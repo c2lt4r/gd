@@ -1,0 +1,45 @@
+[package]
+name = "gd"
+version = "0.1.0"
+edition = "2024"
+description = "A comprehensive Godot toolchain - format, lint, build, run, and manage Godot projects"
+license = "MIT"
+
+[[bin]]
+name = "gd"
+path = "src/main.rs"
+
+[dependencies]
+# CLI
+clap = { version = "4", features = ["derive", "env"] }
+
+# Parsing
+tree-sitter = "0.24"
+tree-sitter-gdscript = "6.1"
+
+# Serialization / Config
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+
+# Error handling
+miette = { version = "7", features = ["fancy"] }
+thiserror = "2"
+
+# File system
+walkdir = "2"
+ignore = "0.4"
+
+# Parallelism
+rayon = "1"
+
+# Terminal output
+owo-colors = "4"
+indicatif = "0.17"
+
+# Misc
+similar = "2"          # Diffing for fmt --check
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = true
