@@ -40,12 +40,15 @@ impl Default for FmtConfig {
 pub struct LintConfig {
     /// Lint rules to disable.
     pub disabled_rules: Vec<String>,
+    /// Maximum number of lines in a function before long-function warns.
+    pub max_function_length: usize,
 }
 
 impl Default for LintConfig {
     fn default() -> Self {
         Self {
             disabled_rules: Vec::new(),
+            max_function_length: 50,
         }
     }
 }

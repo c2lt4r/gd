@@ -16,7 +16,7 @@ const GODOT_BINARY_NAMES: &[&str] = &["godot", "godot4", "godot-4"];
 /// 1. `run.godot_path` in gd.toml config
 /// 2. `GODOT_PATH` environment variable
 /// 3. PATH search for: godot, godot4, godot-4
-fn find_godot(config: &Config) -> Result<PathBuf> {
+pub fn find_godot(config: &Config) -> Result<PathBuf> {
     // 1. Check config
     if let Some(ref path) = config.run.godot_path {
         if path.exists() {

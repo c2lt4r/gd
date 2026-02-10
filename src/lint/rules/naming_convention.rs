@@ -31,12 +31,36 @@ fn check_node(
         "function_definition" => {
             if let Some(name_node) = node.child_by_field_name("name") {
                 let name = &source[name_node.byte_range()];
-                if !is_snake_case(name) {
+                // Skip Godot built-in overridden methods
+                if !is_godot_builtin(name) && !is_snake_case(name) {
                     let fixed = to_snake_case(name);
                     diags.push(LintDiagnostic {
                         rule: "naming-convention",
                         message: format!(
                             "function `{}` should use snake_case: `{}`",
+                            name, fixed
+                        ),
+                        severity: Severity::Warning,
+                        line: name_node.start_position().row,
+                        column: name_node.start_position().column,
+                        fix: Some(Fix {
+                            byte_start: name_node.start_byte(),
+                            byte_end: name_node.end_byte(),
+                            replacement: fixed,
+                        }),
+                    });
+                }
+            }
+        }
+        "const_statement" => {
+            if let Some(name_node) = node.child_by_field_name("name") {
+                let name = &source[name_node.byte_range()];
+                if !is_upper_snake_case(name) {
+                    let fixed = to_upper_snake_case(name);
+                    diags.push(LintDiagnostic {
+                        rule: "naming-convention",
+                        message: format!(
+                            "constant `{}` should use UPPER_SNAKE_CASE: `{}`",
                             name, fixed
                         ),
                         severity: Severity::Warning,
@@ -138,6 +162,61 @@ fn check_node(
         }
         cursor.goto_parent();
     }
+}
+
+/// Godot built-in methods that are commonly overridden and use _prefix naming.
+const GODOT_BUILTINS: &[&str] = &[
+    "_ready",
+    "_process",
+    "_physics_process",
+    "_input",
+    "_unhandled_input",
+    "_enter_tree",
+    "_exit_tree",
+    "_draw",
+    "_notification",
+    "_to_string",
+    "_init",
+    "_get",
+    "_set",
+    "_get_property_list",
+];
+
+fn is_godot_builtin(name: &str) -> bool {
+    GODOT_BUILTINS.contains(&name)
+}
+
+/// Check if a name is valid UPPER_SNAKE_CASE.
+fn is_upper_snake_case(name: &str) -> bool {
+    if name.is_empty() {
+        return true;
+    }
+    name.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+        && !name.contains("__")
+        && !name.starts_with('_')
+        && !name.ends_with('_')
+}
+
+/// Convert a name to UPPER_SNAKE_CASE.
+fn to_upper_snake_case(name: &str) -> String {
+    let mut result = String::new();
+    let mut prev_was_upper = false;
+    for (i, ch) in name.chars().enumerate() {
+        if ch == '_' {
+            result.push('_');
+            prev_was_upper = false;
+        } else if ch.is_ascii_uppercase() {
+            if i > 0 && !prev_was_upper && name.as_bytes()[i - 1] != b'_' {
+                result.push('_');
+            }
+            result.push(ch);
+            prev_was_upper = true;
+        } else {
+            prev_was_upper = false;
+            result.push(ch.to_ascii_uppercase());
+        }
+    }
+    result
 }
 
 /// Check if a name is valid snake_case.

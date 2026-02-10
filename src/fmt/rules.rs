@@ -23,6 +23,11 @@ pub fn spacing_between(prev_kind: &str, next_kind: &str, in_class_body: bool) ->
         return spacing_in_class_body(prev_kind, next_kind);
     }
 
+    // Standalone annotations (@tool, @icon) attach to the next statement - no blank line
+    if prev_kind == "annotation" || prev_kind == "annotations" {
+        return Spacing::None;
+    }
+
     // Two blank lines before/after functions and classes
     let prev_is_big = TWO_BLANK_LINE_KINDS.contains(&prev_kind);
     let next_is_big = TWO_BLANK_LINE_KINDS.contains(&next_kind);

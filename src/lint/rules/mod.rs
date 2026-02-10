@@ -7,6 +7,10 @@ pub mod empty_function;
 pub mod long_function;
 pub mod duplicate_signal;
 pub mod self_assignment;
+pub mod unreachable_code;
+pub mod shadowed_variable;
+pub mod comparison_with_boolean;
+pub mod unnecessary_pass;
 
 use tree_sitter::Tree;
 
@@ -60,6 +64,10 @@ pub fn all_rules(disabled: &[String]) -> Vec<Box<dyn LintRule>> {
         Box::new(long_function::LongFunction),
         Box::new(duplicate_signal::DuplicateSignal),
         Box::new(self_assignment::SelfAssignment),
+        Box::new(unreachable_code::UnreachableCode),
+        Box::new(shadowed_variable::ShadowedVariable),
+        Box::new(comparison_with_boolean::ComparisonWithBoolean),
+        Box::new(unnecessary_pass::UnnecessaryPass),
     ];
     all.into_iter()
         .filter(|r| !disabled.iter().any(|d| d == r.name()))

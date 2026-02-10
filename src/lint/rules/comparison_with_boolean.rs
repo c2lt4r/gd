@@ -1,0 +1,70 @@
+use tree_sitter::{Node, Tree};
+
+use crate::core::config::LintConfig;
+use super::{LintDiagnostic, LintRule, Severity};
+
+pub struct ComparisonWithBoolean;
+
+impl LintRule for ComparisonWithBoolean {
+    fn name(&self) -> &'static str {
+        "comparison-with-boolean"
+    }
+
+    fn check(&self, tree: &Tree, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+        let mut diags = Vec::new();
+        let root = tree.root_node();
+        check_node(root, source, &mut diags);
+        diags
+    }
+}
+
+fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
+    if node.kind() == "binary_operator" {
+        if let Some(op_node) = node.child_by_field_name("operator") {
+            let op = &source[op_node.byte_range()];
+            if op == "==" || op == "!=" {
+                let left = node.child_by_field_name("left");
+                let right = node.child_by_field_name("right");
+
+                let left_is_bool = left.as_ref().is_some_and(|n| is_boolean_literal(n, source));
+                let right_is_bool = right.as_ref().is_some_and(|n| is_boolean_literal(n, source));
+
+                if left_is_bool || right_is_bool {
+                    let suggestion = if op == "==" {
+                        "use the value directly (e.g. `if x:` instead of `if x == true:`)"
+                    } else {
+                        "use `not` (e.g. `if not x:` instead of `if x != true:`)"
+                    };
+
+                    diags.push(LintDiagnostic {
+                        rule: "comparison-with-boolean",
+                        message: format!(
+                            "comparison `{}` with boolean literal is redundant; {}",
+                            &source[node.byte_range()],
+                            suggestion,
+                        ),
+                        severity: Severity::Warning,
+                        line: node.start_position().row,
+                        column: node.start_position().column,
+                        fix: None,
+                    });
+                }
+            }
+        }
+    }
+
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            check_node(cursor.node(), source, diags);
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+    }
+}
+
+fn is_boolean_literal(node: &Node, source: &str) -> bool {
+    let text = &source[node.byte_range()];
+    text == "true" || text == "false"
+}

@@ -110,6 +110,7 @@ impl Printer {
             "break_statement" => self.push_str("break"),
             "continue_statement" => self.push_str("continue"),
             "unary_operator" => self.print_unary_op(node, source, indent),
+            "await_expression" => self.print_await_expr(node, source, indent),
             "parenthesized_expression" => self.print_parenthesized(node, source, indent),
             "subscript" => self.print_subscript(node, source, indent),
             "conditional_expression" => self.print_conditional_expr(node, source, indent),
@@ -510,6 +511,16 @@ impl Printer {
         }
     }
 
+    // ── Await expression ──────────────────────────────────────────────
+
+    fn print_await_expr(&mut self, node: &Node, source: &str, indent: usize) {
+        self.push_str("await ");
+        let mut cursor = node.walk();
+        for child in node.named_children(&mut cursor) {
+            self.print_node(&child, source, indent);
+        }
+    }
+
     // ── Parenthesized expression ───────────────────────────────────────
 
     fn print_parenthesized(&mut self, node: &Node, source: &str, indent: usize) {
@@ -563,7 +574,8 @@ impl Printer {
 
     // ── Annotations ────────────────────────────────────────────────────
 
-    /// Print annotations block followed by a newline + indent (for func/var).
+    /// Print annotations inline before a declaration (var/func/etc).
+    /// Multiple annotations: each on its own line, last one on the same line as the declaration.
     fn print_annotations_block(&mut self, node: &Node, source: &str, indent: usize) {
         let mut cursor = node.walk();
         let children: Vec<Node> = node.named_children(&mut cursor).collect();
@@ -575,8 +587,8 @@ impl Printer {
             }
             self.emit(child, source);
         }
-        self.push_str("\n");
-        self.write_indent(indent);
+        // Space before the declaration keyword (var/func) - keeps annotation on same line
+        self.push_str(" ");
     }
 
     /// Print standalone annotations (at module level, not attached to var/func).
@@ -875,7 +887,7 @@ mod tests {
     fn test_variable_with_annotation() {
         let input = "@export var health: int = 100\n";
         let output = format_source(input);
-        assert_eq!(output, "@export\nvar health: int = 100\n");
+        assert_eq!(output, "@export var health: int = 100\n");
     }
 
     #[test]
@@ -942,5 +954,130 @@ mod tests {
         let input = "@onready var sprite: Sprite2D = $Sprite2D\n";
         let output = format_source(input);
         assert!(output.contains("$Sprite2D"), "got: {output}");
+    }
+
+    // ── Edge case tests ───────────────────────────────────────────────
+
+    #[test]
+    fn test_annotation_on_same_line_as_var() {
+        let input = "@export var health: int = 100\n";
+        let output = format_source(input);
+        assert_eq!(output, "@export var health: int = 100\n");
+    }
+
+    #[test]
+    fn test_onready_annotation_on_same_line() {
+        let input = "@onready var sprite: Sprite2D = $Sprite2D\n";
+        let output = format_source(input);
+        assert_eq!(output, "@onready var sprite: Sprite2D = $Sprite2D\n");
+    }
+
+    #[test]
+    fn test_multi_annotation_var() {
+        let input = "@export @onready var sprite: Sprite2D = $Sprite2D\n";
+        let output = format_source(input);
+        assert!(
+            output.contains("@export\n@onready var sprite"),
+            "got: {output}"
+        );
+    }
+
+    #[test]
+    fn test_annotation_on_function() {
+        let input = "@rpc(\"any_peer\") func sync():\n\tpass\n";
+        let output = format_source(input);
+        assert!(
+            output.contains("@rpc(\"any_peer\") func sync()"),
+            "got: {output}"
+        );
+    }
+
+    #[test]
+    fn test_tool_annotation_no_blank_line() {
+        let input = "@tool\nextends Node2D\n";
+        let output = format_source(input);
+        assert_eq!(output, "@tool\nextends Node2D\n");
+    }
+
+    #[test]
+    fn test_await_expression() {
+        let input = "func f():\n\tawait get_tree().create_timer(1.0).timeout\n";
+        let output = format_source(input);
+        assert!(
+            output.contains("await get_tree().create_timer(1.0).timeout"),
+            "got: {output}"
+        );
+    }
+
+    #[test]
+    fn test_as_cast() {
+        let input = "func f():\n\tvar node = get_node(\"path\") as Node2D\n";
+        let output = format_source(input);
+        assert!(
+            output.contains("get_node(\"path\") as Node2D"),
+            "got: {output}"
+        );
+    }
+
+    #[test]
+    fn test_is_type_check() {
+        let input = "func f():\n\tif enemy is Boss:\n\t\tpass\n";
+        let output = format_source(input);
+        assert!(output.contains("if enemy is Boss:"), "got: {output}");
+    }
+
+    #[test]
+    fn test_not_keyword() {
+        let input = "func f():\n\tif not ready:\n\t\tpass\n";
+        let output = format_source(input);
+        assert!(output.contains("if not ready:"), "got: {output}");
+    }
+
+    #[test]
+    fn test_preload_call() {
+        let input = "func f():\n\tvar s = preload(\"res://scene.tscn\")\n";
+        let output = format_source(input);
+        assert!(
+            output.contains("preload(\"res://scene.tscn\")"),
+            "got: {output}"
+        );
+    }
+
+    #[test]
+    fn test_typed_array() {
+        let input = "var arr: Array[int] = []\n";
+        let output = format_source(input);
+        assert!(output.contains("arr: Array[int]"), "got: {output}");
+    }
+
+    #[test]
+    fn test_inferred_type() {
+        let input = "func f():\n\tvar x := 42\n";
+        let output = format_source(input);
+        assert!(output.contains("var x := 42"), "got: {output}");
+    }
+
+    #[test]
+    fn test_idempotency_basic() {
+        let input = "extends Node2D\n\nvar health: int = 100\n\n\nfunc _ready():\n\tpass\n";
+        let first = format_source(input);
+        let second = format_source(&first);
+        assert_eq!(first, second, "Format is not idempotent!\nFirst:\n{first}\nSecond:\n{second}");
+    }
+
+    #[test]
+    fn test_idempotency_annotations() {
+        let input = "@export var health: int = 100\n@onready var sprite: Sprite2D = $Sprite2D\n";
+        let first = format_source(input);
+        let second = format_source(&first);
+        assert_eq!(first, second, "Format is not idempotent!\nFirst:\n{first}\nSecond:\n{second}");
+    }
+
+    #[test]
+    fn test_idempotency_tool() {
+        let input = "@tool\nextends Node2D\n\nvar x: int = 0\n";
+        let first = format_source(input);
+        let second = format_source(&first);
+        assert_eq!(first, second, "Format is not idempotent!\nFirst:\n{first}\nSecond:\n{second}");
     }
 }
