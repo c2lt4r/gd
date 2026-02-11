@@ -12,33 +12,6 @@ use templates::{
     template_for,
 };
 
-/// Default Godot version used when Godot binary is not found.
-const DEFAULT_GODOT_VERSION: &str = "4.6";
-
-/// Detect the installed Godot version by running `godot --version`.
-fn detect_godot_version() -> String {
-    // Try GODOT_PATH env first, then search PATH
-    let binary = std::env::var("GODOT_PATH")
-        .ok()
-        .unwrap_or_else(|| "godot".to_string());
-
-    Command::new(&binary)
-        .arg("--version")
-        .output()
-        .ok()
-        .and_then(|out| {
-            let version_str = String::from_utf8_lossy(&out.stdout);
-            // Output format: "4.6.stable.official.89cea1439"
-            let parts: Vec<&str> = version_str.trim().splitn(3, '.').collect();
-            if parts.len() >= 2 {
-                Some(format!("{}.{}", parts[0], parts[1]))
-            } else {
-                None
-            }
-        })
-        .unwrap_or_else(|| DEFAULT_GODOT_VERSION.to_string())
-}
-
 /// Create a new Godot project with the given name and template.
 pub fn create_project(name: &str, template: &str) -> miette::Result<()> {
     let tpl = template_for(template).ok_or_else(|| {
@@ -48,7 +21,7 @@ pub fn create_project(name: &str, template: &str) -> miette::Result<()> {
         )
     })?;
 
-    let godot_version = detect_godot_version();
+    let godot_version = crate::core::project::detect_godot_version();
 
     let project_dir = Path::new(name);
     if project_dir.exists() {

@@ -1,7 +1,9 @@
 use miette::{Result, miette};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 const PROJECT_FILE: &str = "project.godot";
+const DEFAULT_GODOT_VERSION: &str = "4.0";
 
 /// Represents a discovered Godot project.
 #[derive(Debug)]
@@ -31,6 +33,30 @@ impl GodotProject {
         }
         Ok("Untitled".to_string())
     }
+}
+
+/// Detect the installed Godot major.minor version (e.g. "4.6").
+/// Tries GODOT_PATH env, then PATH, falls back to "4.0".
+pub fn detect_godot_version() -> String {
+    let binary = std::env::var("GODOT_PATH")
+        .ok()
+        .unwrap_or_else(|| "godot".to_string());
+
+    Command::new(&binary)
+        .arg("--version")
+        .output()
+        .ok()
+        .and_then(|out| {
+            let version_str = String::from_utf8_lossy(&out.stdout);
+            // Output format: "4.6.stable.official.89cea1439"
+            let parts: Vec<&str> = version_str.trim().splitn(3, '.').collect();
+            if parts.len() >= 2 {
+                Some(format!("{}.{}", parts[0], parts[1]))
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| DEFAULT_GODOT_VERSION.to_string())
 }
 
 /// Walk upward from `start` looking for project.godot.

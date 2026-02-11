@@ -45,6 +45,9 @@ pub struct SearchArgs {
     pub query: String,
 }
 
+/// Godot Asset Library API base URL.
+const ASSET_API: &str = "https://godotengine.org/asset-library/api/asset";
+
 pub fn exec(args: AddonsArgs) -> Result<()> {
     match args.command {
         AddonsCommand::List => list_addons(),
@@ -52,6 +55,17 @@ pub fn exec(args: AddonsArgs) -> Result<()> {
         AddonsCommand::Remove(remove_args) => remove_addon(remove_args),
         AddonsCommand::Search(search_args) => search_addons(search_args),
     }
+}
+
+/// Build a search URL for the Asset Library, using the detected Godot version.
+fn asset_search_url(query: &str) -> String {
+    let version = crate::core::project::detect_godot_version();
+    format!(
+        "{}?godot_version={}&filter={}&max_results=10",
+        ASSET_API,
+        urlencoding::encode(&version),
+        urlencoding::encode(query),
+    )
 }
 
 fn list_addons() -> Result<()> {
@@ -140,32 +154,34 @@ fn install_from_git(
     custom_name: Option<&str>,
     addons_dir: &std::path::Path,
 ) -> Result<()> {
-    // Determine addon name
-    let addon_name = if let Some(name) = custom_name {
-        name.to_string()
-    } else {
-        // Extract from URL (last path segment without .git)
+    let repo_name = {
         let url_path = url.trim_end_matches('/');
-        let last_segment = url_path
+        url_path
             .rsplit('/')
             .next()
-            .ok_or_else(|| miette!("Invalid URL format"))?;
-        last_segment.trim_end_matches(".git").to_string()
+            .ok_or_else(|| miette!("Invalid URL format"))?
+            .trim_end_matches(".git")
+            .to_string()
     };
 
-    let addon_path = addons_dir.join(&addon_name);
+    println!(
+        "Cloning {} from {}...",
+        repo_name.green().bold(),
+        url.dimmed()
+    );
 
-    if addon_path.exists() {
-        return Err(miette!("Addon '{}' already exists", addon_name));
+    // Clone into a temp directory first
+    let tmp_dir = std::env::temp_dir().join(format!("gd-addon-{}", std::process::id()));
+    if tmp_dir.exists() {
+        fs::remove_dir_all(&tmp_dir).map_err(|e| miette!("Failed to clean temp dir: {e}"))?;
     }
+    fs::create_dir_all(&tmp_dir).map_err(|e| miette!("Failed to create temp dir: {e}"))?;
+    let clone_path = tmp_dir.join(&repo_name);
 
-    println!("Installing {} from {}...", addon_name.green().bold(), url);
-
-    // Run git clone
     let status = ProcessCommand::new("git")
-        .arg("clone")
-        .arg(url)
-        .arg(&addon_path)
+        .args(["clone", "--depth=1", url])
+        .arg(&clone_path)
+        .stderr(std::process::Stdio::null())
         .status()
         .map_err(|e| miette!("Failed to run git clone: {e}"))?;
 
@@ -173,28 +189,95 @@ fn install_from_git(
         return Err(miette!("Git clone failed"));
     }
 
-    // Check for plugin.cfg and display info
-    let plugin_cfg = addon_path.join("plugin.cfg");
-    if plugin_cfg.exists() {
+    // Look for addons/ directory inside the clone
+    let cloned_addons = clone_path.join("addons");
+    if !cloned_addons.is_dir() {
+        return Err(miette!(
+            "Repository has no addons/ directory. Expected addons/<plugin_name>/plugin.cfg"
+        ));
+    }
+
+    // Find addon subdirectories (ones with plugin.cfg)
+    let addon_entries: Vec<_> = fs::read_dir(&cloned_addons)
+        .map_err(|e| miette!("Failed to read addons directory: {e}"))?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_dir() && e.path().join("plugin.cfg").exists())
+        .collect();
+
+    if addon_entries.is_empty() {
+        return Err(miette!(
+            "No valid addons found (no plugin.cfg in any addons/ subdirectory)"
+        ));
+    }
+
+    // Determine the target name and check for collisions
+    for entry in &addon_entries {
+        let dir_name = entry.file_name();
+        let target_name = if addon_entries.len() == 1 {
+            custom_name.map(std::ffi::OsStr::new).unwrap_or(&dir_name)
+        } else {
+            &dir_name
+        };
+        let target_path = addons_dir.join(target_name);
+        if target_path.exists() {
+            return Err(miette!(
+                "Addon '{}' already exists",
+                target_name.to_string_lossy()
+            ));
+        }
+    }
+
+    // Copy each addon into the project's addons/ directory
+    for entry in &addon_entries {
+        let dir_name = entry.file_name();
+        let target_name = if addon_entries.len() == 1 {
+            custom_name
+                .map(std::ffi::OsString::from)
+                .unwrap_or(dir_name.clone())
+        } else {
+            dir_name.clone()
+        };
+        let target_path = addons_dir.join(&target_name);
+        copy_dir_recursive(&entry.path(), &target_path)?;
+
+        // Display plugin info
+        let plugin_cfg = target_path.join("plugin.cfg");
         if let Ok(info) = parse_plugin_cfg(&plugin_cfg) {
             println!("\n{}", "Successfully installed!".green().bold());
             if let Some(name) = &info.name {
-                println!("  Name: {}", name);
+                print!("  {}", name.green().bold());
             }
             if let Some(version) = &info.version {
-                println!("  Version: {}", version.cyan());
+                print!(" {}", version.cyan());
             }
+            println!();
             if let Some(author) = &info.author {
                 println!("  Author: {}", author);
             }
             if let Some(desc) = &info.description {
-                println!("  Description: {}", desc.dimmed());
+                println!("  {}", desc.dimmed());
             }
         }
-    } else {
-        println!("{}", "Installed successfully!".green().bold());
     }
 
+    // Clean up temp dir
+    let _ = fs::remove_dir_all(&tmp_dir);
+
+    Ok(())
+}
+
+fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Result<()> {
+    fs::create_dir_all(dst).map_err(|e| miette!("Failed to create directory: {e}"))?;
+    for entry in fs::read_dir(src).map_err(|e| miette!("Failed to read directory: {e}"))? {
+        let entry = entry.map_err(|e| miette!("Failed to read entry: {e}"))?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        if src_path.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else {
+            fs::copy(&src_path, &dst_path).map_err(|e| miette!("Failed to copy file: {e}"))?;
+        }
+    }
     Ok(())
 }
 
@@ -209,10 +292,7 @@ fn install_from_asset_library(
     );
 
     // Get asset details
-    let url = format!(
-        "https://godotengine.org/asset-library/api/asset/{}",
-        asset_id
-    );
+    let url = format!("{}/{}", ASSET_API, asset_id);
     let mut response = ureq::get(&url)
         .call()
         .map_err(|e| miette!("Failed to fetch asset details: {e}"))?;
@@ -223,13 +303,6 @@ fn install_from_asset_library(
 
     if asset.download_url.is_empty() {
         return Err(miette!("Asset has no download URL"));
-    }
-
-    let addon_name = custom_name.unwrap_or(&asset.title).to_string();
-    let addon_path = addons_dir.join(&addon_name);
-
-    if addon_path.exists() {
-        return Err(miette!("Addon '{}' already exists", addon_name));
     }
 
     println!(
@@ -253,32 +326,71 @@ fn install_from_asset_library(
     let mut archive =
         zip::ZipArchive::new(cursor).map_err(|e| miette!("Failed to open zip archive: {e}"))?;
 
-    // Find the addons directory in the archive and extract it
+    // Pre-scan: find which addon directories the zip contains and check for collisions.
+    // GitHub archives have a root prefix like "Repo-<commit>/addons/..." so we find
+    // "addons/" anywhere in the path and look at the first component after it.
+    let mut addon_dirs: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for i in 0..archive.len() {
+        let file = archive
+            .by_index(i)
+            .map_err(|e| miette!("Failed to read zip entry: {e}"))?;
+        let file_path = file.name();
+        if let Some(addons_idx) = file_path.find("addons/") {
+            let relative = &file_path[addons_idx + "addons/".len()..];
+            if let Some(dir_name) = relative.split('/').next()
+                && !dir_name.is_empty()
+            {
+                addon_dirs.insert(dir_name.to_string());
+            }
+        }
+    }
+
+    // Check for collisions before extracting
+    for dir_name in &addon_dirs {
+        let target_name = if addon_dirs.len() == 1 {
+            custom_name.unwrap_or(dir_name)
+        } else {
+            dir_name
+        };
+        let target_path = addons_dir.join(target_name);
+        if target_path.exists() {
+            return Err(miette!("Addon '{}' already exists", target_name));
+        }
+    }
+
+    // Extract the addons/ directory from the zip directly into the project's addons/ dir.
     let mut found_addon = false;
+    let mut installed_dirs: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for i in 0..archive.len() {
         let mut file = archive
             .by_index(i)
             .map_err(|e| miette!("Failed to read zip entry: {e}"))?;
 
-        let file_path = file.name();
+        let file_path = file.name().to_string();
 
-        // Skip if not in addons directory
-        if !file_path.starts_with("addons/") {
+        // Find "addons/" anywhere in the path (handles root dir prefix)
+        let Some(addons_idx) = file_path.find("addons/") else {
             continue;
-        }
+        };
 
         found_addon = true;
 
-        // Remove "addons/" prefix and prepend our addon name
-        let relative_path = file_path.strip_prefix("addons/").unwrap();
+        // Extract the path after "addons/" — e.g. "gut/plugin.cfg"
+        let relative_path = &file_path[addons_idx + "addons/".len()..];
 
-        // Skip the top-level addons directory itself
+        // Skip the addons directory entry itself
         if relative_path.is_empty() {
             continue;
         }
 
-        let dest_path = addon_path.join(relative_path);
+        // Track which top-level addon directories we install
+        if let Some(dir_name) = relative_path.split('/').next() {
+            installed_dirs.insert(dir_name.to_string());
+        }
+
+        // Place directly into addons_dir, preserving the addon's own directory name
+        let dest_path = addons_dir.join(relative_path);
 
         if file.is_dir() {
             fs::create_dir_all(&dest_path)
@@ -303,6 +415,18 @@ fn install_from_asset_library(
         ));
     }
 
+    // If --name was provided and there's exactly one addon directory, rename it
+    if let Some(name) = custom_name
+        && installed_dirs.len() == 1
+    {
+        let original = installed_dirs.iter().next().unwrap();
+        let from = addons_dir.join(original);
+        let to = addons_dir.join(name);
+        if from != to {
+            fs::rename(&from, &to).map_err(|e| miette!("Failed to rename addon directory: {e}"))?;
+        }
+    }
+
     println!("\n{}", "Successfully installed!".green().bold());
     println!("  Name: {}", asset.title);
     println!("  Author: {}", asset.author);
@@ -310,7 +434,12 @@ fn install_from_asset_library(
         println!("  Godot version: {}", asset.godot_version.cyan());
     }
     if !asset.description.is_empty() {
-        println!("  Description: {}", asset.description.dimmed());
+        let desc = if asset.description.len() > 200 {
+            format!("{}...", &asset.description[..197])
+        } else {
+            asset.description.clone()
+        };
+        println!("  {}", desc.dimmed());
     }
 
     Ok(())
@@ -323,11 +452,7 @@ fn install_from_asset_library_by_name(
 ) -> Result<()> {
     println!("Searching Asset Library for '{}'...", name);
 
-    // Search for the asset
-    let search_url = format!(
-        "https://godotengine.org/asset-library/api/asset?filter={}&max_results=10",
-        urlencoding::encode(name)
-    );
+    let search_url = asset_search_url(name);
 
     let search_response: AssetSearchResponse = ureq::get(&search_url)
         .call()
@@ -419,10 +544,7 @@ fn parse_plugin_cfg(path: &PathBuf) -> Result<PluginInfo> {
 fn search_addons(args: SearchArgs) -> Result<()> {
     println!("Searching Asset Library for '{}'...\n", args.query);
 
-    let search_url = format!(
-        "https://godotengine.org/asset-library/api/asset?filter={}&max_results=10",
-        urlencoding::encode(&args.query)
-    );
+    let search_url = asset_search_url(&args.query);
 
     let search_response: AssetSearchResponse = ureq::get(&search_url)
         .call()
