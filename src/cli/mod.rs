@@ -15,6 +15,7 @@ pub mod addons_cmd;
 pub mod stats_cmd;
 pub mod ci_cmd;
 pub mod lsp_cmd;
+pub mod deps_cmd;
 
 use clap::{Parser, Subcommand};
 use miette::Result;
@@ -62,6 +63,8 @@ pub enum Command {
     Ci(ci_cmd::CiArgs),
     /// Start the Language Server Protocol server
     Lsp(lsp_cmd::LspArgs),
+    /// Show script dependency graph
+    Deps(deps_cmd::DepsArgs),
 }
 
 pub fn run(cli: Cli) -> Result<()> {
@@ -83,5 +86,6 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Stats(args) => stats_cmd::exec(args),
         Command::Ci(args) => ci_cmd::exec(args),
         Command::Lsp(args) => lsp_cmd::exec(args),
+        Command::Deps(args) => deps_cmd::exec(args),
     }
 }

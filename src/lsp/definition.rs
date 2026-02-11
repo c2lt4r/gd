@@ -1,0 +1,186 @@
+use std::path::PathBuf;
+
+use tower_lsp::lsp_types::*;
+
+/// Resolve go-to-definition at the given position within a single file.
+pub fn goto_definition(source: &str, uri: &Url, position: Position) -> Option<GotoDefinitionResponse> {
+    let tree = crate::core::parser::parse(source).ok()?;
+    let root = tree.root_node();
+
+    let point = tree_sitter::Point::new(position.line as usize, position.character as usize);
+    let node = root.descendant_for_point_range(point, point)?;
+
+    // Handle `extends "res://path.gd"` string literals
+    if node.kind() == "string" {
+        let text = node.utf8_text(source.as_bytes()).ok()?;
+        return resolve_extends_path(text, uri);
+    }
+
+    // Get the identifier text at the cursor
+    let ident = node.utf8_text(source.as_bytes()).ok()?;
+
+    // Search top-level nodes for a matching definition
+    find_definition(&root, ident, source, uri)
+}
+
+/// Find a top-level definition that matches the given name.
+fn find_definition(
+    root: &tree_sitter::Node,
+    name: &str,
+    source: &str,
+    uri: &Url,
+) -> Option<GotoDefinitionResponse> {
+    let mut cursor = root.walk();
+    for child in root.children(&mut cursor) {
+        let matched = match child.kind() {
+            "function_definition" | "variable_statement" | "const_statement"
+            | "signal_statement" | "class_definition" | "enum_definition" => {
+                matches_name(&child, name, source)
+            }
+            "class_name_statement" => {
+                // class_name MyClass  — the name is the second child
+                child
+                    .child_by_field_name("name")
+                    .or_else(|| child.child(1))
+                    .is_some_and(|n| node_text(&n, source) == name)
+            }
+            _ => false,
+        };
+
+        if matched {
+            let name_node = child.child_by_field_name("name").unwrap_or(child);
+            return Some(GotoDefinitionResponse::Scalar(Location {
+                uri: uri.clone(),
+                range: node_range(&name_node),
+            }));
+        }
+    }
+    None
+}
+
+/// For `extends "res://path.gd"` strings, resolve the path relative to the project root.
+fn resolve_extends_path(text: &str, uri: &Url) -> Option<GotoDefinitionResponse> {
+    // Strip surrounding quotes
+    let inner = text.trim_matches('"').trim_matches('\'');
+    if !inner.starts_with("res://") {
+        return None;
+    }
+
+    let rel_path = &inner["res://".len()..];
+
+    // Derive project root from the current file's directory, walking up to find project.godot
+    let file_path = uri.to_file_path().ok()?;
+    let project_root = find_project_root(&file_path)?;
+    let target = project_root.join(rel_path);
+
+    if target.exists() {
+        let target_uri = Url::from_file_path(&target).ok()?;
+        Some(GotoDefinitionResponse::Scalar(Location {
+            uri: target_uri,
+            range: Range::new(Position::new(0, 0), Position::new(0, 0)),
+        }))
+    } else {
+        None
+    }
+}
+
+/// Walk up directories to find the Godot project root (containing project.godot).
+fn find_project_root(from: &std::path::Path) -> Option<PathBuf> {
+    let mut dir = from.parent()?;
+    loop {
+        if dir.join("project.godot").exists() {
+            return Some(dir.to_path_buf());
+        }
+        dir = dir.parent()?;
+    }
+}
+
+fn matches_name(node: &tree_sitter::Node, name: &str, source: &str) -> bool {
+    node.child_by_field_name("name")
+        .is_some_and(|n| node_text(&n, source) == name)
+}
+
+fn node_text<'a>(node: &tree_sitter::Node, source: &'a str) -> &'a str {
+    node.utf8_text(source.as_bytes()).unwrap_or("unknown")
+}
+
+fn node_range(node: &tree_sitter::Node) -> Range {
+    Range::new(
+        Position::new(
+            node.start_position().row as u32,
+            node.start_position().column as u32,
+        ),
+        Position::new(
+            node.end_position().row as u32,
+            node.end_position().column as u32,
+        ),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_uri() -> Url {
+        Url::parse("file:///test.gd").unwrap()
+    }
+
+    #[test]
+    fn goto_function_definition() {
+        let source = "func greet():\n\tpass\n\nfunc main():\n\tgreet()\n";
+        let uri = test_uri();
+        // Position on `greet()` call at line 4, col 1
+        let result = goto_definition(source, &uri, Position::new(4, 1));
+        assert!(result.is_some());
+        if let Some(GotoDefinitionResponse::Scalar(loc)) = result {
+            assert_eq!(loc.range.start.line, 0);
+            assert_eq!(loc.range.start.character, 5); // "greet" starts after "func "
+        } else {
+            panic!("Expected Scalar response");
+        }
+    }
+
+    #[test]
+    fn goto_variable_definition() {
+        let source = "var speed = 10\n\nfunc run():\n\tprint(speed)\n";
+        let uri = test_uri();
+        // Position on `speed` at line 3, col 7
+        let result = goto_definition(source, &uri, Position::new(3, 7));
+        assert!(result.is_some());
+        if let Some(GotoDefinitionResponse::Scalar(loc)) = result {
+            assert_eq!(loc.range.start.line, 0);
+            assert_eq!(loc.range.start.character, 4); // "speed" starts after "var "
+        } else {
+            panic!("Expected Scalar response");
+        }
+    }
+
+    #[test]
+    fn goto_signal_definition() {
+        let source = "signal health_changed\n\nfunc hit():\n\thealth_changed.emit()\n";
+        let uri = test_uri();
+        // Position on `health_changed` at line 3
+        let result = goto_definition(source, &uri, Position::new(3, 5));
+        assert!(result.is_some());
+        if let Some(GotoDefinitionResponse::Scalar(loc)) = result {
+            assert_eq!(loc.range.start.line, 0);
+        } else {
+            panic!("Expected Scalar response");
+        }
+    }
+
+    #[test]
+    fn unknown_identifier_returns_none() {
+        let source = "func main():\n\tunknown_thing()\n";
+        let uri = test_uri();
+        let result = goto_definition(source, &uri, Position::new(1, 5));
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn empty_source_returns_none() {
+        let uri = test_uri();
+        let result = goto_definition("", &uri, Position::new(0, 0));
+        assert!(result.is_none());
+    }
+}

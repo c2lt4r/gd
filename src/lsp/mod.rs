@@ -1,7 +1,9 @@
+mod actions;
+mod definition;
 mod diagnostics;
 mod formatting;
+mod hover;
 mod symbols;
-mod actions;
 
 use dashmap::DashMap;
 use tower_lsp::jsonrpc::Result;
@@ -47,6 +49,8 @@ impl LanguageServer for Backend {
                 document_formatting_provider: Some(OneOf::Left(true)),
                 code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
                 document_symbol_provider: Some(OneOf::Left(true)),
+                hover_provider: Some(HoverProviderCapability::Simple(true)),
+                definition_provider: Some(OneOf::Left(true)),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -142,6 +146,35 @@ impl LanguageServer for Backend {
         drop(doc);
 
         Ok(symbols::document_symbols(&source))
+    }
+
+    async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
+        let uri = &params.text_document_position_params.text_document.uri;
+        let Some(doc) = self.documents.get(uri) else {
+            return Ok(None);
+        };
+        let source = doc.content.clone();
+        drop(doc);
+
+        Ok(hover::hover_at(&source, params.text_document_position_params.position))
+    }
+
+    async fn goto_definition(
+        &self,
+        params: GotoDefinitionParams,
+    ) -> Result<Option<GotoDefinitionResponse>> {
+        let uri = &params.text_document_position_params.text_document.uri;
+        let Some(doc) = self.documents.get(uri) else {
+            return Ok(None);
+        };
+        let source = doc.content.clone();
+        drop(doc);
+
+        Ok(definition::goto_definition(
+            &source,
+            uri,
+            params.text_document_position_params.position,
+        ))
     }
 }
 
