@@ -60,7 +60,7 @@ fn check_body_for_unreachable(body: Node, source: &str, diags: &mut Vec<LintDiag
 
     loop {
         let child = cursor.node();
-        if !child.is_named() {
+        if !child.is_named() || child.kind() == "comment" {
             if !cursor.goto_next_sibling() {
                 break;
             }
@@ -127,5 +127,37 @@ fn check_body_for_unreachable(body: Node, source: &str, diags: &mut Vec<LintDiag
                 replacement: String::new(),
             }),
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::parser;
+
+    fn check(source: &str) -> Vec<LintDiagnostic> {
+        let tree = parser::parse(source).unwrap();
+        let config = LintConfig::default();
+        UnreachableCode.check(&tree, source, &config)
+    }
+
+    #[test]
+    fn no_false_positive_on_comments_after_return() {
+        let source = "func f() -> void:\n\treturn  # done\n";
+        assert!(check(source).is_empty());
+    }
+
+    #[test]
+    fn no_false_positive_on_match_arms_with_comments() {
+        let source = "func f(x: int) -> String:\n\tmatch x:\n\t\t0:\n\t\t\treturn \"a\"  # first\n\t\t1:\n\t\t\treturn \"b\"  # second\n\t\t_:\n\t\t\treturn \"c\"\n";
+        assert!(check(source).is_empty());
+    }
+
+    #[test]
+    fn still_detects_real_unreachable_code() {
+        let source = "func f() -> void:\n\treturn\n\tvar x := 1\n";
+        let diags = check(source);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].rule, "unreachable-code");
     }
 }

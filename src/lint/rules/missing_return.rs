@@ -61,18 +61,158 @@ fn check_function(func: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
         None => return,
     };
 
-    // Check if the last named child is a return statement
-    let child_count = body.named_child_count();
-    if child_count == 0 {
-        // Empty body with a return type - warn
-        emit_warning(func, source, diags);
+    if body_always_returns(body, source) {
         return;
     }
 
-    let last_child = body.named_child(child_count - 1).unwrap();
-    if last_child.kind() != "return_statement" {
-        emit_warning(func, source, diags);
+    emit_warning(func, source, diags);
+}
+
+/// Check if a body node always returns on every code path.
+fn body_always_returns(body: Node, source: &str) -> bool {
+    let last = match last_statement(body) {
+        Some(n) => n,
+        None => return false,
+    };
+
+    node_always_returns(last, source)
+}
+
+/// Check if a node (the last statement in a body) always returns.
+fn node_always_returns(node: Node, source: &str) -> bool {
+    match node.kind() {
+        "return_statement" => true,
+        "if_statement" => if_always_returns(node, source),
+        "match_statement" => match_always_returns(node, source),
+        _ => false,
     }
+}
+
+/// Check if an if/elif/else chain always returns (needs an else branch
+/// and every branch must return).
+fn if_always_returns(node: Node, source: &str) -> bool {
+    // The if body
+    let if_body = match node.child_by_field_name("body") {
+        Some(b) => b,
+        None => return false,
+    };
+    if !body_always_returns(if_body, source) {
+        return false;
+    }
+
+    // Walk children looking for elif_clause and else_clause
+    let mut has_else = false;
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            let child = cursor.node();
+            match child.kind() {
+                "elif_clause" => {
+                    if let Some(body) = child.child_by_field_name("body") {
+                        if !body_always_returns(body, source) {
+                            return false;
+                        }
+                    } else {
+                        return false;
+                    }
+                }
+                "else_clause" => {
+                    has_else = true;
+                    if let Some(body) = child.child_by_field_name("body") {
+                        if !body_always_returns(body, source) {
+                            return false;
+                        }
+                    } else {
+                        return false;
+                    }
+                }
+                _ => {}
+            }
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+    }
+
+    // Without an else branch, the if can fall through
+    has_else
+}
+
+/// Check if a match statement always returns (needs a wildcard arm
+/// and every arm must return).
+fn match_always_returns(node: Node, source: &str) -> bool {
+    let match_body = node
+        .children(&mut node.walk())
+        .find(|c| c.kind() == "match_body");
+    let match_body = match match_body {
+        Some(b) => b,
+        None => return false,
+    };
+
+    let mut has_wildcard = false;
+    let mut cursor = match_body.walk();
+    if cursor.goto_first_child() {
+        loop {
+            let child = cursor.node();
+            if child.kind() == "pattern_section" {
+                // Check for wildcard pattern (_)
+                if has_wildcard_pattern(child, source) {
+                    has_wildcard = true;
+                }
+                // Check the arm's body returns
+                if let Some(body) = child.child_by_field_name("body") {
+                    if !body_always_returns(body, source) {
+                        return false;
+                    }
+                } else {
+                    return false;
+                }
+            }
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+    }
+
+    // Without a wildcard, the match can fall through
+    has_wildcard
+}
+
+/// Check if a pattern_section contains a wildcard (_) pattern.
+fn has_wildcard_pattern(section: Node, source: &str) -> bool {
+    let mut cursor = section.walk();
+    if cursor.goto_first_child() {
+        loop {
+            let child = cursor.node();
+            // The wildcard is an identifier node with text "_"
+            if child.kind() == "identifier"
+                && child.utf8_text(source.as_bytes()).unwrap_or("") == "_"
+            {
+                return true;
+            }
+            // Stop at the body — patterns come before it
+            if child.kind() == "body" {
+                break;
+            }
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+    }
+    false
+}
+
+/// Get the last non-comment named child of a body node.
+fn last_statement(body: Node) -> Option<Node> {
+    let count = body.named_child_count();
+    for i in (0..count).rev() {
+        if let Some(child) = body.named_child(i) {
+            if child.kind() != "comment" {
+                return Some(child);
+            }
+        }
+    }
+    None
 }
 
 fn emit_warning(func: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
@@ -93,4 +233,58 @@ fn emit_warning(func: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
         end_column: None,
         fix: None,
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::parser;
+
+    fn check(source: &str) -> Vec<LintDiagnostic> {
+        let tree = parser::parse(source).unwrap();
+        let config = LintConfig::default();
+        MissingReturn.check(&tree, source, &config)
+    }
+
+    #[test]
+    fn no_warning_on_match_with_all_returns() {
+        let source = "func f(x: int) -> String:\n\tmatch x:\n\t\t0:\n\t\t\treturn \"a\"\n\t\t1:\n\t\t\treturn \"b\"\n\t\t_:\n\t\t\treturn \"c\"\n";
+        assert!(check(source).is_empty());
+    }
+
+    #[test]
+    fn no_warning_on_if_elif_else_all_return() {
+        let source = "func f(x: int) -> int:\n\tif x > 10:\n\t\treturn 1\n\telif x > 5:\n\t\treturn 2\n\telse:\n\t\treturn 3\n";
+        assert!(check(source).is_empty());
+    }
+
+    #[test]
+    fn warns_on_match_without_wildcard() {
+        let source = "func f(x: int) -> String:\n\tmatch x:\n\t\t0:\n\t\t\treturn \"a\"\n\t\t1:\n\t\t\treturn \"b\"\n";
+        assert_eq!(check(source).len(), 1);
+    }
+
+    #[test]
+    fn warns_on_if_without_else() {
+        let source = "func f(x: int) -> int:\n\tif x > 10:\n\t\treturn 1\n";
+        assert_eq!(check(source).len(), 1);
+    }
+
+    #[test]
+    fn warns_on_empty_body() {
+        let source = "func f() -> int:\n\tpass\n";
+        assert_eq!(check(source).len(), 1);
+    }
+
+    #[test]
+    fn no_warning_on_direct_return() {
+        let source = "func f() -> int:\n\treturn 42\n";
+        assert!(check(source).is_empty());
+    }
+
+    #[test]
+    fn no_warning_on_void() {
+        let source = "func f() -> void:\n\tpass\n";
+        assert!(check(source).is_empty());
+    }
 }
