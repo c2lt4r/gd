@@ -214,14 +214,26 @@ fn run_gut_tests(
     cmd.arg("--path")
         .arg(&project.root)
         .arg("-s")
-        .arg("addons/gut/gut_cmdln.gd");
+        .arg("addons/gut/gut_cmdln.gd")
+        .arg("-gexit");
 
-    // Pass test directories or specific files to GUT
-    if !args.paths.is_empty() {
-        for path in &args.paths {
-            let dir_str = format!("-gdir=res://{}", path.display());
-            cmd.arg(dir_str);
+    // If no .gutconfig.json exists, tell GUT where to find tests
+    if !project.root.join(".gutconfig.json").exists() {
+        // Collect unique parent directories from discovered test files
+        let mut gut_dirs: Vec<String> = Vec::new();
+        for file in test_files {
+            if let Some(parent) = file.parent() {
+                let rel = parent.strip_prefix(&project.root).unwrap_or(parent);
+                let dir_str = format!("res://{}", rel.display());
+                if !gut_dirs.contains(&dir_str) {
+                    gut_dirs.push(dir_str);
+                }
+            }
         }
+        for dir in &gut_dirs {
+            cmd.arg(format!("-gdir={dir}"));
+        }
+        cmd.arg("-ginclude_subdirs");
     }
 
     if let Some(ref filter) = args.filter {
@@ -235,7 +247,8 @@ fn run_gut_tests(
 
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
-    let output = run_with_timeout(&mut cmd, Duration::from_secs(args.timeout))?;
+    // GUT handles its own exit with -gexit, don't kill on stderr errors
+    let output = run_with_timeout(&mut cmd, Duration::from_secs(args.timeout), false)?;
 
     spinner.finish_and_clear();
 
@@ -310,7 +323,8 @@ fn run_script_tests(
 
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
-        let output = match run_with_timeout(&mut cmd, Duration::from_secs(args.timeout)) {
+        // Kill early on script errors (Godot hangs on assert failure in --script mode)
+        let output = match run_with_timeout(&mut cmd, Duration::from_secs(args.timeout), true) {
             Ok(output) => output,
             Err(_) => {
                 spinner.finish_and_clear();
@@ -356,24 +370,100 @@ fn run_script_tests(
 }
 
 /// Run a command with a timeout, killing the process if it exceeds the limit.
-fn run_with_timeout(cmd: &mut Command, timeout: Duration) -> Result<std::process::Output> {
+/// When `kill_on_error` is true, monitors stderr for script errors/assertion failures
+/// and kills early (used for raw --script tests where Godot hangs on assert failure).
+fn run_with_timeout(
+    cmd: &mut Command,
+    timeout: Duration,
+    kill_on_error: bool,
+) -> Result<std::process::Output> {
+    use std::io::Read;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+
     let mut child = cmd
         .spawn()
         .map_err(|e| miette!("Failed to start Godot: {e}"))?;
 
+    let hit_error = Arc::new(AtomicBool::new(false));
+
+    // Read stdout in a background thread
+    let stdout_handle = child.stdout.take();
+    let stdout_thread = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(mut stdout) = stdout_handle {
+            let _ = stdout.read_to_end(&mut buf);
+        }
+        buf
+    });
+
+    // Read stderr in a background thread. When kill_on_error is true, watches
+    // for script errors (Godot writes SCRIPT ERROR to stderr on assert failure).
+    let stderr_handle = child.stderr.take();
+    let hit_error_stderr = Arc::clone(&hit_error);
+    let stderr_thread = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(mut stderr) = stderr_handle {
+            if kill_on_error {
+                let mut chunk = [0u8; 4096];
+                loop {
+                    match stderr.read(&mut chunk) {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            buf.extend_from_slice(&chunk[..n]);
+                            if !hit_error_stderr.load(Ordering::Relaxed) {
+                                let text = String::from_utf8_lossy(&buf);
+                                if text.contains("SCRIPT ERROR")
+                                    || text.contains("Assertion failed")
+                                {
+                                    hit_error_stderr.store(true, Ordering::Relaxed);
+                                }
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+            } else {
+                let _ = stderr.read_to_end(&mut buf);
+            }
+        }
+        buf
+    });
+
     let start = Instant::now();
     loop {
         match child.try_wait() {
-            Ok(Some(_)) => {
-                return child
-                    .wait_with_output()
-                    .map_err(|e| miette!("Failed to read Godot output: {e}"));
+            Ok(Some(status)) => {
+                let stdout_buf = stdout_thread.join().unwrap_or_default();
+                let stderr_buf = stderr_thread.join().unwrap_or_default();
+                return Ok(std::process::Output {
+                    status,
+                    stdout: stdout_buf,
+                    stderr: stderr_buf,
+                });
             }
             Ok(None) => {
                 if start.elapsed() >= timeout {
                     let _ = child.kill();
                     let _ = child.wait();
                     return Err(miette!("Test timed out after {}s", timeout.as_secs()));
+                }
+                // If a script error was detected, give Godot a moment then kill
+                if hit_error.load(Ordering::Relaxed) {
+                    std::thread::sleep(Duration::from_millis(500));
+                    if child.try_wait().ok().flatten().is_none() {
+                        let _ = child.kill();
+                    }
+                    let status = child.wait().map_err(|e| miette!("Failed to wait: {e}"))?;
+                    let stdout_buf = stdout_thread.join().unwrap_or_default();
+                    let stderr_buf = stderr_thread.join().unwrap_or_default();
+                    return Ok(std::process::Output {
+                        status,
+                        stdout: stdout_buf,
+                        stderr: stderr_buf,
+                    });
                 }
                 std::thread::sleep(Duration::from_millis(100));
             }
@@ -383,33 +473,64 @@ fn run_with_timeout(cmd: &mut Command, timeout: Duration) -> Result<std::process
 }
 
 /// Parse GUT command-line output for pass/fail counts.
+/// Supports multiple GUT output formats across versions and log levels.
 fn parse_gut_output(output: &str, file_count: usize) -> TestSummary {
     let mut passed = 0usize;
     let mut failed = 0usize;
+    let mut found = false;
 
     for line in output.lines() {
         let trimmed = line.trim();
-        // GUT outputs lines like: "Passed: 5 Failed: 2"
-        if trimmed.contains("Passed:") && trimmed.contains("Failed:") {
+
+        // GUT 9.x "Run Summary" totals section:
+        //   Passing Tests         3
+        //   Failing Tests         1
+        if trimmed.starts_with("Passing Tests") {
+            if let Some(n) = trimmed
+                .split_whitespace()
+                .last()
+                .and_then(|s| s.parse().ok())
+            {
+                passed = n;
+                found = true;
+            }
+        } else if trimmed.starts_with("Failing Tests") {
+            if let Some(n) = trimmed
+                .split_whitespace()
+                .last()
+                .and_then(|s| s.parse().ok())
+            {
+                failed = n;
+                found = true;
+            }
+        }
+        // Older GUT format: "Passed: 5 Failed: 2"
+        else if trimmed.contains("Passed:") && trimmed.contains("Failed:") {
             for part in trimmed.split_whitespace().collect::<Vec<_>>().windows(2) {
                 if part[0] == "Passed:"
                     && let Ok(n) = part[1].parse::<usize>()
                 {
                     passed = n;
+                    found = true;
                 }
                 if part[0] == "Failed:"
                     && let Ok(n) = part[1].parse::<usize>()
                 {
                     failed = n;
+                    found = true;
                 }
             }
-            return TestSummary { passed, failed };
         }
     }
 
-    // Fallback: if we couldn't parse the output, estimate from file count
-    TestSummary {
-        passed: 0,
-        failed: file_count,
+    if found {
+        // If no failing tests line was found, GUT omits it when 0
+        TestSummary { passed, failed }
+    } else {
+        // Fallback: if we couldn't parse the output, estimate from file count
+        TestSummary {
+            passed: 0,
+            failed: file_count,
+        }
     }
 }

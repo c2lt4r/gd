@@ -6,30 +6,36 @@ use std::path::Path;
 
 #[derive(Args)]
 pub struct CleanArgs {
-    /// Also remove .godot/ directory
+    /// Only remove build/ directory, keep .godot/ cache
     #[arg(long)]
-    pub all: bool,
+    pub keep_cache: bool,
 }
 
 pub fn exec(args: CleanArgs) -> Result<()> {
     let cwd = env::current_dir().unwrap_or_default();
     let project = crate::core::project::GodotProject::discover(&cwd)?;
 
-    let dirs_to_clean: Vec<&str> = if args.all {
-        vec!["build", ".godot"]
-    } else {
+    let dirs_to_clean: Vec<&str> = if args.keep_cache {
         vec!["build"]
+    } else {
+        vec![".godot", "build"]
     };
 
+    let mut removed = false;
     for dir_name in dirs_to_clean {
         let dir = project.root.join(dir_name);
         if dir.exists() {
             remove_dir(&dir)?;
             println!("{} Removed {}", "✓".green(), dir_name);
+            removed = true;
         }
     }
 
-    println!("{} Clean complete", "✓".green());
+    if !removed {
+        println!("{} Nothing to clean", "✓".green());
+    } else {
+        println!("{} Clean complete", "✓".green());
+    }
     Ok(())
 }
 

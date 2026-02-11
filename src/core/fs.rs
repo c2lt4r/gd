@@ -23,6 +23,10 @@ pub fn collect_gdscript_files(root: &Path) -> Result<Vec<PathBuf>> {
 
 /// Skip hidden dirs, .godot/, addons/ build dirs, etc.
 fn is_hidden_or_ignored(entry: &walkdir::DirEntry) -> bool {
+    // Never filter the root entry (e.g. "." passed as the walk root)
+    if entry.depth() == 0 {
+        return false;
+    }
     let name = entry.file_name().to_string_lossy();
     name.starts_with('.') || name == "build" || name == ".godot" || name == ".import"
 }

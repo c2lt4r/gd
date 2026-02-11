@@ -24,9 +24,9 @@ pub struct CiPlatformArgs {
     /// Include export/build stage
     #[arg(long)]
     pub export: bool,
-    /// Godot version to use
-    #[arg(long, default_value = "4.4")]
-    pub godot_version: String,
+    /// Godot version to use (auto-detected from installed Godot)
+    #[arg(long)]
+    pub godot_version: Option<String>,
     /// Overwrite existing CI configuration
     #[arg(long)]
     pub force: bool,
@@ -41,7 +41,14 @@ pub fn exec(args: CiArgs) -> Result<()> {
     }
 }
 
+fn resolve_godot_version(args: &CiPlatformArgs) -> String {
+    args.godot_version
+        .clone()
+        .unwrap_or_else(crate::core::project::detect_godot_version)
+}
+
 fn generate_github(project: &GodotProject, args: &CiPlatformArgs) -> Result<()> {
+    let godot_version = resolve_godot_version(args);
     let workflows_dir = project.root.join(".github/workflows");
     let ci_file = workflows_dir.join("ci.yml");
 
@@ -79,7 +86,7 @@ fn generate_github(project: &GodotProject, args: &CiPlatformArgs) -> Result<()> 
           mkdir -p build
           godot --headless --export-release "Linux" build/game.x86_64
 "#,
-            version = args.godot_version
+            version = godot_version
         )
     } else {
         String::new()
@@ -113,7 +120,7 @@ jobs:
       - name: Lint
         run: gd lint
 {export_job}"#,
-        version = args.godot_version,
+        version = godot_version,
         export_job = export_job
     );
 
@@ -133,6 +140,7 @@ jobs:
 }
 
 fn generate_gitlab(project: &GodotProject, args: &CiPlatformArgs) -> Result<()> {
+    let godot_version = resolve_godot_version(args);
     let ci_file = project.root.join(".gitlab-ci.yml");
 
     // Check if file already exists
@@ -176,7 +184,7 @@ lint:
     - gd fmt --check
     - gd lint
 {export_job}"#,
-        version = args.godot_version,
+        version = godot_version,
         export_stage = export_stage,
         export_job = export_job
     );
