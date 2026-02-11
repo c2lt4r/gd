@@ -45,6 +45,7 @@ pub struct Printer {
 }
 
 impl Printer {
+    #[cfg(test)]
     pub fn new(use_tabs: bool, indent_size: usize) -> Self {
         Self {
             output: String::new(),
