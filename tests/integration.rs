@@ -1,3 +1,4 @@
+use std::io::{Read, Write};
 use std::process::Command;
 use std::fs;
 use tempfile::TempDir;
@@ -385,4 +386,75 @@ fn test_lint_sarif_output() {
         sarif["runs"][0]["results"].as_array().unwrap().len() > 0,
         "SARIF should contain results"
     );
+}
+
+#[test]
+fn test_lsp_initialize() {
+    use std::process::Stdio;
+
+    fn lsp_msg(data: &serde_json::Value) -> Vec<u8> {
+        let body = serde_json::to_string(data).unwrap();
+        format!("Content-Length: {}\r\n\r\n{}", body.len(), body)
+            .into_bytes()
+    }
+
+    fn read_lsp_response(stdout: &mut impl Read) -> serde_json::Value {
+        let mut header = Vec::new();
+        let mut buf = [0u8; 1];
+        while !header.ends_with(b"\r\n\r\n") {
+            stdout.read_exact(&mut buf).expect("Failed to read header byte");
+            header.push(buf[0]);
+        }
+        let header_str = String::from_utf8_lossy(&header);
+        let length: usize = header_str
+            .lines()
+            .find_map(|l| l.strip_prefix("Content-Length: "))
+            .expect("Missing Content-Length")
+            .trim()
+            .parse()
+            .expect("Invalid Content-Length");
+        let mut body = vec![0u8; length];
+        stdout.read_exact(&mut body).expect("Failed to read body");
+        serde_json::from_slice(&body).expect("Invalid JSON response")
+    }
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_gd"))
+        .arg("lsp")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("Failed to start gd lsp");
+
+    let stdin = child.stdin.as_mut().unwrap();
+    let stdout = child.stdout.as_mut().unwrap();
+
+    // Send initialize request
+    let init = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": { "capabilities": {} }
+    });
+    stdin.write_all(&lsp_msg(&init)).unwrap();
+    stdin.flush().unwrap();
+
+    // Read response
+    let resp = read_lsp_response(stdout);
+
+    // Verify LSP spec compliance
+    assert_eq!(resp["jsonrpc"], "2.0");
+    assert_eq!(resp["id"], 1);
+
+    let caps = &resp["result"]["capabilities"];
+    assert_eq!(caps["textDocumentSync"], 1, "Should use FULL sync");
+    assert_eq!(caps["documentFormattingProvider"], true);
+    assert_eq!(caps["codeActionProvider"], true);
+    assert_eq!(caps["documentSymbolProvider"], true);
+
+    let info = &resp["result"]["serverInfo"];
+    assert_eq!(info["name"], "gd-lsp");
+
+    // Clean up
+    child.kill().ok();
 }

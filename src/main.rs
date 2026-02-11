@@ -5,6 +5,7 @@ mod cli;
 mod core;
 mod fmt;
 mod lint;
+mod lsp;
 mod scaffold;
 mod build;
 mod doc;

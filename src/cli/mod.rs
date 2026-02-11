@@ -14,6 +14,7 @@ pub mod watch_cmd;
 pub mod addons_cmd;
 pub mod stats_cmd;
 pub mod ci_cmd;
+pub mod lsp_cmd;
 
 use clap::{Parser, Subcommand};
 use miette::Result;
@@ -59,6 +60,8 @@ pub enum Command {
     Stats(stats_cmd::StatsArgs),
     /// Generate CI/CD pipeline configuration
     Ci(ci_cmd::CiArgs),
+    /// Start the Language Server Protocol server
+    Lsp(lsp_cmd::LspArgs),
 }
 
 pub fn run(cli: Cli) -> Result<()> {
@@ -79,5 +82,6 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Addons(args) => addons_cmd::exec(args),
         Command::Stats(args) => stats_cmd::exec(args),
         Command::Ci(args) => ci_cmd::exec(args),
+        Command::Lsp(args) => lsp_cmd::exec(args),
     }
 }
