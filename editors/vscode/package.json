@@ -4,6 +4,11 @@
   "description": "GDScript language support powered by the gd toolchain",
   "version": "0.1.0",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/c2lt4r/gd"
+  },
+  "homepage": "https://github.com/c2lt4r/gd",
   "engines": {
     "vscode": "^1.85.0"
   },

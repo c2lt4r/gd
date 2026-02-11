@@ -100,7 +100,7 @@ jobs:
 
       - name: Install gd toolchain
         run: |
-          curl -L https://github.com/your-org/gd/releases/latest/download/gd-linux-x86_64 -o /usr/local/bin/gd
+          curl -L https://github.com/c2lt4r/gd/releases/latest/download/gd-linux-x86_64 -o /usr/local/bin/gd
           chmod +x /usr/local/bin/gd
 
       - name: Check formatting
@@ -167,7 +167,7 @@ stages:
 lint:
   stage: lint
   script:
-    - curl -L https://github.com/your-org/gd/releases/latest/download/gd-linux-x86_64 -o /usr/local/bin/gd && chmod +x /usr/local/bin/gd
+    - curl -L https://github.com/c2lt4r/gd/releases/latest/download/gd-linux-x86_64 -o /usr/local/bin/gd && chmod +x /usr/local/bin/gd
     - gd fmt --check
     - gd lint
 {export_job}"#, version = args.godot_version, export_stage = export_stage, export_job = export_job);

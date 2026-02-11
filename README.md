@@ -20,7 +20,7 @@ Built with [tree-sitter](https://tree-sitter.github.io/) for accurate parsing an
 ### From source
 
 ```sh
-git clone https://github.com/user/gd.git
+git clone https://github.com/c2lt4r/gd.git
 cd gd
 cargo install --path .
 ```
