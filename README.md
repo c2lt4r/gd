@@ -37,6 +37,9 @@ cargo install gd
 # Create a new Godot project
 gd new my-game
 
+# Or create from a GitHub template
+gd new my-game --from user/godot-template
+
 cd my-game
 
 # Format all GDScript files
@@ -53,7 +56,7 @@ gd run
 
 | Command | Description |
 |---------|-------------|
-| `gd new <name>` | Create a new Godot project (templates: `default`, `2d`, `3d`) |
+| `gd new <name>` | Create a new Godot project (templates: `default`, `2d`, `3d`, or `--from` GitHub) |
 | `gd init` | Initialize gd toolchain in an existing Godot project |
 | `gd fmt` | Format GDScript files |
 | `gd lint` | Lint GDScript files |
@@ -170,6 +173,23 @@ gd ci gitlab
 # Include export stage
 gd ci github --export --godot-version 4.4
 ```
+
+### GitHub Templates
+
+Create projects from any GitHub repository containing a Godot project:
+
+```sh
+# From a GitHub repo (auto-detects default branch)
+gd new my-game --from user/godot-template
+
+# With a specific branch or tag
+gd new my-game --from user/repo@v1.0
+
+# Full GitHub URLs also work
+gd new my-game --from https://github.com/user/repo
+```
+
+The template system automatically finds `project.godot` within the repository to determine the project root, so templates with nested directory structures work correctly.
 
 ## Lint Rules
 
@@ -369,7 +389,7 @@ Example GitHub Actions step:
 **VS Code:** Download the `.vsix` from the [latest release](https://github.com/c2lt4r/gd/releases/latest), then install it with:
 
 ```sh
-code --install-extension gd-gdscript-0.1.0.vsix
+code --install-extension gd-gdscript-0.1.1.vsix
 ```
 
 **Neovim (nvim-lspconfig):**
