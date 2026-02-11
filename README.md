@@ -308,7 +308,11 @@ Example GitHub Actions step:
 
 ### Editor Setup
 
-**VS Code:** Install the [gd-vscode](https://marketplace.visualstudio.com/items?itemName=gd.gd-vscode) extension.
+**VS Code:** Download the `.vsix` from the [latest release](https://github.com/c2lt4r/gd/releases/latest), then install it with:
+
+```sh
+code --install-extension gd-gdscript-0.1.0.vsix
+```
 
 **Neovim (nvim-lspconfig):**
 
