@@ -1122,3 +1122,227 @@ fn test_lsp_formatting() {
 
     child.kill().ok();
 }
+
+// ─── Iteration 11 feature tests ─────────────────────────────────────────────
+
+#[test]
+fn test_man_page_output() {
+    let output = gd_bin()
+        .arg("man")
+        .output()
+        .expect("Failed to run gd man");
+
+    assert!(
+        output.status.success(),
+        "gd man should exit 0, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains(".TH"),
+        "man page should contain roff .TH header, got: {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("gd"),
+        "man page should mention 'gd', got: {}",
+        stdout
+    );
+}
+
+#[test]
+fn test_man_subcommand() {
+    let output = gd_bin()
+        .arg("man")
+        .arg("fmt")
+        .output()
+        .expect("Failed to run gd man fmt");
+
+    assert!(
+        output.status.success(),
+        "gd man fmt should exit 0, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("fmt"),
+        "man page for fmt should contain 'fmt', got: {}",
+        stdout
+    );
+}
+
+#[test]
+fn test_config_validation_unknown_key() {
+    let temp = tempfile::Builder::new()
+        .prefix("gdtest")
+        .tempdir()
+        .expect("Failed to create temp dir");
+
+    // gd.toml with an unknown key under [fmt]
+    fs::write(
+        temp.path().join("gd.toml"),
+        "[fmt]\ntypo_key = true\n",
+    )
+    .expect("write gd.toml");
+
+    // A clean .gd file so lint has something to process
+    fs::write(
+        temp.path().join("clean.gd"),
+        "extends Node\n\n\nfunc _ready() -> void:\n\tpass\n",
+    )
+    .expect("write clean.gd");
+
+    let output = gd_bin()
+        .arg("lint")
+        .arg(temp.path())
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lint");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("unknown key"),
+        "Should warn about unknown key in gd.toml, stderr: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_deps_cycle_detection() {
+    let temp = tempfile::Builder::new()
+        .prefix("gdtest")
+        .tempdir()
+        .expect("Failed to create temp dir");
+
+    fs::write(
+        temp.path().join("project.godot"),
+        "[application]\nconfig/name=\"cycle-test\"\n",
+    )
+    .expect("write project.godot");
+
+    fs::write(
+        temp.path().join("a.gd"),
+        "extends \"b.gd\"\n",
+    )
+    .expect("write a.gd");
+
+    fs::write(
+        temp.path().join("b.gd"),
+        "extends \"a.gd\"\n",
+    )
+    .expect("write b.gd");
+
+    let output = gd_bin()
+        .arg("deps")
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd deps");
+
+    assert!(
+        !output.status.success(),
+        "gd deps should fail when circular dependency exists"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("circular"),
+        "Should report circular dependency, stderr: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_deps_no_cycle_check() {
+    let temp = tempfile::Builder::new()
+        .prefix("gdtest")
+        .tempdir()
+        .expect("Failed to create temp dir");
+
+    fs::write(
+        temp.path().join("project.godot"),
+        "[application]\nconfig/name=\"cycle-test\"\n",
+    )
+    .expect("write project.godot");
+
+    fs::write(
+        temp.path().join("a.gd"),
+        "extends \"b.gd\"\n",
+    )
+    .expect("write a.gd");
+
+    fs::write(
+        temp.path().join("b.gd"),
+        "extends \"a.gd\"\n",
+    )
+    .expect("write b.gd");
+
+    let output = gd_bin()
+        .arg("deps")
+        .arg("--no-cycle-check")
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd deps --no-cycle-check");
+
+    assert!(
+        output.status.success(),
+        "gd deps --no-cycle-check should succeed even with cycles, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("circular"),
+        "Should not report circular dependency with --no-cycle-check, stderr: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_lint_fix_comparison_boolean() {
+    let temp = TempDir::new().expect("Failed to create temp dir");
+    let file_path = temp.path().join("bool_cmp.gd");
+
+    fs::write(&file_path, "extends Node\n\n\nfunc test() -> void:\n\tif x == true:\n\t\tpass\n")
+        .expect("write file");
+
+    let _output = gd_bin()
+        .arg("lint")
+        .arg("--fix")
+        .arg(&file_path)
+        .output()
+        .expect("Failed to run gd lint --fix");
+
+    let fixed = fs::read_to_string(&file_path).unwrap();
+    assert!(
+        !fixed.contains("== true"),
+        "`== true` should be removed by --fix, got: {}",
+        fixed
+    );
+}
+
+#[test]
+fn test_lint_float_comparison_detected() {
+    let temp = TempDir::new().expect("Failed to create temp dir");
+    let file_path = temp.path().join("floats.gd");
+
+    fs::write(
+        &file_path,
+        "extends Node\n\nvar a: float = 1.0\n\n\nfunc test() -> void:\n\tif a == 1.0:\n\t\tpass\n",
+    )
+    .expect("write file");
+
+    let output = gd_bin()
+        .arg("lint")
+        .arg(&file_path)
+        .output()
+        .expect("Failed to run gd lint");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("float-comparison"),
+        "Should detect float-comparison issue, stderr: {}",
+        stderr
+    );
+}
