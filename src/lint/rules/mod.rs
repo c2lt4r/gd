@@ -11,7 +11,6 @@ pub mod integer_division;
 pub mod long_function;
 pub mod magic_number;
 pub mod missing_return;
-pub mod missing_super_call;
 pub mod missing_type_hint;
 pub mod naming_convention;
 pub mod node_ready_order;
@@ -93,7 +92,6 @@ pub fn all_rules(disabled: &[String]) -> Vec<Box<dyn LintRule>> {
         Box::new(signal_name_convention::SignalNameConvention),
         Box::new(magic_number::MagicNumber),
         Box::new(float_comparison::FloatComparison),
-        Box::new(missing_super_call::MissingSuperCall),
         Box::new(return_type_mismatch::ReturnTypeMismatch),
         Box::new(private_method_access::PrivateMethodAccess),
         Box::new(untyped_array::UntypedArray),

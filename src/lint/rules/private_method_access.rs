@@ -41,6 +41,7 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
 
             if method_text.starts_with('_')
                 && object_text != "self"
+                && object_text != "super"
                 && !ALLOWED_CALLBACKS.contains(&method_text.as_str())
             {
                 diags.push(LintDiagnostic {
