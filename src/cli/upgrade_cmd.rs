@@ -7,7 +7,7 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
-const GITHUB_REPO: &str = "gdtoolchain/gd";
+const GITHUB_REPO: &str = "c2lt4r/gd";
 
 #[derive(Args)]
 pub struct UpgradeArgs {
