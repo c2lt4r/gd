@@ -16,6 +16,7 @@ pub mod stats_cmd;
 pub mod ci_cmd;
 pub mod lsp_cmd;
 pub mod deps_cmd;
+pub mod man_cmd;
 
 use clap::{Parser, Subcommand};
 use miette::Result;
@@ -65,6 +66,8 @@ pub enum Command {
     Lsp(lsp_cmd::LspArgs),
     /// Show script dependency graph
     Deps(deps_cmd::DepsArgs),
+    /// Generate man pages
+    Man(man_cmd::ManArgs),
 }
 
 pub fn run(cli: Cli) -> Result<()> {
@@ -87,5 +90,6 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Ci(args) => ci_cmd::exec(args),
         Command::Lsp(args) => lsp_cmd::exec(args),
         Command::Deps(args) => deps_cmd::exec(args),
+        Command::Man(args) => man_cmd::exec(args),
     }
 }

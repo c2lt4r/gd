@@ -4,7 +4,7 @@ use owo_colors::OwoColorize;
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::core::config::Config;
 use crate::core::project::GodotProject;
@@ -19,6 +19,12 @@ pub struct TestArgs {
     /// Show detailed test output
     #[arg(short, long)]
     pub verbose: bool,
+    /// Run in headless mode (default: true)
+    #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+    pub headless: bool,
+    /// Timeout per test in seconds (default: 60)
+    #[arg(short, long, default_value_t = 60)]
+    pub timeout: u64,
     /// Extra args to pass to Godot
     #[arg(last = true)]
     pub extra: Vec<String>,
@@ -214,8 +220,10 @@ fn run_gut_tests(
     spinner.enable_steady_tick(std::time::Duration::from_millis(100));
 
     let mut cmd = Command::new(godot);
-    cmd.arg("--headless")
-        .arg("--path")
+    if args.headless {
+        cmd.arg("--headless");
+    }
+    cmd.arg("--path")
         .arg(&project.root)
         .arg("-s")
         .arg("addons/gut/gut_cmdln.gd");
@@ -239,9 +247,7 @@ fn run_gut_tests(
 
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
-    let output = cmd
-        .output()
-        .map_err(|e| miette!("Failed to start Godot: {e}"))?;
+    let output = run_with_timeout(&mut cmd, Duration::from_secs(args.timeout))?;
 
     spinner.finish_and_clear();
 
@@ -303,8 +309,10 @@ fn run_script_tests(
         spinner.enable_steady_tick(std::time::Duration::from_millis(100));
 
         let mut cmd = Command::new(godot);
-        cmd.arg("--headless")
-            .arg("--path")
+        if args.headless {
+            cmd.arg("--headless");
+        }
+        cmd.arg("--path")
             .arg(&project.root)
             .arg("--script")
             .arg(test_file);
@@ -316,9 +324,15 @@ fn run_script_tests(
 
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
-        let output = cmd
-            .output()
-            .map_err(|e| miette!("Failed to start Godot: {e}"))?;
+        let output = match run_with_timeout(&mut cmd, Duration::from_secs(args.timeout)) {
+            Ok(output) => output,
+            Err(_) => {
+                spinner.finish_and_clear();
+                failed += 1;
+                println!("{} {} (timed out after {}s)", "✗".red(), rel.display(), args.timeout);
+                continue;
+            }
+        };
 
         spinner.finish_and_clear();
 
@@ -348,6 +362,36 @@ fn run_script_tests(
     }
 
     Ok(TestSummary { passed, failed })
+}
+
+/// Run a command with a timeout, killing the process if it exceeds the limit.
+fn run_with_timeout(cmd: &mut Command, timeout: Duration) -> Result<std::process::Output> {
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| miette!("Failed to start Godot: {e}"))?;
+
+    let start = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => {
+                return child
+                    .wait_with_output()
+                    .map_err(|e| miette!("Failed to read Godot output: {e}"));
+            }
+            Ok(None) => {
+                if start.elapsed() >= timeout {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(miette!(
+                        "Test timed out after {}s",
+                        timeout.as_secs()
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            Err(e) => return Err(miette!("Failed waiting for Godot process: {e}")),
+        }
+    }
 }
 
 /// Parse GUT command-line output for pass/fail counts.

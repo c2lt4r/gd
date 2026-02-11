@@ -13,6 +13,7 @@ path = "src/main.rs"
 # CLI
 clap = { version = "4", features = ["derive", "env"] }
 clap_complete = "4"
+clap_mangen = "0.2"
 
 # Parsing
 tree-sitter = "0.24"
@@ -56,7 +57,12 @@ tokio = { version = "1", features = ["io-std", "rt-multi-thread", "macros"] }
 dashmap = "6"
 
 [dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
 tempfile = "3"
+
+[[bench]]
+name = "benchmarks"
+harness = false
 
 [profile.release]
 opt-level = 3

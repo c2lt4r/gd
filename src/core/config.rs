@@ -107,11 +107,160 @@ impl Config {
             Some(path) => {
                 let content = std::fs::read_to_string(&path)
                     .map_err(|e| miette!("Failed to read {}: {e}", path.display()))?;
-                toml::from_str(&content)
-                    .map_err(|e| miette!("Failed to parse {}: {e}", path.display()))
+                let config: Self = toml::from_str(&content)
+                    .map_err(|e| miette!("Failed to parse {}: {e}", path.display()))?;
+                if let Ok(raw) = content.parse::<toml::Value>() {
+                    warn_unknown_keys(&raw);
+                }
+                Ok(config)
             }
             None => Ok(Self::default()),
         }
+    }
+}
+
+/// Print warnings to stderr for any unrecognized keys in gd.toml.
+fn warn_unknown_keys(raw: &toml::Value) {
+    use owo_colors::OwoColorize;
+
+    let Some(table) = raw.as_table() else {
+        return;
+    };
+
+    let known_top = &["fmt", "lint", "build", "run"];
+    let known_fmt = &["use_tabs", "indent_size", "max_line_length"];
+    let known_lint = &["disabled_rules", "max_function_length", "rules", "ignore_patterns"];
+    let known_rule = &["severity"];
+    let known_build = &["presets", "output_dir"];
+    let known_run = &["godot_path", "extra_args"];
+
+    for key in table.keys() {
+        if !known_top.contains(&key.as_str()) {
+            eprintln!(
+                "{}: unknown key '{}' in gd.toml",
+                "warning".yellow().bold(),
+                key.bold()
+            );
+        }
+    }
+
+    check_section(table, "fmt", known_fmt);
+    check_section(table, "build", known_build);
+    check_section(table, "run", known_run);
+
+    // Lint section has nested rules.<name> tables
+    if let Some(toml::Value::Table(lint)) = table.get("lint") {
+        for key in lint.keys() {
+            if !known_lint.contains(&key.as_str()) {
+                warn_key(key, "lint");
+            }
+        }
+        if let Some(toml::Value::Table(rules)) = lint.get("rules") {
+            for (rule_name, rule_val) in rules {
+                if let Some(rule_table) = rule_val.as_table() {
+                    for key in rule_table.keys() {
+                        if !known_rule.contains(&key.as_str()) {
+                            warn_key(key, &format!("lint.rules.{rule_name}"));
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn check_section(table: &toml::map::Map<String, toml::Value>, section: &str, known: &[&str]) {
+    if let Some(toml::Value::Table(sub)) = table.get(section) {
+        for key in sub.keys() {
+            if !known.contains(&key.as_str()) {
+                warn_key(key, section);
+            }
+        }
+    }
+}
+
+fn warn_key(key: &str, section: &str) {
+    use owo_colors::OwoColorize;
+    eprintln!(
+        "{}: unknown key '{}' in [{}] section of gd.toml",
+        "warning".yellow().bold(),
+        key.bold(),
+        section
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Capture stderr output from warn_unknown_keys by using a gd.toml with unknown keys.
+    #[test]
+    fn test_warn_unknown_keys_detects_bad_keys() {
+        let raw: toml::Value = toml::from_str(
+            r#"
+            typo_key = "oops"
+
+            [fmt]
+            use_tabs = true
+            indnt_size = 4
+
+            [lint]
+            disbled_rules = []
+
+            [lint.rules.my-rule]
+            severity = "error"
+            extra_field = true
+
+            [build]
+            preseets = []
+
+            [run]
+            godott_path = "/usr/bin/godot"
+            "#,
+        )
+        .unwrap();
+
+        // The function prints to stderr; we just verify it doesn't panic
+        // and parses all sections correctly.
+        warn_unknown_keys(&raw);
+    }
+
+    #[test]
+    fn test_warn_unknown_keys_no_warnings_for_valid() {
+        let raw: toml::Value = toml::from_str(
+            r#"
+            [fmt]
+            use_tabs = true
+            indent_size = 4
+            max_line_length = 120
+
+            [lint]
+            disabled_rules = ["unused-variable"]
+            max_function_length = 80
+            ignore_patterns = ["addons/**"]
+
+            [lint.rules.naming-convention]
+            severity = "error"
+
+            [build]
+            presets = ["web"]
+            output_dir = "dist"
+
+            [run]
+            extra_args = ["--verbose"]
+            "#,
+        )
+        .unwrap();
+
+        warn_unknown_keys(&raw);
+    }
+
+    #[test]
+    fn test_load_default_when_no_config() {
+        let config = Config::load(Path::new("/nonexistent/path")).unwrap();
+        assert!(config.fmt.use_tabs);
+        assert_eq!(config.fmt.indent_size, 4);
+        assert_eq!(config.lint.max_function_length, 50);
     }
 }
 

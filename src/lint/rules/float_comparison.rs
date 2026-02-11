@@ -20,7 +20,7 @@ impl LintRule for FloatComparison {
 
 fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
     if node.kind() == "binary_operator"
-        && let Some(op_node) = node.child_by_field_name("operator") {
+        && let Some(op_node) = node.child_by_field_name("op") {
             let op = &source[op_node.byte_range()];
             if op == "==" || op == "!=" {
                 let left = node.child_by_field_name("left");

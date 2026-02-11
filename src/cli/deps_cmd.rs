@@ -2,7 +2,7 @@ use clap::Args;
 use miette::{miette, Result};
 use owo_colors::OwoColorize;
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use tree_sitter::Node;
 
@@ -13,6 +13,9 @@ pub struct DepsArgs {
     /// Output format: tree (default), dot, json
     #[arg(long, default_value = "tree")]
     pub format: String,
+    /// Skip circular dependency detection
+    #[arg(long)]
+    pub no_cycle_check: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -52,6 +55,21 @@ pub fn exec(args: DepsArgs) -> Result<()> {
         "dot" => output_dot(&dep_map),
         "json" => output_json(&dep_map, files.len())?,
         _ => return Err(miette!("Invalid format '{}'. Use: tree, dot, json", args.format)),
+    }
+
+    if !args.no_cycle_check {
+        let cycles = detect_cycles(&dep_map);
+        if !cycles.is_empty() {
+            eprintln!();
+            for cycle in &cycles {
+                eprintln!("{} circular dependency detected: {}",
+                    "warning:".yellow().bold(),
+                    cycle.join(" -> "));
+            }
+            return Err(miette!("found {} circular dependenc{}",
+                cycles.len(),
+                if cycles.len() == 1 { "y" } else { "ies" }));
+        }
     }
 
     Ok(())
@@ -124,6 +142,61 @@ fn collect_deps(node: Node, source: &[u8], deps: &mut Vec<String>) {
     for child in node.children(&mut cursor) {
         collect_deps(child, source, deps);
     }
+}
+
+/// Detect cycles using DFS with white/gray/black coloring.
+fn detect_cycles(dep_map: &HashMap<String, Vec<String>>) -> Vec<Vec<String>> {
+    let mut cycles = Vec::new();
+    let mut white: HashSet<&str> = dep_map.keys().map(|s| s.as_str()).collect();
+    let mut gray: HashSet<&str> = HashSet::new();
+    let mut black: HashSet<&str> = HashSet::new();
+    let mut path: Vec<&str> = Vec::new();
+
+    // Also include dependency targets as potential nodes
+    for deps in dep_map.values() {
+        for dep in deps {
+            white.insert(dep.as_str());
+        }
+    }
+
+    while let Some(&node) = white.iter().next() {
+        dfs_cycle(node, dep_map, &mut white, &mut gray, &mut black, &mut path, &mut cycles);
+    }
+
+    cycles
+}
+
+fn dfs_cycle<'a>(
+    node: &'a str,
+    dep_map: &'a HashMap<String, Vec<String>>,
+    white: &mut HashSet<&'a str>,
+    gray: &mut HashSet<&'a str>,
+    black: &mut HashSet<&'a str>,
+    path: &mut Vec<&'a str>,
+    cycles: &mut Vec<Vec<String>>,
+) {
+    white.remove(node);
+    gray.insert(node);
+    path.push(node);
+
+    if let Some(deps) = dep_map.get(node) {
+        for dep in deps {
+            let dep_str = dep.as_str();
+            if gray.contains(dep_str) {
+                // Found a cycle - extract it from path
+                let cycle_start = path.iter().position(|&n| n == dep_str).unwrap();
+                let mut cycle: Vec<String> = path[cycle_start..].iter().map(|s| s.to_string()).collect();
+                cycle.push(dep.clone());
+                cycles.push(cycle);
+            } else if white.contains(dep_str) {
+                dfs_cycle(dep_str, dep_map, white, gray, black, path, cycles);
+            }
+        }
+    }
+
+    path.pop();
+    gray.remove(node);
+    black.insert(node);
 }
 
 fn output_tree(dep_map: &HashMap<String, Vec<String>>) {
