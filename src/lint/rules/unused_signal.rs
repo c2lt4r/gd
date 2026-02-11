@@ -119,21 +119,20 @@ fn check_attribute_call(node: Node, src: &[u8], referenced: &mut HashSet<String>
     loop {
         let child = cursor.node();
 
-        if child.kind() == "identifier" {
-            if let Ok(text) = child.utf8_text(src) {
-                identifiers.push(text.to_string());
-            }
+        if child.kind() == "identifier"
+            && let Ok(text) = child.utf8_text(src)
+        {
+            identifiers.push(text.to_string());
         }
 
-        if child.kind() == "attribute_call" {
-            if let Some(method_node) = child
+        if child.kind() == "attribute_call"
+            && let Some(method_node) = child
                 .children(&mut child.walk())
                 .find(|c| c.kind() == "identifier")
-            {
-                let method = method_node.utf8_text(src).unwrap_or("");
-                if matches!(method, "emit" | "connect" | "disconnect") {
-                    found_signal_method = true;
-                }
+        {
+            let method = method_node.utf8_text(src).unwrap_or("");
+            if matches!(method, "emit" | "connect" | "disconnect") {
+                found_signal_method = true;
             }
         }
 
@@ -145,10 +144,10 @@ fn check_attribute_call(node: Node, src: &[u8], referenced: &mut HashSet<String>
     if found_signal_method {
         // signal_name.emit() → identifiers = ["signal_name"]
         // self.signal_name.emit() → identifiers = ["self", "signal_name"]
-        if let Some(name) = identifiers.last() {
-            if name != "self" {
-                referenced.insert(name.clone());
-            }
+        if let Some(name) = identifiers.last()
+            && name != "self"
+        {
+            referenced.insert(name.clone());
         }
     }
 }

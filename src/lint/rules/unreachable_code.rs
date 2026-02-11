@@ -76,8 +76,6 @@ fn check_body_for_unreachable(body: Node, source: &str, diags: &mut Vec<LintDiag
                     let ch = source_bytes[prev];
                     if ch == b' ' || ch == b'\t' {
                         start = prev;
-                    } else if ch == b'\n' {
-                        break;
                     } else {
                         break;
                     }

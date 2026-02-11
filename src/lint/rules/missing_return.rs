@@ -206,10 +206,10 @@ fn has_wildcard_pattern(section: Node, source: &str) -> bool {
 fn last_statement(body: Node) -> Option<Node> {
     let count = body.named_child_count();
     for i in (0..count).rev() {
-        if let Some(child) = body.named_child(i) {
-            if child.kind() != "comment" {
-                return Some(child);
-            }
+        if let Some(child) = body.named_child(i)
+            && child.kind() != "comment"
+        {
+            return Some(child);
         }
     }
     None
