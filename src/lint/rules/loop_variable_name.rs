@@ -19,30 +19,29 @@ impl LintRule for LoopVariableName {
 }
 
 fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    if node.kind() == "for_statement" {
-        if let Some(iter_node) = node.child_by_field_name("left") {
-            if iter_node.kind() == "identifier" {
-                let name = &source[iter_node.byte_range()];
-                if !is_snake_case(name) {
-                    let fixed = to_snake_case(name);
-                    diags.push(LintDiagnostic {
-                        rule: "loop-variable-name",
-                        message: format!(
-                            "loop variable `{}` should use snake_case: `{}`",
-                            name, fixed
-                        ),
-                        severity: Severity::Warning,
-                        line: iter_node.start_position().row,
-                        column: iter_node.start_position().column,
-                        end_column: Some(iter_node.end_position().column),
-                        fix: Some(Fix {
-                            byte_start: iter_node.start_byte(),
-                            byte_end: iter_node.end_byte(),
-                            replacement: fixed,
-                        }),
-                    });
-                }
-            }
+    if node.kind() == "for_statement"
+        && let Some(iter_node) = node.child_by_field_name("left")
+        && iter_node.kind() == "identifier"
+    {
+        let name = &source[iter_node.byte_range()];
+        if !is_snake_case(name) {
+            let fixed = to_snake_case(name);
+            diags.push(LintDiagnostic {
+                rule: "loop-variable-name",
+                message: format!(
+                    "loop variable `{}` should use snake_case: `{}`",
+                    name, fixed
+                ),
+                severity: Severity::Warning,
+                line: iter_node.start_position().row,
+                column: iter_node.start_position().column,
+                end_column: Some(iter_node.end_position().column),
+                fix: Some(Fix {
+                    byte_start: iter_node.start_byte(),
+                    byte_end: iter_node.end_byte(),
+                    replacement: fixed,
+                }),
+            });
         }
     }
 

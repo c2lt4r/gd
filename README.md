@@ -7,12 +7,12 @@ Built with [tree-sitter](https://tree-sitter.github.io/) for accurate parsing an
 ## Features
 
 - **Format** GDScript files with an AST-based formatter aligned to the [GDScript style guide](https://docs.godotengine.org/en/stable/tutorials/scripting/gdscript/gdscript_styleguide.html)
-- **Lint** with 27 built-in rules (8 auto-fixable), SARIF output for CI
+- **Lint** with 46 built-in rules (11 auto-fixable), SARIF output for CI
 - **Run**, **build**, **test**, and **clean** your Godot project from the terminal
 - **Watch** for file changes and auto-lint/format on save
 - **Manage addons** from Git or the Godot Asset Library
 - **Generate CI/CD** configurations for GitHub Actions and GitLab CI
-- **LSP server** with formatting, diagnostics, hover, go-to-definition, references, and rename
+- **LSP server** with formatting, diagnostics, hover, go-to-definition, references, rename, and completion
 - **Analyze** your project with dependency graphs, class trees, and code statistics
 
 ## Installation
@@ -71,6 +71,8 @@ gd run
 | `gd ci` | Generate CI/CD pipeline configuration |
 | `gd lsp` | Start the Language Server Protocol server |
 | `gd deps` | Show script dependency graph |
+| `gd man` | Generate man page |
+| `gd upgrade` | Self-update to latest release |
 
 ### Formatter
 
@@ -171,35 +173,61 @@ gd ci github --export --godot-version 4.4
 
 ## Lint Rules
 
-All 25 built-in rules:
+All 46 built-in rules (38 default-enabled, 8 opt-in):
 
 | Rule | Description | Severity | Fixable |
 |------|-------------|----------|---------|
-| `naming-convention` | Check snake_case/PascalCase naming conventions | warning | yes |
-| `unused-variable` | Detect assigned but unused variables | warning | |
-| `missing-type-hint` | Warn on missing parameter and return type hints | warning | |
-| `empty-function` | Detect functions with only `pass` in body | warning | |
-| `long-function` | Warn on functions exceeding line threshold | warning | |
-| `duplicate-signal` | Detect duplicate signal declarations | error | |
-| `self-assignment` | Detect variables assigned to themselves | warning | |
-| `unreachable-code` | Detect code after return/break/continue | warning | |
-| `shadowed-variable` | Detect variable shadowing in inner scopes | warning | |
-| `comparison-with-boolean` | Flag explicit `== true`/`false` comparisons | warning | |
-| `unnecessary-pass` | Detect `pass` in non-empty function bodies | warning | |
-| `preload-type-hint` | Warn on untyped preload/load assignments | warning | |
-| `integer-division` | Warn on integer literal division truncation | warning | |
-| `signal-name-convention` | Warn on signals with `on_` prefix | warning | yes |
-| `magic-number` | Flag unexplained numeric literals in functions | warning | |
-| `float-comparison` | Warn on float equality comparisons | warning | |
-| `missing-super-call` | Warn on lifecycle overrides without `super()` | warning | |
-| `return-type-mismatch` | Detect void/non-void return mismatches | warning | |
-| `private-method-access` | Warn on calling private methods externally | warning | |
-| `untyped-array` | Suggest typed array annotations | warning | |
+| `await-in-ready` | Detect `await` in `_ready()` | warning | |
+| `comparison-with-boolean` | Flag explicit `== true`/`false` comparisons | warning | yes |
+| `comparison-with-itself` | Detect `x == x` self-comparisons | warning | |
+| `cyclomatic-complexity` | Warn on high cyclomatic complexity | warning | |
+| `deeply-nested-code` | Warn on deeply nested code blocks | warning | |
 | `duplicate-function` | Detect duplicate function definitions | error | |
-| `unused-signal` | Detect signals that are never emitted | warning | |
 | `duplicate-key` | Detect duplicate dictionary keys | warning | |
-| `await-in-ready` | Warn about `await` in `_ready()` | warning | |
+| `duplicate-signal` | Detect duplicate signal declarations | error | |
+| `duplicated-load` | Detect duplicate load/preload calls | warning | |
+| `empty-function` | Detect functions with only `pass` in body | warning | |
+| `enum-naming` | Enforce PascalCase/UPPER_SNAKE_CASE enums | warning | yes |
+| `float-comparison` | Warn on float equality comparisons | warning | yes |
+| `get-node-in-process` | Detect `get_node()` in `_process()` | warning | |
+| `integer-division` | Warn on integer literal division truncation | warning | |
+| `long-function` | Warn on functions exceeding line threshold | warning | |
+| `loop-variable-name` | Enforce snake_case loop variables | warning | yes |
 | `missing-return` | Detect missing return in typed functions | warning | |
+| `missing-type-hint` | Warn on missing type annotations | warning | |
+| `naming-convention` | Enforce snake_case/PascalCase naming | warning | yes |
+| `node-ready-order` | Detect node access before tree is ready | warning | |
+| `parameter-naming` | Enforce snake_case parameters | warning | yes |
+| `physics-in-process` | Detect physics calls in `_process()` | warning | |
+| `preload-type-hint` | Warn on untyped preload/load assignments | warning | |
+| `private-method-access` | Warn on calling private methods externally | warning | |
+| `redundant-else` | Detect unnecessary else after return | warning | |
+| `return-type-mismatch` | Detect void/non-void return mismatches | warning | |
+| `self-assignment` | Detect `x = x` assignments | warning | yes |
+| `shadowed-variable` | Detect variable shadowing in inner scopes | warning | |
+| `signal-name-convention` | Warn on signals with `on_` prefix | warning | yes |
+| `standalone-expression` | Detect side-effect-free expressions | warning | |
+| `static-type-inference` | Suggest explicit type annotations | warning | |
+| `too-many-parameters` | Warn on functions with too many parameters | warning | |
+| `unnecessary-pass` | Detect `pass` in non-empty function bodies | warning | yes |
+| `unreachable-code` | Detect code after return/break/continue | warning | yes |
+| `untyped-array` | Suggest typed array annotations | warning | |
+| `unused-preload` | Detect unused preload variables | warning | |
+| `unused-signal` | Detect signals that are never emitted | warning | |
+| `unused-variable` | Detect unused local variables | warning | yes |
+
+**Opt-in rules** (enable via `[lint.rules.<name>]` in `gd.toml`):
+
+| Rule | Description | Severity | Fixable |
+|------|-------------|----------|---------|
+| `class-definitions-order` | Enforce canonical member ordering | warning | |
+| `magic-number` | Flag unexplained numeric literals | warning | |
+| `max-file-lines` | Enforce maximum file length | warning | |
+| `max-line-length` | Enforce maximum line length | warning | |
+| `max-public-methods` | Enforce maximum public methods per class | warning | |
+| `print-statement` | Detect debug print calls | warning | |
+| `todo-comment` | Detect TODO/FIXME/HACK comments | warning | |
+| `unused-parameter` | Detect unused function parameters | warning | |
 
 ### Inline Suppression
 
@@ -230,10 +258,21 @@ Configure `gd` via a `gd.toml` file in your project root. The toolchain searches
 use_tabs = true
 indent_size = 4
 max_line_length = 100
+blank_lines_around_functions = 2
+blank_lines_around_classes = 2
+trailing_newline = true
 
 [lint]
 disabled_rules = []
 max_function_length = 50
+ignore_patterns = ["addons/**"]
+
+# Per-rule severity overrides
+[lint.rules.magic-number]
+severity = "warning"  # enable opt-in rule
+
+[lint.rules.naming-convention]
+severity = "error"  # upgrade to error
 
 [build]
 output_dir = "build"
@@ -252,13 +291,31 @@ extra_args = []
 | `use_tabs` | `true` | Use tabs instead of spaces for indentation |
 | `indent_size` | `4` | Number of spaces per indent level (when not using tabs) |
 | `max_line_length` | `100` | Maximum line length before warnings |
+| `blank_lines_around_functions` | `2` | Blank lines around top-level functions |
+| `blank_lines_around_classes` | `2` | Blank lines around inner class definitions |
+| `trailing_newline` | `true` | Ensure file ends with exactly one newline |
 
 **`[lint]`**
 
 | Option | Default | Description |
 |--------|---------|-------------|
 | `disabled_rules` | `[]` | List of rule names to disable |
-| `max_function_length` | `50` | Max lines in a function before `long-function` warns |
+| `max_function_length` | `50` | Max lines before `long-function` warns |
+| `max_function_params` | `5` | Max parameters before `too-many-parameters` warns |
+| `max_cyclomatic_complexity` | `10` | Max complexity before `cyclomatic-complexity` warns |
+| `max_nesting_depth` | `4` | Max depth before `deeply-nested-code` warns |
+| `max_line_length` | `120` | Max line length before `max-line-length` warns |
+| `max_file_lines` | `500` | Max file lines before `max-file-lines` warns |
+| `max_public_methods` | `20` | Max public methods before `max-public-methods` warns |
+| `ignore_patterns` | `[]` | Glob patterns for files to skip |
+
+**`[lint.rules.<name>]`** — per-rule overrides:
+
+| Option | Values | Description |
+|--------|--------|-------------|
+| `severity` | `"warning"`, `"error"`, `"off"` | Override severity or disable a rule |
+
+Set severity on an opt-in rule to enable it. Set `"off"` to disable any rule.
 
 **`[build]`**
 
@@ -305,6 +362,7 @@ Example GitHub Actions step:
 - **Go to definition** &mdash; jump to function and variable declarations
 - **Find references** &mdash; find all usages across the project
 - **Rename** &mdash; rename symbols across files with prepare-rename support
+- **Completion** &mdash; context-aware autocomplete for symbols and builtins
 
 ### Editor Setup
 

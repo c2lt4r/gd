@@ -3,8 +3,6 @@ use tree_sitter::Tree;
 use super::{LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
 
-const DEFAULT_MAX_FILE_LINES: usize = 500;
-
 pub struct MaxFileLines;
 
 impl LintRule for MaxFileLines {
@@ -41,6 +39,8 @@ mod tests {
     use super::*;
     use crate::core::parser;
 
+    const DEFAULT_MAX_FILE_LINES: usize = 500;
+
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();
         let config = LintConfig::default();
@@ -67,9 +67,11 @@ mod tests {
         assert_eq!(diags[0].rule, "max-file-lines");
         assert_eq!(diags[0].line, 0);
         assert_eq!(diags[0].column, 0);
-        assert!(diags[0]
-            .message
-            .contains(&(DEFAULT_MAX_FILE_LINES + 1).to_string()));
+        assert!(
+            diags[0]
+                .message
+                .contains(&(DEFAULT_MAX_FILE_LINES + 1).to_string())
+        );
     }
 
     #[test]
@@ -96,9 +98,11 @@ mod tests {
         let source = "pass\n".repeat(DEFAULT_MAX_FILE_LINES + 1);
         let diags = check(&source);
         assert_eq!(diags.len(), 1);
-        assert!(diags[0]
-            .message
-            .contains(&(DEFAULT_MAX_FILE_LINES + 1).to_string()));
+        assert!(
+            diags[0]
+                .message
+                .contains(&(DEFAULT_MAX_FILE_LINES + 1).to_string())
+        );
     }
 
     #[test]

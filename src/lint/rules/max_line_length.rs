@@ -30,11 +30,7 @@ impl LintRule for MaxLineLength {
 
                 diags.push(LintDiagnostic {
                     rule: "max-line-length",
-                    message: format!(
-                        "line is {} characters long (max {})",
-                        line.len(),
-                        max_len
-                    ),
+                    message: format!("line is {} characters long (max {})", line.len(), max_len),
                     severity: Severity::Warning,
                     line: i,
                     column: max_len,
@@ -71,10 +67,7 @@ mod tests {
     #[test]
     fn no_warning_at_limit() {
         let source = &format!("var x = {}\n", "0".repeat(MAX_LEN - 8));
-        assert_eq!(
-            source.lines().next().unwrap().len(),
-            MAX_LEN
-        );
+        assert_eq!(source.lines().next().unwrap().len(), MAX_LEN);
         assert!(check(source).is_empty());
     }
 
@@ -143,10 +136,7 @@ mod tests {
 
     #[test]
     fn does_not_skip_code_with_url() {
-        let long_code = format!(
-            "var url = \"https://example.com/{}\"",
-            "x".repeat(MAX_LEN)
-        );
+        let long_code = format!("var url = \"https://example.com/{}\"", "x".repeat(MAX_LEN));
         assert!(long_code.len() > MAX_LEN);
         let source = format!("{long_code}\n");
         let diags = check(&source);

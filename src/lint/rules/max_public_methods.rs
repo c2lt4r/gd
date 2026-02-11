@@ -3,8 +3,6 @@ use tree_sitter::{Node, Tree};
 use super::{LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
 
-const DEFAULT_MAX_PUBLIC_METHODS: usize = 20;
-
 pub struct MaxPublicMethods;
 
 impl LintRule for MaxPublicMethods {
@@ -52,12 +50,12 @@ fn count_public_methods(node: Node, source: &str) -> usize {
     if cursor.goto_first_child() {
         loop {
             let child = cursor.node();
-            if child.kind() == "function_definition" {
-                if let Some(name_node) = child.child_by_field_name("name") {
-                    let name = &source[name_node.byte_range()];
-                    if !name.starts_with('_') {
-                        count += 1;
-                    }
+            if child.kind() == "function_definition"
+                && let Some(name_node) = child.child_by_field_name("name")
+            {
+                let name = &source[name_node.byte_range()];
+                if !name.starts_with('_') {
+                    count += 1;
                 }
             }
             if !cursor.goto_next_sibling() {
@@ -116,6 +114,8 @@ mod tests {
     use super::*;
     use crate::core::parser;
 
+    const DEFAULT_MAX_PUBLIC_METHODS: usize = 20;
+
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();
         let config = LintConfig::default();
@@ -164,9 +164,11 @@ mod tests {
         assert_eq!(diags[0].rule, "max-public-methods");
         assert_eq!(diags[0].line, 0);
         assert!(diags[0].message.contains("script"));
-        assert!(diags[0]
-            .message
-            .contains(&(DEFAULT_MAX_PUBLIC_METHODS + 1).to_string()));
+        assert!(
+            diags[0]
+                .message
+                .contains(&(DEFAULT_MAX_PUBLIC_METHODS + 1).to_string())
+        );
     }
 
     #[test]
@@ -181,9 +183,11 @@ mod tests {
         let diags = check(&source);
         assert_eq!(diags.len(), 1);
         assert!(diags[0].message.contains("MyClass"));
-        assert!(diags[0]
-            .message
-            .contains(&(DEFAULT_MAX_PUBLIC_METHODS + 1).to_string()));
+        assert!(
+            diags[0]
+                .message
+                .contains(&(DEFAULT_MAX_PUBLIC_METHODS + 1).to_string())
+        );
     }
 
     #[test]

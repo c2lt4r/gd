@@ -136,12 +136,12 @@ fn check_inner_classes(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>
     }
     loop {
         let child = cursor.node();
-        if child.kind() == "class_definition" {
-            if let Some(body) = child.child_by_field_name("body") {
-                check_member_order(body, source, diags);
-                // Recurse for nested inner classes
-                check_inner_classes(body, source, diags);
-            }
+        if child.kind() == "class_definition"
+            && let Some(body) = child.child_by_field_name("body")
+        {
+            check_member_order(body, source, diags);
+            // Recurse for nested inner classes
+            check_inner_classes(body, source, diags);
         }
         if !cursor.goto_next_sibling() {
             break;
@@ -239,7 +239,7 @@ fn has_export_group_annotation(node: &Node, source: &str) -> bool {
 }
 
 /// Extract the name of a member node (function, variable, signal, etc.).
-fn member_name<'a>(node: &Node, source: &'a str) -> Option<String> {
+fn member_name(node: &Node, source: &str) -> Option<String> {
     node.child_by_field_name("name")
         .map(|n| source[n.byte_range()].to_string())
 }

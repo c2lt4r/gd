@@ -31,13 +31,20 @@ pub mod unused_preload;
 pub mod unused_signal;
 pub mod unused_variable;
 
+pub mod class_definitions_order;
 pub mod cyclomatic_complexity;
 pub mod deeply_nested_code;
 pub mod enum_naming;
 pub mod get_node_in_process;
+pub mod loop_variable_name;
+pub mod max_file_lines;
+pub mod max_line_length;
+pub mod max_public_methods;
 pub mod parameter_naming;
 pub mod physics_in_process;
+pub mod print_statement;
 pub mod redundant_else;
+pub mod todo_comment;
 pub mod too_many_parameters;
 pub mod unused_parameter;
 
@@ -141,6 +148,13 @@ pub fn all_rules(
         Box::new(duplicated_load::DuplicatedLoad),
         Box::new(standalone_expression::StandaloneExpression),
         Box::new(comparison_with_itself::ComparisonWithItself),
+        Box::new(class_definitions_order::ClassDefinitionsOrder),
+        Box::new(loop_variable_name::LoopVariableName),
+        Box::new(max_file_lines::MaxFileLines),
+        Box::new(max_line_length::MaxLineLength),
+        Box::new(max_public_methods::MaxPublicMethods),
+        Box::new(print_statement::PrintStatement),
+        Box::new(todo_comment::TodoComment),
     ];
     all.into_iter()
         .filter(|r| {

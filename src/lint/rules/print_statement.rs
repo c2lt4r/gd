@@ -38,12 +38,10 @@ const PRINT_FUNCTIONS: &[&str] = &[
 fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
     if node.kind() == "call" {
         // Try field name first, fall back to finding first identifier child
-        let func_name_opt = node
-            .child_by_field_name("function")
-            .or_else(|| {
-                node.children(&mut node.walk())
-                    .find(|c| c.kind() == "identifier")
-            });
+        let func_name_opt = node.child_by_field_name("function").or_else(|| {
+            node.children(&mut node.walk())
+                .find(|c| c.kind() == "identifier")
+        });
         if let Some(func_node) = func_name_opt {
             let func_name = &source[func_node.byte_range()];
             if PRINT_FUNCTIONS.contains(&func_name) {
