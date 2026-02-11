@@ -95,6 +95,55 @@ fn collect_references(
     }
 }
 
+/// Find all references to the symbol at position across all workspace files.
+pub fn find_references_cross_file(
+    source: &str,
+    uri: &Url,
+    position: Position,
+    include_declaration: bool,
+    workspace: &super::workspace::WorkspaceIndex,
+) -> Option<Vec<Location>> {
+    let tree = crate::core::parser::parse(source).ok()?;
+    let root = tree.root_node();
+
+    let point = tree_sitter::Point::new(position.line as usize, position.character as usize);
+    let node = root.descendant_for_point_range(point, point)?;
+
+    let target_name = node.utf8_text(source.as_bytes()).ok()?;
+    if target_name.is_empty() {
+        return None;
+    }
+
+    let mut locations = Vec::new();
+
+    // Current file
+    collect_references(root, source, target_name, uri, include_declaration, &mut locations);
+
+    // All workspace files
+    let current_path = uri.to_file_path().ok();
+    for (path, content) in workspace.all_files() {
+        if current_path.as_ref() == Some(&path) {
+            continue;
+        }
+        if let Ok(tree) = crate::core::parser::parse(&content) {
+            let file_uri = match Url::from_file_path(&path) {
+                Ok(u) => u,
+                Err(_) => continue,
+            };
+            collect_references(
+                tree.root_node(),
+                &content,
+                target_name,
+                &file_uri,
+                true,
+                &mut locations,
+            );
+        }
+    }
+
+    if locations.is_empty() { None } else { Some(locations) }
+}
+
 fn node_range(node: &tree_sitter::Node) -> Range {
     Range::new(
         Position::new(

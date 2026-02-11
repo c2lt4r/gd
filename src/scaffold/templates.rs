@@ -42,6 +42,13 @@ max_line_length = 100
 
 [lint]
 disabled_rules = []
+# ignore_patterns = ["addons/**"]
+
+# [lint.rules.naming-convention]
+# severity = "error"
+
+# [lint.rules.magic-number]
+# severity = "off"
 
 [build]
 output_dir = "build"

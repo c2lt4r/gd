@@ -1,0 +1,180 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "GDScript",
+  "scopeName": "source.gdscript",
+  "patterns": [
+    { "include": "#comment" },
+    { "include": "#string-double" },
+    { "include": "#string-single" },
+    { "include": "#string-multiline-double" },
+    { "include": "#string-multiline-single" },
+    { "include": "#number" },
+    { "include": "#constant" },
+    { "include": "#keyword-control" },
+    { "include": "#keyword-declaration" },
+    { "include": "#keyword-operator-word" },
+    { "include": "#storage-type" },
+    { "include": "#builtin-function" },
+    { "include": "#function-definition" },
+    { "include": "#class-definition" },
+    { "include": "#annotation" },
+    { "include": "#type-annotation" },
+    { "include": "#node-path" },
+    { "include": "#operator" },
+    { "include": "#punctuation" }
+  ],
+  "repository": {
+    "comment": {
+      "name": "comment.line.number-sign.gdscript",
+      "match": "#.*$"
+    },
+    "string-multiline-double": {
+      "name": "string.quoted.double.multiline.gdscript",
+      "begin": "\"\"\"",
+      "end": "\"\"\""
+    },
+    "string-multiline-single": {
+      "name": "string.quoted.single.multiline.gdscript",
+      "begin": "'''",
+      "end": "'''"
+    },
+    "string-double": {
+      "name": "string.quoted.double.gdscript",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.gdscript",
+          "match": "\\\\."
+        }
+      ]
+    },
+    "string-single": {
+      "name": "string.quoted.single.gdscript",
+      "begin": "'",
+      "end": "'",
+      "patterns": [
+        {
+          "name": "constant.character.escape.gdscript",
+          "match": "\\\\."
+        }
+      ]
+    },
+    "number": {
+      "patterns": [
+        {
+          "name": "constant.numeric.hex.gdscript",
+          "match": "\\b0x[0-9a-fA-F_]+\\b"
+        },
+        {
+          "name": "constant.numeric.binary.gdscript",
+          "match": "\\b0b[01_]+\\b"
+        },
+        {
+          "name": "constant.numeric.float.gdscript",
+          "match": "\\b[0-9][0-9_]*(\\.[0-9][0-9_]*)?([eE][+-]?[0-9_]+)?\\b"
+        }
+      ]
+    },
+    "constant": {
+      "name": "constant.language.gdscript",
+      "match": "\\b(true|false|null|INF|NAN|PI|TAU)\\b"
+    },
+    "keyword-control": {
+      "name": "keyword.control.gdscript",
+      "match": "\\b(if|elif|else|for|while|match|return|break|continue|pass|await|yield)\\b"
+    },
+    "keyword-declaration": {
+      "name": "keyword.other.gdscript",
+      "match": "\\b(var|const|func|class|extends|signal|enum|static|onready|export|class_name|tool|preload|load|self|super|setget|master|puppet|slave|remotesync|sync|remote)\\b"
+    },
+    "keyword-operator-word": {
+      "name": "keyword.operator.word.gdscript",
+      "match": "\\b(and|or|not|in|is|as)\\b"
+    },
+    "storage-type": {
+      "name": "storage.type.gdscript",
+      "match": "\\b(int|float|bool|String|Vector2|Vector2i|Vector3|Vector3i|Vector4|Vector4i|Color|Rect2|Rect2i|Transform2D|Transform3D|Basis|Quaternion|AABB|Plane|Array|Dictionary|PackedByteArray|PackedInt32Array|PackedInt64Array|PackedFloat32Array|PackedFloat64Array|PackedStringArray|PackedVector2Array|PackedVector3Array|PackedColorArray|NodePath|StringName|RID|Callable|Signal|void)\\b"
+    },
+    "builtin-function": {
+      "name": "support.function.builtin.gdscript",
+      "match": "\\b(print|print_rich|prints|printt|print_debug|push_error|push_warning|printerr|str|int|float|bool|abs|sign|ceil|floor|round|clamp|lerp|inverse_lerp|range_lerp|min|max|wrap|wrapf|stepify|deg_to_rad|rad_to_deg|is_equal_approx|is_zero_approx|range|len|typeof|type_string|inst_to_dict|dict_to_inst|weakref|is_instance_valid)\\b"
+    },
+    "function-definition": {
+      "match": "\\b(func)\\s+([a-zA-Z_][a-zA-Z0-9_]*)",
+      "captures": {
+        "1": { "name": "keyword.other.gdscript" },
+        "2": { "name": "entity.name.function.gdscript" }
+      }
+    },
+    "class-definition": {
+      "match": "\\b(class)\\s+([a-zA-Z_][a-zA-Z0-9_]*)",
+      "captures": {
+        "1": { "name": "keyword.other.gdscript" },
+        "2": { "name": "entity.name.type.class.gdscript" }
+      }
+    },
+    "annotation": {
+      "name": "meta.annotation.gdscript",
+      "match": "@[a-zA-Z_][a-zA-Z0-9_]*",
+      "captures": {
+        "0": { "name": "entity.name.function.decorator.gdscript" }
+      }
+    },
+    "type-annotation": {
+      "match": "(->|:\\s*)\\s*([A-Z][a-zA-Z0-9_]*)",
+      "captures": {
+        "1": { "name": "punctuation.separator.annotation.gdscript" },
+        "2": { "name": "entity.name.type.annotation.gdscript" }
+      }
+    },
+    "node-path": {
+      "name": "string.interpolated.nodepath.gdscript",
+      "match": "\\$[a-zA-Z_/][a-zA-Z0-9_/]*"
+    },
+    "operator": {
+      "name": "keyword.operator.gdscript",
+      "match": "(==|!=|<=|>=|<|>|\\+|\\-|\\*|/|%|=|\\+=|\\-=|\\*=|/=|%=|\\||&|\\^|~|<<|>>)"
+    },
+    "punctuation": {
+      "patterns": [
+        {
+          "name": "punctuation.separator.comma.gdscript",
+          "match": ","
+        },
+        {
+          "name": "punctuation.terminator.colon.gdscript",
+          "match": ":"
+        },
+        {
+          "name": "punctuation.section.parens.begin.gdscript",
+          "match": "\\("
+        },
+        {
+          "name": "punctuation.section.parens.end.gdscript",
+          "match": "\\)"
+        },
+        {
+          "name": "punctuation.section.brackets.begin.gdscript",
+          "match": "\\["
+        },
+        {
+          "name": "punctuation.section.brackets.end.gdscript",
+          "match": "\\]"
+        },
+        {
+          "name": "punctuation.section.braces.begin.gdscript",
+          "match": "\\{"
+        },
+        {
+          "name": "punctuation.section.braces.end.gdscript",
+          "match": "\\}"
+        },
+        {
+          "name": "punctuation.accessor.gdscript",
+          "match": "\\."
+        }
+      ]
+    }
+  }
+}

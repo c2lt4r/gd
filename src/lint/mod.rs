@@ -29,11 +29,19 @@ pub fn run_lint(paths: &[String], format: &str, fix: bool) -> Result<()> {
         return Ok(());
     }
 
-    let rules = all_rules(&config.lint.disabled_rules);
+    // Merge rules with severity "off" into disabled list
+    let mut disabled = config.lint.disabled_rules.clone();
+    for (rule_name, rule_config) in &config.lint.rules {
+        if rule_config.severity.as_deref() == Some("off") && !disabled.contains(rule_name) {
+            disabled.push(rule_name.clone());
+        }
+    }
+    let rules = all_rules(&disabled);
 
-    // Process files in parallel
+    // Process files in parallel, skipping those matching ignore_patterns
     let file_results: Vec<(PathBuf, Vec<LintDiagnostic>)> = files
         .par_iter()
+        .filter(|path| !matches_ignore_pattern(path, &cwd, &config.lint.ignore_patterns))
         .filter_map(|path| {
             match lint_file(path, &rules, &config, fix) {
                 Ok(diags) => Some((path.clone(), diags)),
@@ -159,6 +167,17 @@ fn lint_file(
         all_diags.extend(diags);
     }
 
+    // Apply severity overrides from per-rule config
+    for diag in &mut all_diags {
+        if let Some(rule_config) = config.lint.rules.get(diag.rule) {
+            match rule_config.severity.as_deref() {
+                Some("warning") => diag.severity = Severity::Warning,
+                Some("error") => diag.severity = Severity::Error,
+                _ => {}
+            }
+        }
+    }
+
     // Sort by line, then column
     all_diags.sort_by(|a, b| a.line.cmp(&b.line).then(a.column.cmp(&b.column)));
 
@@ -264,6 +283,37 @@ fn apply_fixes(source: &str, fixes: &[&Fix]) -> String {
         }
     }
     result
+}
+
+/// Check if a file path matches any of the ignore patterns.
+/// Patterns support: `dir/**` (recursive), `*.ext` (extension), exact match.
+fn matches_ignore_pattern(path: &Path, base: &Path, patterns: &[String]) -> bool {
+    if patterns.is_empty() {
+        return false;
+    }
+    let relative = path.strip_prefix(base).unwrap_or(path);
+    let rel_str = relative.to_string_lossy();
+
+    for pattern in patterns {
+        if pattern.ends_with("/**") {
+            // "addons/**" → match anything under addons/
+            let prefix = &pattern[..pattern.len() - 3];
+            if rel_str.starts_with(prefix) {
+                return true;
+            }
+        } else if let Some(suffix) = pattern.strip_prefix('*') {
+            // "*.test.gd" → match files ending with .test.gd
+            if rel_str.ends_with(suffix) {
+                return true;
+            }
+        } else if rel_str == pattern.as_str()
+            || rel_str.starts_with(&format!("{pattern}/"))
+        {
+            // Exact file match or directory prefix
+            return true;
+        }
+    }
+    false
 }
 
 /// Collect .gd files from the given paths, or from cwd if none specified.

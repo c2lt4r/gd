@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use miette::{miette, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -42,6 +44,12 @@ pub struct LintConfig {
     pub disabled_rules: Vec<String>,
     /// Maximum number of lines in a function before long-function warns.
     pub max_function_length: usize,
+    /// Per-rule severity overrides.
+    #[serde(default)]
+    pub rules: HashMap<String, RuleConfig>,
+    /// Glob patterns for files to skip during linting.
+    #[serde(default)]
+    pub ignore_patterns: Vec<String>,
 }
 
 impl Default for LintConfig {
@@ -49,8 +57,17 @@ impl Default for LintConfig {
         Self {
             disabled_rules: Vec::new(),
             max_function_length: 50,
+            rules: HashMap::new(),
+            ignore_patterns: Vec::new(),
         }
     }
+}
+
+/// Per-rule configuration in `[lint.rules.<name>]`.
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+pub struct RuleConfig {
+    /// Override severity: "warning", "error", or "off".
+    pub severity: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

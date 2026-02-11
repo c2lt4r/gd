@@ -104,6 +104,62 @@ fn node_text<'a>(node: &tree_sitter::Node, source: &'a str) -> &'a str {
     node.utf8_text(source.as_bytes()).unwrap_or("unknown")
 }
 
+/// Resolve go-to-definition using workspace for cross-file support.
+pub fn goto_definition_cross_file(
+    source: &str,
+    uri: &Url,
+    position: Position,
+    workspace: &super::workspace::WorkspaceIndex,
+) -> Option<GotoDefinitionResponse> {
+    let tree = crate::core::parser::parse(source).ok()?;
+    let root = tree.root_node();
+
+    let point = tree_sitter::Point::new(position.line as usize, position.character as usize);
+    let node = root.descendant_for_point_range(point, point)?;
+
+    // Handle string nodes (preload/load/extends paths) using workspace resolution
+    if node.kind() == "string" {
+        let text = node.utf8_text(source.as_bytes()).ok()?;
+        let inner = text.trim_matches('"').trim_matches('\'');
+        if inner.starts_with("res://")
+            && let Some(path) = workspace.resolve_res_path(inner)
+        {
+            let target_uri = Url::from_file_path(&path).ok()?;
+            return Some(GotoDefinitionResponse::Scalar(Location {
+                uri: target_uri,
+                range: Range::new(Position::new(0, 0), Position::new(0, 0)),
+            }));
+        }
+        return None;
+    }
+
+    let ident = node.utf8_text(source.as_bytes()).ok()?;
+
+    // Try single-file definition first
+    if let Some(result) = find_definition(&root, ident, source, uri) {
+        return Some(result);
+    }
+
+    // Search workspace files for the definition
+    let current_path = uri.to_file_path().ok();
+    for (path, content) in workspace.all_files() {
+        if current_path.as_ref() == Some(&path) {
+            continue;
+        }
+        if let Ok(tree) = crate::core::parser::parse(&content) {
+            let file_uri = match Url::from_file_path(&path) {
+                Ok(u) => u,
+                Err(_) => continue,
+            };
+            if let Some(result) = find_definition(&tree.root_node(), ident, &content, &file_uri) {
+                return Some(result);
+            }
+        }
+    }
+
+    None
+}
+
 fn node_range(node: &tree_sitter::Node) -> Range {
     Range::new(
         Position::new(

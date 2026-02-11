@@ -1,7 +1,7 @@
 use tree_sitter::{Node, Tree};
 
 use crate::core::config::LintConfig;
-use super::{LintDiagnostic, LintRule, Severity};
+use super::{Fix, LintDiagnostic, LintRule, Severity};
 
 pub struct FloatComparison;
 
@@ -30,14 +30,16 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
                 let right_is_float = right.as_ref().is_some_and(|n| n.kind() == "float");
 
                 if left_is_float || right_is_float {
+                    let fix = generate_fix(&node, left, right, op, source);
+
                     diags.push(LintDiagnostic {
                         rule: "float-comparison",
                         message: "comparing floats with == is unreliable; use is_equal_approx() instead".to_string(),
                         severity: Severity::Warning,
                         line: node.start_position().row,
                         column: node.start_position().column,
-                        fix: None,
-                    end_column: None,
+                        end_column: Some(node.end_position().column),
+                        fix,
                     });
                 }
             }
@@ -52,4 +54,27 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
             }
         }
     }
+}
+
+fn generate_fix(
+    node: &Node,
+    left: Option<Node>,
+    right: Option<Node>,
+    op: &str,
+    source: &str,
+) -> Option<Fix> {
+    let left_text = &source[left?.byte_range()];
+    let right_text = &source[right?.byte_range()];
+
+    let replacement = if op == "==" {
+        format!("is_equal_approx({}, {})", left_text, right_text)
+    } else {
+        format!("!is_equal_approx({}, {})", left_text, right_text)
+    };
+
+    Some(Fix {
+        byte_start: node.start_byte(),
+        byte_end: node.end_byte(),
+        replacement,
+    })
 }

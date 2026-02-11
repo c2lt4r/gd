@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use tower_lsp::lsp_types::*;
 
 /// Prepare rename: verify the symbol at position is renameable and return its range.
@@ -50,6 +52,36 @@ pub fn rename_symbol(
     }
 
     let changes = [(uri.clone(), edits)].into_iter().collect();
+    Some(WorkspaceEdit {
+        changes: Some(changes),
+        ..Default::default()
+    })
+}
+
+/// Rename a symbol across all workspace files.
+pub fn rename_cross_file(
+    source: &str,
+    uri: &Url,
+    position: Position,
+    new_name: &str,
+    workspace: &super::workspace::WorkspaceIndex,
+) -> Option<WorkspaceEdit> {
+    let locations = super::references::find_references_cross_file(
+        source, uri, position, true, workspace,
+    )?;
+
+    let mut changes: HashMap<Url, Vec<TextEdit>> = HashMap::new();
+    for loc in locations {
+        changes.entry(loc.uri).or_default().push(TextEdit {
+            range: loc.range,
+            new_text: new_name.to_string(),
+        });
+    }
+
+    if changes.is_empty() {
+        return None;
+    }
+
     Some(WorkspaceEdit {
         changes: Some(changes),
         ..Default::default()

@@ -6,6 +6,7 @@ mod hover;
 mod references;
 mod rename;
 mod symbols;
+mod workspace;
 
 use dashmap::DashMap;
 use tower_lsp::jsonrpc::Result;
@@ -21,6 +22,7 @@ struct DocumentState {
 struct Backend {
     client: Client,
     documents: DashMap<Url, DocumentState>,
+    workspace: std::sync::OnceLock<workspace::WorkspaceIndex>,
 }
 
 impl Backend {
@@ -42,7 +44,11 @@ impl Backend {
 
 #[tower_lsp::async_trait]
 impl LanguageServer for Backend {
-    async fn initialize(&self, _: InitializeParams) -> Result<InitializeResult> {
+    async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
+        if let Some(root) = workspace::discover_root(&params) {
+            let _ = self.workspace.set(workspace::WorkspaceIndex::new(root));
+        }
+
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
@@ -103,6 +109,11 @@ impl LanguageServer for Backend {
 
     async fn did_save(&self, params: DidSaveTextDocumentParams) {
         let uri = params.text_document.uri;
+        if let Some(ws) = self.workspace.get()
+            && let Ok(path) = uri.to_file_path()
+        {
+            ws.refresh_file(&path);
+        }
         self.publish_diagnostics(uri).await;
     }
 
@@ -177,11 +188,20 @@ impl LanguageServer for Backend {
         let source = doc.content.clone();
         drop(doc);
 
-        Ok(definition::goto_definition(
-            &source,
-            uri,
-            params.text_document_position_params.position,
-        ))
+        if let Some(ws) = self.workspace.get() {
+            Ok(definition::goto_definition_cross_file(
+                &source,
+                uri,
+                params.text_document_position_params.position,
+                ws,
+            ))
+        } else {
+            Ok(definition::goto_definition(
+                &source,
+                uri,
+                params.text_document_position_params.position,
+            ))
+        }
     }
 
     async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
@@ -192,12 +212,22 @@ impl LanguageServer for Backend {
         let source = doc.content.clone();
         drop(doc);
 
-        Ok(references::find_references(
-            &source,
-            uri,
-            params.text_document_position.position,
-            params.context.include_declaration,
-        ))
+        if let Some(ws) = self.workspace.get() {
+            Ok(references::find_references_cross_file(
+                &source,
+                uri,
+                params.text_document_position.position,
+                params.context.include_declaration,
+                ws,
+            ))
+        } else {
+            Ok(references::find_references(
+                &source,
+                uri,
+                params.text_document_position.position,
+                params.context.include_declaration,
+            ))
+        }
     }
 
     async fn rename(&self, params: RenameParams) -> Result<Option<WorkspaceEdit>> {
@@ -208,12 +238,22 @@ impl LanguageServer for Backend {
         let source = doc.content.clone();
         drop(doc);
 
-        Ok(rename::rename_symbol(
-            &source,
-            uri,
-            params.text_document_position.position,
-            &params.new_name,
-        ))
+        if let Some(ws) = self.workspace.get() {
+            Ok(rename::rename_cross_file(
+                &source,
+                uri,
+                params.text_document_position.position,
+                &params.new_name,
+                ws,
+            ))
+        } else {
+            Ok(rename::rename_symbol(
+                &source,
+                uri,
+                params.text_document_position.position,
+                &params.new_name,
+            ))
+        }
     }
 
     async fn prepare_rename(
@@ -244,6 +284,7 @@ pub fn run_server() {
             let (service, socket) = LspService::new(|client| Backend {
                 client,
                 documents: DashMap::new(),
+                workspace: std::sync::OnceLock::new(),
             });
 
             Server::new(stdin, stdout, socket).serve(service).await;
