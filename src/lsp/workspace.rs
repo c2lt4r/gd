@@ -46,6 +46,11 @@ impl WorkspaceIndex {
             .collect()
     }
 
+    /// Get a single file's cached content.
+    pub fn get_content(&self, path: &Path) -> Option<String> {
+        self.files.get(path).map(|r| r.value().clone())
+    }
+
     /// Re-read a file from disk and update the cache.
     pub fn refresh_file(&self, path: &Path) {
         if let Ok(content) = std::fs::read_to_string(path) {

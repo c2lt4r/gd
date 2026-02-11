@@ -39,6 +39,24 @@ impl Backend {
 
         self.client.publish_diagnostics(uri, diags, None).await;
     }
+
+    /// Lint all workspace files and publish diagnostics for the entire project.
+    async fn lint_workspace(&self) {
+        let Some(ws) = self.workspace.get() else {
+            return;
+        };
+        for (path, content) in ws.all_files() {
+            let Ok(uri) = Url::from_file_path(&path) else {
+                continue;
+            };
+            // Skip files already open — they have fresh diagnostics from did_open
+            if self.documents.contains_key(&uri) {
+                continue;
+            }
+            let diags = diagnostics::lint_source(&content, &uri);
+            self.client.publish_diagnostics(uri, diags, None).await;
+        }
+    }
 }
 
 #[tower_lsp::async_trait]
@@ -80,6 +98,7 @@ impl LanguageServer for Backend {
         self.client
             .log_message(MessageType::INFO, "gd language server initialized")
             .await;
+        self.lint_workspace().await;
     }
 
     async fn shutdown(&self) -> Result<()> {
@@ -121,9 +140,18 @@ impl LanguageServer for Backend {
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
-        let uri = params.text_document.uri.clone();
-        self.documents.remove(&params.text_document.uri);
-        // Clear diagnostics for closed file
+        let uri = params.text_document.uri;
+        self.documents.remove(&uri);
+        // Re-lint from disk content so Problems panel reflects saved state
+        if let Some(ws) = self.workspace.get()
+            && let Ok(path) = uri.to_file_path()
+            && let Some(content) = ws.get_content(&path)
+        {
+            let diags = diagnostics::lint_source(&content, &uri);
+            self.client.publish_diagnostics(uri, diags, None).await;
+            return;
+        }
+        // Fallback: file not in workspace index, clear diagnostics
         self.client.publish_diagnostics(uri, vec![], None).await;
     }
 
