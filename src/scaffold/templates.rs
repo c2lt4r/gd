@@ -14,7 +14,7 @@ config_version=5
 
 config/name="{name}"
 run/main_scene="res://main.tscn"
-config/features=PackedStringArray("4.4")
+config/features=PackedStringArray("{version}", "{renderer_feature}")
 
 [rendering]
 
@@ -64,6 +64,7 @@ extra_args = []
 pub struct TemplateSet {
     pub node_type: &'static str,
     pub renderer: &'static str,
+    pub renderer_feature: &'static str,
 }
 
 pub fn template_for(template: &str) -> Option<TemplateSet> {
@@ -71,14 +72,17 @@ pub fn template_for(template: &str) -> Option<TemplateSet> {
         "default" => Some(TemplateSet {
             node_type: "Node",
             renderer: "forward_plus",
+            renderer_feature: "Forward Plus",
         }),
         "2d" => Some(TemplateSet {
             node_type: "Node2D",
             renderer: "gl_compatibility",
+            renderer_feature: "GL Compatibility",
         }),
         "3d" => Some(TemplateSet {
             node_type: "Node3D",
             renderer: "forward_plus",
+            renderer_feature: "Forward Plus",
         }),
         _ => None,
     }
@@ -113,8 +117,15 @@ func _process(delta: float) -> void:
     )
 }
 
-pub fn project_godot_content(name: &str, renderer: &str) -> String {
+pub fn project_godot_content(
+    name: &str,
+    renderer: &str,
+    renderer_feature: &str,
+    godot_version: &str,
+) -> String {
     PROJECT_GODOT_TEMPLATE
         .replace("{name}", name)
         .replace("{renderer}", renderer)
+        .replace("{renderer_feature}", renderer_feature)
+        .replace("{version}", godot_version)
 }
