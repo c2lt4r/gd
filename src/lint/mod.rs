@@ -291,7 +291,10 @@ fn matches_ignore_pattern(path: &Path, base: &Path, patterns: &[String]) -> bool
     if patterns.is_empty() {
         return false;
     }
-    let relative = path.strip_prefix(base).unwrap_or(path);
+    // Canonicalize both paths to handle symlinks (e.g., macOS /var -> /private/var)
+    let canon_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let canon_base = base.canonicalize().unwrap_or_else(|_| base.to_path_buf());
+    let relative = canon_path.strip_prefix(&canon_base).unwrap_or(&canon_path);
     let rel_str = relative.to_string_lossy();
 
     for pattern in patterns {
