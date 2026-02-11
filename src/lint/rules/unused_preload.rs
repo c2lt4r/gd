@@ -94,11 +94,16 @@ fn collect_preload_vars(
 }
 
 fn is_preload_call(node: &Node, source: &str) -> bool {
-    if node.kind() == "call"
-        && let Some(func) = node.child_by_field_name("function")
-    {
-        let name = &source[func.byte_range()];
-        return name == "preload" || name == "load";
+    if node.kind() == "call" {
+        // Try field name first, fall back to first named child
+        // (tree-sitter-gdscript doesn't always set the "function" field for builtins)
+        let func = node
+            .child_by_field_name("function")
+            .or_else(|| node.named_child(0));
+        if let Some(func_node) = func {
+            let name = &source[func_node.byte_range()];
+            return name == "preload" || name == "load";
+        }
     }
     false
 }
@@ -132,5 +137,51 @@ fn collect_all_references(node: Node, src: &[u8], refs: &mut HashSet<String>) {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::config::LintConfig;
+
+    fn check(source: &str) -> Vec<LintDiagnostic> {
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_gdscript::LANGUAGE.into())
+            .unwrap();
+        let tree = parser.parse(source, None).unwrap();
+        UnusedPreload.check(&tree, source, &LintConfig::default())
+    }
+
+    #[test]
+    fn unused_preload_detected() {
+        let src =
+            "var unused_res = preload(\"res://unused.tscn\")\nfunc _ready() -> void:\n\tpass\n";
+        let diags = check(src);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].rule, "unused-preload");
+        assert!(diags[0].message.contains("unused_res"));
+    }
+
+    #[test]
+    fn used_preload_no_warning() {
+        let src =
+            "var scene = preload(\"res://scene.tscn\")\nfunc _ready() -> void:\n\tprint(scene)\n";
+        assert!(check(src).is_empty());
+    }
+
+    #[test]
+    fn underscore_prefix_skipped() {
+        let src = "var _cached = preload(\"res://cached.tscn\")\n";
+        assert!(check(src).is_empty());
+    }
+
+    #[test]
+    fn unused_load_detected() {
+        let src = "var unused_script = load(\"res://script.gd\")\n";
+        let diags = check(src);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("unused_script"));
     }
 }
