@@ -73,6 +73,7 @@ impl Default for BuildConfig {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(default)]
+#[derive(Default)]
 pub struct RunConfig {
     /// Path to godot binary. Uses PATH lookup if empty.
     pub godot_path: Option<PathBuf>,
@@ -80,14 +81,6 @@ pub struct RunConfig {
     pub extra_args: Vec<String>,
 }
 
-impl Default for RunConfig {
-    fn default() -> Self {
-        Self {
-            godot_path: None,
-            extra_args: Vec::new(),
-        }
-    }
-}
 
 impl Config {
     /// Load configuration from a gd.toml file, searching upward from `start`.

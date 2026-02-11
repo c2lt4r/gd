@@ -10,13 +10,11 @@ pub fn collect_gdscript_files(root: &Path) -> Result<Vec<PathBuf>> {
         .filter_entry(|e| !is_hidden_or_ignored(e))
     {
         let entry = entry.map_err(|e| miette!("Error walking directory: {e}"))?;
-        if entry.file_type().is_file() {
-            if let Some(ext) = entry.path().extension() {
-                if ext == "gd" {
+        if entry.file_type().is_file()
+            && let Some(ext) = entry.path().extension()
+                && ext == "gd" {
                     files.push(entry.into_path());
                 }
-            }
-        }
     }
     files.sort();
     Ok(files)

@@ -360,16 +360,14 @@ fn parse_gut_output(output: &str, file_count: usize) -> TestSummary {
         // GUT outputs lines like: "Passed: 5 Failed: 2"
         if trimmed.contains("Passed:") && trimmed.contains("Failed:") {
             for part in trimmed.split_whitespace().collect::<Vec<_>>().windows(2) {
-                if part[0] == "Passed:" {
-                    if let Ok(n) = part[1].parse::<usize>() {
+                if part[0] == "Passed:"
+                    && let Ok(n) = part[1].parse::<usize>() {
                         passed = n;
                     }
-                }
-                if part[0] == "Failed:" {
-                    if let Ok(n) = part[1].parse::<usize>() {
+                if part[0] == "Failed:"
+                    && let Ok(n) = part[1].parse::<usize>() {
                         failed = n;
                     }
-                }
             }
             return TestSummary { passed, failed };
         }

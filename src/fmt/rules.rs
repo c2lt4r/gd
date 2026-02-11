@@ -1,4 +1,4 @@
-/// Formatting rules applied during AST traversal.
+//! Formatting rules applied during AST traversal.
 
 /// Represents the kind of whitespace to insert between top-level statements.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]

@@ -28,8 +28,8 @@ fn check_scope(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
     if cursor.goto_first_child() {
         loop {
             let child = cursor.node();
-            if child.kind() == "signal_statement" {
-                if let Some(name_node) = child.child_by_field_name("name") {
+            if child.kind() == "signal_statement"
+                && let Some(name_node) = child.child_by_field_name("name") {
                     let name = source[name_node.byte_range()].to_string();
                     let line = name_node.start_position().row;
 
@@ -50,14 +50,12 @@ fn check_scope(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
                         signals.insert(name, line);
                     }
                 }
-            }
 
             // Recurse into class definitions to check nested scopes
-            if child.kind() == "class_definition" {
-                if let Some(body) = child.child_by_field_name("body") {
+            if child.kind() == "class_definition"
+                && let Some(body) = child.child_by_field_name("body") {
                     check_scope(body, source, diags);
                 }
-            }
 
             if !cursor.goto_next_sibling() {
                 break;

@@ -22,8 +22,8 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
     if node.kind() == "variable_statement" {
         // Check if it's a const (constants are fine)
         let first_child = node.child(0);
-        if let Some(first) = first_child {
-            if &source[first.byte_range()] == "const" {
+        if let Some(first) = first_child
+            && &source[first.byte_range()] == "const" {
                 // Constants are ok, skip
                 let mut cursor = node.walk();
                 if cursor.goto_first_child() {
@@ -36,15 +36,14 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
                 }
                 return;
             }
-        }
 
         // Check if there's a type annotation
         let has_type = node.child_by_field_name("type").is_some();
 
         if !has_type {
             // Check if the value is a preload() or load() call
-            if let Some(value_node) = node.child_by_field_name("value") {
-                if is_preload_or_load_call(&value_node, source) {
+            if let Some(value_node) = node.child_by_field_name("value")
+                && is_preload_or_load_call(&value_node, source) {
                     // Get the variable name for the diagnostic message
                     let var_name = if let Some(name_node) = node.child_by_field_name("name") {
                         source[name_node.byte_range()].to_string()
@@ -64,7 +63,6 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
                         fix: None,
                     });
                 }
-            }
         }
     }
 
@@ -80,11 +78,10 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
 }
 
 fn is_preload_or_load_call(node: &Node, source: &str) -> bool {
-    if node.kind() == "call" {
-        if let Some(func_node) = node.child_by_field_name("function") {
+    if node.kind() == "call"
+        && let Some(func_node) = node.child_by_field_name("function") {
             let func_name = &source[func_node.byte_range()];
             return func_name == "preload" || func_name == "load";
         }
-    }
     false
 }

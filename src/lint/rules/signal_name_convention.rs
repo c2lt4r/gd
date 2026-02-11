@@ -19,11 +19,11 @@ impl LintRule for SignalNameConvention {
 }
 
 fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    if node.kind() == "signal_statement" {
-        if let Some(name_node) = node.child_by_field_name("name") {
+    if node.kind() == "signal_statement"
+        && let Some(name_node) = node.child_by_field_name("name") {
             let name = &source[name_node.byte_range()];
-            if name.starts_with("on_") {
-                let fixed = &name[3..]; // Remove "on_" prefix
+            if let Some(fixed) = name.strip_prefix("on_") {
+                // Remove "on_" prefix
 
                 diags.push(LintDiagnostic {
                     rule: "signal-name-convention",
@@ -42,7 +42,6 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
                 });
             }
         }
-    }
 
     let mut cursor = node.walk();
     if cursor.goto_first_child() {

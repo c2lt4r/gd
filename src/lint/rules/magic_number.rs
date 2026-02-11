@@ -22,13 +22,12 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>, in_func
     let inside_body = in_function_body;
 
     // If we're entering a function body, mark it
-    if node.kind() == "function_definition" {
-        if let Some(body_node) = node.child_by_field_name("body") {
+    if node.kind() == "function_definition"
+        && let Some(body_node) = node.child_by_field_name("body") {
             check_node(body_node, source, diags, true);
             // Don't recurse normally for function_definition since we handled body explicitly
             return;
         }
-    }
 
     // Only check numeric literals inside function bodies
     if inside_body && (node.kind() == "integer" || node.kind() == "float") {

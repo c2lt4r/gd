@@ -1,4 +1,4 @@
-/// Lint rules module - each rule analyzes the tree-sitter AST.
+//! Lint rules module - each rule analyzes the tree-sitter AST.
 
 pub mod naming_convention;
 pub mod unused_variable;

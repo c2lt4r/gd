@@ -98,12 +98,11 @@ fn extract_class_info(path: &Path) -> Result<ClassInfo> {
             "extends_statement" => {
                 // Get the type being extended
                 for i in 0..child.named_child_count() {
-                    if let Some(type_node) = child.named_child(i) {
-                        if type_node.kind() == "type" || type_node.kind() == "identifier" {
+                    if let Some(type_node) = child.named_child(i)
+                        && (type_node.kind() == "type" || type_node.kind() == "identifier") {
                             extends = Some(type_node.utf8_text(source.as_bytes()).unwrap().to_string());
                             break;
                         }
-                    }
                 }
             }
             "function_definition" => {
@@ -133,7 +132,7 @@ fn extract_class_info(path: &Path) -> Result<ClassInfo> {
     let final_class_name = class_name.unwrap_or_else(|| {
         path.file_stem()
             .and_then(|s| s.to_str())
-            .map(|s| to_pascal_case(s))
+            .map(to_pascal_case)
             .unwrap_or_else(|| "Unknown".to_string())
     });
 

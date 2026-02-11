@@ -1,13 +1,13 @@
-/// AST-aware formatter - walks the tree-sitter tree and emits formatted source.
-///
-/// Strategy: We walk the AST recursively. For leaf nodes (tokens), we emit the
-/// original source text. For interior nodes, we control whitespace between children
-/// based on formatting rules. Indentation is tracked via the AST's `body` and
-/// `class_body` nodes.
-///
-/// Important: Some tree-sitter-gdscript nodes (string, get_node, comment) have
-/// internal content not represented as children. For these "opaque" nodes we emit
-/// the full source text directly rather than recursing into children.
+//! AST-aware formatter - walks the tree-sitter tree and emits formatted source.
+//!
+//! Strategy: We walk the AST recursively. For leaf nodes (tokens), we emit the
+//! original source text. For interior nodes, we control whitespace between children
+//! based on formatting rules. Indentation is tracked via the AST's `body` and
+//! `class_body` nodes.
+//!
+//! Important: Some tree-sitter-gdscript nodes (string, get_node, comment) have
+//! internal content not represented as children. For these "opaque" nodes we emit
+//! the full source text directly rather than recursing into children.
 
 use tree_sitter::Node;
 

@@ -19,8 +19,8 @@ impl LintRule for IntegerDivision {
 }
 
 fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    if node.kind() == "binary_operator" {
-        if let Some(op_node) = node.child_by_field_name("operator") {
+    if node.kind() == "binary_operator"
+        && let Some(op_node) = node.child_by_field_name("operator") {
             let op = &source[op_node.byte_range()];
             if op == "/" {
                 let left = node.child_by_field_name("left");
@@ -48,7 +48,6 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
                 }
             }
         }
-    }
 
     let mut cursor = node.walk();
     if cursor.goto_first_child() {

@@ -57,11 +57,10 @@ fn collect_param_names(params: Node, source: &str, names: &mut HashSet<String>) 
                 names.insert(source[child.byte_range()].to_string());
             }
             "typed_parameter" | "default_parameter" | "typed_default_parameter" => {
-                if let Some(name_node) = child.child(0) {
-                    if name_node.kind() == "identifier" {
+                if let Some(name_node) = child.child(0)
+                    && name_node.kind() == "identifier" {
                         names.insert(source[name_node.byte_range()].to_string());
                     }
-                }
             }
             _ => {}
         }
@@ -83,8 +82,8 @@ fn check_body(body: Node, source: &str, outer: &HashSet<String>, diags: &mut Vec
     loop {
         let child = cursor.node();
 
-        if child.kind() == "variable_statement" {
-            if let Some(name_node) = child.child_by_field_name("name") {
+        if child.kind() == "variable_statement"
+            && let Some(name_node) = child.child_by_field_name("name") {
                 let name = source[name_node.byte_range()].to_string();
                 if outer.contains(&name) {
                     diags.push(LintDiagnostic {
@@ -98,7 +97,6 @@ fn check_body(body: Node, source: &str, outer: &HashSet<String>, diags: &mut Vec
                 }
                 current_scope.insert(name);
             }
-        }
 
         // Recurse into inner scopes (if/for/while bodies)
         if is_scope_node(child.kind()) {
@@ -128,11 +126,10 @@ fn check_inner_scopes(
     // For for_statement, the iterator variable is also an outer name for the body
     if node.kind() == "for_statement" {
         let mut for_outer = outer.clone();
-        if let Some(iter_node) = node.child_by_field_name("left") {
-            if iter_node.kind() == "identifier" {
+        if let Some(iter_node) = node.child_by_field_name("left")
+            && iter_node.kind() == "identifier" {
                 for_outer.insert(source[iter_node.byte_range()].to_string());
             }
-        }
         if let Some(body) = node.child_by_field_name("body") {
             check_body(body, source, &for_outer, diags);
         }

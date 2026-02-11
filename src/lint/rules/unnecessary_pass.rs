@@ -18,14 +18,14 @@ impl LintRule for UnnecessaryPass {
     }
 }
 
-fn check_node(node: Node, source_bytes: &[u8], source: &str, diags: &mut Vec<LintDiagnostic>) {
+fn check_node(node: Node, source_bytes: &[u8], _source: &str, diags: &mut Vec<LintDiagnostic>) {
     // Check body nodes: if they have more than one named child and one is pass_statement
     if node.kind() == "body" || node.kind() == "block" {
         let named_count = node.named_child_count();
         if named_count > 1 {
             for i in 0..named_count {
-                if let Some(child) = node.named_child(i) {
-                    if child.kind() == "pass_statement" {
+                if let Some(child) = node.named_child(i)
+                    && child.kind() == "pass_statement" {
                         let fix = generate_fix(&child, source_bytes);
 
                         diags.push(LintDiagnostic {
@@ -37,7 +37,6 @@ fn check_node(node: Node, source_bytes: &[u8], source: &str, diags: &mut Vec<Lin
                             fix,
                         });
                     }
-                }
             }
         }
     }
@@ -45,7 +44,7 @@ fn check_node(node: Node, source_bytes: &[u8], source: &str, diags: &mut Vec<Lin
     let mut cursor = node.walk();
     if cursor.goto_first_child() {
         loop {
-            check_node(cursor.node(), source_bytes, source, diags);
+            check_node(cursor.node(), source_bytes, _source, diags);
             if !cursor.goto_next_sibling() {
                 break;
             }

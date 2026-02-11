@@ -275,11 +275,10 @@ fn parse_export_presets(project_root: &Path) -> Result<Vec<String>> {
     for line in content.lines() {
         let trimmed = line.trim();
         // Look for: name="PresetName"
-        if let Some(rest) = trimmed.strip_prefix("name=\"") {
-            if let Some(name) = rest.strip_suffix('"') {
+        if let Some(rest) = trimmed.strip_prefix("name=\"")
+            && let Some(name) = rest.strip_suffix('"') {
                 presets.push(name.to_string());
             }
-        }
     }
 
     Ok(presets)

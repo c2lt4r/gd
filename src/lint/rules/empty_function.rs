@@ -19,13 +19,13 @@ impl LintRule for EmptyFunction {
 }
 
 fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    if node.kind() == "function_definition" {
-        if let Some(body) = node.child_by_field_name("body") {
+    if node.kind() == "function_definition"
+        && let Some(body) = node.child_by_field_name("body") {
             // An empty function body has exactly one named child: a pass_statement
             let named_count = body.named_child_count();
-            if named_count == 1 {
-                if let Some(first) = body.named_child(0) {
-                    if first.kind() == "pass_statement" {
+            if named_count == 1
+                && let Some(first) = body.named_child(0)
+                    && first.kind() == "pass_statement" {
                         let func_name = node
                             .child_by_field_name("name")
                             .map(|n| &source[n.byte_range()])
@@ -42,10 +42,7 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
                             fix: None,
                         });
                     }
-                }
-            }
         }
-    }
 
     let mut cursor = node.walk();
     if cursor.goto_first_child() {

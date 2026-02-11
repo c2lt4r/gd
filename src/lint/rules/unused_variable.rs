@@ -23,11 +23,10 @@ impl LintRule for UnusedVariable {
 }
 
 fn collect_functions(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    if node.kind() == "function_definition" {
-        if let Some(body) = node.child_by_field_name("body") {
+    if node.kind() == "function_definition"
+        && let Some(body) = node.child_by_field_name("body") {
             check_function_body(body, source, diags);
         }
-    }
 
     let mut cursor = node.walk();
     if cursor.goto_first_child() {
@@ -102,11 +101,10 @@ fn collect_declarations_and_refs(
                     collect_refs_only(right, source, references);
                 }
                 // If left is a complex expression (attribute, subscript), count identifiers as refs
-                if let Some(left) = left {
-                    if left.kind() != "identifier" {
+                if let Some(left) = left
+                    && left.kind() != "identifier" {
                         collect_refs_only(left, source, references);
                     }
-                }
             }
         }
         "identifier" => {

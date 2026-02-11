@@ -66,11 +66,10 @@ fn list_addons() -> Result<()> {
 
         if path.is_dir() {
             let plugin_cfg = path.join("plugin.cfg");
-            if plugin_cfg.exists() {
-                if let Ok(info) = parse_plugin_cfg(&plugin_cfg) {
+            if plugin_cfg.exists()
+                && let Ok(info) = parse_plugin_cfg(&plugin_cfg) {
                     addons.push((entry.file_name().to_string_lossy().to_string(), info));
                 }
-            }
         }
     }
 

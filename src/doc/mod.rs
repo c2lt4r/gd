@@ -100,15 +100,14 @@ pub fn extract_docs(source: &str, tree: &Tree, file_path: &Path) -> DocClass {
             "extends_statement" => {
                 // Get the type being extended
                 for i in 0..node.named_child_count() {
-                    if let Some(type_node) = node.named_child(i) {
-                        if type_node.kind() == "type" || type_node.kind() == "identifier" {
+                    if let Some(type_node) = node.named_child(i)
+                        && (type_node.kind() == "type" || type_node.kind() == "identifier") {
                             extends = type_node
                                 .utf8_text(source.as_bytes())
                                 .unwrap_or("")
                                 .to_string();
                             break;
                         }
-                    }
                 }
             }
             "signal_statement" => {
@@ -276,7 +275,7 @@ pub fn render_markdown(doc: &DocClass) -> String {
                 prop.name, prop.type_hint, export, prop.description
             ));
         }
-        output.push_str("\n");
+        output.push('\n');
     }
 
     // Methods

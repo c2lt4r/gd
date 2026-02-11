@@ -1,4 +1,4 @@
-/// Built-in project templates.
+//! Built-in project templates.
 
 pub const PROJECT_GODOT_TEMPLATE: &str = r#"; Engine configuration file.
 ; It's best edited using the editor UI and not directly,
