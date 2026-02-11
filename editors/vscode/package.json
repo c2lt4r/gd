@@ -3,6 +3,7 @@
   "displayName": "GDScript (gd)",
   "description": "GDScript language support powered by the gd toolchain",
   "version": "0.1.0",
+  "publisher": "c2lt4r",
   "license": "MIT",
   "repository": {
     "type": "git",
