@@ -196,7 +196,7 @@ pub fn export_project(preset: Option<&str>, output: Option<&str>, release: bool)
     // Determine output file path (use preset name as default filename)
     let output_file = if output.is_some() {
         // If user gave an explicit path, use it as-is (could be file or dir)
-        output_dir.clone()
+        output_dir
     } else {
         output_dir.join(&preset_name)
     };

@@ -37,7 +37,7 @@ fn check_node(node: Node, source_bytes: &[u8], _source: &str, diags: &mut Vec<Li
                         line: child.start_position().row,
                         column: child.start_position().column,
                         end_column: Some(child.end_position().column),
-                        fix,
+                        fix: Some(fix),
                     });
                 }
             }
@@ -55,7 +55,7 @@ fn check_node(node: Node, source_bytes: &[u8], _source: &str, diags: &mut Vec<Li
     }
 }
 
-fn generate_fix(node: &Node, source_bytes: &[u8]) -> Option<Fix> {
+fn generate_fix(node: &Node, source_bytes: &[u8]) -> Fix {
     let mut byte_start = node.start_byte();
     let mut byte_end = node.end_byte();
 
@@ -78,9 +78,9 @@ fn generate_fix(node: &Node, source_bytes: &[u8]) -> Option<Fix> {
         }
     }
 
-    Some(Fix {
+    Fix {
         byte_start,
         byte_end,
         replacement: String::new(),
-    })
+    }
 }

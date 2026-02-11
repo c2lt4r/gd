@@ -41,7 +41,7 @@ fn check_node(node: Node, source_bytes: &[u8], source: &str, diags: &mut Vec<Lin
                         line: node.start_position().row,
                         column: node.start_position().column,
                         end_column: Some(node.end_position().column),
-                        fix,
+                        fix: Some(fix),
                     });
                 }
             }
@@ -59,7 +59,7 @@ fn check_node(node: Node, source_bytes: &[u8], source: &str, diags: &mut Vec<Lin
     }
 }
 
-fn generate_fix(node: &Node, source_bytes: &[u8]) -> Option<Fix> {
+fn generate_fix(node: &Node, source_bytes: &[u8]) -> Fix {
     // For self-assignment, we want to remove the entire line
     // This could be an assignment node or its parent (expression_statement)
     let target_node = if let Some(parent) = node.parent() {
@@ -94,9 +94,9 @@ fn generate_fix(node: &Node, source_bytes: &[u8]) -> Option<Fix> {
         }
     }
 
-    Some(Fix {
+    Fix {
         byte_start,
         byte_end,
         replacement: String::new(),
-    })
+    }
 }

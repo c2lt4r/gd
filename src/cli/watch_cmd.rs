@@ -28,7 +28,7 @@ pub fn exec(args: WatchArgs) -> Result<()> {
 
     // Determine watch paths
     let watch_paths: Vec<PathBuf> = if args.paths.is_empty() {
-        vec![cwd.clone()]
+        vec![cwd]
     } else {
         args.paths.iter().map(PathBuf::from).collect()
     };

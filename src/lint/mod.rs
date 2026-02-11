@@ -26,7 +26,7 @@ pub fn run_lint(paths: &[String], format: &str, fix: bool) -> Result<()> {
         if p.is_file() {
             p.parent().unwrap_or(&cwd).to_path_buf()
         } else if p.is_dir() {
-            p.clone()
+            p
         } else {
             cwd.clone()
         }

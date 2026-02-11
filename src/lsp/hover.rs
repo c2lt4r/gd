@@ -14,10 +14,10 @@ pub fn hover_at(source: &str, position: Position) -> Option<Hover> {
     loop {
         match current.kind() {
             "function_definition" => return hover_function(&current, source),
-            "variable_statement" => return hover_variable(&current, source),
-            "const_statement" => return hover_const(&current, source),
-            "signal_statement" => return hover_signal(&current, source),
-            "class_name_statement" => return hover_class_name(&current, source),
+            "variable_statement" => return Some(hover_variable(&current, source)),
+            "const_statement" => return Some(hover_const(&current, source)),
+            "signal_statement" => return Some(hover_signal(&current, source)),
+            "class_name_statement" => return Some(hover_class_name(&current, source)),
             "class_definition" => return hover_class(&current, source),
             "enum_definition" => return hover_enum(&current, source),
             "identifier" | "name" => {
@@ -53,27 +53,27 @@ fn hover_function(node: &tree_sitter::Node, source: &str) -> Option<Hover> {
     Some(make_hover(&sig, node))
 }
 
-fn hover_variable(node: &tree_sitter::Node, source: &str) -> Option<Hover> {
+fn hover_variable(node: &tree_sitter::Node, source: &str) -> Hover {
     let text = node_text(node, source);
     let decl = text.lines().next().unwrap_or(text).trim_end();
-    Some(make_hover(decl, node))
+    make_hover(decl, node)
 }
 
-fn hover_const(node: &tree_sitter::Node, source: &str) -> Option<Hover> {
+fn hover_const(node: &tree_sitter::Node, source: &str) -> Hover {
     let text = node_text(node, source);
     let decl = text.lines().next().unwrap_or(text).trim_end();
-    Some(make_hover(decl, node))
+    make_hover(decl, node)
 }
 
-fn hover_signal(node: &tree_sitter::Node, source: &str) -> Option<Hover> {
+fn hover_signal(node: &tree_sitter::Node, source: &str) -> Hover {
     let text = node_text(node, source);
     let decl = text.lines().next().unwrap_or(text).trim_end();
-    Some(make_hover(decl, node))
+    make_hover(decl, node)
 }
 
-fn hover_class_name(node: &tree_sitter::Node, source: &str) -> Option<Hover> {
+fn hover_class_name(node: &tree_sitter::Node, source: &str) -> Hover {
     let text = node_text(node, source);
-    Some(make_hover(text.trim(), node))
+    make_hover(text.trim(), node)
 }
 
 fn hover_class(node: &tree_sitter::Node, source: &str) -> Option<Hover> {
@@ -100,17 +100,17 @@ fn resolve_identifier(root: &tree_sitter::Node, name: &str, source: &str) -> Opt
             }
             "variable_statement" => {
                 if matches_name(&child, name, source) {
-                    return hover_variable(&child, source);
+                    return Some(hover_variable(&child, source));
                 }
             }
             "const_statement" => {
                 if matches_name(&child, name, source) {
-                    return hover_const(&child, source);
+                    return Some(hover_const(&child, source));
                 }
             }
             "signal_statement" => {
                 if matches_name(&child, name, source) {
-                    return hover_signal(&child, source);
+                    return Some(hover_signal(&child, source));
                 }
             }
             "class_definition" => {

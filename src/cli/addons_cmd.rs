@@ -437,7 +437,7 @@ fn install_from_asset_library(
         let desc = if asset.description.len() > 200 {
             format!("{}...", &asset.description[..197])
         } else {
-            asset.description.clone()
+            asset.description
         };
         println!("  {}", desc.dimmed());
     }
