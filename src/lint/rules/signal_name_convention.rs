@@ -34,6 +34,7 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
                     severity: Severity::Warning,
                     line: name_node.start_position().row,
                     column: name_node.start_position().column,
+                    end_column: Some(name_node.end_position().column),
                     fix: Some(Fix {
                         byte_start: name_node.start_byte(),
                         byte_end: name_node.end_byte(),

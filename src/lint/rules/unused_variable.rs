@@ -61,6 +61,7 @@ fn check_function_body(body: Node, source: &str, diags: &mut Vec<LintDiagnostic>
                 line: *line,
                 column: *col,
                 fix: None,
+                    end_column: None,
             });
         }
     }

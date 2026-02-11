@@ -45,6 +45,7 @@ fn check_scope(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
                             line,
                             column: name_node.start_position().column,
                             fix: None,
+                    end_column: None,
                         });
                     } else {
                         signals.insert(name, line);

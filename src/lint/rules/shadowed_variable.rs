@@ -93,6 +93,7 @@ fn check_body(body: Node, source: &str, outer: &HashSet<String>, diags: &mut Vec
                         line: name_node.start_position().row,
                         column: name_node.start_position().column,
                         fix: None,
+                    end_column: None,
                     });
                 }
                 current_scope.insert(name);

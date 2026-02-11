@@ -44,6 +44,7 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
                             line: child.start_position().row,
                             column: child.start_position().column,
                             fix: None,
+                    end_column: None,
                         });
                     }
                     // default_parameter (untyped with default) also has no type
@@ -62,6 +63,7 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
                                     line: name_node.start_position().row,
                                     column: name_node.start_position().column,
                                     fix: None,
+                    end_column: None,
                                 });
                             }
                     }
@@ -86,6 +88,7 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
                     line: name_node.start_position().row,
                     column: name_node.start_position().column,
                     fix: None,
+                    end_column: None,
                 });
             }
         }

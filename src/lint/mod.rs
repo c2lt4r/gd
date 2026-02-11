@@ -1,6 +1,7 @@
 pub mod rules;
 pub mod diagnostics;
 
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use miette::{miette, Result};
@@ -11,7 +12,7 @@ use crate::core::config::Config;
 use crate::core::fs::collect_gdscript_files;
 use crate::core::parser;
 
-use diagnostics::{print_diagnostic, print_json, FileLintResult};
+use diagnostics::{print_diagnostic, print_json, print_sarif, FileLintResult};
 use rules::{all_rules, Fix, LintDiagnostic, Severity};
 
 /// Entry point for the linter.
@@ -68,6 +69,7 @@ pub fn run_lint(paths: &[String], format: &str, fix: bool) -> Result<()> {
                             severity: d.severity,
                             line: d.line,
                             column: d.column,
+                            end_column: d.end_column,
                             fix: None,
                         }).collect(),
                     }
@@ -75,15 +77,46 @@ pub fn run_lint(paths: &[String], format: &str, fix: bool) -> Result<()> {
                 .collect();
             print_json(&json_results);
         }
+        "sarif" => {
+            // Collect rule names for SARIF tool.driver.rules
+            let rule_names: Vec<&str> = rules.iter().map(|r| r.name()).collect();
+
+            let sarif_results: Vec<FileLintResult> = file_results
+                .iter()
+                .filter(|(_, diags)| !diags.is_empty())
+                .map(|(path, diags)| {
+                    for d in diags {
+                        match d.severity {
+                            Severity::Warning => total_warnings += 1,
+                            Severity::Error => total_errors += 1,
+                        }
+                    }
+                    FileLintResult {
+                        file: path.display().to_string(),
+                        diagnostics: diags.iter().map(|d| LintDiagnostic {
+                            rule: d.rule,
+                            message: d.message.clone(),
+                            severity: d.severity,
+                            line: d.line,
+                            column: d.column,
+                            end_column: d.end_column,
+                            fix: None,
+                        }).collect(),
+                    }
+                })
+                .collect();
+            print_sarif(&sarif_results, &rule_names);
+        }
         _ => {
-            // Human format
+            // Human format - read source for span display
             for (path, diags) in &file_results {
+                let source = std::fs::read_to_string(path).ok();
                 for diag in diags {
                     match diag.severity {
                         Severity::Warning => total_warnings += 1,
                         Severity::Error => total_errors += 1,
                     }
-                    print_diagnostic(path, diag);
+                    print_diagnostic(path, diag, source.as_deref());
                 }
             }
         }
@@ -129,6 +162,10 @@ fn lint_file(
     // Sort by line, then column
     all_diags.sort_by(|a, b| a.line.cmp(&b.line).then(a.column.cmp(&b.column)));
 
+    // Filter out suppressed diagnostics
+    let suppressions = parse_suppressions(&source);
+    all_diags.retain(|d| !is_suppressed(d, &suppressions));
+
     // Apply fixes if requested
     if fix {
         let fixes: Vec<&Fix> = all_diags
@@ -149,6 +186,67 @@ fn lint_file(
     }
 
     Ok(all_diags)
+}
+
+/// Parse suppression comments from source code.
+/// Returns a map of line numbers (0-indexed, matching LintDiagnostic) to rule suppressions (None = suppress all).
+fn parse_suppressions(source: &str) -> HashMap<usize, Option<HashSet<String>>> {
+    let mut suppressions = HashMap::new();
+
+    for (line_idx, line) in source.lines().enumerate() {
+        // Look for "# gd:ignore" patterns in the line
+        if let Some(pos) = line.find("# gd:ignore") {
+            let rest = &line[pos + "# gd:ignore".len()..];
+
+            if let Some(rule_rest) = rest.strip_prefix("-next-line") {
+                // Applies to the next line (0-indexed)
+                let rules = parse_rule_list(rule_rest);
+                suppressions.insert(line_idx + 1, rules);
+            } else {
+                // Applies to current line (0-indexed)
+                let rules = parse_rule_list(rest);
+                suppressions.insert(line_idx, rules);
+            }
+        }
+    }
+
+    suppressions
+}
+
+/// Parse the rule list from a suppression comment.
+/// Returns None for "suppress all", Some(set) for specific rules.
+fn parse_rule_list(text: &str) -> Option<HashSet<String>> {
+    let text = text.trim();
+    if text.starts_with('[') {
+        if let Some(end) = text.find(']') {
+            let rules_str = &text[1..end];
+            let rules: HashSet<String> = rules_str
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            if rules.is_empty() { None } else { Some(rules) }
+        } else {
+            None // malformed, suppress all
+        }
+    } else {
+        None // no bracket = suppress all
+    }
+}
+
+/// Check if a diagnostic is suppressed by suppression comments.
+fn is_suppressed(
+    diag: &LintDiagnostic,
+    suppressions: &HashMap<usize, Option<HashSet<String>>>,
+) -> bool {
+    if let Some(rules) = suppressions.get(&diag.line) {
+        match rules {
+            None => true, // suppress all
+            Some(rule_set) => rule_set.contains(diag.rule),
+        }
+    } else {
+        false
+    }
 }
 
 /// Apply non-overlapping fixes to source code (from last to first to preserve offsets).

@@ -43,6 +43,7 @@ fn check_node(
                         severity: Severity::Warning,
                         line: name_node.start_position().row,
                         column: name_node.start_position().column,
+                        end_column: Some(name_node.end_position().column),
                         fix: Some(Fix {
                             byte_start: name_node.start_byte(),
                             byte_end: name_node.end_byte(),
@@ -66,6 +67,7 @@ fn check_node(
                         severity: Severity::Warning,
                         line: name_node.start_position().row,
                         column: name_node.start_position().column,
+                        end_column: Some(name_node.end_position().column),
                         fix: Some(Fix {
                             byte_start: name_node.start_byte(),
                             byte_end: name_node.end_byte(),
@@ -90,6 +92,7 @@ fn check_node(
                         severity: Severity::Warning,
                         line: name_node.start_position().row,
                         column: name_node.start_position().column,
+                        end_column: Some(name_node.end_position().column),
                         fix: Some(Fix {
                             byte_start: name_node.start_byte(),
                             byte_end: name_node.end_byte(),
@@ -113,6 +116,7 @@ fn check_node(
                         severity: Severity::Warning,
                         line: name_node.start_position().row,
                         column: name_node.start_position().column,
+                        end_column: Some(name_node.end_position().column),
                         fix: Some(Fix {
                             byte_start: name_node.start_byte(),
                             byte_end: name_node.end_byte(),
@@ -137,6 +141,7 @@ fn check_node(
                         severity: Severity::Warning,
                         line: name_node.start_position().row,
                         column: name_node.start_position().column,
+                        end_column: Some(name_node.end_position().column),
                         fix: Some(Fix {
                             byte_start: name_node.start_byte(),
                             byte_end: name_node.end_byte(),

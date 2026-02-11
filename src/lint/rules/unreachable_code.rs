@@ -68,6 +68,7 @@ fn check_body_for_unreachable(body: Node, _source: &str, diags: &mut Vec<LintDia
                 line: child.start_position().row,
                 column: child.start_position().column,
                 fix: None,
+                    end_column: None,
             });
             // Only report the first unreachable statement per block
             break;

@@ -34,6 +34,7 @@ fn check_node(node: Node, source_bytes: &[u8], _source: &str, diags: &mut Vec<Li
                             severity: Severity::Warning,
                             line: child.start_position().row,
                             column: child.start_position().column,
+                            end_column: Some(child.end_position().column),
                             fix,
                         });
                     }

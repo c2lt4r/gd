@@ -41,6 +41,9 @@ pub struct LintDiagnostic {
     pub severity: Severity,
     pub line: usize,
     pub column: usize,
+    /// End column of the span (exclusive). Used for underline display.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end_column: Option<usize>,
     /// If this diagnostic is auto-fixable, this holds the replacement.
     #[serde(skip)]
     pub fix: Option<Fix>,

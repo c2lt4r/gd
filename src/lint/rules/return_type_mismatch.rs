@@ -61,6 +61,7 @@ fn check_void_returns(node: Node, _source: &str, diags: &mut Vec<LintDiagnostic>
                     line: node.start_position().row,
                     column: node.start_position().column,
                     fix: None,
+                    end_column: None,
                 });
             }
         }
@@ -102,6 +103,7 @@ fn check_bare_returns(node: Node, _source: &str, diags: &mut Vec<LintDiagnostic>
                 line: node.start_position().row,
                 column: node.start_position().column,
                 fix: None,
+                    end_column: None,
             });
         }
     }

@@ -1,10 +1,11 @@
 use owo_colors::OwoColorize;
+use serde_json::json;
 use std::path::Path;
 
 use super::rules::{LintDiagnostic, Severity};
 
-/// Print a diagnostic in human-readable format.
-pub fn print_diagnostic(path: &Path, diag: &LintDiagnostic) {
+/// Print a diagnostic in human-readable format with optional source spans.
+pub fn print_diagnostic(path: &Path, diag: &LintDiagnostic, source: Option<&str>) {
     let severity_str = match diag.severity {
         Severity::Warning => "warning".yellow().bold().to_string(),
         Severity::Error => "error".red().bold().to_string(),
@@ -17,6 +18,42 @@ pub fn print_diagnostic(path: &Path, diag: &LintDiagnostic) {
         diag.message,
         diag.rule.dimmed(),
     );
+
+    // Show source span with underline if we have source and end_column
+    if let (Some(source), Some(end_col)) = (source, diag.end_column)
+        && let Some(line_text) = source.lines().nth(diag.line) {
+            let line_num = format!("{}", diag.line + 1);
+            let gutter_width = line_num.len();
+
+            // Print gutter separator
+            eprintln!("{:>width$} {}", "", "|".cyan(), width = gutter_width);
+
+            // Print the source line with line number
+            eprintln!(
+                "{} {} {}",
+                line_num.cyan(),
+                "|".cyan(),
+                line_text,
+            );
+
+            // Print the underline
+            let col = diag.column;
+            let span_len = if end_col > col { end_col - col } else { 1 };
+            let underline = "^".repeat(span_len);
+            let colored_underline = match diag.severity {
+                Severity::Warning => underline.yellow().bold().to_string(),
+                Severity::Error => underline.red().bold().to_string(),
+            };
+            eprintln!(
+                "{:>width$} {} {:>col$}{}",
+                "",
+                "|".cyan(),
+                "",
+                colored_underline,
+                width = gutter_width,
+                col = col,
+            );
+    }
 }
 
 /// Serializable file-level result for JSON output.
@@ -30,4 +67,92 @@ pub struct FileLintResult {
 pub fn print_json(results: &[FileLintResult]) {
     let json = serde_json::to_string_pretty(results).unwrap_or_else(|_| "[]".to_string());
     println!("{}", json);
+}
+
+/// Get a short description for a lint rule.
+fn rule_description(name: &str) -> &'static str {
+    match name {
+        "naming-convention" => "Check snake_case/PascalCase naming conventions",
+        "unused-variable" => "Detect assigned but unused variables",
+        "missing-type-hint" => "Warn on missing parameter and return type hints",
+        "empty-function" => "Detect functions with only pass in body",
+        "long-function" => "Warn on functions exceeding line threshold",
+        "duplicate-signal" => "Detect duplicate signal declarations",
+        "self-assignment" => "Detect variables assigned to themselves",
+        "unreachable-code" => "Detect code after return/break/continue",
+        "shadowed-variable" => "Detect variable shadowing in inner scopes",
+        "comparison-with-boolean" => "Flag explicit == true/false comparisons",
+        "unnecessary-pass" => "Detect pass in non-empty function bodies",
+        "preload-type-hint" => "Warn on untyped preload/load assignments",
+        "integer-division" => "Warn on integer literal division truncation",
+        "signal-name-convention" => "Warn on signals with on_ prefix",
+        "magic-number" => "Flag unexplained numeric literals in functions",
+        "float-comparison" => "Warn on float equality comparisons",
+        "missing-super-call" => "Warn on lifecycle overrides without super()",
+        "return-type-mismatch" => "Detect void/non-void return mismatches",
+        "private-method-access" => "Warn on calling private methods externally",
+        "untyped-array" => "Suggest typed array annotations",
+        _ => "Lint rule",
+    }
+}
+
+/// Print all results as SARIF 2.1.0 JSON for GitHub Code Scanning.
+pub fn print_sarif(results: &[FileLintResult], rules: &[&str]) {
+    let sarif_rules: Vec<serde_json::Value> = rules
+        .iter()
+        .map(|name| {
+            json!({
+                "id": name,
+                "shortDescription": { "text": rule_description(name) }
+            })
+        })
+        .collect();
+
+    let mut sarif_results = Vec::new();
+    for file_result in results {
+        for diag in &file_result.diagnostics {
+            let mut region = json!({
+                "startLine": diag.line + 1,
+                "startColumn": diag.column + 1
+            });
+            if let Some(end_col) = diag.end_column {
+                region["endColumn"] = json!(end_col + 1);
+            }
+
+            sarif_results.push(json!({
+                "ruleId": diag.rule,
+                "level": match diag.severity {
+                    super::rules::Severity::Warning => "warning",
+                    super::rules::Severity::Error => "error",
+                },
+                "message": { "text": diag.message },
+                "locations": [{
+                    "physicalLocation": {
+                        "artifactLocation": {
+                            "uri": file_result.file,
+                            "uriBaseId": "%SRCROOT%"
+                        },
+                        "region": region
+                    }
+                }]
+            }));
+        }
+    }
+
+    let sarif = json!({
+        "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main/sarif-2.1/schema/sarif-schema-2.1.0.json",
+        "version": "2.1.0",
+        "runs": [{
+            "tool": {
+                "driver": {
+                    "name": "gd",
+                    "version": env!("CARGO_PKG_VERSION"),
+                    "rules": sarif_rules
+                }
+            },
+            "results": sarif_results
+        }]
+    });
+
+    println!("{}", serde_json::to_string_pretty(&sarif).unwrap());
 }
