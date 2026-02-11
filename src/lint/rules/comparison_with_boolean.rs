@@ -1,7 +1,7 @@
 use tree_sitter::{Node, Tree};
 
 use crate::core::config::LintConfig;
-use super::{LintDiagnostic, LintRule, Severity};
+use super::{Fix, LintDiagnostic, LintRule, Severity};
 
 pub struct ComparisonWithBoolean;
 
@@ -36,6 +36,9 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
                         "use `not` (e.g. `if not x:` instead of `if x != true:`)"
                     };
 
+                    // Generate fix
+                    let fix = generate_fix(&node, left, right, op, left_is_bool, right_is_bool, source);
+
                     diags.push(LintDiagnostic {
                         rule: "comparison-with-boolean",
                         message: format!(
@@ -46,7 +49,7 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
                         severity: Severity::Warning,
                         line: node.start_position().row,
                         column: node.start_position().column,
-                        fix: None,
+                        fix,
                     });
                 }
             }
@@ -67,4 +70,37 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
 fn is_boolean_literal(node: &Node, source: &str) -> bool {
     let text = &source[node.byte_range()];
     text == "true" || text == "false"
+}
+
+fn generate_fix(
+    node: &Node,
+    left: Option<Node>,
+    right: Option<Node>,
+    op: &str,
+    left_is_bool: bool,
+    _right_is_bool: bool,
+    source: &str,
+) -> Option<Fix> {
+    let (bool_node, other_node) = if left_is_bool {
+        (left?, right?)
+    } else {
+        (right?, left?)
+    };
+
+    let bool_text = &source[bool_node.byte_range()];
+    let other_text = source[other_node.byte_range()].to_string();
+
+    let replacement = match (op, bool_text) {
+        ("==", "true") => other_text,
+        ("==", "false") => format!("not {}", other_text),
+        ("!=", "true") => format!("not {}", other_text),
+        ("!=", "false") => other_text,
+        _ => return None,
+    };
+
+    Some(Fix {
+        byte_start: node.start_byte(),
+        byte_end: node.end_byte(),
+        replacement,
+    })
 }

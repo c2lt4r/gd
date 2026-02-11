@@ -11,6 +11,7 @@ pub mod unreachable_code;
 pub mod shadowed_variable;
 pub mod comparison_with_boolean;
 pub mod unnecessary_pass;
+pub mod preload_type_hint;
 
 use tree_sitter::Tree;
 
@@ -68,6 +69,7 @@ pub fn all_rules(disabled: &[String]) -> Vec<Box<dyn LintRule>> {
         Box::new(shadowed_variable::ShadowedVariable),
         Box::new(comparison_with_boolean::ComparisonWithBoolean),
         Box::new(unnecessary_pass::UnnecessaryPass),
+        Box::new(preload_type_hint::PreloadTypeHint),
     ];
     all.into_iter()
         .filter(|r| !disabled.iter().any(|d| d == r.name()))

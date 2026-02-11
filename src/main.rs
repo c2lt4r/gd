@@ -7,6 +7,7 @@ mod fmt;
 mod lint;
 mod scaffold;
 mod build;
+mod doc;
 
 use cli::Cli;
 

@@ -7,6 +7,9 @@ pub mod build_cmd;
 pub mod check_cmd;
 pub mod clean_cmd;
 pub mod test_cmd;
+pub mod completions_cmd;
+pub mod tree_cmd;
+pub mod doc_cmd;
 
 use clap::{Parser, Subcommand};
 use miette::Result;
@@ -38,6 +41,12 @@ pub enum Command {
     Clean(clean_cmd::CleanArgs),
     /// Run GDScript tests
     Test(test_cmd::TestArgs),
+    /// Generate shell completions
+    Completions(completions_cmd::CompletionsArgs),
+    /// Show project class hierarchy
+    Tree(tree_cmd::TreeArgs),
+    /// Generate documentation from GDScript doc comments
+    Doc(doc_cmd::DocArgs),
 }
 
 pub fn run(cli: Cli) -> Result<()> {
@@ -51,5 +60,8 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Check(args) => check_cmd::exec(args),
         Command::Clean(args) => clean_cmd::exec(args),
         Command::Test(args) => test_cmd::exec(args),
+        Command::Completions(args) => completions_cmd::exec(args),
+        Command::Tree(args) => tree_cmd::exec(args),
+        Command::Doc(args) => doc_cmd::exec(args),
     }
 }

@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 # CLI
 clap = { version = "4", features = ["derive", "env"] }
+clap_complete = "4"
 
 # Parsing
 tree-sitter = "0.24"
