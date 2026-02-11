@@ -25,6 +25,12 @@ pub struct FmtConfig {
     pub indent_size: usize,
     /// Maximum line length before wrapping.
     pub max_line_length: usize,
+    /// Number of blank lines around top-level function definitions.
+    pub blank_lines_around_functions: usize,
+    /// Number of blank lines around top-level class definitions.
+    pub blank_lines_around_classes: usize,
+    /// Ensure file ends with exactly one newline.
+    pub trailing_newline: bool,
 }
 
 impl Default for FmtConfig {
@@ -33,6 +39,9 @@ impl Default for FmtConfig {
             use_tabs: true,
             indent_size: 4,
             max_line_length: 100,
+            blank_lines_around_functions: 2,
+            blank_lines_around_classes: 2,
+            trailing_newline: true,
         }
     }
 }
@@ -128,7 +137,7 @@ fn warn_unknown_keys(raw: &toml::Value) {
     };
 
     let known_top = &["fmt", "lint", "build", "run"];
-    let known_fmt = &["use_tabs", "indent_size", "max_line_length"];
+    let known_fmt = &["use_tabs", "indent_size", "max_line_length", "blank_lines_around_functions", "blank_lines_around_classes", "trailing_newline"];
     let known_lint = &["disabled_rules", "max_function_length", "rules", "ignore_patterns"];
     let known_rule = &["severity"];
     let known_build = &["presets", "output_dir"];
@@ -233,6 +242,9 @@ mod tests {
             use_tabs = true
             indent_size = 4
             max_line_length = 120
+            blank_lines_around_functions = 2
+            blank_lines_around_classes = 2
+            trailing_newline = true
 
             [lint]
             disabled_rules = ["unused-variable"]

@@ -2,49 +2,52 @@
 
 use tree_sitter::Node;
 
-/// Represents the kind of whitespace to insert between top-level statements.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Spacing {
-    /// No extra blank lines - consecutive lines.
-    None,
-    /// One blank line between items.
-    BlankLine,
-    /// Two blank lines between items.
-    TwoBlankLines,
-}
-
-/// Top-level node kinds that get two blank lines around them.
-const TWO_BLANK_LINE_KINDS: &[&str] = &[
-    "function_definition",
-    "class_definition",
-];
-
-/// Check if a node has annotations as a child
+/// Check if a node has annotations as a child.
 fn has_annotations(node: &Node) -> bool {
     let mut cursor = node.walk();
     node.children(&mut cursor)
         .any(|child| child.kind() == "annotations")
 }
 
-/// Determine spacing between two consecutive siblings in a body.
-pub fn spacing_between(prev: &Node, next: &Node, in_class_body: bool) -> Spacing {
-    let prev_kind = prev.kind();
-    let next_kind = next.kind();
-
+/// Returns the number of blank lines to insert between two consecutive siblings.
+///
+/// `func_blank` and `class_blank` control blank lines around function and class
+/// definitions at the top level. Inside class bodies, methods always get 1 blank line.
+pub fn spacing_between(
+    prev: &Node,
+    next: &Node,
+    in_class_body: bool,
+    func_blank: usize,
+    class_blank: usize,
+) -> usize {
     if in_class_body {
         return spacing_in_class_body(prev, next);
     }
 
+    let prev_kind = prev.kind();
+    let next_kind = next.kind();
+
     // Standalone annotations (@tool, @icon) attach to the next statement - no blank line
     if prev_kind == "annotation" || prev_kind == "annotations" {
-        return Spacing::None;
+        return 0;
     }
 
-    // Two blank lines before/after functions and classes
-    let prev_is_big = TWO_BLANK_LINE_KINDS.contains(&prev_kind);
-    let next_is_big = TWO_BLANK_LINE_KINDS.contains(&next_kind);
-    if prev_is_big || next_is_big {
-        return Spacing::TwoBlankLines;
+    let prev_is_func = prev_kind == "function_definition";
+    let next_is_func = next_kind == "function_definition";
+    let prev_is_class = prev_kind == "class_definition";
+    let next_is_class = next_kind == "class_definition";
+
+    // Adjacent to both function and class: use the larger
+    if (prev_is_func || next_is_func) && (prev_is_class || next_is_class) {
+        return func_blank.max(class_blank);
+    }
+
+    if prev_is_func || next_is_func {
+        return func_blank;
+    }
+
+    if prev_is_class || next_is_class {
+        return class_blank;
     }
 
     // Special handling for variable statements: distinguish annotated vs non-annotated
@@ -53,50 +56,48 @@ pub fn spacing_between(prev: &Node, next: &Node, in_class_body: bool) -> Spacing
         let next_has_anno = has_annotations(next);
         // If one has annotations and the other doesn't, add blank line between groups
         if prev_has_anno != next_has_anno {
-            return Spacing::BlankLine;
+            return 1;
         }
         // Both have annotations or both don't: no blank line
-        return Spacing::None;
+        return 0;
     }
 
     // Same kind of statement: no blank line (e.g., consecutive signals, consts)
     if prev_kind == next_kind {
-        return Spacing::None;
+        return 0;
     }
 
     // Different kinds: one blank line between groups
-    Spacing::BlankLine
+    1
 }
 
-fn spacing_in_class_body(prev: &Node, next: &Node) -> Spacing {
+fn spacing_in_class_body(prev: &Node, next: &Node) -> usize {
     let prev_kind = prev.kind();
     let next_kind = next.kind();
 
     let prev_is_func = prev_kind == "function_definition";
     let next_is_func = next_kind == "function_definition";
 
-    // One blank line before/after methods
+    // One blank line before/after methods in class body
     if prev_is_func || next_is_func {
-        return Spacing::BlankLine;
+        return 1;
     }
 
     // Special handling for variable statements: distinguish annotated vs non-annotated
     if prev_kind == "variable_statement" && next_kind == "variable_statement" {
         let prev_has_anno = has_annotations(prev);
         let next_has_anno = has_annotations(next);
-        // If one has annotations and the other doesn't, add blank line between groups
         if prev_has_anno != next_has_anno {
-            return Spacing::BlankLine;
+            return 1;
         }
-        // Both have annotations or both don't: no blank line
-        return Spacing::None;
+        return 0;
     }
 
     // Same kind: no blank line
     if prev_kind == next_kind {
-        return Spacing::None;
+        return 0;
     }
 
     // Different kinds: blank line
-    Spacing::BlankLine
+    1
 }

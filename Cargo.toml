@@ -46,6 +46,8 @@ similar = "2"          # Diffing for fmt --check
 ureq = { version = "3", features = ["json"] }
 zip = "2"
 urlencoding = "2"
+flate2 = "1"
+tar = "0.4"
 
 # File watching
 notify = "7"

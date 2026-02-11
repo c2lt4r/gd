@@ -97,6 +97,9 @@ fn rule_description(name: &str) -> &'static str {
         "duplicate-key" => "Detect duplicate dictionary keys",
         "await-in-ready" => "Warn about await in _ready()",
         "missing-return" => "Detect missing return in typed functions",
+        "unused-preload" => "Detect preloaded variables that are never used",
+        "static-type-inference" => "Suggest explicit types for trivially inferable literals",
+        "node-ready-order" => "Warn on node access in _init() before tree is ready",
         _ => "Lint rule",
     }
 }

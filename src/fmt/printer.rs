@@ -11,7 +11,8 @@
 
 use tree_sitter::Node;
 
-use super::rules::{self, Spacing};
+use super::rules;
+use crate::core::config::FmtConfig;
 
 /// Node kinds whose full source text should be emitted verbatim.
 /// These nodes have internal content that is NOT exposed as child nodes.
@@ -38,6 +39,9 @@ pub struct Printer {
     output: String,
     use_tabs: bool,
     indent_size: usize,
+    blank_lines_around_functions: usize,
+    blank_lines_around_classes: usize,
+    trailing_newline: bool,
 }
 
 impl Printer {
@@ -46,14 +50,29 @@ impl Printer {
             output: String::new(),
             use_tabs,
             indent_size,
+            blank_lines_around_functions: 2,
+            blank_lines_around_classes: 2,
+            trailing_newline: true,
+        }
+    }
+
+    pub fn from_config(config: &FmtConfig) -> Self {
+        Self {
+            output: String::new(),
+            use_tabs: config.use_tabs,
+            indent_size: config.indent_size,
+            blank_lines_around_functions: config.blank_lines_around_functions,
+            blank_lines_around_classes: config.blank_lines_around_classes,
+            trailing_newline: config.trailing_newline,
         }
     }
 
     pub fn finish(mut self) -> String {
-        // Ensure single trailing newline
         let trimmed = self.output.trim_end().len();
         self.output.truncate(trimmed);
-        self.output.push('\n');
+        if self.trailing_newline {
+            self.output.push('\n');
+        }
         self.output
     }
 
@@ -132,12 +151,12 @@ impl Printer {
         for (i, child) in children.iter().enumerate() {
             if i > 0 {
                 let prev = &children[i - 1];
-                let spacing = rules::spacing_between(prev, child, false);
-                match spacing {
-                    Spacing::TwoBlankLines => self.push_str("\n\n\n"),
-                    Spacing::BlankLine => self.push_str("\n\n"),
-                    Spacing::None => self.push_str("\n"),
-                }
+                let blank_lines = rules::spacing_between(
+                    prev, child, false,
+                    self.blank_lines_around_functions,
+                    self.blank_lines_around_classes,
+                );
+                self.write_blank_lines(blank_lines);
             }
             self.write_indent(indent);
             self.print_node(child, source, indent);
@@ -160,12 +179,12 @@ impl Printer {
         for (i, child) in children.iter().enumerate() {
             if i > 0 && is_class_body {
                 let prev = &children[i - 1];
-                let spacing = rules::spacing_between(prev, child, true);
-                match spacing {
-                    Spacing::TwoBlankLines => self.push_str("\n\n\n"),
-                    Spacing::BlankLine => self.push_str("\n\n"),
-                    Spacing::None => self.push_str("\n"),
-                }
+                let blank_lines = rules::spacing_between(
+                    prev, child, true,
+                    self.blank_lines_around_functions,
+                    self.blank_lines_around_classes,
+                );
+                self.write_blank_lines(blank_lines);
             } else {
                 self.push_str("\n");
             }
@@ -843,6 +862,13 @@ impl Printer {
         self.output.push_str(s);
     }
 
+    /// Write a newline plus `count` blank lines.
+    fn write_blank_lines(&mut self, count: usize) {
+        for _ in 0..=count {
+            self.output.push('\n');
+        }
+    }
+
     fn write_indent(&mut self, level: usize) {
         if self.use_tabs {
             for _ in 0..level {
@@ -1113,5 +1139,46 @@ mod tests {
         let output = format_source(input);
         // Trailing comma should be preserved (though spacing may be normalized)
         assert!(output.contains("\"b\","), "Trailing comma should be preserved, got: {output}");
+    }
+
+    // ── Config option tests ───────────────────────────────────────────
+
+    fn format_with_config(source: &str, config: &crate::core::config::FmtConfig) -> String {
+        let tree = parser::parse(source).unwrap();
+        let mut printer = Printer::from_config(config);
+        printer.format(&tree.root_node(), source);
+        printer.finish()
+    }
+
+    #[test]
+    fn test_blank_lines_around_functions_one() {
+        let mut config = crate::core::config::FmtConfig::default();
+        config.blank_lines_around_functions = 1;
+        let input = "var x = 1\n\n\nfunc a():\n\tpass\n\n\nfunc b():\n\tpass\n";
+        let output = format_with_config(input, &config);
+        // Only 1 blank line before/between functions
+        assert!(output.contains("x = 1\n\nfunc a"), "got: {output}");
+        assert!(output.contains("pass\n\nfunc b"), "got: {output}");
+        // Not 2 blank lines
+        assert!(!output.contains("\n\n\nfunc"), "got: {output}");
+    }
+
+    #[test]
+    fn test_trailing_newline_false() {
+        let mut config = crate::core::config::FmtConfig::default();
+        config.trailing_newline = false;
+        let input = "func f():\n\tpass\n";
+        let output = format_with_config(input, &config);
+        assert!(!output.ends_with('\n'), "got: {output:?}");
+        assert!(output.ends_with("pass"), "got: {output:?}");
+    }
+
+    #[test]
+    fn test_from_config_defaults_match_new() {
+        let config = crate::core::config::FmtConfig::default();
+        let input = "func a():\n\tpass\nfunc b():\n\tpass\n";
+        let output_new = format_source(input);
+        let output_config = format_with_config(input, &config);
+        assert_eq!(output_new, output_config);
     }
 }

@@ -39,6 +39,9 @@ pub const GD_TOML_TEMPLATE: &str = r#"# gd toolchain configuration
 use_tabs = true
 indent_size = 4
 max_line_length = 100
+# blank_lines_around_functions = 2
+# blank_lines_around_classes = 2
+# trailing_newline = true
 
 [lint]
 disabled_rules = []

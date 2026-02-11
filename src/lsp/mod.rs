@@ -1,4 +1,5 @@
 mod actions;
+mod completion;
 mod definition;
 mod diagnostics;
 mod formatting;
@@ -57,6 +58,10 @@ impl LanguageServer for Backend {
                 document_formatting_provider: Some(OneOf::Left(true)),
                 code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
                 document_symbol_provider: Some(OneOf::Left(true)),
+                completion_provider: Some(CompletionOptions {
+                    trigger_characters: Some(vec![".".to_string()]),
+                    ..Default::default()
+                }),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 definition_provider: Some(OneOf::Left(true)),
                 references_provider: Some(OneOf::Left(true)),
@@ -268,6 +273,30 @@ impl LanguageServer for Backend {
         drop(doc);
 
         Ok(rename::prepare_rename(&source, params.position))
+    }
+
+    async fn completion(
+        &self,
+        params: CompletionParams,
+    ) -> Result<Option<CompletionResponse>> {
+        let uri = &params.text_document_position.text_document.uri;
+        let Some(doc) = self.documents.get(uri) else {
+            return Ok(None);
+        };
+        let source = doc.content.clone();
+        drop(doc);
+
+        let items = completion::provide_completions(
+            &source,
+            params.text_document_position.position,
+            self.workspace.get(),
+        );
+
+        if items.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(CompletionResponse::Array(items)))
+        }
     }
 }
 

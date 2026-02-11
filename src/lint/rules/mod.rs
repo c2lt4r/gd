@@ -25,6 +25,9 @@ pub mod unused_signal;
 pub mod duplicate_key;
 pub mod await_in_ready;
 pub mod missing_return;
+pub mod unused_preload;
+pub mod static_type_inference;
+pub mod node_ready_order;
 
 use tree_sitter::Tree;
 
@@ -99,6 +102,9 @@ pub fn all_rules(disabled: &[String]) -> Vec<Box<dyn LintRule>> {
         Box::new(duplicate_key::DuplicateKey),
         Box::new(await_in_ready::AwaitInReady),
         Box::new(missing_return::MissingReturn),
+        Box::new(unused_preload::UnusedPreload),
+        Box::new(static_type_inference::StaticTypeInference),
+        Box::new(node_ready_order::NodeReadyOrder),
     ];
     all.into_iter()
         .filter(|r| !disabled.iter().any(|d| d == r.name()))

@@ -17,6 +17,7 @@ pub mod ci_cmd;
 pub mod lsp_cmd;
 pub mod deps_cmd;
 pub mod man_cmd;
+pub mod upgrade_cmd;
 
 use clap::{Parser, Subcommand};
 use miette::Result;
@@ -68,6 +69,8 @@ pub enum Command {
     Deps(deps_cmd::DepsArgs),
     /// Generate man pages
     Man(man_cmd::ManArgs),
+    /// Upgrade gd to the latest version
+    Upgrade(upgrade_cmd::UpgradeArgs),
 }
 
 pub fn run(cli: Cli) -> Result<()> {
@@ -91,5 +94,6 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Lsp(args) => lsp_cmd::exec(args),
         Command::Deps(args) => deps_cmd::exec(args),
         Command::Man(args) => man_cmd::exec(args),
+        Command::Upgrade(args) => upgrade_cmd::exec(args),
     }
 }

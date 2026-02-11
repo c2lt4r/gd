@@ -96,7 +96,7 @@ fn format_file(path: &Path, config: &Config, check: bool, show_diff: bool) -> Re
         .map_err(|e| miette!("Failed to read {}: {e}", path.display()))?;
 
     let tree = parser::parse(&source)?;
-    let mut printer = Printer::new(config.fmt.use_tabs, config.fmt.indent_size);
+    let mut printer = Printer::from_config(&config.fmt);
     printer.format(&tree.root_node(), &source);
     let formatted = printer.finish();
 
