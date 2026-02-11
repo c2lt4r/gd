@@ -223,6 +223,9 @@ mod tests {
         // do_nothing is public (no _ prefix) so should still warn even with virtual stubs nearby
         let source = "func _on_enter(_msg: Dictionary) -> void:\n\tpass\n\nfunc do_nothing() -> void:\n\tpass\n";
         assert_eq!(check(source).len(), 1);
-        assert_eq!(check(source)[0].message, "function `do_nothing` has an empty body (only `pass`)");
+        assert_eq!(
+            check(source)[0].message,
+            "function `do_nothing` has an empty body (only `pass`)"
+        );
     }
 }
