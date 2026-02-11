@@ -20,16 +20,20 @@ impl LintRule for UnusedSignal {
         let mut signals: HashMap<String, (usize, usize)> = HashMap::new();
         collect_signals(root, src, &mut signals);
 
-        // Second pass: find all emitted signals
-        let mut emitted: HashSet<String> = HashSet::new();
-        collect_emitted(root, src, &mut emitted);
+        // Second pass: find all referenced signals (emitted or connected)
+        let mut referenced: HashSet<String> = HashSet::new();
+        collect_emitted(root, src, &mut referenced);
+        collect_signal_references(root, src, &mut referenced);
 
-        // Report signals that are never emitted
+        // Report signals that are never referenced in this file
         for (name, (line, column)) in &signals {
-            if !emitted.contains(name) {
+            if !referenced.contains(name) {
                 diags.push(LintDiagnostic {
                     rule: "unused-signal",
-                    message: format!("signal `{}` is declared but never emitted", name),
+                    message: format!(
+                        "signal `{}` is declared but never referenced in this file",
+                        name
+                    ),
                     severity: Severity::Warning,
                     line: *line,
                     column: *column,
@@ -120,6 +124,41 @@ fn collect_emitted(node: Node, src: &[u8], emitted: &mut HashSet<String>) {
             }
 
             collect_emitted(child, src, emitted);
+
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+    }
+}
+
+/// Find signal references via .connect(), .disconnect(), or direct signal access.
+/// Catches patterns like: signal_name.connect(...), self.signal_name.connect(...)
+fn collect_signal_references(node: Node, src: &[u8], referenced: &mut HashSet<String>) {
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            let child = cursor.node();
+
+            if child.kind() == "call"
+                && let Some(func) = child.child_by_field_name("function")
+            {
+                let func_text = func.utf8_text(src).unwrap_or("");
+
+                // signal_name.connect(...) / self.signal_name.connect(...)
+                // signal_name.disconnect(...) / self.signal_name.disconnect(...)
+                for suffix in &[".connect", ".disconnect"] {
+                    if func_text.ends_with(suffix) {
+                        let before = func_text.trim_end_matches(suffix);
+                        let name = before.rsplit('.').next().unwrap_or(before);
+                        if !name.is_empty() {
+                            referenced.insert(name.to_string());
+                        }
+                    }
+                }
+            }
+
+            collect_signal_references(child, src, referenced);
 
             if !cursor.goto_next_sibling() {
                 break;
