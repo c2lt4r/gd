@@ -1,8 +1,8 @@
 {
   "name": "gd-gdscript",
   "displayName": "GDScript (gd)",
-  "description": "GDScript language support powered by the gd toolchain",
-  "version": "0.1.0",
+  "description": "GDScript language support powered by the gd toolchain — formatting, linting, go-to-definition, and more",
+  "version": "0.1.1",
   "publisher": "c2lt4r",
   "license": "MIT",
   "repository": {
@@ -17,6 +17,13 @@
     "Programming Languages",
     "Linters",
     "Formatters"
+  ],
+  "keywords": [
+    "godot",
+    "gdscript",
+    "gamedev",
+    "linter",
+    "formatter"
   ],
   "activationEvents": [
     "onLanguage:gdscript"
@@ -43,6 +50,13 @@
         "path": "./syntaxes/gdscript.tmLanguage.json"
       }
     ],
+    "commands": [
+      {
+        "command": "gd.restartLsp",
+        "title": "Restart Language Server",
+        "category": "GDScript"
+      }
+    ],
     "configuration": {
       "title": "GDScript (gd)",
       "properties": {
@@ -55,7 +69,28 @@
           "type": "boolean",
           "default": true,
           "description": "Enable the gd language server"
+        },
+        "gd.trace.server": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "description": "Trace communication between VS Code and the gd language server (for debugging)"
         }
+      }
+    },
+    "configurationDefaults": {
+      "[gdscript]": {
+        "editor.defaultFormatter": "c2lt4r.gd-gdscript",
+        "editor.formatOnSave": true,
+        "editor.insertSpaces": false,
+        "editor.tabSize": 4,
+        "editor.trimAutoWhitespace": true,
+        "files.trimTrailingWhitespace": true,
+        "files.insertFinalNewline": true
       }
     }
   },

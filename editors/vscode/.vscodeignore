@@ -1,3 +1,5 @@
 .vscode/
 src/
 tsconfig.json
+*.vsix
+.gitignore
