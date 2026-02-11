@@ -92,6 +92,11 @@ fn rule_description(name: &str) -> &'static str {
         "return-type-mismatch" => "Detect void/non-void return mismatches",
         "private-method-access" => "Warn on calling private methods externally",
         "untyped-array" => "Suggest typed array annotations",
+        "duplicate-function" => "Detect duplicate function definitions",
+        "unused-signal" => "Detect signals that are never emitted",
+        "duplicate-key" => "Detect duplicate dictionary keys",
+        "await-in-ready" => "Warn about await in _ready()",
+        "missing-return" => "Detect missing return in typed functions",
         _ => "Lint rule",
     }
 }

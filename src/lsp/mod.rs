@@ -3,6 +3,8 @@ mod definition;
 mod diagnostics;
 mod formatting;
 mod hover;
+mod references;
+mod rename;
 mod symbols;
 
 use dashmap::DashMap;
@@ -51,6 +53,11 @@ impl LanguageServer for Backend {
                 document_symbol_provider: Some(OneOf::Left(true)),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 definition_provider: Some(OneOf::Left(true)),
+                references_provider: Some(OneOf::Left(true)),
+                rename_provider: Some(OneOf::Right(RenameOptions {
+                    prepare_provider: Some(true),
+                    work_done_progress_options: Default::default(),
+                })),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -175,6 +182,52 @@ impl LanguageServer for Backend {
             uri,
             params.text_document_position_params.position,
         ))
+    }
+
+    async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
+        let uri = &params.text_document_position.text_document.uri;
+        let Some(doc) = self.documents.get(uri) else {
+            return Ok(None);
+        };
+        let source = doc.content.clone();
+        drop(doc);
+
+        Ok(references::find_references(
+            &source,
+            uri,
+            params.text_document_position.position,
+            params.context.include_declaration,
+        ))
+    }
+
+    async fn rename(&self, params: RenameParams) -> Result<Option<WorkspaceEdit>> {
+        let uri = &params.text_document_position.text_document.uri;
+        let Some(doc) = self.documents.get(uri) else {
+            return Ok(None);
+        };
+        let source = doc.content.clone();
+        drop(doc);
+
+        Ok(rename::rename_symbol(
+            &source,
+            uri,
+            params.text_document_position.position,
+            &params.new_name,
+        ))
+    }
+
+    async fn prepare_rename(
+        &self,
+        params: TextDocumentPositionParams,
+    ) -> Result<Option<PrepareRenameResponse>> {
+        let uri = &params.text_document.uri;
+        let Some(doc) = self.documents.get(uri) else {
+            return Ok(None);
+        };
+        let source = doc.content.clone();
+        drop(doc);
+
+        Ok(rename::prepare_rename(&source, params.position))
     }
 }
 

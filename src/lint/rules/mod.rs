@@ -20,6 +20,11 @@ pub mod missing_super_call;
 pub mod return_type_mismatch;
 pub mod private_method_access;
 pub mod untyped_array;
+pub mod duplicate_function;
+pub mod unused_signal;
+pub mod duplicate_key;
+pub mod await_in_ready;
+pub mod missing_return;
 
 use tree_sitter::Tree;
 
@@ -89,6 +94,11 @@ pub fn all_rules(disabled: &[String]) -> Vec<Box<dyn LintRule>> {
         Box::new(return_type_mismatch::ReturnTypeMismatch),
         Box::new(private_method_access::PrivateMethodAccess),
         Box::new(untyped_array::UntypedArray),
+        Box::new(duplicate_function::DuplicateFunction),
+        Box::new(unused_signal::UnusedSignal),
+        Box::new(duplicate_key::DuplicateKey),
+        Box::new(await_in_ready::AwaitInReady),
+        Box::new(missing_return::MissingReturn),
     ];
     all.into_iter()
         .filter(|r| !disabled.iter().any(|d| d == r.name()))
