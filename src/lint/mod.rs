@@ -309,7 +309,8 @@ pub fn matches_ignore_pattern(path: &Path, base: &Path, patterns: &[String]) -> 
     let canon_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let canon_base = base.canonicalize().unwrap_or_else(|_| base.to_path_buf());
     let relative = canon_path.strip_prefix(&canon_base).unwrap_or(&canon_path);
-    let rel_str = relative.to_string_lossy();
+    // Normalize to forward slashes so patterns work on Windows
+    let rel_str = relative.to_string_lossy().replace('\\', "/");
 
     for pattern in patterns {
         if pattern.ends_with("/**") {
