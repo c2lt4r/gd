@@ -1,18 +1,33 @@
+use std::path::Path;
 use tower_lsp::lsp_types::*;
 
 /// Lint source code and return LSP diagnostics.
-pub fn lint_source(source: &str) -> Vec<Diagnostic> {
+pub fn lint_source(source: &str, uri: &Url) -> Vec<Diagnostic> {
     // Parse with tree-sitter
     let tree = match crate::core::parser::parse(source) {
         Ok(tree) => tree,
         Err(_) => return vec![],
     };
 
-    // Load config from working directory (falls back to defaults)
-    let config = std::env::current_dir()
+    // Load config, searching upward from the file's directory
+    let config = uri
+        .to_file_path()
         .ok()
-        .and_then(|cwd| crate::core::config::Config::load(&cwd).ok())
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+        .and_then(|dir| crate::core::config::Config::load(&dir).ok())
         .unwrap_or_default();
+
+    // Check if this file matches ignore patterns
+    if let Ok(file_path) = uri.to_file_path() {
+        let base = uri
+            .to_file_path()
+            .ok()
+            .and_then(|p| find_project_root(&p))
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+        if crate::lint::matches_ignore_pattern(&file_path, &base, &config.lint.ignore_patterns) {
+            return vec![];
+        }
+    }
 
     // Run all lint rules
     let rules = crate::lint::rules::all_rules(&config.lint.disabled_rules, &config.lint.rules);
@@ -95,5 +110,16 @@ fn is_suppressed(
         }
     } else {
         false
+    }
+}
+
+/// Walk upward from a file path to find the project root (directory containing gd.toml or project.godot).
+fn find_project_root(file_path: &Path) -> Option<std::path::PathBuf> {
+    let mut dir = file_path.parent()?;
+    loop {
+        if dir.join("gd.toml").is_file() || dir.join("project.godot").is_file() {
+            return Some(dir.to_path_buf());
+        }
+        dir = dir.parent()?;
     }
 }

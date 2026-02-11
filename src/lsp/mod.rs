@@ -35,7 +35,7 @@ impl Backend {
         let source = doc.content.clone();
         drop(doc); // release lock before expensive work
 
-        let diags = diagnostics::lint_source(&source);
+        let diags = diagnostics::lint_source(&source, &uri);
 
         self.client.publish_diagnostics(uri, diags, None).await;
     }

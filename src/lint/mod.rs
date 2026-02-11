@@ -284,7 +284,7 @@ fn apply_fixes(source: &str, fixes: &[&Fix]) -> String {
 
 /// Check if a file path matches any of the ignore patterns.
 /// Patterns support: `dir/**` (recursive), `*.ext` (extension), exact match.
-fn matches_ignore_pattern(path: &Path, base: &Path, patterns: &[String]) -> bool {
+pub fn matches_ignore_pattern(path: &Path, base: &Path, patterns: &[String]) -> bool {
     if patterns.is_empty() {
         return false;
     }
