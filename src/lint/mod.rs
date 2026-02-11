@@ -8,7 +8,7 @@ use miette::{Result, miette};
 use owo_colors::OwoColorize;
 use rayon::prelude::*;
 
-use crate::core::config::Config;
+use crate::core::config::{Config, find_project_root};
 use crate::core::fs::collect_gdscript_files;
 use crate::core::parser;
 
@@ -19,7 +19,21 @@ use rules::{Fix, LintDiagnostic, Severity, all_rules};
 pub fn run_lint(paths: &[String], format: &str, fix: bool) -> Result<()> {
     let cwd =
         std::env::current_dir().map_err(|e| miette!("Failed to get current directory: {e}"))?;
-    let config = Config::load(&cwd)?;
+
+    // Load config: search from the first explicit path if given, otherwise cwd
+    let config_search_dir = if let Some(first) = paths.first() {
+        let p = PathBuf::from(first);
+        if p.is_file() {
+            p.parent().unwrap_or(&cwd).to_path_buf()
+        } else if p.is_dir() {
+            p.clone()
+        } else {
+            cwd.clone()
+        }
+    } else {
+        cwd.clone()
+    };
+    let config = Config::load(&config_search_dir)?;
 
     // Collect GDScript files
     let files = collect_files(paths, &cwd)?;
@@ -38,10 +52,13 @@ pub fn run_lint(paths: &[String], format: &str, fix: bool) -> Result<()> {
     }
     let rules = all_rules(&disabled, &config.lint.rules);
 
+    // Use project root (not cwd) as base for ignore patterns
+    let ignore_base = find_project_root(&config_search_dir).unwrap_or_else(|| cwd.clone());
+
     // Process files in parallel, skipping those matching ignore_patterns
     let file_results: Vec<(PathBuf, Vec<LintDiagnostic>)> = files
         .par_iter()
-        .filter(|path| !matches_ignore_pattern(path, &cwd, &config.lint.ignore_patterns))
+        .filter(|path| !matches_ignore_pattern(path, &ignore_base, &config.lint.ignore_patterns))
         .filter_map(|path| match lint_file(path, &rules, &config, fix) {
             Ok(diags) => Some((path.clone(), diags)),
             Err(e) => {

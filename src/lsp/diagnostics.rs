@@ -1,4 +1,3 @@
-use std::path::Path;
 use tower_lsp::lsp_types::*;
 
 /// Lint source code and return LSP diagnostics.
@@ -22,7 +21,7 @@ pub fn lint_source(source: &str, uri: &Url) -> Vec<Diagnostic> {
         let base = uri
             .to_file_path()
             .ok()
-            .and_then(|p| find_project_root(&p))
+            .and_then(|p| crate::core::config::find_project_root(&p))
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
         if crate::lint::matches_ignore_pattern(&file_path, &base, &config.lint.ignore_patterns) {
             return vec![];
@@ -110,16 +109,5 @@ fn is_suppressed(
         }
     } else {
         false
-    }
-}
-
-/// Walk upward from a file path to find the project root (directory containing gd.toml or project.godot).
-fn find_project_root(file_path: &Path) -> Option<std::path::PathBuf> {
-    let mut dir = file_path.parent()?;
-    loop {
-        if dir.join("gd.toml").is_file() || dir.join("project.godot").is_file() {
-            return Some(dir.to_path_buf());
-        }
-        dir = dir.parent()?;
     }
 }

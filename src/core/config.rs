@@ -287,6 +287,23 @@ mod tests {
     }
 }
 
+/// Walk upward from `start` looking for the project root (directory containing gd.toml or project.godot).
+pub fn find_project_root(start: &Path) -> Option<PathBuf> {
+    let mut dir = if start.is_file() {
+        start.parent()?.to_path_buf()
+    } else {
+        start.to_path_buf()
+    };
+    loop {
+        if dir.join(CONFIG_FILE).is_file() || dir.join("project.godot").is_file() {
+            return Some(dir);
+        }
+        if !dir.pop() {
+            return None;
+        }
+    }
+}
+
 /// Walk upward from `start` looking for gd.toml.
 fn find_config(start: &Path) -> Option<PathBuf> {
     let mut dir = if start.is_file() {
