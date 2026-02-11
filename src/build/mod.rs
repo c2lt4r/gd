@@ -1,4 +1,4 @@
-use miette::{miette, Result};
+use miette::{Result, miette};
 use owo_colors::OwoColorize;
 use std::env;
 use std::path::{Path, PathBuf};
@@ -132,11 +132,7 @@ pub fn run_project(
 }
 
 /// Export/build the Godot project.
-pub fn export_project(
-    preset: Option<&str>,
-    output: Option<&str>,
-    release: bool,
-) -> Result<()> {
+pub fn export_project(preset: Option<&str>, output: Option<&str>, release: bool) -> Result<()> {
     let cwd = env::current_dir().unwrap_or_default();
     let config = Config::load(&cwd)?;
     let project = GodotProject::discover(&cwd)?;
@@ -183,12 +179,19 @@ pub fn export_project(
     // Determine output path
     let output_dir = match output {
         Some(p) => PathBuf::from(p),
-        None => project.root.join(&config.build.output_dir).join(&preset_name),
+        None => project
+            .root
+            .join(&config.build.output_dir)
+            .join(&preset_name),
     };
 
     // Create output directory
-    std::fs::create_dir_all(&output_dir)
-        .map_err(|e| miette!("Failed to create output directory {}: {e}", output_dir.display()))?;
+    std::fs::create_dir_all(&output_dir).map_err(|e| {
+        miette!(
+            "Failed to create output directory {}: {e}",
+            output_dir.display()
+        )
+    })?;
 
     // Determine output file path (use preset name as default filename)
     let output_file = if output.is_some() {
@@ -253,11 +256,7 @@ pub fn export_project(
         std::process::exit(code);
     }
 
-    println!(
-        "{} Export complete: {}",
-        "✓".green(),
-        output_file.display()
-    );
+    println!("{} Export complete: {}", "✓".green(), output_file.display());
     Ok(())
 }
 
@@ -276,9 +275,10 @@ fn parse_export_presets(project_root: &Path) -> Result<Vec<String>> {
         let trimmed = line.trim();
         // Look for: name="PresetName"
         if let Some(rest) = trimmed.strip_prefix("name=\"")
-            && let Some(name) = rest.strip_suffix('"') {
-                presets.push(name.to_string());
-            }
+            && let Some(name) = rest.strip_suffix('"')
+        {
+            presets.push(name.to_string());
+        }
     }
 
     Ok(presets)

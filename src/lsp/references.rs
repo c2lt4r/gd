@@ -22,9 +22,20 @@ pub fn find_references(
 
     // Collect all matching identifiers in the file
     let mut locations = Vec::new();
-    collect_references(root, source, target_name, uri, include_declaration, &mut locations);
+    collect_references(
+        root,
+        source,
+        target_name,
+        uri,
+        include_declaration,
+        &mut locations,
+    );
 
-    if locations.is_empty() { None } else { Some(locations) }
+    if locations.is_empty() {
+        None
+    } else {
+        Some(locations)
+    }
 }
 
 /// Declaration node kinds whose `name` field child is the defining occurrence.
@@ -52,8 +63,7 @@ fn is_declaration(node: &tree_sitter::Node, source: &str, target_name: &str) -> 
     } else if parent.kind() == "class_name_statement" {
         // Fallback: check second child
         parent.child(1).is_some_and(|n| {
-            n.id() == node.id()
-                && n.utf8_text(source.as_bytes()).unwrap_or("") == target_name
+            n.id() == node.id() && n.utf8_text(source.as_bytes()).unwrap_or("") == target_name
         })
     } else {
         false
@@ -91,7 +101,14 @@ fn collect_references(
     // Recurse into children
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        collect_references(child, source, target_name, uri, include_declaration, locations);
+        collect_references(
+            child,
+            source,
+            target_name,
+            uri,
+            include_declaration,
+            locations,
+        );
     }
 }
 
@@ -117,7 +134,14 @@ pub fn find_references_cross_file(
     let mut locations = Vec::new();
 
     // Current file
-    collect_references(root, source, target_name, uri, include_declaration, &mut locations);
+    collect_references(
+        root,
+        source,
+        target_name,
+        uri,
+        include_declaration,
+        &mut locations,
+    );
 
     // All workspace files
     let current_path = uri.to_file_path().ok();
@@ -141,7 +165,11 @@ pub fn find_references_cross_file(
         }
     }
 
-    if locations.is_empty() { None } else { Some(locations) }
+    if locations.is_empty() {
+        None
+    } else {
+        Some(locations)
+    }
 }
 
 fn node_range(node: &tree_sitter::Node) -> Range {

@@ -89,11 +89,7 @@ fn hover_enum(node: &tree_sitter::Node, source: &str) -> Option<Hover> {
 }
 
 /// Try to resolve an identifier to a top-level declaration in the file.
-fn resolve_identifier(
-    root: &tree_sitter::Node,
-    name: &str,
-    source: &str,
-) -> Option<Hover> {
+fn resolve_identifier(root: &tree_sitter::Node, name: &str, source: &str) -> Option<Hover> {
     let mut cursor = root.walk();
     for child in root.children(&mut cursor) {
         match child.kind() {

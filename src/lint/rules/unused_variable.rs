@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use tree_sitter::{Node, Tree};
 
-use crate::core::config::LintConfig;
 use super::{LintDiagnostic, LintRule, Severity};
+use crate::core::config::LintConfig;
 
 pub struct UnusedVariable;
 
@@ -24,9 +24,10 @@ impl LintRule for UnusedVariable {
 
 fn collect_functions(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
     if node.kind() == "function_definition"
-        && let Some(body) = node.child_by_field_name("body") {
-            check_function_body(body, source, diags);
-        }
+        && let Some(body) = node.child_by_field_name("body")
+    {
+        check_function_body(body, source, diags);
+    }
 
     let mut cursor = node.walk();
     if cursor.goto_first_child() {
@@ -61,7 +62,7 @@ fn check_function_body(body: Node, source: &str, diags: &mut Vec<LintDiagnostic>
                 line: *line,
                 column: *col,
                 fix: None,
-                    end_column: None,
+                end_column: None,
             });
         }
     }
@@ -80,7 +81,10 @@ fn collect_declarations_and_refs(
                 let name = source[name_node.byte_range()].to_string();
                 declarations.insert(
                     name,
-                    (name_node.start_position().row, name_node.start_position().column),
+                    (
+                        name_node.start_position().row,
+                        name_node.start_position().column,
+                    ),
                 );
             }
             // The value expression may reference other vars
@@ -103,9 +107,10 @@ fn collect_declarations_and_refs(
                 }
                 // If left is a complex expression (attribute, subscript), count identifiers as refs
                 if let Some(left) = left
-                    && left.kind() != "identifier" {
-                        collect_refs_only(left, source, references);
-                    }
+                    && left.kind() != "identifier"
+                {
+                    collect_refs_only(left, source, references);
+                }
             }
         }
         "identifier" => {
@@ -128,11 +133,7 @@ fn collect_declarations_and_refs(
     }
 }
 
-fn collect_refs_only(
-    node: Node,
-    source: &str,
-    references: &mut std::collections::HashSet<String>,
-) {
+fn collect_refs_only(node: Node, source: &str, references: &mut std::collections::HashSet<String>) {
     if node.kind() == "identifier" {
         let name = source[node.byte_range()].to_string();
         references.insert(name);

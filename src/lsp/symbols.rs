@@ -17,11 +17,7 @@ pub fn document_symbols(source: &str) -> Option<DocumentSymbolResponse> {
 }
 
 #[allow(deprecated)]
-fn collect_symbols(
-    node: tree_sitter::Node,
-    source: &str,
-    symbols: &mut Vec<DocumentSymbol>,
-) {
+fn collect_symbols(node: tree_sitter::Node, source: &str, symbols: &mut Vec<DocumentSymbol>) {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         match child.kind() {

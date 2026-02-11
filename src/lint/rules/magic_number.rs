@@ -1,7 +1,7 @@
 use tree_sitter::{Node, Tree};
 
-use crate::core::config::LintConfig;
 use super::{LintDiagnostic, LintRule, Severity};
+use crate::core::config::LintConfig;
 
 pub struct MagicNumber;
 
@@ -23,11 +23,12 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>, in_func
 
     // If we're entering a function body, mark it
     if node.kind() == "function_definition"
-        && let Some(body_node) = node.child_by_field_name("body") {
-            check_node(body_node, source, diags, true);
-            // Don't recurse normally for function_definition since we handled body explicitly
-            return;
-        }
+        && let Some(body_node) = node.child_by_field_name("body")
+    {
+        check_node(body_node, source, diags, true);
+        // Don't recurse normally for function_definition since we handled body explicitly
+        return;
+    }
 
     // Only check numeric literals inside function bodies
     if inside_body && (node.kind() == "integer" || node.kind() == "float") {
@@ -85,7 +86,18 @@ fn is_in_variable_or_const_definition(node: &Node) -> bool {
 fn is_allowed_value(text: &str) -> bool {
     matches!(
         text,
-        "0" | "1" | "-1" | "2" | "0.0" | "1.0" | "0.5" | "2.0" |
-        "10" | "10.0" | "100" | "255" | "256" | "360"
+        "0" | "1"
+            | "-1"
+            | "2"
+            | "0.0"
+            | "1.0"
+            | "0.5"
+            | "2.0"
+            | "10"
+            | "10.0"
+            | "100"
+            | "255"
+            | "256"
+            | "360"
     )
 }

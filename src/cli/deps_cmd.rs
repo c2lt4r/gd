@@ -1,5 +1,5 @@
 use clap::Args;
-use miette::{miette, Result};
+use miette::{Result, miette};
 use owo_colors::OwoColorize;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
@@ -54,7 +54,12 @@ pub fn exec(args: DepsArgs) -> Result<()> {
         "tree" => output_tree(&dep_map),
         "dot" => output_dot(&dep_map),
         "json" => output_json(&dep_map, files.len())?,
-        _ => return Err(miette!("Invalid format '{}'. Use: tree, dot, json", args.format)),
+        _ => {
+            return Err(miette!(
+                "Invalid format '{}'. Use: tree, dot, json",
+                args.format
+            ));
+        }
     }
 
     if !args.no_cycle_check {
@@ -62,13 +67,17 @@ pub fn exec(args: DepsArgs) -> Result<()> {
         if !cycles.is_empty() {
             eprintln!();
             for cycle in &cycles {
-                eprintln!("{} circular dependency detected: {}",
+                eprintln!(
+                    "{} circular dependency detected: {}",
                     "warning:".yellow().bold(),
-                    cycle.join(" -> "));
+                    cycle.join(" -> ")
+                );
             }
-            return Err(miette!("found {} circular dependenc{}",
+            return Err(miette!(
+                "found {} circular dependenc{}",
                 cycles.len(),
-                if cycles.len() == 1 { "y" } else { "ies" }));
+                if cycles.len() == 1 { "y" } else { "ies" }
+            ));
         }
     }
 
@@ -160,7 +169,15 @@ fn detect_cycles(dep_map: &HashMap<String, Vec<String>>) -> Vec<Vec<String>> {
     }
 
     while let Some(&node) = white.iter().next() {
-        dfs_cycle(node, dep_map, &mut white, &mut gray, &mut black, &mut path, &mut cycles);
+        dfs_cycle(
+            node,
+            dep_map,
+            &mut white,
+            &mut gray,
+            &mut black,
+            &mut path,
+            &mut cycles,
+        );
     }
 
     cycles
@@ -185,7 +202,8 @@ fn dfs_cycle<'a>(
             if gray.contains(dep_str) {
                 // Found a cycle - extract it from path
                 let cycle_start = path.iter().position(|&n| n == dep_str).unwrap();
-                let mut cycle: Vec<String> = path[cycle_start..].iter().map(|s| s.to_string()).collect();
+                let mut cycle: Vec<String> =
+                    path[cycle_start..].iter().map(|s| s.to_string()).collect();
                 cycle.push(dep.clone());
                 cycles.push(cycle);
             } else if white.contains(dep_str) {

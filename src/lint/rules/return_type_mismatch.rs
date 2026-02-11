@@ -1,7 +1,7 @@
 use tree_sitter::{Node, Tree};
 
-use crate::core::config::LintConfig;
 use super::{LintDiagnostic, LintRule, Severity};
+use crate::core::config::LintConfig;
 
 pub struct ReturnTypeMismatch;
 
@@ -20,19 +20,20 @@ impl LintRule for ReturnTypeMismatch {
 
 fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
     if node.kind() == "function_definition"
-        && let Some(return_type_node) = node.child_by_field_name("return_type") {
-            let return_type = &source[return_type_node.byte_range()];
+        && let Some(return_type_node) = node.child_by_field_name("return_type")
+    {
+        let return_type = &source[return_type_node.byte_range()];
 
-            if let Some(body) = node.child_by_field_name("body") {
-                if return_type == "void" {
-                    // void function should not return a value
-                    check_void_returns(body, source, diags);
-                } else {
-                    // non-void function should not have bare returns
-                    check_bare_returns(body, source, diags);
-                }
+        if let Some(body) = node.child_by_field_name("body") {
+            if return_type == "void" {
+                // void function should not return a value
+                check_void_returns(body, source, diags);
+            } else {
+                // non-void function should not have bare returns
+                check_bare_returns(body, source, diags);
             }
         }
+    }
 
     let mut cursor = node.walk();
     if cursor.goto_first_child() {
@@ -103,7 +104,7 @@ fn check_bare_returns(node: Node, _source: &str, diags: &mut Vec<LintDiagnostic>
                 line: node.start_position().row,
                 column: node.start_position().column,
                 fix: None,
-                    end_column: None,
+                end_column: None,
             });
         }
     }

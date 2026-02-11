@@ -1,8 +1,8 @@
 use std::collections::HashSet;
 use tree_sitter::{Node, Tree};
 
-use crate::core::config::LintConfig;
 use super::{LintDiagnostic, LintRule, Severity};
+use crate::core::config::LintConfig;
 
 pub struct ShadowedVariable;
 
@@ -58,9 +58,10 @@ fn collect_param_names(params: Node, source: &str, names: &mut HashSet<String>) 
             }
             "typed_parameter" | "default_parameter" | "typed_default_parameter" => {
                 if let Some(name_node) = child.child(0)
-                    && name_node.kind() == "identifier" {
-                        names.insert(source[name_node.byte_range()].to_string());
-                    }
+                    && name_node.kind() == "identifier"
+                {
+                    names.insert(source[name_node.byte_range()].to_string());
+                }
             }
             _ => {}
         }
@@ -83,21 +84,22 @@ fn check_body(body: Node, source: &str, outer: &HashSet<String>, diags: &mut Vec
         let child = cursor.node();
 
         if child.kind() == "variable_statement"
-            && let Some(name_node) = child.child_by_field_name("name") {
-                let name = source[name_node.byte_range()].to_string();
-                if outer.contains(&name) {
-                    diags.push(LintDiagnostic {
-                        rule: "shadowed-variable",
-                        message: format!("variable `{}` shadows a variable from an outer scope", name),
-                        severity: Severity::Warning,
-                        line: name_node.start_position().row,
-                        column: name_node.start_position().column,
-                        fix: None,
+            && let Some(name_node) = child.child_by_field_name("name")
+        {
+            let name = source[name_node.byte_range()].to_string();
+            if outer.contains(&name) {
+                diags.push(LintDiagnostic {
+                    rule: "shadowed-variable",
+                    message: format!("variable `{}` shadows a variable from an outer scope", name),
+                    severity: Severity::Warning,
+                    line: name_node.start_position().row,
+                    column: name_node.start_position().column,
+                    fix: None,
                     end_column: None,
-                    });
-                }
-                current_scope.insert(name);
+                });
             }
+            current_scope.insert(name);
+        }
 
         // Recurse into inner scopes (if/for/while bodies)
         if is_scope_node(child.kind()) {
@@ -113,7 +115,11 @@ fn check_body(body: Node, source: &str, outer: &HashSet<String>, diags: &mut Vec
 fn is_scope_node(kind: &str) -> bool {
     matches!(
         kind,
-        "if_statement" | "for_statement" | "while_statement" | "elif_clause" | "else_clause"
+        "if_statement"
+            | "for_statement"
+            | "while_statement"
+            | "elif_clause"
+            | "else_clause"
             | "match_statement"
     )
 }
@@ -128,9 +134,10 @@ fn check_inner_scopes(
     if node.kind() == "for_statement" {
         let mut for_outer = outer.clone();
         if let Some(iter_node) = node.child_by_field_name("left")
-            && iter_node.kind() == "identifier" {
-                for_outer.insert(source[iter_node.byte_range()].to_string());
-            }
+            && iter_node.kind() == "identifier"
+        {
+            for_outer.insert(source[iter_node.byte_range()].to_string());
+        }
         if let Some(body) = node.child_by_field_name("body") {
             check_body(body, source, &for_outer, diags);
         }

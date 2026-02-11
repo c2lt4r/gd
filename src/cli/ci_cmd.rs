@@ -1,5 +1,5 @@
 use clap::{Args, Subcommand};
-use miette::{miette, IntoDiagnostic, Result};
+use miette::{IntoDiagnostic, Result, miette};
 use owo_colors::OwoColorize;
 use std::fs;
 
@@ -59,7 +59,8 @@ fn generate_github(project: &GodotProject, args: &CiPlatformArgs) -> Result<()> 
 
     // Generate the workflow content
     let export_job = if args.export {
-        format!(r#"
+        format!(
+            r#"
   export:
     runs-on: ubuntu-latest
     needs: lint-and-format
@@ -77,12 +78,15 @@ fn generate_github(project: &GodotProject, args: &CiPlatformArgs) -> Result<()> 
         run: |
           mkdir -p build
           godot --headless --export-release "Linux" build/game.x86_64
-"#, version = args.godot_version)
+"#,
+            version = args.godot_version
+        )
     } else {
         String::new()
     };
 
-    let content = format!(r#"name: GDScript CI
+    let content = format!(
+        r#"name: GDScript CI
 
 on:
   push:
@@ -108,7 +112,10 @@ jobs:
 
       - name: Lint
         run: gd lint
-{export_job}"#, version = args.godot_version, export_job = export_job);
+{export_job}"#,
+        version = args.godot_version,
+        export_job = export_job
+    );
 
     // Write the file
     fs::write(&ci_file, content)
@@ -137,11 +144,7 @@ fn generate_gitlab(project: &GodotProject, args: &CiPlatformArgs) -> Result<()> 
     }
 
     // Generate the CI content
-    let export_stage = if args.export {
-        "  - export"
-    } else {
-        ""
-    };
+    let export_stage = if args.export { "  - export" } else { "" };
 
     let export_job = if args.export {
         r#"
@@ -154,12 +157,14 @@ export:
   artifacts:
     paths:
       - build/
-"#.to_string()
+"#
+        .to_string()
     } else {
         String::new()
     };
 
-    let content = format!(r#"image: barichello/godot-ci:{version}
+    let content = format!(
+        r#"image: barichello/godot-ci:{version}
 
 stages:
   - lint{export_stage}
@@ -170,7 +175,11 @@ lint:
     - curl -L https://github.com/c2lt4r/gd/releases/latest/download/gd-linux-x86_64 -o /usr/local/bin/gd && chmod +x /usr/local/bin/gd
     - gd fmt --check
     - gd lint
-{export_job}"#, version = args.godot_version, export_stage = export_stage, export_job = export_job);
+{export_job}"#,
+        version = args.godot_version,
+        export_stage = export_stage,
+        export_job = export_job
+    );
 
     // Write the file
     fs::write(&ci_file, content)

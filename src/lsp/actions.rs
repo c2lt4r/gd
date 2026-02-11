@@ -1,11 +1,7 @@
 use tower_lsp::lsp_types::*;
 
 /// Provide code actions (quick fixes) for diagnostics in the given range.
-pub fn provide_code_actions(
-    uri: &Url,
-    source: &str,
-    range: &Range,
-) -> Option<CodeActionResponse> {
+pub fn provide_code_actions(uri: &Url, source: &str, range: &Range) -> Option<CodeActionResponse> {
     // Parse and lint
     let tree = crate::core::parser::parse(source).ok()?;
     let config = crate::core::config::Config::default();

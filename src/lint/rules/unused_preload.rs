@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use tree_sitter::{Node, Tree};
 
-use crate::core::config::LintConfig;
 use super::{LintDiagnostic, LintRule, Severity};
+use crate::core::config::LintConfig;
 
 pub struct UnusedPreload;
 
@@ -37,10 +37,7 @@ impl LintRule for UnusedPreload {
             if !references.contains(name.as_str()) {
                 diags.push(LintDiagnostic {
                     rule: "unused-preload",
-                    message: format!(
-                        "preloaded variable `{}` is never used",
-                        name
-                    ),
+                    message: format!("preloaded variable `{}` is never used", name),
                     severity: Severity::Warning,
                     line: *line,
                     column: *col,

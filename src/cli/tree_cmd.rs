@@ -1,5 +1,5 @@
 use clap::Args;
-use miette::{miette, Result};
+use miette::{Result, miette};
 use owo_colors::OwoColorize;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -99,10 +99,11 @@ fn extract_class_info(path: &Path) -> Result<ClassInfo> {
                 // Get the type being extended
                 for i in 0..child.named_child_count() {
                     if let Some(type_node) = child.named_child(i)
-                        && (type_node.kind() == "type" || type_node.kind() == "identifier") {
-                            extends = Some(type_node.utf8_text(source.as_bytes()).unwrap().to_string());
-                            break;
-                        }
+                        && (type_node.kind() == "type" || type_node.kind() == "identifier")
+                    {
+                        extends = Some(type_node.utf8_text(source.as_bytes()).unwrap().to_string());
+                        break;
+                    }
                 }
             }
             "function_definition" => {
@@ -136,7 +137,8 @@ fn extract_class_info(path: &Path) -> Result<ClassInfo> {
             .unwrap_or_else(|| "Unknown".to_string())
     });
 
-    let file_name = path.file_name()
+    let file_name = path
+        .file_name()
         .and_then(|s| s.to_str())
         .unwrap_or("unknown.gd")
         .to_string();
@@ -154,8 +156,15 @@ fn extract_class_info(path: &Path) -> Result<ClassInfo> {
 fn is_builtin_method(name: &str) -> bool {
     matches!(
         name,
-        "_ready" | "_process" | "_physics_process" | "_input" | "_unhandled_input"
-            | "_enter_tree" | "_exit_tree" | "_init" | "_notification"
+        "_ready"
+            | "_process"
+            | "_physics_process"
+            | "_input"
+            | "_unhandled_input"
+            | "_enter_tree"
+            | "_exit_tree"
+            | "_init"
+            | "_notification"
     )
 }
 
@@ -209,7 +218,11 @@ fn render_tree(root: &Path, file_count: usize, classes: &[ClassInfo], classes_on
             let child_count = children.len();
             for (j, class) in children.iter().enumerate() {
                 let is_last_child = j == child_count - 1;
-                let prefix = if is_last_child { "└──" } else { "├──" };
+                let prefix = if is_last_child {
+                    "└──"
+                } else {
+                    "├──"
+                };
                 let continuation = if is_last_child { "    " } else { "│   " };
 
                 // Print class name and file

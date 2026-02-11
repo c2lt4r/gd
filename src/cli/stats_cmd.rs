@@ -1,5 +1,5 @@
 use clap::Args;
-use miette::{miette, Result};
+use miette::{Result, miette};
 use owo_colors::OwoColorize;
 use rayon::prelude::*;
 use serde::Serialize;
@@ -160,7 +160,8 @@ fn walk_node(node: Node, source: &str, path: &Path, stats: &mut FileStats) {
                 let func_info = FunctionInfo {
                     name: func_name.to_string(),
                     lines: length,
-                    file: path.file_name()
+                    file: path
+                        .file_name()
                         .and_then(|n| n.to_str())
                         .unwrap_or("unknown")
                         .to_string(),
@@ -191,7 +192,10 @@ fn walk_node(node: Node, source: &str, path: &Path, stats: &mut FileStats) {
 fn output_human(stats: &ProjectStats) {
     println!("{}", "Project Statistics".bright_cyan().bold());
     println!("{}", "──────────────────────────────".cyan());
-    println!("  Files:          {}", stats.files.to_string().bright_white());
+    println!(
+        "  Files:          {}",
+        stats.files.to_string().bright_white()
+    );
     println!(
         "  Lines (total):  {}",
         format_number(stats.lines_total).bright_white()
@@ -209,9 +213,18 @@ fn output_human(stats: &ProjectStats) {
         format_number(stats.lines_comment).bright_white()
     );
     println!("{}", "──────────────────────────────".cyan());
-    println!("  Classes:        {}", stats.classes.to_string().bright_white());
-    println!("  Functions:      {}", stats.functions.to_string().bright_white());
-    println!("  Signals:        {}", stats.signals.to_string().bright_white());
+    println!(
+        "  Classes:        {}",
+        stats.classes.to_string().bright_white()
+    );
+    println!(
+        "  Functions:      {}",
+        stats.functions.to_string().bright_white()
+    );
+    println!(
+        "  Signals:        {}",
+        stats.signals.to_string().bright_white()
+    );
     println!("{}", "──────────────────────────────".cyan());
     println!(
         "  Avg function length: {} lines",
@@ -224,10 +237,7 @@ fn output_human(stats: &ProjectStats) {
             longest.name.bright_yellow(),
             longest.lines.to_string().bright_white()
         );
-        println!(
-            "                       in {}",
-            longest.file.bright_blue()
-        );
+        println!("                       in {}", longest.file.bright_blue());
     }
 }
 

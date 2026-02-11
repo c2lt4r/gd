@@ -1,5 +1,5 @@
 use clap::Args;
-use miette::{miette, Result};
+use miette::{Result, miette};
 use owo_colors::OwoColorize;
 use std::env;
 use std::path::{Path, PathBuf};
@@ -73,9 +73,7 @@ pub fn exec(args: TestArgs) -> Result<()> {
 
     if args.verbose {
         for f in &test_files {
-            let rel = f
-                .strip_prefix(&project.root)
-                .unwrap_or(f);
+            let rel = f.strip_prefix(&project.root).unwrap_or(f);
             println!("  {}", rel.display().to_string().dimmed());
         }
     }
@@ -83,16 +81,10 @@ pub fn exec(args: TestArgs) -> Result<()> {
     let start = Instant::now();
 
     let result = if has_gut {
-        println!(
-            "{} Running tests with GUT",
-            "▶".green()
-        );
+        println!("{} Running tests with GUT", "▶".green());
         run_gut_tests(&godot, &project, &args, &test_files)
     } else {
-        println!(
-            "{} Running tests with Godot (no GUT addon)",
-            "▶".green()
-        );
+        println!("{} Running tests with Godot (no GUT addon)", "▶".green());
         run_script_tests(&godot, &project, &args, &test_files)
     };
 
@@ -121,11 +113,7 @@ pub fn exec(args: TestArgs) -> Result<()> {
         }
         Err(e) => {
             println!();
-            eprintln!(
-                "{} Tests failed ({:.2}s)",
-                "✗".red().bold(),
-                secs,
-            );
+            eprintln!("{} Tests failed ({:.2}s)", "✗".red().bold(), secs,);
             Err(e)
         }
     }
@@ -294,9 +282,7 @@ fn run_script_tests(
     let mut failed = 0usize;
 
     for (i, test_file) in test_files.iter().enumerate() {
-        let rel = test_file
-            .strip_prefix(&project.root)
-            .unwrap_or(test_file);
+        let rel = test_file.strip_prefix(&project.root).unwrap_or(test_file);
         let label = format!("[{}/{}] {}", i + 1, test_files.len(), rel.display());
 
         let spinner = indicatif::ProgressBar::new_spinner();
@@ -329,7 +315,12 @@ fn run_script_tests(
             Err(_) => {
                 spinner.finish_and_clear();
                 failed += 1;
-                println!("{} {} (timed out after {}s)", "✗".red(), rel.display(), args.timeout);
+                println!(
+                    "{} {} (timed out after {}s)",
+                    "✗".red(),
+                    rel.display(),
+                    args.timeout
+                );
                 continue;
             }
         };
@@ -382,10 +373,7 @@ fn run_with_timeout(cmd: &mut Command, timeout: Duration) -> Result<std::process
                 if start.elapsed() >= timeout {
                     let _ = child.kill();
                     let _ = child.wait();
-                    return Err(miette!(
-                        "Test timed out after {}s",
-                        timeout.as_secs()
-                    ));
+                    return Err(miette!("Test timed out after {}s", timeout.as_secs()));
                 }
                 std::thread::sleep(Duration::from_millis(100));
             }
@@ -405,13 +393,15 @@ fn parse_gut_output(output: &str, file_count: usize) -> TestSummary {
         if trimmed.contains("Passed:") && trimmed.contains("Failed:") {
             for part in trimmed.split_whitespace().collect::<Vec<_>>().windows(2) {
                 if part[0] == "Passed:"
-                    && let Ok(n) = part[1].parse::<usize>() {
-                        passed = n;
-                    }
+                    && let Ok(n) = part[1].parse::<usize>()
+                {
+                    passed = n;
+                }
                 if part[0] == "Failed:"
-                    && let Ok(n) = part[1].parse::<usize>() {
-                        failed = n;
-                    }
+                    && let Ok(n) = part[1].parse::<usize>()
+                {
+                    failed = n;
+                }
             }
             return TestSummary { passed, failed };
         }

@@ -1,7 +1,7 @@
 use tree_sitter::{Node, Tree};
 
-use crate::core::config::LintConfig;
 use super::{Fix, LintDiagnostic, LintRule, Severity};
+use crate::core::config::LintConfig;
 
 pub struct FloatComparison;
 
@@ -20,30 +20,33 @@ impl LintRule for FloatComparison {
 
 fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
     if node.kind() == "binary_operator"
-        && let Some(op_node) = node.child_by_field_name("op") {
-            let op = &source[op_node.byte_range()];
-            if op == "==" || op == "!=" {
-                let left = node.child_by_field_name("left");
-                let right = node.child_by_field_name("right");
+        && let Some(op_node) = node.child_by_field_name("op")
+    {
+        let op = &source[op_node.byte_range()];
+        if op == "==" || op == "!=" {
+            let left = node.child_by_field_name("left");
+            let right = node.child_by_field_name("right");
 
-                let left_is_float = left.as_ref().is_some_and(|n| n.kind() == "float");
-                let right_is_float = right.as_ref().is_some_and(|n| n.kind() == "float");
+            let left_is_float = left.as_ref().is_some_and(|n| n.kind() == "float");
+            let right_is_float = right.as_ref().is_some_and(|n| n.kind() == "float");
 
-                if left_is_float || right_is_float {
-                    let fix = generate_fix(&node, left, right, op, source);
+            if left_is_float || right_is_float {
+                let fix = generate_fix(&node, left, right, op, source);
 
-                    diags.push(LintDiagnostic {
-                        rule: "float-comparison",
-                        message: "comparing floats with == is unreliable; use is_equal_approx() instead".to_string(),
-                        severity: Severity::Warning,
-                        line: node.start_position().row,
-                        column: node.start_position().column,
-                        end_column: Some(node.end_position().column),
-                        fix,
-                    });
-                }
+                diags.push(LintDiagnostic {
+                    rule: "float-comparison",
+                    message:
+                        "comparing floats with == is unreliable; use is_equal_approx() instead"
+                            .to_string(),
+                    severity: Severity::Warning,
+                    line: node.start_position().row,
+                    column: node.start_position().column,
+                    end_column: Some(node.end_position().column),
+                    fix,
+                });
             }
         }
+    }
 
     let mut cursor = node.walk();
     if cursor.goto_first_child() {

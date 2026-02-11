@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use miette::{miette, Result};
+use miette::{Result, miette};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -107,7 +107,6 @@ pub struct RunConfig {
     pub extra_args: Vec<String>,
 }
 
-
 impl Config {
     /// Load configuration from a gd.toml file, searching upward from `start`.
     /// Returns default config if no file found.
@@ -137,8 +136,20 @@ fn warn_unknown_keys(raw: &toml::Value) {
     };
 
     let known_top = &["fmt", "lint", "build", "run"];
-    let known_fmt = &["use_tabs", "indent_size", "max_line_length", "blank_lines_around_functions", "blank_lines_around_classes", "trailing_newline"];
-    let known_lint = &["disabled_rules", "max_function_length", "rules", "ignore_patterns"];
+    let known_fmt = &[
+        "use_tabs",
+        "indent_size",
+        "max_line_length",
+        "blank_lines_around_functions",
+        "blank_lines_around_classes",
+        "trailing_newline",
+    ];
+    let known_lint = &[
+        "disabled_rules",
+        "max_function_length",
+        "rules",
+        "ignore_patterns",
+    ];
     let known_rule = &["severity"];
     let known_build = &["presets", "output_dir"];
     let known_run = &["godot_path", "extra_args"];

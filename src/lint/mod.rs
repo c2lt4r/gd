@@ -1,10 +1,10 @@
-pub mod rules;
 pub mod diagnostics;
+pub mod rules;
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use miette::{miette, Result};
+use miette::{Result, miette};
 use owo_colors::OwoColorize;
 use rayon::prelude::*;
 
@@ -12,13 +12,13 @@ use crate::core::config::Config;
 use crate::core::fs::collect_gdscript_files;
 use crate::core::parser;
 
-use diagnostics::{print_diagnostic, print_json, print_sarif, FileLintResult};
-use rules::{all_rules, Fix, LintDiagnostic, Severity};
+use diagnostics::{FileLintResult, print_diagnostic, print_json, print_sarif};
+use rules::{Fix, LintDiagnostic, Severity, all_rules};
 
 /// Entry point for the linter.
 pub fn run_lint(paths: &[String], format: &str, fix: bool) -> Result<()> {
-    let cwd = std::env::current_dir()
-        .map_err(|e| miette!("Failed to get current directory: {e}"))?;
+    let cwd =
+        std::env::current_dir().map_err(|e| miette!("Failed to get current directory: {e}"))?;
     let config = Config::load(&cwd)?;
 
     // Collect GDScript files
@@ -42,13 +42,11 @@ pub fn run_lint(paths: &[String], format: &str, fix: bool) -> Result<()> {
     let file_results: Vec<(PathBuf, Vec<LintDiagnostic>)> = files
         .par_iter()
         .filter(|path| !matches_ignore_pattern(path, &cwd, &config.lint.ignore_patterns))
-        .filter_map(|path| {
-            match lint_file(path, &rules, &config, fix) {
-                Ok(diags) => Some((path.clone(), diags)),
-                Err(e) => {
-                    eprintln!("{}: {}", path.display().red(), e);
-                    None
-                }
+        .filter_map(|path| match lint_file(path, &rules, &config, fix) {
+            Ok(diags) => Some((path.clone(), diags)),
+            Err(e) => {
+                eprintln!("{}: {}", path.display().red(), e);
+                None
             }
         })
         .collect();
@@ -71,15 +69,18 @@ pub fn run_lint(paths: &[String], format: &str, fix: bool) -> Result<()> {
                     }
                     FileLintResult {
                         file: path.display().to_string(),
-                        diagnostics: diags.iter().map(|d| LintDiagnostic {
-                            rule: d.rule,
-                            message: d.message.clone(),
-                            severity: d.severity,
-                            line: d.line,
-                            column: d.column,
-                            end_column: d.end_column,
-                            fix: None,
-                        }).collect(),
+                        diagnostics: diags
+                            .iter()
+                            .map(|d| LintDiagnostic {
+                                rule: d.rule,
+                                message: d.message.clone(),
+                                severity: d.severity,
+                                line: d.line,
+                                column: d.column,
+                                end_column: d.end_column,
+                                fix: None,
+                            })
+                            .collect(),
                     }
                 })
                 .collect();
@@ -101,15 +102,18 @@ pub fn run_lint(paths: &[String], format: &str, fix: bool) -> Result<()> {
                     }
                     FileLintResult {
                         file: path.display().to_string(),
-                        diagnostics: diags.iter().map(|d| LintDiagnostic {
-                            rule: d.rule,
-                            message: d.message.clone(),
-                            severity: d.severity,
-                            line: d.line,
-                            column: d.column,
-                            end_column: d.end_column,
-                            fix: None,
-                        }).collect(),
+                        diagnostics: diags
+                            .iter()
+                            .map(|d| LintDiagnostic {
+                                rule: d.rule,
+                                message: d.message.clone(),
+                                severity: d.severity,
+                                line: d.line,
+                                column: d.column,
+                                end_column: d.end_column,
+                                fix: None,
+                            })
+                            .collect(),
                     }
                 })
                 .collect();
@@ -187,20 +191,13 @@ fn lint_file(
 
     // Apply fixes if requested
     if fix {
-        let fixes: Vec<&Fix> = all_diags
-            .iter()
-            .filter_map(|d| d.fix.as_ref())
-            .collect();
+        let fixes: Vec<&Fix> = all_diags.iter().filter_map(|d| d.fix.as_ref()).collect();
 
         if !fixes.is_empty() {
             let fixed_source = apply_fixes(&source, &fixes);
             std::fs::write(path, &fixed_source)
                 .map_err(|e| miette!("Failed to write {}: {e}", path.display()))?;
-            eprintln!(
-                "{}: applied {} fix(es)",
-                path.display(),
-                fixes.len(),
-            );
+            eprintln!("{}: applied {} fix(es)", path.display(), fixes.len(),);
         }
     }
 
@@ -309,9 +306,7 @@ fn matches_ignore_pattern(path: &Path, base: &Path, patterns: &[String]) -> bool
             if rel_str.ends_with(suffix) {
                 return true;
             }
-        } else if rel_str == pattern.as_str()
-            || rel_str.starts_with(&format!("{pattern}/"))
-        {
+        } else if rel_str == pattern.as_str() || rel_str.starts_with(&format!("{pattern}/")) {
             // Exact file match or directory prefix
             return true;
         }

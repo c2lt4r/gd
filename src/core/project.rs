@@ -1,4 +1,4 @@
-use miette::{miette, Result};
+use miette::{Result, miette};
 use std::path::{Path, PathBuf};
 
 const PROJECT_FILE: &str = "project.godot";
@@ -15,8 +15,9 @@ pub struct GodotProject {
 impl GodotProject {
     /// Find the Godot project by searching upward from `start`.
     pub fn discover(start: &Path) -> Result<Self> {
-        find_project(start)
-            .ok_or_else(|| miette!("No Godot project found (no project.godot in any parent directory)"))
+        find_project(start).ok_or_else(|| {
+            miette!("No Godot project found (no project.godot in any parent directory)")
+        })
     }
 
     /// Get the project name from project.godot.

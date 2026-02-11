@@ -1,7 +1,7 @@
 use clap::Args;
-use miette::{miette, Result};
+use miette::{Result, miette};
 use notify::RecursiveMode;
-use notify_debouncer_mini::{new_debouncer, DebouncedEventKind};
+use notify_debouncer_mini::{DebouncedEventKind, new_debouncer};
 use owo_colors::OwoColorize;
 use std::path::PathBuf;
 use std::sync::mpsc;
@@ -23,8 +23,8 @@ pub struct WatchArgs {
 }
 
 pub fn exec(args: WatchArgs) -> Result<()> {
-    let cwd = std::env::current_dir()
-        .map_err(|e| miette!("Failed to get current directory: {e}"))?;
+    let cwd =
+        std::env::current_dir().map_err(|e| miette!("Failed to get current directory: {e}"))?;
 
     // Determine watch paths
     let watch_paths: Vec<PathBuf> = if args.paths.is_empty() {
@@ -96,7 +96,8 @@ pub fn exec(args: WatchArgs) -> Result<()> {
 
                 // Run formatter if requested
                 if args.fmt {
-                    let paths: Vec<String> = gd_files.iter().map(|p| p.display().to_string()).collect();
+                    let paths: Vec<String> =
+                        gd_files.iter().map(|p| p.display().to_string()).collect();
                     match crate::fmt::run_fmt(&paths, false, false) {
                         Ok(()) => {}
                         Err(e) => {
@@ -108,7 +109,8 @@ pub fn exec(args: WatchArgs) -> Result<()> {
 
                 // Run linter unless disabled
                 if !args.no_lint {
-                    let paths: Vec<String> = gd_files.iter().map(|p| p.display().to_string()).collect();
+                    let paths: Vec<String> =
+                        gd_files.iter().map(|p| p.display().to_string()).collect();
                     match crate::lint::run_lint(&paths, "human", false) {
                         Ok(()) => {}
                         Err(e) => {

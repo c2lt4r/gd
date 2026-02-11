@@ -66,9 +66,8 @@ pub fn rename_cross_file(
     new_name: &str,
     workspace: &super::workspace::WorkspaceIndex,
 ) -> Option<WorkspaceEdit> {
-    let locations = super::references::find_references_cross_file(
-        source, uri, position, true, workspace,
-    )?;
+    let locations =
+        super::references::find_references_cross_file(source, uri, position, true, workspace)?;
 
     let mut changes: HashMap<Url, Vec<TextEdit>> = HashMap::new();
     for loc in locations {

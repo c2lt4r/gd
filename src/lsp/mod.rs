@@ -37,9 +37,7 @@ impl Backend {
 
         let diags = diagnostics::lint_source(&source);
 
-        self.client
-            .publish_diagnostics(uri, diags, None)
-            .await;
+        self.client.publish_diagnostics(uri, diags, None).await;
     }
 }
 
@@ -126,9 +124,7 @@ impl LanguageServer for Backend {
         let uri = params.text_document.uri.clone();
         self.documents.remove(&params.text_document.uri);
         // Clear diagnostics for closed file
-        self.client
-            .publish_diagnostics(uri, vec![], None)
-            .await;
+        self.client.publish_diagnostics(uri, vec![], None).await;
     }
 
     async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
@@ -179,7 +175,10 @@ impl LanguageServer for Backend {
         let source = doc.content.clone();
         drop(doc);
 
-        Ok(hover::hover_at(&source, params.text_document_position_params.position))
+        Ok(hover::hover_at(
+            &source,
+            params.text_document_position_params.position,
+        ))
     }
 
     async fn goto_definition(
@@ -275,10 +274,7 @@ impl LanguageServer for Backend {
         Ok(rename::prepare_rename(&source, params.position))
     }
 
-    async fn completion(
-        &self,
-        params: CompletionParams,
-    ) -> Result<Option<CompletionResponse>> {
+    async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
         let uri = &params.text_document_position.text_document.uri;
         let Some(doc) = self.documents.get(uri) else {
             return Ok(None);

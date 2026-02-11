@@ -55,11 +55,7 @@ pub fn exec(args: CheckArgs) -> Result<()> {
     Ok(())
 }
 
-fn report_errors(
-    cursor: &mut tree_sitter::TreeCursor,
-    source: &str,
-    file: &std::path::Path,
-) {
+fn report_errors(cursor: &mut tree_sitter::TreeCursor, source: &str, file: &std::path::Path) {
     use owo_colors::OwoColorize;
     loop {
         let node = cursor.node();

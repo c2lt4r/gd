@@ -4,12 +4,12 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-use miette::{bail, Context, IntoDiagnostic};
+use miette::{Context, IntoDiagnostic, bail};
 use owo_colors::OwoColorize;
 
 use templates::{
-    project_godot_content, scene_content, script_content, template_for, GD_TOML_TEMPLATE,
-    GITIGNORE_TEMPLATE,
+    GD_TOML_TEMPLATE, GITIGNORE_TEMPLATE, project_godot_content, scene_content, script_content,
+    template_for,
 };
 
 /// Create a new Godot project with the given name and template.
@@ -75,10 +75,7 @@ pub fn create_project(name: &str, template: &str) -> miette::Result<()> {
         );
     }
 
-    println!(
-        "\n  Run {} to get started.\n",
-        format!("cd {name}").cyan()
-    );
+    println!("\n  Run {} to get started.\n", format!("cd {name}").cyan());
 
     Ok(())
 }

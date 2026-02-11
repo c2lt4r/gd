@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use tree_sitter::{Node, Tree};
 
-use crate::core::config::LintConfig;
 use super::{LintDiagnostic, LintRule, Severity};
+use crate::core::config::LintConfig;
 
 pub struct UnusedSignal;
 
@@ -112,10 +112,7 @@ fn collect_emitted(node: Node, src: &[u8], emitted: &mut HashSet<String>) {
                 if func_text.ends_with(".emit") {
                     let signal_name = func_text.trim_end_matches(".emit");
                     // Could be self.signal_name.emit or just signal_name.emit
-                    let name = signal_name
-                        .rsplit('.')
-                        .next()
-                        .unwrap_or(signal_name);
+                    let name = signal_name.rsplit('.').next().unwrap_or(signal_name);
                     if !name.is_empty() {
                         emitted.insert(name.to_string());
                     }

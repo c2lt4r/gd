@@ -3,7 +3,11 @@ use std::path::PathBuf;
 use tower_lsp::lsp_types::*;
 
 /// Resolve go-to-definition at the given position within a single file.
-pub fn goto_definition(source: &str, uri: &Url, position: Position) -> Option<GotoDefinitionResponse> {
+pub fn goto_definition(
+    source: &str,
+    uri: &Url,
+    position: Position,
+) -> Option<GotoDefinitionResponse> {
     let tree = crate::core::parser::parse(source).ok()?;
     let root = tree.root_node();
 
@@ -33,10 +37,12 @@ fn find_definition(
     let mut cursor = root.walk();
     for child in root.children(&mut cursor) {
         let matched = match child.kind() {
-            "function_definition" | "variable_statement" | "const_statement"
-            | "signal_statement" | "class_definition" | "enum_definition" => {
-                matches_name(&child, name, source)
-            }
+            "function_definition"
+            | "variable_statement"
+            | "const_statement"
+            | "signal_statement"
+            | "class_definition"
+            | "enum_definition" => matches_name(&child, name, source),
             "class_name_statement" => {
                 // class_name MyClass  — the name is the second child
                 child

@@ -1,6 +1,6 @@
+use std::fs;
 use std::io::{Read, Write};
 use std::process::Command;
-use std::fs;
 use tempfile::TempDir;
 
 fn gd_bin() -> Command {
@@ -57,8 +57,11 @@ fn test_fmt_check_clean_file() {
     let file_path = temp.path().join("clean.gd");
 
     // Write a well-formatted file (using real tabs)
-    fs::write(&file_path, "extends Node\n\n\nfunc _ready() -> void:\n\tpass\n")
-        .expect("Failed to write file");
+    fs::write(
+        &file_path,
+        "extends Node\n\n\nfunc _ready() -> void:\n\tpass\n",
+    )
+    .expect("Failed to write file");
 
     let output = gd_bin()
         .arg("fmt")
@@ -80,8 +83,11 @@ fn test_fmt_check_unformatted_file() {
     let file_path = temp.path().join("messy.gd");
 
     // Write an unformatted file (extra spaces, wrong indentation)
-    fs::write(&file_path, "extends Node\n\n\n\n\nfunc _ready()->void:\n  pass\n")
-        .expect("Failed to write file");
+    fs::write(
+        &file_path,
+        "extends Node\n\n\n\n\nfunc _ready()->void:\n  pass\n",
+    )
+    .expect("Failed to write file");
 
     let output = gd_bin()
         .arg("fmt")
@@ -103,8 +109,11 @@ fn test_fmt_diff() {
     let file_path = temp.path().join("diff_test.gd");
 
     // Write an unformatted file
-    fs::write(&file_path, "extends Node\n\n\n\n\nfunc _ready()->void:\n  pass\n")
-        .expect("Failed to write file");
+    fs::write(
+        &file_path,
+        "extends Node\n\n\n\n\nfunc _ready()->void:\n  pass\n",
+    )
+    .expect("Failed to write file");
 
     let output = gd_bin()
         .arg("fmt")
@@ -128,7 +137,7 @@ fn test_lint_detects_issues() {
     // Write a file with duplicate signals and bad naming
     fs::write(
         &file_path,
-        "extends Node\n\nsignal died\nsignal died\n\nfunc BadName():\n\tpass\n"
+        "extends Node\n\nsignal died\nsignal died\n\nfunc BadName():\n\tpass\n",
     )
     .expect("Failed to write file");
 
@@ -161,8 +170,11 @@ fn test_lint_clean_file() {
     let file_path = temp.path().join("clean.gd");
 
     // Write a clean file
-    fs::write(&file_path, "extends Node\n\n\nfunc _ready() -> void:\n\tpass\n")
-        .expect("Failed to write file");
+    fs::write(
+        &file_path,
+        "extends Node\n\n\nfunc _ready() -> void:\n\tpass\n",
+    )
+    .expect("Failed to write file");
 
     let output = gd_bin()
         .arg("lint")
@@ -183,11 +195,8 @@ fn test_lint_json_output() {
     let file_path = temp.path().join("issues.gd");
 
     // Write a file with issues
-    fs::write(
-        &file_path,
-        "extends Node\n\nfunc BadName():\n\tpass\n"
-    )
-    .expect("Failed to write file");
+    fs::write(&file_path, "extends Node\n\nfunc BadName():\n\tpass\n")
+        .expect("Failed to write file");
 
     let output = gd_bin()
         .arg("lint")
@@ -212,8 +221,7 @@ fn test_lint_fix() {
     let file_path = temp.path().join("fix_test.gd");
 
     // Write a file with naming convention issue
-    fs::write(&file_path, "func BadName():\n\tpass\n")
-        .expect("Failed to write file");
+    fs::write(&file_path, "func BadName():\n\tpass\n").expect("Failed to write file");
 
     let _output = gd_bin()
         .arg("lint")
@@ -223,8 +231,7 @@ fn test_lint_fix() {
         .expect("Failed to run gd lint --fix");
 
     // Read the file back
-    let fixed_content = fs::read_to_string(&file_path)
-        .expect("Failed to read fixed file");
+    let fixed_content = fs::read_to_string(&file_path).expect("Failed to read fixed file");
 
     assert!(
         fixed_content.contains("bad_name"),
@@ -269,13 +276,13 @@ fn test_stats_output() {
     // Create a simple project structure
     fs::write(
         temp.path().join("project.godot"),
-        "[application]\nconfig/name=\"test\"\n"
+        "[application]\nconfig/name=\"test\"\n",
     )
     .expect("Failed to write project.godot");
 
     fs::write(
         temp.path().join("test.gd"),
-        "extends Node\n\nfunc _ready() -> void:\n\tpass\n"
+        "extends Node\n\nfunc _ready() -> void:\n\tpass\n",
     )
     .expect("Failed to write test.gd");
 
@@ -315,7 +322,7 @@ fn test_lint_suppression_ignore() {
     // Write a file with a naming issue suppressed on the same line
     fs::write(
         &file_path,
-        "func BadName():  # gd:ignore[naming-convention]\n\tpass\n"
+        "func BadName():  # gd:ignore[naming-convention]\n\tpass\n",
     )
     .expect("Failed to write file");
 
@@ -340,7 +347,7 @@ fn test_lint_suppression_ignore_next_line() {
     // gd:ignore-next-line suppresses the following line
     fs::write(
         &file_path,
-        "# gd:ignore-next-line[naming-convention]\nfunc BadName():\n\tpass\n"
+        "# gd:ignore-next-line[naming-convention]\nfunc BadName():\n\tpass\n",
     )
     .expect("Failed to write file");
 
@@ -362,8 +369,7 @@ fn test_lint_sarif_output() {
     let temp = TempDir::new().expect("Failed to create temp dir");
     let file_path = temp.path().join("sarif_test.gd");
 
-    fs::write(&file_path, "func BadName():\n\tpass\n")
-        .expect("Failed to write file");
+    fs::write(&file_path, "func BadName():\n\tpass\n").expect("Failed to write file");
 
     let output = gd_bin()
         .arg("lint")
@@ -374,8 +380,8 @@ fn test_lint_sarif_output() {
         .expect("Failed to run gd lint --format sarif");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let sarif: serde_json::Value = serde_json::from_str(&stdout)
-        .expect("SARIF output should be valid JSON");
+    let sarif: serde_json::Value =
+        serde_json::from_str(&stdout).expect("SARIF output should be valid JSON");
 
     assert_eq!(sarif["version"], "2.1.0", "SARIF version should be 2.1.0");
     assert!(
@@ -394,15 +400,16 @@ fn test_lsp_initialize() {
 
     fn lsp_msg(data: &serde_json::Value) -> Vec<u8> {
         let body = serde_json::to_string(data).unwrap();
-        format!("Content-Length: {}\r\n\r\n{}", body.len(), body)
-            .into_bytes()
+        format!("Content-Length: {}\r\n\r\n{}", body.len(), body).into_bytes()
     }
 
     fn read_lsp_response(stdout: &mut impl Read) -> serde_json::Value {
         let mut header = Vec::new();
         let mut buf = [0u8; 1];
         while !header.ends_with(b"\r\n\r\n") {
-            stdout.read_exact(&mut buf).expect("Failed to read header byte");
+            stdout
+                .read_exact(&mut buf)
+                .expect("Failed to read header byte");
             header.push(buf[0]);
         }
         let header_str = String::from_utf8_lossy(&header);
@@ -487,13 +494,22 @@ fn test_fmt_multiple_files() {
         .output()
         .expect("Failed to run gd fmt");
 
-    assert!(output.status.success(), "gd fmt should succeed on directory");
+    assert!(
+        output.status.success(),
+        "gd fmt should succeed on directory"
+    );
 
     // Both files should now be formatted (tabs, not spaces)
     let a = fs::read_to_string(temp.path().join("a.gd")).unwrap();
     let b = fs::read_to_string(temp.path().join("b.gd")).unwrap();
-    assert!(a.contains("\tpass"), "a.gd should use tab indentation after fmt");
-    assert!(b.contains("\tpass"), "b.gd should use tab indentation after fmt");
+    assert!(
+        a.contains("\tpass"),
+        "a.gd should use tab indentation after fmt"
+    );
+    assert!(
+        b.contains("\tpass"),
+        "b.gd should use tab indentation after fmt"
+    );
 }
 
 #[test]
@@ -505,8 +521,11 @@ fn test_fmt_idempotent() {
     let file_path = temp.path().join("idem.gd");
 
     // Unformatted input
-    fs::write(&file_path, "extends Node\n\n\n\n\nfunc _ready()->void:\n  pass\n")
-        .expect("write file");
+    fs::write(
+        &file_path,
+        "extends Node\n\n\n\n\nfunc _ready()->void:\n  pass\n",
+    )
+    .expect("write file");
 
     // First format
     gd_bin()
@@ -533,7 +552,11 @@ fn test_fmt_idempotent() {
         .arg(&file_path)
         .output()
         .expect("fmt --check");
-    assert_eq!(check.status.code(), Some(0), "Already-formatted file should pass --check");
+    assert_eq!(
+        check.status.code(),
+        Some(0),
+        "Already-formatted file should pass --check"
+    );
 }
 
 #[test]
@@ -580,8 +603,7 @@ fn test_fmt_malformed_gdscript() {
     let file_path = temp.path().join("broken.gd");
 
     // Intentionally broken GDScript
-    fs::write(&file_path, "func (:\n\t\tif if if\n\t\t\t{\n")
-        .expect("write file");
+    fs::write(&file_path, "func (:\n\t\tif if if\n\t\t\t{\n").expect("write file");
 
     let output = gd_bin()
         .arg("fmt")
@@ -826,11 +848,8 @@ fn test_lint_ignore_pattern() {
     // Create addons/ directory with a bad file
     let addons = temp.path().join("addons");
     fs::create_dir_all(&addons).expect("create addons dir");
-    fs::write(
-        addons.join("plugin.gd"),
-        "func BadName():\n\tpass\n",
-    )
-    .expect("write addons/plugin.gd");
+    fs::write(addons.join("plugin.gd"), "func BadName():\n\tpass\n")
+        .expect("write addons/plugin.gd");
 
     // Also create a root file that is clean
     fs::write(
@@ -935,7 +954,10 @@ fn test_deps_dot_output() {
         .output()
         .expect("Failed to run gd deps --format dot");
 
-    assert!(output.status.success(), "gd deps --format dot should succeed");
+    assert!(
+        output.status.success(),
+        "gd deps --format dot should succeed"
+    );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
@@ -967,11 +989,14 @@ fn test_deps_json_output() {
         .output()
         .expect("Failed to run gd deps --format json");
 
-    assert!(output.status.success(), "gd deps --format json should succeed");
+    assert!(
+        output.status.success(),
+        "gd deps --format json should succeed"
+    );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let json: serde_json::Value = serde_json::from_str(&stdout)
-        .expect("gd deps --format json should produce valid JSON");
+    let json: serde_json::Value =
+        serde_json::from_str(&stdout).expect("gd deps --format json should produce valid JSON");
 
     assert!(
         json["files"].as_u64().unwrap() >= 3,
@@ -991,15 +1016,16 @@ fn test_lsp_formatting() {
 
     fn lsp_msg(data: &serde_json::Value) -> Vec<u8> {
         let body = serde_json::to_string(data).unwrap();
-        format!("Content-Length: {}\r\n\r\n{}", body.len(), body)
-            .into_bytes()
+        format!("Content-Length: {}\r\n\r\n{}", body.len(), body).into_bytes()
     }
 
     fn read_lsp_response(stdout: &mut impl Read) -> serde_json::Value {
         let mut header = Vec::new();
         let mut buf = [0u8; 1];
         while !header.ends_with(b"\r\n\r\n") {
-            stdout.read_exact(&mut buf).expect("Failed to read header byte");
+            stdout
+                .read_exact(&mut buf)
+                .expect("Failed to read header byte");
             header.push(buf[0]);
         }
         let header_str = String::from_utf8_lossy(&header);
@@ -1117,7 +1143,10 @@ fn test_lsp_formatting() {
     // Each edit should have range and newText
     for edit in edits {
         assert!(edit.get("range").is_some(), "TextEdit should have range");
-        assert!(edit.get("newText").is_some(), "TextEdit should have newText");
+        assert!(
+            edit.get("newText").is_some(),
+            "TextEdit should have newText"
+        );
     }
 
     child.kill().ok();
@@ -1127,10 +1156,7 @@ fn test_lsp_formatting() {
 
 #[test]
 fn test_man_page_output() {
-    let output = gd_bin()
-        .arg("man")
-        .output()
-        .expect("Failed to run gd man");
+    let output = gd_bin().arg("man").output().expect("Failed to run gd man");
 
     assert!(
         output.status.success(),
@@ -1181,11 +1207,7 @@ fn test_config_validation_unknown_key() {
         .expect("Failed to create temp dir");
 
     // gd.toml with an unknown key under [fmt]
-    fs::write(
-        temp.path().join("gd.toml"),
-        "[fmt]\ntypo_key = true\n",
-    )
-    .expect("write gd.toml");
+    fs::write(temp.path().join("gd.toml"), "[fmt]\ntypo_key = true\n").expect("write gd.toml");
 
     // A clean .gd file so lint has something to process
     fs::write(
@@ -1222,17 +1244,9 @@ fn test_deps_cycle_detection() {
     )
     .expect("write project.godot");
 
-    fs::write(
-        temp.path().join("a.gd"),
-        "extends \"b.gd\"\n",
-    )
-    .expect("write a.gd");
+    fs::write(temp.path().join("a.gd"), "extends \"b.gd\"\n").expect("write a.gd");
 
-    fs::write(
-        temp.path().join("b.gd"),
-        "extends \"a.gd\"\n",
-    )
-    .expect("write b.gd");
+    fs::write(temp.path().join("b.gd"), "extends \"a.gd\"\n").expect("write b.gd");
 
     let output = gd_bin()
         .arg("deps")
@@ -1266,17 +1280,9 @@ fn test_deps_no_cycle_check() {
     )
     .expect("write project.godot");
 
-    fs::write(
-        temp.path().join("a.gd"),
-        "extends \"b.gd\"\n",
-    )
-    .expect("write a.gd");
+    fs::write(temp.path().join("a.gd"), "extends \"b.gd\"\n").expect("write a.gd");
 
-    fs::write(
-        temp.path().join("b.gd"),
-        "extends \"a.gd\"\n",
-    )
-    .expect("write b.gd");
+    fs::write(temp.path().join("b.gd"), "extends \"a.gd\"\n").expect("write b.gd");
 
     let output = gd_bin()
         .arg("deps")
@@ -1304,8 +1310,11 @@ fn test_lint_fix_comparison_boolean() {
     let temp = TempDir::new().expect("Failed to create temp dir");
     let file_path = temp.path().join("bool_cmp.gd");
 
-    fs::write(&file_path, "extends Node\n\n\nfunc test() -> void:\n\tif x == true:\n\t\tpass\n")
-        .expect("write file");
+    fs::write(
+        &file_path,
+        "extends Node\n\n\nfunc test() -> void:\n\tif x == true:\n\t\tpass\n",
+    )
+    .expect("write file");
 
     let _output = gd_bin()
         .arg("lint")

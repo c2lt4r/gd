@@ -1,4 +1,4 @@
-use miette::{miette, Result};
+use miette::{Result, miette};
 use owo_colors::OwoColorize;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -101,13 +101,14 @@ pub fn extract_docs(source: &str, tree: &Tree, file_path: &Path) -> DocClass {
                 // Get the type being extended
                 for i in 0..node.named_child_count() {
                     if let Some(type_node) = node.named_child(i)
-                        && (type_node.kind() == "type" || type_node.kind() == "identifier") {
-                            extends = type_node
-                                .utf8_text(source.as_bytes())
-                                .unwrap_or("")
-                                .to_string();
-                            break;
-                        }
+                        && (type_node.kind() == "type" || type_node.kind() == "identifier")
+                    {
+                        extends = type_node
+                            .utf8_text(source.as_bytes())
+                            .unwrap_or("")
+                            .to_string();
+                        break;
+                    }
                 }
             }
             "signal_statement" => {
@@ -168,15 +169,15 @@ pub fn extract_docs(source: &str, tree: &Tree, file_path: &Path) -> DocClass {
                     } else {
                         "()".to_string()
                     };
-                    let return_type = if let Some(ret_node) = node.child_by_field_name("return_type")
-                    {
-                        ret_node
-                            .utf8_text(source.as_bytes())
-                            .unwrap_or("")
-                            .to_string()
-                    } else {
-                        String::new()
-                    };
+                    let return_type =
+                        if let Some(ret_node) = node.child_by_field_name("return_type") {
+                            ret_node
+                                .utf8_text(source.as_bytes())
+                                .unwrap_or("")
+                                .to_string()
+                        } else {
+                            String::new()
+                        };
                     methods.push(DocMethod {
                         name,
                         params,
@@ -242,10 +243,7 @@ pub fn render_markdown(doc: &DocClass) -> String {
     if !doc.extends.is_empty() {
         output.push_str(&format!("**Extends:** {}\n", doc.extends));
     }
-    output.push_str(&format!(
-        "**File:** `{}`\n\n",
-        doc.file.display()
-    ));
+    output.push_str(&format!("**File:** `{}`\n\n", doc.file.display()));
 
     // Description
     if !doc.description.is_empty() {
@@ -339,11 +337,7 @@ pub fn run_doc(paths: &[String], output_dir: &str, stdout: bool) -> Result<()> {
             let output_path = Path::new(output_dir).join(output_file_name);
             fs::write(&output_path, markdown)
                 .map_err(|e| miette!("Failed to write {}: {e}", output_path.display()))?;
-            println!(
-                "{} {}",
-                "Generated".green(),
-                output_path.display()
-            );
+            println!("{} {}", "Generated".green(), output_path.display());
             generated_count += 1;
         }
     }

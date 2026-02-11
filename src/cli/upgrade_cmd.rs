@@ -1,6 +1,6 @@
 use clap::Args;
 use flate2::read::GzDecoder;
-use miette::{miette, Result};
+use miette::{Result, miette};
 use owo_colors::OwoColorize;
 use std::env;
 use std::fs;
@@ -109,9 +109,7 @@ fn fetch_latest_release() -> Result<(String, Vec<ReleaseAsset>)> {
 }
 
 fn fetch_release_by_tag(tag: &str) -> Result<(String, Vec<ReleaseAsset>)> {
-    let url = format!(
-        "https://api.github.com/repos/{GITHUB_REPO}/releases/tags/{tag}"
-    );
+    let url = format!("https://api.github.com/repos/{GITHUB_REPO}/releases/tags/{tag}");
     parse_release_response(&url)
 }
 
@@ -295,9 +293,6 @@ mod tests {
             "aarch64-apple-darwin",
             "x86_64-pc-windows-msvc",
         ];
-        assert!(
-            known.contains(&target),
-            "Unknown target: {target}"
-        );
+        assert!(known.contains(&target), "Unknown target: {target}");
     }
 }

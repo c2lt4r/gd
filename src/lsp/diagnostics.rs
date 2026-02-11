@@ -27,10 +27,7 @@ pub fn lint_source(source: &str) -> Vec<Diagnostic> {
         .filter(|d| !is_suppressed(d, &suppressions))
         .map(|d| {
             let start = Position::new(d.line as u32, d.column as u32);
-            let end = Position::new(
-                d.line as u32,
-                d.end_column.unwrap_or(d.column + 1) as u32,
-            );
+            let end = Position::new(d.line as u32, d.end_column.unwrap_or(d.column + 1) as u32);
             Diagnostic {
                 range: Range::new(start, end),
                 severity: Some(match d.severity {

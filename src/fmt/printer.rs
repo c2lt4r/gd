@@ -152,7 +152,9 @@ impl Printer {
             if i > 0 {
                 let prev = &children[i - 1];
                 let blank_lines = rules::spacing_between(
-                    prev, child, false,
+                    prev,
+                    child,
+                    false,
                     self.blank_lines_around_functions,
                     self.blank_lines_around_classes,
                 );
@@ -165,13 +167,7 @@ impl Printer {
 
     // ── Body blocks (function body, class body) ────────────────────────
 
-    fn print_body_block(
-        &mut self,
-        node: &Node,
-        source: &str,
-        indent: usize,
-        is_class_body: bool,
-    ) {
+    fn print_body_block(&mut self, node: &Node, source: &str, indent: usize, is_class_body: bool) {
         let inner_indent = indent + 1;
         let mut cursor = node.walk();
         let children: Vec<Node> = node.named_children(&mut cursor).collect();
@@ -180,7 +176,9 @@ impl Printer {
             if i > 0 && is_class_body {
                 let prev = &children[i - 1];
                 let blank_lines = rules::spacing_between(
-                    prev, child, true,
+                    prev,
+                    child,
+                    true,
                     self.blank_lines_around_functions,
                     self.blank_lines_around_classes,
                 );
@@ -920,7 +918,10 @@ mod tests {
     fn test_dictionary() {
         let input = "func f():\n\tvar d = {\"key\": \"value\", \"k2\": \"v2\"}\n";
         let output = format_source(input);
-        assert!(output.contains("{\"key\": \"value\", \"k2\": \"v2\"}"), "got: {output}");
+        assert!(
+            output.contains("{\"key\": \"value\", \"k2\": \"v2\"}"),
+            "got: {output}"
+        );
     }
 
     #[test]
@@ -954,7 +955,8 @@ mod tests {
 
     #[test]
     fn test_if_elif_else() {
-        let input = "func f():\n\tif x > 0:\n\t\tpass\n\telif x < 0:\n\t\tpass\n\telse:\n\t\tpass\n";
+        let input =
+            "func f():\n\tif x > 0:\n\t\tpass\n\telif x < 0:\n\t\tpass\n\telse:\n\t\tpass\n";
         let output = format_source(input);
         assert!(output.contains("if x > 0:"), "got: {output}");
         assert!(output.contains("\telif x < 0:"), "got: {output}");
@@ -1088,7 +1090,10 @@ mod tests {
         let input = "extends Node2D\n\nvar health: int = 100\n\n\nfunc _ready():\n\tpass\n";
         let first = format_source(input);
         let second = format_source(&first);
-        assert_eq!(first, second, "Format is not idempotent!\nFirst:\n{first}\nSecond:\n{second}");
+        assert_eq!(
+            first, second,
+            "Format is not idempotent!\nFirst:\n{first}\nSecond:\n{second}"
+        );
     }
 
     #[test]
@@ -1096,7 +1101,10 @@ mod tests {
         let input = "@export var health: int = 100\n@onready var sprite: Sprite2D = $Sprite2D\n";
         let first = format_source(input);
         let second = format_source(&first);
-        assert_eq!(first, second, "Format is not idempotent!\nFirst:\n{first}\nSecond:\n{second}");
+        assert_eq!(
+            first, second,
+            "Format is not idempotent!\nFirst:\n{first}\nSecond:\n{second}"
+        );
     }
 
     #[test]
@@ -1104,7 +1112,10 @@ mod tests {
         let input = "@tool\nextends Node2D\n\nvar x: int = 0\n";
         let first = format_source(input);
         let second = format_source(&first);
-        assert_eq!(first, second, "Format is not idempotent!\nFirst:\n{first}\nSecond:\n{second}");
+        assert_eq!(
+            first, second,
+            "Format is not idempotent!\nFirst:\n{first}\nSecond:\n{second}"
+        );
     }
 
     #[test]
@@ -1114,7 +1125,10 @@ mod tests {
         // No blank lines between annotated vars
         assert!(!output.contains("100\n\n@export"), "got: {output}");
         // No blank line between regular vars and previous group
-        assert!(!output.contains("$Sprite2D\n\n\nvar speed"), "got: {output}");
+        assert!(
+            !output.contains("$Sprite2D\n\n\nvar speed"),
+            "got: {output}"
+        );
         // One blank line between different groups
         assert!(output.contains("$Sprite2D\n\nvar speed"), "got: {output}");
     }
@@ -1124,11 +1138,20 @@ mod tests {
         let input = "class_name Player\n\nextends Node2D\n\nsignal died\n\nvar health: int = 100\nvar mana: int = 50\n\n\nfunc _ready() -> void:\n\tpass\n\n\nfunc _process(delta: float) -> void:\n\tpass\n";
         let output = format_source(input);
         // One blank line between different declaration groups
-        assert!(output.contains("signal died\n\nvar health"), "got: {output}");
+        assert!(
+            output.contains("signal died\n\nvar health"),
+            "got: {output}"
+        );
         // No blank line between consecutive vars
-        assert!(output.contains("health: int = 100\nvar mana"), "got: {output}");
+        assert!(
+            output.contains("health: int = 100\nvar mana"),
+            "got: {output}"
+        );
         // Two blank lines before first function
-        assert!(output.contains("mana: int = 50\n\n\nfunc _ready"), "got: {output}");
+        assert!(
+            output.contains("mana: int = 50\n\n\nfunc _ready"),
+            "got: {output}"
+        );
         // Two blank lines between functions
         assert!(output.contains("pass\n\n\nfunc _process"), "got: {output}");
     }
@@ -1138,7 +1161,10 @@ mod tests {
         let input = "func f():\n\tvar items = [\n\t\t\"a\",\n\t\t\"b\",\n\t]\n";
         let output = format_source(input);
         // Trailing comma should be preserved (though spacing may be normalized)
-        assert!(output.contains("\"b\","), "Trailing comma should be preserved, got: {output}");
+        assert!(
+            output.contains("\"b\","),
+            "Trailing comma should be preserved, got: {output}"
+        );
     }
 
     // ── Config option tests ───────────────────────────────────────────

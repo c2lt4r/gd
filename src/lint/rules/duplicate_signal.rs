@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use tree_sitter::{Node, Tree};
 
-use crate::core::config::LintConfig;
 use super::{LintDiagnostic, LintRule, Severity};
+use crate::core::config::LintConfig;
 
 pub struct DuplicateSignal;
 
@@ -29,34 +29,36 @@ fn check_scope(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
         loop {
             let child = cursor.node();
             if child.kind() == "signal_statement"
-                && let Some(name_node) = child.child_by_field_name("name") {
-                    let name = source[name_node.byte_range()].to_string();
-                    let line = name_node.start_position().row;
+                && let Some(name_node) = child.child_by_field_name("name")
+            {
+                let name = source[name_node.byte_range()].to_string();
+                let line = name_node.start_position().row;
 
-                    if let Some(&first_line) = signals.get(&name) {
-                        diags.push(LintDiagnostic {
-                            rule: "duplicate-signal",
-                            message: format!(
-                                "signal `{}` already declared on line {}",
-                                name,
-                                first_line + 1,
-                            ),
-                            severity: Severity::Error,
-                            line,
-                            column: name_node.start_position().column,
-                            fix: None,
-                    end_column: None,
-                        });
-                    } else {
-                        signals.insert(name, line);
-                    }
+                if let Some(&first_line) = signals.get(&name) {
+                    diags.push(LintDiagnostic {
+                        rule: "duplicate-signal",
+                        message: format!(
+                            "signal `{}` already declared on line {}",
+                            name,
+                            first_line + 1,
+                        ),
+                        severity: Severity::Error,
+                        line,
+                        column: name_node.start_position().column,
+                        fix: None,
+                        end_column: None,
+                    });
+                } else {
+                    signals.insert(name, line);
                 }
+            }
 
             // Recurse into class definitions to check nested scopes
             if child.kind() == "class_definition"
-                && let Some(body) = child.child_by_field_name("body") {
-                    check_scope(body, source, diags);
-                }
+                && let Some(body) = child.child_by_field_name("body")
+            {
+                check_scope(body, source, diags);
+            }
 
             if !cursor.goto_next_sibling() {
                 break;

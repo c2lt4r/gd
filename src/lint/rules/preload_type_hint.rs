@@ -1,7 +1,7 @@
 use tree_sitter::{Node, Tree};
 
-use crate::core::config::LintConfig;
 use super::{LintDiagnostic, LintRule, Severity};
+use crate::core::config::LintConfig;
 
 pub struct PreloadTypeHint;
 
@@ -23,19 +23,20 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
         // Check if it's a const (constants are fine)
         let first_child = node.child(0);
         if let Some(first) = first_child
-            && &source[first.byte_range()] == "const" {
-                // Constants are ok, skip
-                let mut cursor = node.walk();
-                if cursor.goto_first_child() {
-                    loop {
-                        check_node(cursor.node(), source, diags);
-                        if !cursor.goto_next_sibling() {
-                            break;
-                        }
+            && &source[first.byte_range()] == "const"
+        {
+            // Constants are ok, skip
+            let mut cursor = node.walk();
+            if cursor.goto_first_child() {
+                loop {
+                    check_node(cursor.node(), source, diags);
+                    if !cursor.goto_next_sibling() {
+                        break;
                     }
                 }
-                return;
             }
+            return;
+        }
 
         // Check if there's a type annotation
         let has_type = node.child_by_field_name("type").is_some();
@@ -43,15 +44,16 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
         if !has_type {
             // Check if the value is a preload() or load() call
             if let Some(value_node) = node.child_by_field_name("value")
-                && is_preload_or_load_call(&value_node, source) {
-                    // Get the variable name for the diagnostic message
-                    let var_name = if let Some(name_node) = node.child_by_field_name("name") {
-                        source[name_node.byte_range()].to_string()
-                    } else {
-                        "variable".to_string()
-                    };
+                && is_preload_or_load_call(&value_node, source)
+            {
+                // Get the variable name for the diagnostic message
+                let var_name = if let Some(name_node) = node.child_by_field_name("name") {
+                    source[name_node.byte_range()].to_string()
+                } else {
+                    "variable".to_string()
+                };
 
-                    diags.push(LintDiagnostic {
+                diags.push(LintDiagnostic {
                         rule: "preload-type-hint",
                         message: format!(
                             "variable `{}` uses preload/load but has no type hint; consider adding a type annotation",
@@ -63,7 +65,7 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
                         fix: None,
                     end_column: None,
                     });
-                }
+            }
         }
     }
 
@@ -80,9 +82,10 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
 
 fn is_preload_or_load_call(node: &Node, source: &str) -> bool {
     if node.kind() == "call"
-        && let Some(func_node) = node.child_by_field_name("function") {
-            let func_name = &source[func_node.byte_range()];
-            return func_name == "preload" || func_name == "load";
-        }
+        && let Some(func_node) = node.child_by_field_name("function")
+    {
+        let func_name = &source[func_node.byte_range()];
+        return func_name == "preload" || func_name == "load";
+    }
     false
 }

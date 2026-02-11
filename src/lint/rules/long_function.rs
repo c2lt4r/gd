@@ -1,7 +1,7 @@
 use tree_sitter::{Node, Tree};
 
-use crate::core::config::LintConfig;
 use super::{LintDiagnostic, LintRule, Severity};
+use crate::core::config::LintConfig;
 
 pub struct LongFunction;
 
@@ -40,7 +40,7 @@ fn check_node(node: Node, source: &str, max_lines: usize, diags: &mut Vec<LintDi
                 line: node.start_position().row,
                 column: node.start_position().column,
                 fix: None,
-                    end_column: None,
+                end_column: None,
             });
         }
     }

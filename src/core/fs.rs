@@ -1,4 +1,4 @@
-use miette::{miette, Result};
+use miette::{Result, miette};
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
@@ -12,9 +12,10 @@ pub fn collect_gdscript_files(root: &Path) -> Result<Vec<PathBuf>> {
         let entry = entry.map_err(|e| miette!("Error walking directory: {e}"))?;
         if entry.file_type().is_file()
             && let Some(ext) = entry.path().extension()
-                && ext == "gd" {
-                    files.push(entry.into_path());
-                }
+            && ext == "gd"
+        {
+            files.push(entry.into_path());
+        }
     }
     files.sort();
     Ok(files)
@@ -23,8 +24,5 @@ pub fn collect_gdscript_files(root: &Path) -> Result<Vec<PathBuf>> {
 /// Skip hidden dirs, .godot/, addons/ build dirs, etc.
 fn is_hidden_or_ignored(entry: &walkdir::DirEntry) -> bool {
     let name = entry.file_name().to_string_lossy();
-    name.starts_with('.')
-        || name == "build"
-        || name == ".godot"
-        || name == ".import"
+    name.starts_with('.') || name == "build" || name == ".godot" || name == ".import"
 }

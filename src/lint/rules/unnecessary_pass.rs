@@ -1,7 +1,7 @@
 use tree_sitter::{Node, Tree};
 
-use crate::core::config::LintConfig;
 use super::{Fix, LintDiagnostic, LintRule, Severity};
+use crate::core::config::LintConfig;
 
 pub struct UnnecessaryPass;
 
@@ -25,19 +25,21 @@ fn check_node(node: Node, source_bytes: &[u8], _source: &str, diags: &mut Vec<Li
         if named_count > 1 {
             for i in 0..named_count {
                 if let Some(child) = node.named_child(i)
-                    && child.kind() == "pass_statement" {
-                        let fix = generate_fix(&child, source_bytes);
+                    && child.kind() == "pass_statement"
+                {
+                    let fix = generate_fix(&child, source_bytes);
 
-                        diags.push(LintDiagnostic {
-                            rule: "unnecessary-pass",
-                            message: "`pass` is unnecessary when the body contains other statements".to_string(),
-                            severity: Severity::Warning,
-                            line: child.start_position().row,
-                            column: child.start_position().column,
-                            end_column: Some(child.end_position().column),
-                            fix,
-                        });
-                    }
+                    diags.push(LintDiagnostic {
+                        rule: "unnecessary-pass",
+                        message: "`pass` is unnecessary when the body contains other statements"
+                            .to_string(),
+                        severity: Severity::Warning,
+                        line: child.start_position().row,
+                        column: child.start_position().column,
+                        end_column: Some(child.end_position().column),
+                        fix,
+                    });
+                }
             }
         }
     }

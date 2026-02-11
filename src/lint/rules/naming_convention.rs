@@ -1,7 +1,7 @@
 use tree_sitter::Tree;
 
-use crate::core::config::LintConfig;
 use super::{Fix, LintDiagnostic, LintRule, Severity};
+use crate::core::config::LintConfig;
 
 pub struct NamingConvention;
 
@@ -36,10 +36,7 @@ fn check_node(
                     let fixed = to_snake_case(name);
                     diags.push(LintDiagnostic {
                         rule: "naming-convention",
-                        message: format!(
-                            "function `{}` should use snake_case: `{}`",
-                            name, fixed
-                        ),
+                        message: format!("function `{}` should use snake_case: `{}`", name, fixed),
                         severity: Severity::Warning,
                         line: name_node.start_position().row,
                         column: name_node.start_position().column,
@@ -85,10 +82,7 @@ fn check_node(
                     let fixed = to_snake_case(name);
                     diags.push(LintDiagnostic {
                         rule: "naming-convention",
-                        message: format!(
-                            "variable `{}` should use snake_case: `{}`",
-                            name, fixed
-                        ),
+                        message: format!("variable `{}` should use snake_case: `{}`", name, fixed),
                         severity: Severity::Warning,
                         line: name_node.start_position().row,
                         column: name_node.start_position().column,
@@ -134,10 +128,7 @@ fn check_node(
                     let fixed = to_pascal_case(name);
                     diags.push(LintDiagnostic {
                         rule: "naming-convention",
-                        message: format!(
-                            "class `{}` should use PascalCase: `{}`",
-                            name, fixed
-                        ),
+                        message: format!("class `{}` should use PascalCase: `{}`", name, fixed),
                         severity: Severity::Warning,
                         line: name_node.start_position().row,
                         column: name_node.start_position().column,
@@ -196,7 +187,8 @@ fn is_upper_snake_case(name: &str) -> bool {
     if name.is_empty() {
         return true;
     }
-    name.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+    name.chars()
+        .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
         && !name.contains("__")
         && !name.starts_with('_')
         && !name.ends_with('_')
@@ -232,7 +224,9 @@ fn is_snake_case(name: &str) -> bool {
         return true; // `_` or `__` are fine
     }
     // Must be lowercase alphanumeric + underscores, no consecutive underscores in the body
-    trimmed.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+    trimmed
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
         && !trimmed.contains("__")
 }
 
@@ -246,8 +240,7 @@ fn is_pascal_case(name: &str) -> bool {
         return false;
     }
     // No underscores allowed in PascalCase
-    !name.contains('_')
-        && name.chars().all(|c| c.is_ascii_alphanumeric())
+    !name.contains('_') && name.chars().all(|c| c.is_ascii_alphanumeric())
 }
 
 /// Convert a name to snake_case.

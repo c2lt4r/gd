@@ -1,5 +1,5 @@
 use clap::Args;
-use miette::{miette, Result};
+use miette::{Result, miette};
 use std::path::PathBuf;
 
 #[derive(Args)]

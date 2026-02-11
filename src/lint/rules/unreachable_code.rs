@@ -1,7 +1,7 @@
 use tree_sitter::{Node, Tree};
 
-use crate::core::config::LintConfig;
 use super::{LintDiagnostic, LintRule, Severity};
+use crate::core::config::LintConfig;
 
 pub struct UnreachableCode;
 
@@ -40,7 +40,10 @@ fn is_body_node(kind: &str) -> bool {
 }
 
 fn is_terminator(kind: &str) -> bool {
-    matches!(kind, "return_statement" | "break_statement" | "continue_statement")
+    matches!(
+        kind,
+        "return_statement" | "break_statement" | "continue_statement"
+    )
 }
 
 fn check_body_for_unreachable(body: Node, _source: &str, diags: &mut Vec<LintDiagnostic>) {
@@ -68,7 +71,7 @@ fn check_body_for_unreachable(body: Node, _source: &str, diags: &mut Vec<LintDia
                 line: child.start_position().row,
                 column: child.start_position().column,
                 fix: None,
-                    end_column: None,
+                end_column: None,
             });
             // Only report the first unreachable statement per block
             break;

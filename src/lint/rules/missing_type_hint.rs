@@ -1,7 +1,7 @@
 use tree_sitter::{Node, Tree};
 
-use crate::core::config::LintConfig;
 use super::{LintDiagnostic, LintRule, Severity};
+use crate::core::config::LintConfig;
 
 pub struct MissingTypeHint;
 
@@ -44,28 +44,29 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
                             line: child.start_position().row,
                             column: child.start_position().column,
                             fix: None,
-                    end_column: None,
+                            end_column: None,
                         });
                     }
                     // default_parameter (untyped with default) also has no type
                     if child.kind() == "default_parameter" {
                         // First child is the identifier name
                         if let Some(name_node) = child.child(0)
-                            && name_node.kind() == "identifier" {
-                                let param_name = &source[name_node.byte_range()];
-                                diags.push(LintDiagnostic {
-                                    rule: "missing-type-hint",
-                                    message: format!(
-                                        "parameter `{}` in function `{}` has no type hint",
-                                        param_name, func_name
-                                    ),
-                                    severity: Severity::Warning,
-                                    line: name_node.start_position().row,
-                                    column: name_node.start_position().column,
-                                    fix: None,
-                    end_column: None,
-                                });
-                            }
+                            && name_node.kind() == "identifier"
+                        {
+                            let param_name = &source[name_node.byte_range()];
+                            diags.push(LintDiagnostic {
+                                rule: "missing-type-hint",
+                                message: format!(
+                                    "parameter `{}` in function `{}` has no type hint",
+                                    param_name, func_name
+                                ),
+                                severity: Severity::Warning,
+                                line: name_node.start_position().row,
+                                column: name_node.start_position().column,
+                                fix: None,
+                                end_column: None,
+                            });
+                        }
                     }
                     if !cursor.goto_next_sibling() {
                         break;
@@ -80,10 +81,7 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
             if let Some(name_node) = name_node {
                 diags.push(LintDiagnostic {
                     rule: "missing-type-hint",
-                    message: format!(
-                        "function `{}` has no return type hint",
-                        func_name
-                    ),
+                    message: format!("function `{}` has no return type hint", func_name),
                     severity: Severity::Warning,
                     line: name_node.start_position().row,
                     column: name_node.start_position().column,

@@ -1,14 +1,14 @@
 use clap::Parser;
 use miette::Result;
 
+mod build;
 mod cli;
 mod core;
+mod doc;
 mod fmt;
 mod lint;
 mod lsp;
 mod scaffold;
-mod build;
-mod doc;
 
 use cli::Cli;
 

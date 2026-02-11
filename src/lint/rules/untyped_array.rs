@@ -1,7 +1,7 @@
 use tree_sitter::{Node, Tree};
 
-use crate::core::config::LintConfig;
 use super::{LintDiagnostic, LintRule, Severity};
+use crate::core::config::LintConfig;
 
 pub struct UntypedArray;
 
@@ -39,24 +39,28 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
         }
 
         // Check if value is an array
-        let has_array_value = node.child_by_field_name("value")
+        let has_array_value = node
+            .child_by_field_name("value")
             .is_some_and(|n| n.kind() == "array");
 
         // Check if there's a type annotation
         let has_type = node.child_by_field_name("type").is_some();
 
-        if has_array_value && !has_type
-            && let Some(name_node) = node.child_by_field_name("name") {
-                diags.push(LintDiagnostic {
-                    rule: "untyped-array",
-                    message: "array variable has no type annotation; consider `Array[Type]`".to_string(),
-                    severity: Severity::Warning,
-                    line: name_node.start_position().row,
-                    column: name_node.start_position().column,
-                    fix: None,
-                    end_column: None,
-                });
-            }
+        if has_array_value
+            && !has_type
+            && let Some(name_node) = node.child_by_field_name("name")
+        {
+            diags.push(LintDiagnostic {
+                rule: "untyped-array",
+                message: "array variable has no type annotation; consider `Array[Type]`"
+                    .to_string(),
+                severity: Severity::Warning,
+                line: name_node.start_position().row,
+                column: name_node.start_position().column,
+                fix: None,
+                end_column: None,
+            });
+        }
     }
 
     let mut cursor = node.walk();

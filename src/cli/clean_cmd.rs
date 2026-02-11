@@ -1,5 +1,5 @@
 use clap::Args;
-use miette::{miette, Result};
+use miette::{Result, miette};
 use owo_colors::OwoColorize;
 use std::env;
 use std::path::Path;
@@ -34,6 +34,5 @@ pub fn exec(args: CleanArgs) -> Result<()> {
 }
 
 fn remove_dir(path: &Path) -> Result<()> {
-    std::fs::remove_dir_all(path)
-        .map_err(|e| miette!("Failed to remove {}: {e}", path.display()))
+    std::fs::remove_dir_all(path).map_err(|e| miette!("Failed to remove {}: {e}", path.display()))
 }

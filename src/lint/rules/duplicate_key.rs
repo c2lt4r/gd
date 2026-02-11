@@ -1,8 +1,8 @@
 use std::collections::HashSet;
 use tree_sitter::{Node, Tree};
 
-use crate::core::config::LintConfig;
 use super::{LintDiagnostic, LintRule, Severity};
+use crate::core::config::LintConfig;
 
 pub struct DuplicateKey;
 

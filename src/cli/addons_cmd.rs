@@ -1,5 +1,5 @@
 use clap::{Args, Subcommand};
-use miette::{miette, Result};
+use miette::{Result, miette};
 use owo_colors::OwoColorize;
 use std::fs;
 use std::io;
@@ -55,8 +55,8 @@ pub fn exec(args: AddonsArgs) -> Result<()> {
 }
 
 fn list_addons() -> Result<()> {
-    let cwd = std::env::current_dir()
-        .map_err(|e| miette!("Failed to get current directory: {e}"))?;
+    let cwd =
+        std::env::current_dir().map_err(|e| miette!("Failed to get current directory: {e}"))?;
     let project = crate::core::project::GodotProject::discover(&cwd)?;
     let addons_dir = project.root.join("addons");
 
@@ -65,8 +65,8 @@ fn list_addons() -> Result<()> {
         return Ok(());
     }
 
-    let entries = fs::read_dir(&addons_dir)
-        .map_err(|e| miette!("Failed to read addons directory: {e}"))?;
+    let entries =
+        fs::read_dir(&addons_dir).map_err(|e| miette!("Failed to read addons directory: {e}"))?;
 
     let mut addons = Vec::new();
 
@@ -77,9 +77,10 @@ fn list_addons() -> Result<()> {
         if path.is_dir() {
             let plugin_cfg = path.join("plugin.cfg");
             if plugin_cfg.exists()
-                && let Ok(info) = parse_plugin_cfg(&plugin_cfg) {
-                    addons.push((entry.file_name().to_string_lossy().to_string(), info));
-                }
+                && let Ok(info) = parse_plugin_cfg(&plugin_cfg)
+            {
+                addons.push((entry.file_name().to_string_lossy().to_string(), info));
+            }
         }
     }
 
@@ -110,8 +111,8 @@ fn list_addons() -> Result<()> {
 }
 
 fn install_addon(args: InstallArgs) -> Result<()> {
-    let cwd = std::env::current_dir()
-        .map_err(|e| miette!("Failed to get current directory: {e}"))?;
+    let cwd =
+        std::env::current_dir().map_err(|e| miette!("Failed to get current directory: {e}"))?;
     let project = crate::core::project::GodotProject::discover(&cwd)?;
     let addons_dir = project.root.join("addons");
 
@@ -134,7 +135,11 @@ fn install_addon(args: InstallArgs) -> Result<()> {
     }
 }
 
-fn install_from_git(url: &str, custom_name: Option<&str>, addons_dir: &std::path::Path) -> Result<()> {
+fn install_from_git(
+    url: &str,
+    custom_name: Option<&str>,
+    addons_dir: &std::path::Path,
+) -> Result<()> {
     // Determine addon name
     let addon_name = if let Some(name) = custom_name {
         name.to_string()
@@ -193,15 +198,27 @@ fn install_from_git(url: &str, custom_name: Option<&str>, addons_dir: &std::path
     Ok(())
 }
 
-fn install_from_asset_library(asset_id: &str, custom_name: Option<&str>, addons_dir: &std::path::Path) -> Result<()> {
-    println!("Fetching asset {} from Godot Asset Library...", asset_id.cyan());
+fn install_from_asset_library(
+    asset_id: &str,
+    custom_name: Option<&str>,
+    addons_dir: &std::path::Path,
+) -> Result<()> {
+    println!(
+        "Fetching asset {} from Godot Asset Library...",
+        asset_id.cyan()
+    );
 
     // Get asset details
-    let url = format!("https://godotengine.org/asset-library/api/asset/{}", asset_id);
+    let url = format!(
+        "https://godotengine.org/asset-library/api/asset/{}",
+        asset_id
+    );
     let mut response = ureq::get(&url)
         .call()
         .map_err(|e| miette!("Failed to fetch asset details: {e}"))?;
-    let asset: AssetInfo = response.body_mut().read_json()
+    let asset: AssetInfo = response
+        .body_mut()
+        .read_json()
         .map_err(|e| miette!("Failed to parse asset details: {e}"))?;
 
     if asset.download_url.is_empty() {
@@ -215,26 +232,33 @@ fn install_from_asset_library(asset_id: &str, custom_name: Option<&str>, addons_
         return Err(miette!("Addon '{}' already exists", addon_name));
     }
 
-    println!("Downloading {} by {}...", asset.title.green().bold(), asset.author);
+    println!(
+        "Downloading {} by {}...",
+        asset.title.green().bold(),
+        asset.author
+    );
 
     // Download the zip file
     let zip_response = ureq::get(&asset.download_url)
         .call()
         .map_err(|e| miette!("Failed to download asset: {e}"))?;
 
-    let zip_data = zip_response.into_body().read_to_vec()
+    let zip_data = zip_response
+        .into_body()
+        .read_to_vec()
         .map_err(|e| miette!("Failed to read download: {e}"))?;
 
     // Extract the zip
     let cursor = io::Cursor::new(zip_data);
-    let mut archive = zip::ZipArchive::new(cursor)
-        .map_err(|e| miette!("Failed to open zip archive: {e}"))?;
+    let mut archive =
+        zip::ZipArchive::new(cursor).map_err(|e| miette!("Failed to open zip archive: {e}"))?;
 
     // Find the addons directory in the archive and extract it
     let mut found_addon = false;
 
     for i in 0..archive.len() {
-        let mut file = archive.by_index(i)
+        let mut file = archive
+            .by_index(i)
             .map_err(|e| miette!("Failed to read zip entry: {e}"))?;
 
         let file_path = file.name();
@@ -265,8 +289,8 @@ fn install_from_asset_library(asset_id: &str, custom_name: Option<&str>, addons_
                     .map_err(|e| miette!("Failed to create parent directory: {e}"))?;
             }
 
-            let mut outfile = fs::File::create(&dest_path)
-                .map_err(|e| miette!("Failed to create file: {e}"))?;
+            let mut outfile =
+                fs::File::create(&dest_path).map_err(|e| miette!("Failed to create file: {e}"))?;
 
             io::copy(&mut file, &mut outfile)
                 .map_err(|e| miette!("Failed to extract file: {e}"))?;
@@ -274,7 +298,9 @@ fn install_from_asset_library(asset_id: &str, custom_name: Option<&str>, addons_
     }
 
     if !found_addon {
-        return Err(miette!("No addons directory found in the downloaded archive"));
+        return Err(miette!(
+            "No addons directory found in the downloaded archive"
+        ));
     }
 
     println!("\n{}", "Successfully installed!".green().bold());
@@ -290,17 +316,24 @@ fn install_from_asset_library(asset_id: &str, custom_name: Option<&str>, addons_
     Ok(())
 }
 
-fn install_from_asset_library_by_name(name: &str, custom_name: Option<&str>, addons_dir: &std::path::Path) -> Result<()> {
+fn install_from_asset_library_by_name(
+    name: &str,
+    custom_name: Option<&str>,
+    addons_dir: &std::path::Path,
+) -> Result<()> {
     println!("Searching Asset Library for '{}'...", name);
 
     // Search for the asset
-    let search_url = format!("https://godotengine.org/asset-library/api/asset?filter={}&max_results=10",
-        urlencoding::encode(name));
+    let search_url = format!(
+        "https://godotengine.org/asset-library/api/asset?filter={}&max_results=10",
+        urlencoding::encode(name)
+    );
 
     let search_response: AssetSearchResponse = ureq::get(&search_url)
         .call()
         .map_err(|e| miette!("Failed to search Asset Library: {e}"))?
-        .body_mut().read_json()
+        .body_mut()
+        .read_json()
         .map_err(|e| miette!("Failed to parse search results: {e}"))?;
 
     // Find exact match (case-insensitive)
@@ -313,8 +346,8 @@ fn install_from_asset_library_by_name(name: &str, custom_name: Option<&str>, add
 }
 
 fn remove_addon(args: RemoveArgs) -> Result<()> {
-    let cwd = std::env::current_dir()
-        .map_err(|e| miette!("Failed to get current directory: {e}"))?;
+    let cwd =
+        std::env::current_dir().map_err(|e| miette!("Failed to get current directory: {e}"))?;
     let project = crate::core::project::GodotProject::discover(&cwd)?;
     let addons_dir = project.root.join("addons");
     let addon_path = addons_dir.join(&args.name);
@@ -354,8 +387,8 @@ struct PluginInfo {
 }
 
 fn parse_plugin_cfg(path: &PathBuf) -> Result<PluginInfo> {
-    let content = fs::read_to_string(path)
-        .map_err(|e| miette!("Failed to read plugin.cfg: {e}"))?;
+    let content =
+        fs::read_to_string(path).map_err(|e| miette!("Failed to read plugin.cfg: {e}"))?;
 
     let mut info = PluginInfo {
         name: None,
@@ -386,13 +419,16 @@ fn parse_plugin_cfg(path: &PathBuf) -> Result<PluginInfo> {
 fn search_addons(args: SearchArgs) -> Result<()> {
     println!("Searching Asset Library for '{}'...\n", args.query);
 
-    let search_url = format!("https://godotengine.org/asset-library/api/asset?filter={}&max_results=10",
-        urlencoding::encode(&args.query));
+    let search_url = format!(
+        "https://godotengine.org/asset-library/api/asset?filter={}&max_results=10",
+        urlencoding::encode(&args.query)
+    );
 
     let search_response: AssetSearchResponse = ureq::get(&search_url)
         .call()
         .map_err(|e| miette!("Failed to search Asset Library: {e}"))?
-        .body_mut().read_json()
+        .body_mut()
+        .read_json()
         .map_err(|e| miette!("Failed to parse search results: {e}"))?;
 
     if search_response.result.is_empty() {
@@ -424,7 +460,10 @@ fn search_addons(args: SearchArgs) -> Result<()> {
         println!();
     }
 
-    println!("To install, run: {}", "gd addons install <ID>".to_string().cyan());
+    println!(
+        "To install, run: {}",
+        "gd addons install <ID>".to_string().cyan()
+    );
 
     Ok(())
 }

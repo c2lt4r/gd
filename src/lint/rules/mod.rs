@@ -1,33 +1,33 @@
 //! Lint rules module - each rule analyzes the tree-sitter AST.
 
-pub mod naming_convention;
-pub mod unused_variable;
-pub mod missing_type_hint;
-pub mod empty_function;
-pub mod long_function;
-pub mod duplicate_signal;
-pub mod self_assignment;
-pub mod unreachable_code;
-pub mod shadowed_variable;
-pub mod comparison_with_boolean;
-pub mod unnecessary_pass;
-pub mod preload_type_hint;
-pub mod integer_division;
-pub mod signal_name_convention;
-pub mod magic_number;
-pub mod float_comparison;
-pub mod missing_super_call;
-pub mod return_type_mismatch;
-pub mod private_method_access;
-pub mod untyped_array;
-pub mod duplicate_function;
-pub mod unused_signal;
-pub mod duplicate_key;
 pub mod await_in_ready;
+pub mod comparison_with_boolean;
+pub mod duplicate_function;
+pub mod duplicate_key;
+pub mod duplicate_signal;
+pub mod empty_function;
+pub mod float_comparison;
+pub mod integer_division;
+pub mod long_function;
+pub mod magic_number;
 pub mod missing_return;
-pub mod unused_preload;
-pub mod static_type_inference;
+pub mod missing_super_call;
+pub mod missing_type_hint;
+pub mod naming_convention;
 pub mod node_ready_order;
+pub mod preload_type_hint;
+pub mod private_method_access;
+pub mod return_type_mismatch;
+pub mod self_assignment;
+pub mod shadowed_variable;
+pub mod signal_name_convention;
+pub mod static_type_inference;
+pub mod unnecessary_pass;
+pub mod unreachable_code;
+pub mod untyped_array;
+pub mod unused_preload;
+pub mod unused_signal;
+pub mod unused_variable;
 
 use tree_sitter::Tree;
 

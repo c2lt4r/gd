@@ -4,7 +4,7 @@ pub mod rules;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use miette::{miette, Result};
+use miette::{Result, miette};
 use owo_colors::OwoColorize;
 use rayon::prelude::*;
 use similar::TextDiff;
@@ -16,8 +16,8 @@ use printer::Printer;
 
 /// Entry point for the formatter.
 pub fn run_fmt(paths: &[String], check: bool, diff: bool) -> Result<()> {
-    let cwd = std::env::current_dir()
-        .map_err(|e| miette!("Failed to get current directory: {e}"))?;
+    let cwd =
+        std::env::current_dir().map_err(|e| miette!("Failed to get current directory: {e}"))?;
     let config = Config::load(&cwd)?;
 
     let files = collect_files(paths, &cwd)?;
@@ -30,8 +30,9 @@ pub fn run_fmt(paths: &[String], check: bool, diff: bool) -> Result<()> {
     let has_changes = AtomicBool::new(false);
     let has_errors = AtomicBool::new(false);
 
-    files.par_iter().for_each(|path| {
-        match format_file(path, &config, check, diff) {
+    files
+        .par_iter()
+        .for_each(|path| match format_file(path, &config, check, diff) {
             Ok(changed) => {
                 if changed {
                     has_changes.store(true, Ordering::Relaxed);
@@ -41,8 +42,7 @@ pub fn run_fmt(paths: &[String], check: bool, diff: bool) -> Result<()> {
                 eprintln!("{}: {e}", path.display().red());
                 has_errors.store(true, Ordering::Relaxed);
             }
-        }
-    });
+        });
 
     if has_errors.load(Ordering::Relaxed) {
         return Err(miette!("Some files had errors during formatting"));
@@ -118,11 +118,7 @@ fn format_file(path: &Path, config: &Config, check: bool, show_diff: bool) -> Re
     }
 
     if check {
-        eprintln!(
-            "{} {}",
-            "would reformat".yellow().bold(),
-            path.display()
-        );
+        eprintln!("{} {}", "would reformat".yellow().bold(), path.display());
     }
 
     if show_diff {
@@ -147,14 +143,8 @@ fn print_diff(path: &Path, old: &str, new: &str) {
     let diff = TextDiff::from_lines(old, new);
     let display_path = path.display();
 
-    println!(
-        "{}",
-        format!("--- {display_path} (original)").red()
-    );
-    println!(
-        "{}",
-        format!("+++ {display_path} (formatted)").green()
-    );
+    println!("{}", format!("--- {display_path} (original)").red());
+    println!("{}", format!("+++ {display_path} (formatted)").green());
 
     for hunk in diff.unified_diff().context_radius(3).iter_hunks() {
         println!("{}", format!("{hunk}").cyan());

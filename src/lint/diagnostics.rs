@@ -21,38 +21,34 @@ pub fn print_diagnostic(path: &Path, diag: &LintDiagnostic, source: Option<&str>
 
     // Show source span with underline if we have source and end_column
     if let (Some(source), Some(end_col)) = (source, diag.end_column)
-        && let Some(line_text) = source.lines().nth(diag.line) {
-            let line_num = format!("{}", diag.line + 1);
-            let gutter_width = line_num.len();
+        && let Some(line_text) = source.lines().nth(diag.line)
+    {
+        let line_num = format!("{}", diag.line + 1);
+        let gutter_width = line_num.len();
 
-            // Print gutter separator
-            eprintln!("{:>width$} {}", "", "|".cyan(), width = gutter_width);
+        // Print gutter separator
+        eprintln!("{:>width$} {}", "", "|".cyan(), width = gutter_width);
 
-            // Print the source line with line number
-            eprintln!(
-                "{} {} {}",
-                line_num.cyan(),
-                "|".cyan(),
-                line_text,
-            );
+        // Print the source line with line number
+        eprintln!("{} {} {}", line_num.cyan(), "|".cyan(), line_text,);
 
-            // Print the underline
-            let col = diag.column;
-            let span_len = if end_col > col { end_col - col } else { 1 };
-            let underline = "^".repeat(span_len);
-            let colored_underline = match diag.severity {
-                Severity::Warning => underline.yellow().bold().to_string(),
-                Severity::Error => underline.red().bold().to_string(),
-            };
-            eprintln!(
-                "{:>width$} {} {:>col$}{}",
-                "",
-                "|".cyan(),
-                "",
-                colored_underline,
-                width = gutter_width,
-                col = col,
-            );
+        // Print the underline
+        let col = diag.column;
+        let span_len = if end_col > col { end_col - col } else { 1 };
+        let underline = "^".repeat(span_len);
+        let colored_underline = match diag.severity {
+            Severity::Warning => underline.yellow().bold().to_string(),
+            Severity::Error => underline.red().bold().to_string(),
+        };
+        eprintln!(
+            "{:>width$} {} {:>col$}{}",
+            "",
+            "|".cyan(),
+            "",
+            colored_underline,
+            width = gutter_width,
+            col = col,
+        );
     }
 }
 
