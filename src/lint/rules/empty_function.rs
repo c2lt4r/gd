@@ -13,78 +13,111 @@ impl LintRule for EmptyFunction {
     fn check(&self, tree: &Tree, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
         let root = tree.root_node();
-        check_node(root, source, &mut diags);
+        check_scope(root, source, &mut diags);
         diags
     }
 }
 
-fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    if node.kind() == "function_definition"
-        && let Some(body) = node.child_by_field_name("body")
-    {
-        // An empty function body has exactly one named child: a pass_statement
-        let named_count = body.named_child_count();
-        if named_count == 1
-            && let Some(first) = body.named_child(0)
-            && first.kind() == "pass_statement"
-        {
-            // Skip virtual method stubs: functions where all parameters
-            // are prefixed with _ (the GDScript convention for intentionally
-            // unused parameters). This pattern indicates the function is a
-            // base class virtual method meant to be overridden by subclasses.
-            if is_virtual_stub(node, source) {
-                // Still recurse into children below
-            } else {
-                let func_name = node
-                    .child_by_field_name("name")
-                    .map(|n| &source[n.byte_range()])
-                    .unwrap_or("<unknown>");
-                diags.push(LintDiagnostic {
-                    rule: "empty-function",
-                    message: format!("function `{}` has an empty body (only `pass`)", func_name),
-                    severity: Severity::Warning,
-                    line: node.start_position().row,
-                    column: node.start_position().column,
-                    fix: None,
-                    end_column: None,
-                });
-            }
-        }
-    }
+/// Check all functions within a scope (file top-level or class body).
+/// Two-pass: first detect if the scope contains virtual stubs (empty functions
+/// with all-`_`-prefixed params), then emit warnings skipping zero-param
+/// empty functions that are siblings of virtual stubs.
+fn check_scope(scope: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
+    // Pass 1: find empty functions and check for virtual stubs in this scope
+    let mut empty_funcs: Vec<Node> = Vec::new();
+    let mut has_virtual_stubs = false;
 
-    let mut cursor = node.walk();
+    let mut cursor = scope.walk();
     if cursor.goto_first_child() {
         loop {
-            check_node(cursor.node(), source, diags);
+            let child = cursor.node();
+
+            if child.kind() == "function_definition" && is_empty_body(child) {
+                empty_funcs.push(child);
+                if is_virtual_stub(child, source) {
+                    has_virtual_stubs = true;
+                }
+            }
+
+            // Recurse into class bodies (separate scope)
+            if child.kind() == "class_definition"
+                && let Some(body) = child.child_by_field_name("body")
+            {
+                check_scope(body, source, diags);
+            }
+
             if !cursor.goto_next_sibling() {
                 break;
             }
         }
     }
+
+    // Pass 2: emit warnings, skipping zero-param functions in virtual stub scopes
+    for func in empty_funcs {
+        if is_virtual_stub(func, source) {
+            continue;
+        }
+
+        // Zero-param private function alongside virtual stubs → likely a virtual stub too
+        // (e.g. _on_exit() next to _on_enter(_msg), _on_update(_delta))
+        if has_virtual_stubs && param_count(func) == 0 {
+            let name = func
+                .child_by_field_name("name")
+                .map(|n| &source[n.byte_range()])
+                .unwrap_or("");
+            if name.starts_with('_') {
+                continue;
+            }
+        }
+
+        let func_name = func
+            .child_by_field_name("name")
+            .map(|n| &source[n.byte_range()])
+            .unwrap_or("<unknown>");
+        diags.push(LintDiagnostic {
+            rule: "empty-function",
+            message: format!("function `{}` has an empty body (only `pass`)", func_name),
+            severity: Severity::Warning,
+            line: func.start_position().row,
+            column: func.start_position().column,
+            fix: None,
+            end_column: None,
+        });
+    }
+}
+
+/// Check if a function has only `pass` in its body.
+fn is_empty_body(func: Node) -> bool {
+    let Some(body) = func.child_by_field_name("body") else {
+        return false;
+    };
+    // Count non-comment named children
+    let stmts: Vec<_> = (0..body.named_child_count())
+        .filter_map(|i| body.named_child(i))
+        .filter(|c| c.kind() != "comment")
+        .collect();
+    stmts.len() == 1 && stmts[0].kind() == "pass_statement"
 }
 
 /// A function is a virtual stub if it has at least one parameter and every
-/// parameter name starts with `_`. This is the standard GDScript convention
-/// for base class methods meant to be overridden.
+/// parameter name starts with `_`.
 fn is_virtual_stub(func: Node, source: &str) -> bool {
-    let params = match func.child_by_field_name("parameters") {
-        Some(p) => p,
-        None => return false,
+    let Some(params) = func.child_by_field_name("parameters") else {
+        return false;
     };
 
     let src = source.as_bytes();
-    let mut param_count = 0;
+    let mut count = 0;
 
     let mut cursor = params.walk();
     if cursor.goto_first_child() {
         loop {
             let child = cursor.node();
-            let is_param = matches!(
+            if matches!(
                 child.kind(),
                 "identifier" | "typed_parameter" | "default_parameter" | "typed_default_parameter"
-            );
-            if is_param {
-                param_count += 1;
+            ) {
+                count += 1;
                 let name = match child.kind() {
                     "identifier" => child.utf8_text(src).unwrap_or(""),
                     _ => child
@@ -102,7 +135,31 @@ fn is_virtual_stub(func: Node, source: &str) -> bool {
         }
     }
 
-    param_count > 0
+    count > 0
+}
+
+/// Count the number of parameters in a function.
+fn param_count(func: Node) -> usize {
+    let Some(params) = func.child_by_field_name("parameters") else {
+        return 0;
+    };
+
+    let mut count = 0;
+    let mut cursor = params.walk();
+    if cursor.goto_first_child() {
+        loop {
+            if matches!(
+                cursor.node().kind(),
+                "identifier" | "typed_parameter" | "default_parameter" | "typed_default_parameter"
+            ) {
+                count += 1;
+            }
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+    }
+    count
 }
 
 #[cfg(test)]
@@ -141,8 +198,31 @@ mod tests {
     }
 
     #[test]
-    fn warns_on_zero_param_empty_function() {
+    fn no_warning_on_zero_param_sibling_of_virtual_stub() {
+        // _on_exit has no params but is alongside _on_enter which is a virtual stub
+        let source = "func _on_enter(_msg: Dictionary) -> void:\n\tpass\n\nfunc _on_exit() -> void:\n\tpass\n";
+        assert!(check(source).is_empty());
+    }
+
+    #[test]
+    fn warns_on_isolated_zero_param_empty() {
+        // No virtual stub siblings → should warn
         let source = "func _on_exit() -> void:\n\tpass\n";
         assert_eq!(check(source).len(), 1);
+    }
+
+    #[test]
+    fn warns_on_standalone_empty_handler() {
+        // Empty signal handler with no virtual stub context
+        let source = "func _on_button_pressed() -> void:\n\tpass\n\nfunc do_stuff() -> void:\n\tprint(\"hi\")\n";
+        assert_eq!(check(source).len(), 1);
+    }
+
+    #[test]
+    fn warns_on_public_empty_alongside_stubs() {
+        // do_nothing is public (no _ prefix) so should still warn even with virtual stubs nearby
+        let source = "func _on_enter(_msg: Dictionary) -> void:\n\tpass\n\nfunc do_nothing() -> void:\n\tpass\n";
+        assert_eq!(check(source).len(), 1);
+        assert_eq!(check(source)[0].message, "function `do_nothing` has an empty body (only `pass`)");
     }
 }
