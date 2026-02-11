@@ -2,9 +2,11 @@
 
 pub mod await_in_ready;
 pub mod comparison_with_boolean;
+pub mod comparison_with_itself;
 pub mod duplicate_function;
 pub mod duplicate_key;
 pub mod duplicate_signal;
+pub mod duplicated_load;
 pub mod empty_function;
 pub mod float_comparison;
 pub mod integer_division;
@@ -20,6 +22,7 @@ pub mod return_type_mismatch;
 pub mod self_assignment;
 pub mod shadowed_variable;
 pub mod signal_name_convention;
+pub mod standalone_expression;
 pub mod static_type_inference;
 pub mod unnecessary_pass;
 pub mod unreachable_code;
@@ -135,6 +138,9 @@ pub fn all_rules(
         Box::new(physics_in_process::PhysicsInProcess),
         Box::new(redundant_else::RedundantElse),
         Box::new(unused_parameter::UnusedParameter),
+        Box::new(duplicated_load::DuplicatedLoad),
+        Box::new(standalone_expression::StandaloneExpression),
+        Box::new(comparison_with_itself::ComparisonWithItself),
     ];
     all.into_iter()
         .filter(|r| {

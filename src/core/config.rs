@@ -59,6 +59,12 @@ pub struct LintConfig {
     pub max_cyclomatic_complexity: usize,
     /// Maximum nesting depth before deeply-nested-code warns.
     pub max_nesting_depth: usize,
+    /// Maximum line length before max-line-length warns.
+    pub max_line_length: usize,
+    /// Maximum file lines before max-file-lines warns.
+    pub max_file_lines: usize,
+    /// Maximum public methods per class before max-public-methods warns.
+    pub max_public_methods: usize,
     /// Per-rule severity overrides.
     #[serde(default)]
     pub rules: HashMap<String, RuleConfig>,
@@ -75,6 +81,9 @@ impl Default for LintConfig {
             max_function_params: 5,
             max_cyclomatic_complexity: 10,
             max_nesting_depth: 4,
+            max_line_length: 120,
+            max_file_lines: 500,
+            max_public_methods: 20,
             rules: HashMap::new(),
             ignore_patterns: Vec::new(),
         }
@@ -159,6 +168,9 @@ fn warn_unknown_keys(raw: &toml::Value) {
         "max_function_params",
         "max_cyclomatic_complexity",
         "max_nesting_depth",
+        "max_line_length",
+        "max_file_lines",
+        "max_public_methods",
         "rules",
         "ignore_patterns",
     ];
