@@ -202,7 +202,7 @@ impl Printer {
                 "annotations" => {
                     self.print_annotations_block(child, source, indent);
                 }
-                "static" => self.push_str("static "),
+                "static_keyword" => self.push_str("static "),
                 "func" => self.push_str("func"),
                 "name" => {
                     self.push_str(" ");
@@ -212,6 +212,7 @@ impl Printer {
                 "->" => self.push_str(" -> "),
                 "type" => self.print_type(child, source),
                 ":" => self.push_str(":"),
+                "comment" => self.print_inline_comment(child, source, indent + 1),
                 "body" => self.print_body_block(child, source, indent, false),
                 _ => {}
             }
@@ -234,6 +235,7 @@ impl Printer {
                 "extends" => self.push_str(" extends "),
                 "type" => self.print_type(child, source),
                 ":" => self.push_str(":"),
+                "comment" => self.print_inline_comment(child, source, indent + 1),
                 "class_body" => self.print_body_block(child, source, indent, true),
                 _ => {}
             }
@@ -261,6 +263,7 @@ impl Printer {
                     self.write_indent(indent);
                     self.print_else_clause(child, source, indent);
                 }
+                "comment" => self.print_inline_comment(child, source, indent + 1),
                 _ if child.is_named() => self.print_node(child, source, indent),
                 _ => {}
             }
@@ -275,6 +278,7 @@ impl Printer {
             match child.kind() {
                 "elif" => self.push_str("elif "),
                 ":" => self.push_str(":"),
+                "comment" => self.print_inline_comment(child, source, indent + 1),
                 "body" => self.print_body_block(child, source, indent, false),
                 _ if child.is_named() => self.print_node(child, source, indent),
                 _ => {}
@@ -290,6 +294,7 @@ impl Printer {
             match child.kind() {
                 "else" => self.push_str("else"),
                 ":" => self.push_str(":"),
+                "comment" => self.print_inline_comment(child, source, indent + 1),
                 "body" => self.print_body_block(child, source, indent, false),
                 _ => {}
             }
@@ -307,6 +312,7 @@ impl Printer {
                 "for" => self.push_str("for "),
                 "in" => self.push_str(" in "),
                 ":" => self.push_str(":"),
+                "comment" => self.print_inline_comment(child, source, indent + 1),
                 "body" => self.print_body_block(child, source, indent, false),
                 _ if child.is_named() => self.print_node(child, source, indent),
                 _ => {}
@@ -322,6 +328,7 @@ impl Printer {
             match child.kind() {
                 "while" => self.push_str("while "),
                 ":" => self.push_str(":"),
+                "comment" => self.print_inline_comment(child, source, indent + 1),
                 "body" => self.print_body_block(child, source, indent, false),
                 _ if child.is_named() => self.print_node(child, source, indent),
                 _ => {}
@@ -339,6 +346,7 @@ impl Printer {
             match child.kind() {
                 "match" => self.push_str("match "),
                 ":" => self.push_str(":"),
+                "comment" => self.print_inline_comment(child, source, indent + 1),
                 "match_body" => self.print_match_body(child, source, indent),
                 _ if child.is_named() => self.print_node(child, source, indent),
                 _ => {}
@@ -365,6 +373,11 @@ impl Printer {
         for child in &children {
             match child.kind() {
                 ":" => self.push_str(":"),
+                "pattern_guard" => {
+                    self.push_str(" ");
+                    self.emit(child, source);
+                }
+                "comment" => self.print_inline_comment(child, source, indent + 1),
                 "body" => self.print_body_block(child, source, indent, false),
                 "," => self.push_str(", "),
                 _ if child.is_named() => self.print_node(child, source, indent),
@@ -385,6 +398,7 @@ impl Printer {
                 "annotations" => {
                     self.print_annotations_block(child, source, indent);
                 }
+                "static_keyword" => self.push_str("static "),
                 "var" => self.push_str("var"),
                 "const" => self.push_str("const"),
                 "name" => {
@@ -434,9 +448,10 @@ impl Printer {
         for child in &children {
             match child.kind() {
                 "extends" => self.push_str("extends"),
-                "type" => {
+                // type (extends Node2D) or string (extends "res://path.gd")
+                _ if child.is_named() => {
                     self.push_str(" ");
-                    self.print_type(child, source);
+                    self.emit(child, source);
                 }
                 _ => {}
             }
@@ -849,6 +864,13 @@ impl Printer {
 
     // ── Primitive helpers ──────────────────────────────────────────────
 
+    /// Emit a comment on its own line at the given indent level.
+    fn print_inline_comment(&mut self, node: &Node, source: &str, indent: usize) {
+        self.push_str("\n");
+        self.write_indent(indent);
+        self.emit(node, source);
+    }
+
     /// Emit the full source text of a node.
     fn emit(&mut self, node: &Node, source: &str) {
         if let Ok(text) = node.utf8_text(source.as_bytes()) {
@@ -1197,6 +1219,120 @@ mod tests {
         let output = format_with_config(input, &config);
         assert!(!output.ends_with('\n'), "got: {output:?}");
         assert!(output.ends_with("pass"), "got: {output:?}");
+    }
+
+    #[test]
+    fn test_extends_string_path() {
+        let input = "extends \"res://src/Tools/Base.gd\"\n";
+        let output = format_source(input);
+        assert_eq!(output, "extends \"res://src/Tools/Base.gd\"\n");
+    }
+
+    #[test]
+    fn test_extends_string_idempotent() {
+        let input = "extends \"res://src/Tools/Base.gd\"\n\n\nfunc f():\n\tpass\n";
+        let first = format_source(input);
+        let second = format_source(&first);
+        assert_eq!(
+            first, second,
+            "extends string not idempotent!\nFirst:\n{first}\nSecond:\n{second}"
+        );
+    }
+
+    #[test]
+    fn test_comment_between_if_else() {
+        let input = "func f():\n\tif x:\n\t\tpass\n\t# comment\n\telse:\n\t\tpass\n";
+        let first = format_source(input);
+        // Comment should be at body indent level for valid GDScript
+        assert!(
+            first.contains("\t\t# comment"),
+            "comment should be at body indent, got:\n{first}"
+        );
+        let second = format_source(&first);
+        assert_eq!(
+            first, second,
+            "if/comment/else not idempotent!\nFirst:\n{first}\nSecond:\n{second}"
+        );
+    }
+
+    #[test]
+    fn test_comment_after_colon_in_func() {
+        let input = "func f(): # comment\n\tpass\n";
+        let first = format_source(input);
+        let second = format_source(&first);
+        assert_eq!(
+            first, second,
+            "func comment not idempotent!\nFirst:\n{first}\nSecond:\n{second}"
+        );
+    }
+
+    #[test]
+    fn test_comment_after_colon_in_for() {
+        let input = "func f():\n\tfor i in range(10): # loop\n\t\tpass\n";
+        let first = format_source(input);
+        let second = format_source(&first);
+        assert_eq!(
+            first, second,
+            "for comment not idempotent!\nFirst:\n{first}\nSecond:\n{second}"
+        );
+    }
+
+    #[test]
+    fn test_static_var() {
+        let input = "static var count: int = 0\n";
+        let output = format_source(input);
+        assert_eq!(output, "static var count: int = 0\n");
+    }
+
+    #[test]
+    fn test_static_var_inferred() {
+        let input = "static var count := 0\n";
+        let output = format_source(input);
+        assert_eq!(output, "static var count := 0\n");
+    }
+
+    #[test]
+    fn test_static_func() {
+        let input = "static func create() -> void:\n\tpass\n";
+        let output = format_source(input);
+        assert_eq!(output, "static func create() -> void:\n\tpass\n");
+    }
+
+    #[test]
+    fn test_static_var_idempotent() {
+        let input = "static var count: int = 0\n";
+        let first = format_source(input);
+        let second = format_source(&first);
+        assert_eq!(
+            first, second,
+            "static var not idempotent!\nFirst:\n{first}\nSecond:\n{second}"
+        );
+    }
+
+    #[test]
+    fn test_static_func_idempotent() {
+        let input = "static func create() -> void:\n\tpass\n";
+        let first = format_source(input);
+        let second = format_source(&first);
+        assert_eq!(
+            first, second,
+            "static func not idempotent!\nFirst:\n{first}\nSecond:\n{second}"
+        );
+    }
+
+    #[test]
+    fn test_match_pattern_guard() {
+        let input = "func f():\n\tmatch typeof(x):\n\t\tTYPE_INT when x > 0:\n\t\t\tpass\n";
+        let output = format_source(input);
+        assert!(
+            output.contains("TYPE_INT when x > 0:"),
+            "pattern guard spacing lost, got: {output}"
+        );
+        let second = format_source(&output);
+        assert_eq!(
+            output, second,
+            "not idempotent!\nFirst:\n{output}\nSecond:\n{second}"
+        );
     }
 
     #[test]
