@@ -76,9 +76,32 @@ jobs:
           name: gd-${{ matrix.target }}
           path: gd-${{ github.ref_name }}-${{ matrix.target }}.*
 
+  vscode-extension:
+    name: Build VS Code Extension
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Build extension
+        working-directory: editors/vscode
+        run: |
+          npm install
+          npm run compile
+          npx @vscode/vsce package --no-dependencies
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vscode-extension
+          path: editors/vscode/*.vsix
+
   release:
     name: Create GitHub Release
-    needs: build
+    needs: [build, vscode-extension]
     runs-on: ubuntu-latest
 
     steps:
