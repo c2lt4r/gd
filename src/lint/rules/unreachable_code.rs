@@ -1,6 +1,6 @@
 use tree_sitter::{Node, Tree};
 
-use super::{LintDiagnostic, LintRule, Severity};
+use super::{Fix, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
 
 pub struct UnreachableCode;
@@ -46,8 +46,12 @@ fn is_terminator(kind: &str) -> bool {
     )
 }
 
-fn check_body_for_unreachable(body: Node, _source: &str, diags: &mut Vec<LintDiagnostic>) {
+fn check_body_for_unreachable(body: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
+    let source_bytes = source.as_bytes();
     let mut found_terminator: Option<&str> = None;
+    let mut first_unreachable_start: Option<usize> = None;
+    let mut last_unreachable_end: usize = 0;
+    let mut first_unreachable_pos: Option<(usize, usize)> = None;
 
     let mut cursor = body.walk();
     if !cursor.goto_first_child() {
@@ -63,21 +67,29 @@ fn check_body_for_unreachable(body: Node, _source: &str, diags: &mut Vec<LintDia
             continue;
         }
 
-        if let Some(term) = found_terminator {
-            diags.push(LintDiagnostic {
-                rule: "unreachable-code",
-                message: format!("unreachable code after `{}`", term),
-                severity: Severity::Warning,
-                line: child.start_position().row,
-                column: child.start_position().column,
-                fix: None,
-                end_column: None,
-            });
-            // Only report the first unreachable statement per block
-            break;
+        if found_terminator.is_some() {
+            if first_unreachable_start.is_none() {
+                // Extend backward to include leading whitespace on the line
+                let mut start = child.start_byte();
+                while start > 0 {
+                    let prev = start - 1;
+                    let ch = source_bytes[prev];
+                    if ch == b' ' || ch == b'\t' {
+                        start = prev;
+                    } else if ch == b'\n' {
+                        break;
+                    } else {
+                        break;
+                    }
+                }
+                first_unreachable_start = Some(start);
+                first_unreachable_pos =
+                    Some((child.start_position().row, child.start_position().column));
+            }
+            last_unreachable_end = child.end_byte();
         }
 
-        if is_terminator(child.kind()) {
+        if is_terminator(child.kind()) && found_terminator.is_none() {
             found_terminator = Some(match child.kind() {
                 "return_statement" => "return",
                 "break_statement" => "break",
@@ -89,5 +101,31 @@ fn check_body_for_unreachable(body: Node, _source: &str, diags: &mut Vec<LintDia
         if !cursor.goto_next_sibling() {
             break;
         }
+    }
+
+    if let (Some(term), Some(byte_start), Some((line, col))) = (
+        found_terminator,
+        first_unreachable_start,
+        first_unreachable_pos,
+    ) {
+        // Extend to include trailing newline
+        let mut byte_end = last_unreachable_end;
+        if byte_end < source_bytes.len() && source_bytes[byte_end] == b'\n' {
+            byte_end += 1;
+        }
+
+        diags.push(LintDiagnostic {
+            rule: "unreachable-code",
+            message: format!("unreachable code after `{}`", term),
+            severity: Severity::Warning,
+            line,
+            column: col,
+            end_column: None,
+            fix: Some(Fix {
+                byte_start,
+                byte_end,
+                replacement: String::new(),
+            }),
+        });
     }
 }

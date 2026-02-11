@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use tree_sitter::{Node, Tree};
 
-use super::{LintDiagnostic, LintRule, Severity};
+use super::{Fix, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
 
 pub struct UnusedVariable;
@@ -42,14 +42,14 @@ fn collect_functions(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) 
 
 /// Track variable declarations and references within a function body.
 fn check_function_body(body: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    // Collect local variable declarations: name -> (line, col, node)
-    let mut declarations: HashMap<String, (usize, usize)> = HashMap::new();
+    // Collect local variable declarations: name -> (line, col, name_byte_start)
+    let mut declarations: HashMap<String, (usize, usize, usize)> = HashMap::new();
     // Collect all identifier references (not declarations)
     let mut references: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     collect_declarations_and_refs(body, source, &mut declarations, &mut references);
 
-    for (name, (line, col)) in &declarations {
+    for (name, (line, col, name_byte_start)) in &declarations {
         // Skip variables starting with _ (intentionally unused)
         if name.starts_with('_') {
             continue;
@@ -61,8 +61,12 @@ fn check_function_body(body: Node, source: &str, diags: &mut Vec<LintDiagnostic>
                 severity: Severity::Warning,
                 line: *line,
                 column: *col,
-                fix: None,
-                end_column: None,
+                end_column: Some(*col + name.len()),
+                fix: Some(Fix {
+                    byte_start: *name_byte_start,
+                    byte_end: *name_byte_start,
+                    replacement: "_".to_string(),
+                }),
             });
         }
     }
@@ -71,7 +75,7 @@ fn check_function_body(body: Node, source: &str, diags: &mut Vec<LintDiagnostic>
 fn collect_declarations_and_refs(
     node: Node,
     source: &str,
-    declarations: &mut HashMap<String, (usize, usize)>,
+    declarations: &mut HashMap<String, (usize, usize, usize)>,
     references: &mut std::collections::HashSet<String>,
 ) {
     match node.kind() {
@@ -84,6 +88,7 @@ fn collect_declarations_and_refs(
                     (
                         name_node.start_position().row,
                         name_node.start_position().column,
+                        name_node.start_byte(),
                     ),
                 );
             }
