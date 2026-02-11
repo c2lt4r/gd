@@ -12,7 +12,7 @@ pub fn lint_source(source: &str) -> Vec<Diagnostic> {
     let config = crate::core::config::Config::default();
 
     // Run all lint rules
-    let rules = crate::lint::rules::all_rules(&config.lint.disabled_rules);
+    let rules = crate::lint::rules::all_rules(&config.lint.disabled_rules, &config.lint.rules);
     let mut diags = Vec::new();
     for rule in &rules {
         diags.extend(rule.check(&tree, source, &config.lint));

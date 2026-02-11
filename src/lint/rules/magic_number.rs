@@ -10,6 +10,10 @@ impl LintRule for MagicNumber {
         "magic-number"
     }
 
+    fn default_enabled(&self) -> bool {
+        false
+    }
+
     fn check(&self, tree: &Tree, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
         let root = tree.root_node();

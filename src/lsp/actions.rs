@@ -5,7 +5,7 @@ pub fn provide_code_actions(uri: &Url, source: &str, range: &Range) -> Option<Co
     // Parse and lint
     let tree = crate::core::parser::parse(source).ok()?;
     let config = crate::core::config::Config::default();
-    let rules = crate::lint::rules::all_rules(&config.lint.disabled_rules);
+    let rules = crate::lint::rules::all_rules(&config.lint.disabled_rules, &config.lint.rules);
 
     let mut all_diags = Vec::new();
     for rule in &rules {

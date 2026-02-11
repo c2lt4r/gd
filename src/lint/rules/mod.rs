@@ -28,9 +28,10 @@ pub mod unused_preload;
 pub mod unused_signal;
 pub mod unused_variable;
 
+use std::collections::HashMap;
 use tree_sitter::Tree;
 
-use crate::core::config::LintConfig;
+use crate::core::config::{LintConfig, RuleConfig};
 
 /// Severity of a lint diagnostic.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
@@ -69,12 +70,24 @@ pub trait LintRule: Send + Sync {
     /// Unique rule identifier (e.g. "naming-convention").
     fn name(&self) -> &'static str;
 
+    /// Whether this rule is enabled by default. Opt-in rules return false
+    /// and must be explicitly enabled via `[lint.rules.<name>]` in gd.toml.
+    fn default_enabled(&self) -> bool {
+        true
+    }
+
     /// Run the rule against a parsed file and return diagnostics.
     fn check(&self, tree: &Tree, source: &str, config: &LintConfig) -> Vec<LintDiagnostic>;
 }
 
-/// Return all built-in rules, excluding those listed in `disabled`.
-pub fn all_rules(disabled: &[String]) -> Vec<Box<dyn LintRule>> {
+/// Return all active rules based on config.
+/// - Default-enabled rules are included unless explicitly disabled.
+/// - Opt-in rules (default_enabled=false) are included only when
+///   configured in `[lint.rules.<name>]` with severity != "off".
+pub fn all_rules(
+    disabled: &[String],
+    rules_config: &HashMap<String, RuleConfig>,
+) -> Vec<Box<dyn LintRule>> {
     let all: Vec<Box<dyn LintRule>> = vec![
         Box::new(naming_convention::NamingConvention),
         Box::new(unused_variable::UnusedVariable),
@@ -105,6 +118,19 @@ pub fn all_rules(disabled: &[String]) -> Vec<Box<dyn LintRule>> {
         Box::new(node_ready_order::NodeReadyOrder),
     ];
     all.into_iter()
-        .filter(|r| !disabled.iter().any(|d| d == r.name()))
+        .filter(|r| {
+            let name = r.name();
+            if disabled.iter().any(|d| d == name) {
+                return false;
+            }
+            if r.default_enabled() {
+                true
+            } else {
+                // Opt-in: only include if explicitly configured with severity != "off"
+                rules_config
+                    .get(name)
+                    .is_some_and(|c| c.severity.as_deref() != Some("off"))
+            }
+        })
         .collect()
 }

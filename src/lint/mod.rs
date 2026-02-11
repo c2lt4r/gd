@@ -36,7 +36,7 @@ pub fn run_lint(paths: &[String], format: &str, fix: bool) -> Result<()> {
             disabled.push(rule_name.clone());
         }
     }
-    let rules = all_rules(&disabled);
+    let rules = all_rules(&disabled, &config.lint.rules);
 
     // Process files in parallel, skipping those matching ignore_patterns
     let file_results: Vec<(PathBuf, Vec<LintDiagnostic>)> = files
