@@ -8,8 +8,11 @@ pub fn lint_source(source: &str) -> Vec<Diagnostic> {
         Err(_) => return vec![],
     };
 
-    // Load config (use defaults if no project found)
-    let config = crate::core::config::Config::default();
+    // Load config from working directory (falls back to defaults)
+    let config = std::env::current_dir()
+        .ok()
+        .and_then(|cwd| crate::core::config::Config::load(&cwd).ok())
+        .unwrap_or_default();
 
     // Run all lint rules
     let rules = crate::lint::rules::all_rules(&config.lint.disabled_rules, &config.lint.rules);

@@ -4,7 +4,10 @@ use tower_lsp::lsp_types::*;
 pub fn provide_code_actions(uri: &Url, source: &str, range: &Range) -> Option<CodeActionResponse> {
     // Parse and lint
     let tree = crate::core::parser::parse(source).ok()?;
-    let config = crate::core::config::Config::default();
+    let config = std::env::current_dir()
+        .ok()
+        .and_then(|cwd| crate::core::config::Config::load(&cwd).ok())
+        .unwrap_or_default();
     let rules = crate::lint::rules::all_rules(&config.lint.disabled_rules, &config.lint.rules);
 
     let mut all_diags = Vec::new();
