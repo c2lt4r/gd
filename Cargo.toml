@@ -41,6 +41,10 @@ indicatif = "0.17"
 # Misc
 similar = "2"          # Diffing for fmt --check
 
+# File watching
+notify = "7"
+notify-debouncer-mini = "0.5"
+
 [profile.release]
 opt-level = 3
 lto = "thin"

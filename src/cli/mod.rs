@@ -10,6 +10,9 @@ pub mod test_cmd;
 pub mod completions_cmd;
 pub mod tree_cmd;
 pub mod doc_cmd;
+pub mod watch_cmd;
+pub mod addons_cmd;
+pub mod stats_cmd;
 
 use clap::{Parser, Subcommand};
 use miette::Result;
@@ -47,6 +50,12 @@ pub enum Command {
     Tree(tree_cmd::TreeArgs),
     /// Generate documentation from GDScript doc comments
     Doc(doc_cmd::DocArgs),
+    /// Watch files and run fmt/lint on changes
+    Watch(watch_cmd::WatchArgs),
+    /// Manage project addons
+    Addons(addons_cmd::AddonsArgs),
+    /// Show project statistics
+    Stats(stats_cmd::StatsArgs),
 }
 
 pub fn run(cli: Cli) -> Result<()> {
@@ -63,5 +72,8 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Completions(args) => completions_cmd::exec(args),
         Command::Tree(args) => tree_cmd::exec(args),
         Command::Doc(args) => doc_cmd::exec(args),
+        Command::Watch(args) => watch_cmd::exec(args),
+        Command::Addons(args) => addons_cmd::exec(args),
+        Command::Stats(args) => stats_cmd::exec(args),
     }
 }

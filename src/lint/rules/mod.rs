@@ -12,6 +12,9 @@ pub mod shadowed_variable;
 pub mod comparison_with_boolean;
 pub mod unnecessary_pass;
 pub mod preload_type_hint;
+pub mod integer_division;
+pub mod signal_name_convention;
+pub mod magic_number;
 
 use tree_sitter::Tree;
 
@@ -70,6 +73,9 @@ pub fn all_rules(disabled: &[String]) -> Vec<Box<dyn LintRule>> {
         Box::new(comparison_with_boolean::ComparisonWithBoolean),
         Box::new(unnecessary_pass::UnnecessaryPass),
         Box::new(preload_type_hint::PreloadTypeHint),
+        Box::new(integer_division::IntegerDivision),
+        Box::new(signal_name_convention::SignalNameConvention),
+        Box::new(magic_number::MagicNumber),
     ];
     all.into_iter()
         .filter(|r| !disabled.iter().any(|d| d == r.name()))
