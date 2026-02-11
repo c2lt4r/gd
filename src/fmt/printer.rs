@@ -132,7 +132,7 @@ impl Printer {
         for (i, child) in children.iter().enumerate() {
             if i > 0 {
                 let prev = &children[i - 1];
-                let spacing = rules::spacing_between(prev.kind(), child.kind(), false);
+                let spacing = rules::spacing_between(prev, child, false);
                 match spacing {
                     Spacing::TwoBlankLines => self.push_str("\n\n\n"),
                     Spacing::BlankLine => self.push_str("\n\n"),
@@ -160,7 +160,7 @@ impl Printer {
         for (i, child) in children.iter().enumerate() {
             if i > 0 && is_class_body {
                 let prev = &children[i - 1];
-                let spacing = rules::spacing_between(prev.kind(), child.kind(), true);
+                let spacing = rules::spacing_between(prev, child, true);
                 match spacing {
                     Spacing::TwoBlankLines => self.push_str("\n\n\n"),
                     Spacing::BlankLine => self.push_str("\n\n"),
@@ -1079,5 +1079,39 @@ mod tests {
         let first = format_source(input);
         let second = format_source(&first);
         assert_eq!(first, second, "Format is not idempotent!\nFirst:\n{first}\nSecond:\n{second}");
+    }
+
+    #[test]
+    fn test_annotation_var_grouping() {
+        let input = "@export var health: int = 100\n@export var mana: int = 50\n@onready var sprite = $Sprite2D\n\nvar speed = 200\n";
+        let output = format_source(input);
+        // No blank lines between annotated vars
+        assert!(!output.contains("100\n\n@export"), "got: {output}");
+        // No blank line between regular vars and previous group
+        assert!(!output.contains("$Sprite2D\n\n\nvar speed"), "got: {output}");
+        // One blank line between different groups
+        assert!(output.contains("$Sprite2D\n\nvar speed"), "got: {output}");
+    }
+
+    #[test]
+    fn test_class_body_formatting() {
+        let input = "class_name Player\n\nextends Node2D\n\nsignal died\n\nvar health: int = 100\nvar mana: int = 50\n\n\nfunc _ready() -> void:\n\tpass\n\n\nfunc _process(delta: float) -> void:\n\tpass\n";
+        let output = format_source(input);
+        // One blank line between different declaration groups
+        assert!(output.contains("signal died\n\nvar health"), "got: {output}");
+        // No blank line between consecutive vars
+        assert!(output.contains("health: int = 100\nvar mana"), "got: {output}");
+        // Two blank lines before first function
+        assert!(output.contains("mana: int = 50\n\n\nfunc _ready"), "got: {output}");
+        // Two blank lines between functions
+        assert!(output.contains("pass\n\n\nfunc _process"), "got: {output}");
+    }
+
+    #[test]
+    fn test_trailing_comma_preserved() {
+        let input = "func f():\n\tvar items = [\n\t\t\"a\",\n\t\t\"b\",\n\t]\n";
+        let output = format_source(input);
+        // Trailing comma should be preserved (though spacing may be normalized)
+        assert!(output.contains("\"b\","), "Trailing comma should be preserved, got: {output}");
     }
 }

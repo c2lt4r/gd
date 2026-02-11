@@ -2,6 +2,7 @@ use clap::{Args, Subcommand};
 use miette::{miette, Result};
 use owo_colors::OwoColorize;
 use std::fs;
+use std::io;
 use std::path::PathBuf;
 use std::process::Command as ProcessCommand;
 
@@ -15,16 +16,18 @@ pub struct AddonsArgs {
 pub enum AddonsCommand {
     /// List installed addons
     List,
-    /// Install an addon from a git URL
+    /// Install an addon from a git URL or Asset Library
     Install(InstallArgs),
     /// Remove an installed addon
     Remove(RemoveArgs),
+    /// Search the Godot Asset Library
+    Search(SearchArgs),
 }
 
 #[derive(Args)]
 pub struct InstallArgs {
-    /// Git URL to install from
-    pub url: String,
+    /// Git URL, Asset Library ID (numeric), or addon name to install
+    pub source: String,
     /// Custom name for the addon directory
     #[arg(long)]
     pub name: Option<String>,
@@ -36,11 +39,18 @@ pub struct RemoveArgs {
     pub name: String,
 }
 
+#[derive(Args)]
+pub struct SearchArgs {
+    /// Search query
+    pub query: String,
+}
+
 pub fn exec(args: AddonsArgs) -> Result<()> {
     match args.command {
         AddonsCommand::List => list_addons(),
         AddonsCommand::Install(install_args) => install_addon(install_args),
         AddonsCommand::Remove(remove_args) => remove_addon(remove_args),
+        AddonsCommand::Search(search_args) => search_addons(search_args),
     }
 }
 
@@ -111,12 +121,26 @@ fn install_addon(args: InstallArgs) -> Result<()> {
             .map_err(|e| miette!("Failed to create addons directory: {e}"))?;
     }
 
+    // Determine if source is an Asset Library ID, git URL, or name
+    if args.source.chars().all(|c| c.is_ascii_digit()) {
+        // Numeric ID - install from Asset Library
+        install_from_asset_library(&args.source, args.name.as_deref(), &addons_dir)
+    } else if args.source.starts_with("http") || args.source.starts_with("git") {
+        // Git URL - use existing git clone logic
+        install_from_git(&args.source, args.name.as_deref(), &addons_dir)
+    } else {
+        // Name - search Asset Library for exact match
+        install_from_asset_library_by_name(&args.source, args.name.as_deref(), &addons_dir)
+    }
+}
+
+fn install_from_git(url: &str, custom_name: Option<&str>, addons_dir: &std::path::Path) -> Result<()> {
     // Determine addon name
-    let addon_name = if let Some(name) = args.name {
-        name
+    let addon_name = if let Some(name) = custom_name {
+        name.to_string()
     } else {
         // Extract from URL (last path segment without .git)
-        let url_path = args.url.trim_end_matches('/');
+        let url_path = url.trim_end_matches('/');
         let last_segment = url_path
             .rsplit('/')
             .next()
@@ -130,12 +154,12 @@ fn install_addon(args: InstallArgs) -> Result<()> {
         return Err(miette!("Addon '{}' already exists", addon_name));
     }
 
-    println!("Installing {} from {}...", addon_name.green().bold(), args.url);
+    println!("Installing {} from {}...", addon_name.green().bold(), url);
 
     // Run git clone
     let status = ProcessCommand::new("git")
         .arg("clone")
-        .arg(&args.url)
+        .arg(url)
         .arg(&addon_path)
         .status()
         .map_err(|e| miette!("Failed to run git clone: {e}"))?;
@@ -167,6 +191,125 @@ fn install_addon(args: InstallArgs) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn install_from_asset_library(asset_id: &str, custom_name: Option<&str>, addons_dir: &std::path::Path) -> Result<()> {
+    println!("Fetching asset {} from Godot Asset Library...", asset_id.cyan());
+
+    // Get asset details
+    let url = format!("https://godotengine.org/asset-library/api/asset/{}", asset_id);
+    let mut response = ureq::get(&url)
+        .call()
+        .map_err(|e| miette!("Failed to fetch asset details: {e}"))?;
+    let asset: AssetInfo = response.body_mut().read_json()
+        .map_err(|e| miette!("Failed to parse asset details: {e}"))?;
+
+    if asset.download_url.is_empty() {
+        return Err(miette!("Asset has no download URL"));
+    }
+
+    let addon_name = custom_name.unwrap_or(&asset.title).to_string();
+    let addon_path = addons_dir.join(&addon_name);
+
+    if addon_path.exists() {
+        return Err(miette!("Addon '{}' already exists", addon_name));
+    }
+
+    println!("Downloading {} by {}...", asset.title.green().bold(), asset.author);
+
+    // Download the zip file
+    let zip_response = ureq::get(&asset.download_url)
+        .call()
+        .map_err(|e| miette!("Failed to download asset: {e}"))?;
+
+    let zip_data = zip_response.into_body().read_to_vec()
+        .map_err(|e| miette!("Failed to read download: {e}"))?;
+
+    // Extract the zip
+    let cursor = io::Cursor::new(zip_data);
+    let mut archive = zip::ZipArchive::new(cursor)
+        .map_err(|e| miette!("Failed to open zip archive: {e}"))?;
+
+    // Find the addons directory in the archive and extract it
+    let mut found_addon = false;
+
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i)
+            .map_err(|e| miette!("Failed to read zip entry: {e}"))?;
+
+        let file_path = file.name();
+
+        // Skip if not in addons directory
+        if !file_path.starts_with("addons/") {
+            continue;
+        }
+
+        found_addon = true;
+
+        // Remove "addons/" prefix and prepend our addon name
+        let relative_path = file_path.strip_prefix("addons/").unwrap();
+
+        // Skip the top-level addons directory itself
+        if relative_path.is_empty() {
+            continue;
+        }
+
+        let dest_path = addon_path.join(relative_path);
+
+        if file.is_dir() {
+            fs::create_dir_all(&dest_path)
+                .map_err(|e| miette!("Failed to create directory: {e}"))?;
+        } else {
+            if let Some(parent) = dest_path.parent() {
+                fs::create_dir_all(parent)
+                    .map_err(|e| miette!("Failed to create parent directory: {e}"))?;
+            }
+
+            let mut outfile = fs::File::create(&dest_path)
+                .map_err(|e| miette!("Failed to create file: {e}"))?;
+
+            io::copy(&mut file, &mut outfile)
+                .map_err(|e| miette!("Failed to extract file: {e}"))?;
+        }
+    }
+
+    if !found_addon {
+        return Err(miette!("No addons directory found in the downloaded archive"));
+    }
+
+    println!("\n{}", "Successfully installed!".green().bold());
+    println!("  Name: {}", asset.title);
+    println!("  Author: {}", asset.author);
+    if !asset.godot_version.is_empty() {
+        println!("  Godot version: {}", asset.godot_version.cyan());
+    }
+    if !asset.description.is_empty() {
+        println!("  Description: {}", asset.description.dimmed());
+    }
+
+    Ok(())
+}
+
+fn install_from_asset_library_by_name(name: &str, custom_name: Option<&str>, addons_dir: &std::path::Path) -> Result<()> {
+    println!("Searching Asset Library for '{}'...", name);
+
+    // Search for the asset
+    let search_url = format!("https://godotengine.org/asset-library/api/asset?filter={}&max_results=10",
+        urlencoding::encode(name));
+
+    let search_response: AssetSearchResponse = ureq::get(&search_url)
+        .call()
+        .map_err(|e| miette!("Failed to search Asset Library: {e}"))?
+        .body_mut().read_json()
+        .map_err(|e| miette!("Failed to parse search results: {e}"))?;
+
+    // Find exact match (case-insensitive)
+    let asset = search_response.result.iter()
+        .find(|a| a.title.eq_ignore_ascii_case(name))
+        .ok_or_else(|| miette!("No exact match found for '{}'. Try 'gd addons search {}' to see available options.", name, name))?;
+
+    // Install using the asset ID
+    install_from_asset_library(&asset.asset_id, custom_name, addons_dir)
 }
 
 fn remove_addon(args: RemoveArgs) -> Result<()> {
@@ -238,4 +381,71 @@ fn parse_plugin_cfg(path: &PathBuf) -> Result<PluginInfo> {
     }
 
     Ok(info)
+}
+
+fn search_addons(args: SearchArgs) -> Result<()> {
+    println!("Searching Asset Library for '{}'...\n", args.query);
+
+    let search_url = format!("https://godotengine.org/asset-library/api/asset?filter={}&max_results=10",
+        urlencoding::encode(&args.query));
+
+    let search_response: AssetSearchResponse = ureq::get(&search_url)
+        .call()
+        .map_err(|e| miette!("Failed to search Asset Library: {e}"))?
+        .body_mut().read_json()
+        .map_err(|e| miette!("Failed to parse search results: {e}"))?;
+
+    if search_response.result.is_empty() {
+        println!("No results found for '{}'", args.query);
+        return Ok(());
+    }
+
+    println!("Found {} result(s):\n", search_response.result.len());
+
+    for asset in &search_response.result {
+        println!("  {} {}", "ID:".dimmed(), asset.asset_id.cyan());
+        println!("  {} {}", "Title:".dimmed(), asset.title.green().bold());
+        println!("  {} {}", "Author:".dimmed(), asset.author);
+        println!("  {} {}", "Category:".dimmed(), asset.category);
+        if !asset.cost.is_empty() {
+            println!("  {} {}", "License:".dimmed(), asset.cost);
+        }
+        if !asset.godot_version.is_empty() {
+            println!("  {} {}", "Godot version:".dimmed(), asset.godot_version);
+        }
+        if !asset.description.is_empty() {
+            let desc = if asset.description.len() > 100 {
+                format!("{}...", &asset.description[..97])
+            } else {
+                asset.description.clone()
+            };
+            println!("  {} {}", "Description:".dimmed(), desc);
+        }
+        println!();
+    }
+
+    println!("To install, run: {}", "gd addons install <ID>".to_string().cyan());
+
+    Ok(())
+}
+
+// Asset Library API response structs
+#[derive(serde::Deserialize)]
+struct AssetSearchResponse {
+    result: Vec<AssetInfo>,
+}
+
+#[derive(serde::Deserialize)]
+struct AssetInfo {
+    asset_id: String,
+    title: String,
+    author: String,
+    category: String,
+    cost: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    godot_version: String,
+    #[serde(default)]
+    download_url: String,
 }

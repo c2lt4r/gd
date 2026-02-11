@@ -15,6 +15,11 @@ pub mod preload_type_hint;
 pub mod integer_division;
 pub mod signal_name_convention;
 pub mod magic_number;
+pub mod float_comparison;
+pub mod missing_super_call;
+pub mod return_type_mismatch;
+pub mod private_method_access;
+pub mod untyped_array;
 
 use tree_sitter::Tree;
 
@@ -76,6 +81,11 @@ pub fn all_rules(disabled: &[String]) -> Vec<Box<dyn LintRule>> {
         Box::new(integer_division::IntegerDivision),
         Box::new(signal_name_convention::SignalNameConvention),
         Box::new(magic_number::MagicNumber),
+        Box::new(float_comparison::FloatComparison),
+        Box::new(missing_super_call::MissingSuperCall),
+        Box::new(return_type_mismatch::ReturnTypeMismatch),
+        Box::new(private_method_access::PrivateMethodAccess),
+        Box::new(untyped_array::UntypedArray),
     ];
     all.into_iter()
         .filter(|r| !disabled.iter().any(|d| d == r.name()))

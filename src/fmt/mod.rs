@@ -100,6 +100,19 @@ fn format_file(path: &Path, config: &Config, check: bool, show_diff: bool) -> Re
     printer.format(&tree.root_node(), &source);
     let formatted = printer.finish();
 
+    // Check line lengths (informational only)
+    for (i, line) in formatted.lines().enumerate() {
+        if line.len() > config.fmt.max_line_length {
+            eprintln!(
+                "  {}: line {} exceeds {} chars ({} chars)",
+                path.display().dimmed(),
+                i + 1,
+                config.fmt.max_line_length,
+                line.len()
+            );
+        }
+    }
+
     if source == formatted {
         return Ok(false);
     }

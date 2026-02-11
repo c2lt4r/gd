@@ -13,6 +13,7 @@ pub mod doc_cmd;
 pub mod watch_cmd;
 pub mod addons_cmd;
 pub mod stats_cmd;
+pub mod ci_cmd;
 
 use clap::{Parser, Subcommand};
 use miette::Result;
@@ -56,6 +57,8 @@ pub enum Command {
     Addons(addons_cmd::AddonsArgs),
     /// Show project statistics
     Stats(stats_cmd::StatsArgs),
+    /// Generate CI/CD pipeline configuration
+    Ci(ci_cmd::CiArgs),
 }
 
 pub fn run(cli: Cli) -> Result<()> {
@@ -75,5 +78,6 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Watch(args) => watch_cmd::exec(args),
         Command::Addons(args) => addons_cmd::exec(args),
         Command::Stats(args) => stats_cmd::exec(args),
+        Command::Ci(args) => ci_cmd::exec(args),
     }
 }

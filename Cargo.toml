@@ -41,6 +41,11 @@ indicatif = "0.17"
 # Misc
 similar = "2"          # Diffing for fmt --check
 
+# HTTP & Archive support
+ureq = { version = "3", features = ["json"] }
+zip = "2"
+urlencoding = "2"
+
 # File watching
 notify = "7"
 notify-debouncer-mini = "0.5"
