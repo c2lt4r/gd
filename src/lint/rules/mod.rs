@@ -28,6 +28,16 @@ pub mod unused_preload;
 pub mod unused_signal;
 pub mod unused_variable;
 
+pub mod cyclomatic_complexity;
+pub mod deeply_nested_code;
+pub mod enum_naming;
+pub mod get_node_in_process;
+pub mod parameter_naming;
+pub mod physics_in_process;
+pub mod redundant_else;
+pub mod too_many_parameters;
+pub mod unused_parameter;
+
 use std::collections::HashMap;
 use tree_sitter::Tree;
 
@@ -116,6 +126,15 @@ pub fn all_rules(
         Box::new(unused_preload::UnusedPreload),
         Box::new(static_type_inference::StaticTypeInference),
         Box::new(node_ready_order::NodeReadyOrder),
+        Box::new(enum_naming::EnumNaming),
+        Box::new(parameter_naming::ParameterNaming),
+        Box::new(too_many_parameters::TooManyParameters),
+        Box::new(cyclomatic_complexity::CyclomaticComplexity),
+        Box::new(deeply_nested_code::DeeplyNestedCode),
+        Box::new(get_node_in_process::GetNodeInProcess),
+        Box::new(physics_in_process::PhysicsInProcess),
+        Box::new(redundant_else::RedundantElse),
+        Box::new(unused_parameter::UnusedParameter),
     ];
     all.into_iter()
         .filter(|r| {

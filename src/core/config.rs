@@ -53,6 +53,12 @@ pub struct LintConfig {
     pub disabled_rules: Vec<String>,
     /// Maximum number of lines in a function before long-function warns.
     pub max_function_length: usize,
+    /// Maximum number of function parameters before too-many-parameters warns.
+    pub max_function_params: usize,
+    /// Maximum cyclomatic complexity before cyclomatic-complexity warns.
+    pub max_cyclomatic_complexity: usize,
+    /// Maximum nesting depth before deeply-nested-code warns.
+    pub max_nesting_depth: usize,
     /// Per-rule severity overrides.
     #[serde(default)]
     pub rules: HashMap<String, RuleConfig>,
@@ -66,6 +72,9 @@ impl Default for LintConfig {
         Self {
             disabled_rules: Vec::new(),
             max_function_length: 50,
+            max_function_params: 5,
+            max_cyclomatic_complexity: 10,
+            max_nesting_depth: 4,
             rules: HashMap::new(),
             ignore_patterns: Vec::new(),
         }
@@ -147,6 +156,9 @@ fn warn_unknown_keys(raw: &toml::Value) {
     let known_lint = &[
         "disabled_rules",
         "max_function_length",
+        "max_function_params",
+        "max_cyclomatic_complexity",
+        "max_nesting_depth",
         "rules",
         "ignore_patterns",
     ];
