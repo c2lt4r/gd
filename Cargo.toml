@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2024"
 description = "A comprehensive Godot toolchain - format, lint, build, run, and manage Godot projects"
 license = "MIT"
+repository = "https://github.com/c2lt4r/gd"
+readme = "README.md"
+keywords = ["godot", "gdscript", "gamedev", "linter", "formatter"]
+categories = ["command-line-utilities", "development-tools", "game-development"]
 
 [[bin]]
 name = "gd"
