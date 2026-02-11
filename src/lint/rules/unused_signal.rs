@@ -20,10 +20,13 @@ impl LintRule for UnusedSignal {
         let mut signals: HashMap<String, (usize, usize)> = HashMap::new();
         collect_signals(root, src, &mut signals);
 
-        // Second pass: find all referenced signals (emitted or connected)
+        if signals.is_empty() {
+            return diags;
+        }
+
+        // Second pass: find all referenced signals
         let mut referenced: HashSet<String> = HashSet::new();
-        collect_emitted(root, src, &mut referenced);
-        collect_signal_references(root, src, &mut referenced);
+        collect_references(root, src, &mut referenced);
 
         // Report signals that are never referenced in this file
         for (name, (line, column)) in &signals {
@@ -61,7 +64,6 @@ fn collect_signals(node: Node, src: &[u8], signals: &mut HashMap<String, (usize,
                 signals.entry(name).or_insert((line, col));
             }
 
-            // Recurse into all children
             collect_signals(child, src, signals);
 
             if !cursor.goto_next_sibling() {
@@ -71,59 +73,28 @@ fn collect_signals(node: Node, src: &[u8], signals: &mut HashMap<String, (usize,
     }
 }
 
-fn collect_emitted(node: Node, src: &[u8], emitted: &mut HashSet<String>) {
+/// Find signal references in all forms:
+/// - `signal_name.emit(...)` / `signal_name.connect(...)` / `signal_name.disconnect(...)`
+///   Parsed as: attribute > attribute_call (tree-sitter-gdscript method call syntax)
+/// - `emit_signal("signal_name")` (legacy Godot 3 API)
+///   Parsed as: call > [identifier "emit_signal", arguments > [string]]
+fn collect_references(node: Node, src: &[u8], referenced: &mut HashSet<String>) {
     let mut cursor = node.walk();
     if cursor.goto_first_child() {
         loop {
             let child = cursor.node();
 
-            // Check for emit_signal("name") pattern
-            if child.kind() == "call"
-                && let Some(func) = child.child_by_field_name("function")
-            {
-                let func_text = func.utf8_text(src).unwrap_or("");
-
-                // emit_signal("signal_name")
-                if (func_text == "emit_signal" || func_text.ends_with(".emit_signal"))
-                    && let Some(args) = child.child_by_field_name("arguments")
-                {
-                    // Get first argument (the signal name string)
-                    let mut arg_cursor = args.walk();
-                    if arg_cursor.goto_first_child() {
-                        loop {
-                            let arg = arg_cursor.node();
-                            if arg.kind() == "string" {
-                                let text = arg.utf8_text(src).unwrap_or("");
-                                // Strip quotes
-                                let stripped = text
-                                    .trim_start_matches('"')
-                                    .trim_end_matches('"')
-                                    .trim_start_matches('\'')
-                                    .trim_end_matches('\'');
-                                if !stripped.is_empty() {
-                                    emitted.insert(stripped.to_string());
-                                }
-                                break;
-                            }
-                            if !arg_cursor.goto_next_sibling() {
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                // signal_name.emit() pattern
-                if func_text.ends_with(".emit") {
-                    let signal_name = func_text.trim_end_matches(".emit");
-                    // Could be self.signal_name.emit or just signal_name.emit
-                    let name = signal_name.rsplit('.').next().unwrap_or(signal_name);
-                    if !name.is_empty() {
-                        emitted.insert(name.to_string());
-                    }
-                }
+            // Modern GDScript: signal_name.emit() / .connect() / .disconnect()
+            if child.kind() == "attribute" {
+                check_attribute_call(child, src, referenced);
             }
 
-            collect_emitted(child, src, emitted);
+            // Legacy: emit_signal("signal_name")
+            if child.kind() == "call" {
+                check_legacy_emit(child, src, referenced);
+            }
+
+            collect_references(child, src, referenced);
 
             if !cursor.goto_next_sibling() {
                 break;
@@ -132,37 +103,136 @@ fn collect_emitted(node: Node, src: &[u8], emitted: &mut HashSet<String>) {
     }
 }
 
-/// Find signal references via .connect(), .disconnect(), or direct signal access.
-/// Catches patterns like: signal_name.connect(...), self.signal_name.connect(...)
-fn collect_signal_references(node: Node, src: &[u8], referenced: &mut HashSet<String>) {
+/// Check `attribute` nodes for signal method calls like:
+///   signal_name.emit(...)
+///   signal_name.connect(...)
+///   self.signal_name.emit(...)
+fn check_attribute_call(node: Node, src: &[u8], referenced: &mut HashSet<String>) {
     let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            let child = cursor.node();
+    if !cursor.goto_first_child() {
+        return;
+    }
 
-            if child.kind() == "call"
-                && let Some(func) = child.child_by_field_name("function")
-            {
-                let func_text = func.utf8_text(src).unwrap_or("");
+    let mut identifiers: Vec<String> = Vec::new();
+    let mut found_signal_method = false;
 
-                // signal_name.connect(...) / self.signal_name.connect(...)
-                // signal_name.disconnect(...) / self.signal_name.disconnect(...)
-                for suffix in &[".connect", ".disconnect"] {
-                    if func_text.ends_with(suffix) {
-                        let before = func_text.trim_end_matches(suffix);
-                        let name = before.rsplit('.').next().unwrap_or(before);
-                        if !name.is_empty() {
-                            referenced.insert(name.to_string());
-                        }
-                    }
-                }
-            }
+    loop {
+        let child = cursor.node();
 
-            collect_signal_references(child, src, referenced);
-
-            if !cursor.goto_next_sibling() {
-                break;
+        if child.kind() == "identifier" {
+            if let Ok(text) = child.utf8_text(src) {
+                identifiers.push(text.to_string());
             }
         }
+
+        if child.kind() == "attribute_call" {
+            if let Some(method_node) = child
+                .children(&mut child.walk())
+                .find(|c| c.kind() == "identifier")
+            {
+                let method = method_node.utf8_text(src).unwrap_or("");
+                if matches!(method, "emit" | "connect" | "disconnect") {
+                    found_signal_method = true;
+                }
+            }
+        }
+
+        if !cursor.goto_next_sibling() {
+            break;
+        }
+    }
+
+    if found_signal_method {
+        // signal_name.emit() → identifiers = ["signal_name"]
+        // self.signal_name.emit() → identifiers = ["self", "signal_name"]
+        if let Some(name) = identifiers.last() {
+            if name != "self" {
+                referenced.insert(name.clone());
+            }
+        }
+    }
+}
+
+/// Check legacy `emit_signal("signal_name")` calls.
+/// Tree structure: call > [identifier "emit_signal", arguments > [string "signal_name"]]
+fn check_legacy_emit(node: Node, src: &[u8], referenced: &mut HashSet<String>) {
+    // Find the function name: first named child identifier
+    let func_name = node
+        .children(&mut node.walk())
+        .find(|c| c.kind() == "identifier")
+        .and_then(|n| n.utf8_text(src).ok())
+        .unwrap_or("");
+
+    if func_name != "emit_signal" {
+        return;
+    }
+
+    // Find the arguments node
+    let args = match node
+        .children(&mut node.walk())
+        .find(|c| c.kind() == "arguments")
+    {
+        Some(a) => a,
+        None => return,
+    };
+
+    // Get first string argument (the signal name)
+    for child in args.children(&mut args.walk()) {
+        if child.kind() == "string" {
+            let text = child.utf8_text(src).unwrap_or("");
+            let stripped = text
+                .trim_start_matches('"')
+                .trim_end_matches('"')
+                .trim_start_matches('\'')
+                .trim_end_matches('\'');
+            if !stripped.is_empty() {
+                referenced.insert(stripped.to_string());
+            }
+            break;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::parser;
+
+    fn check(source: &str) -> Vec<LintDiagnostic> {
+        let tree = parser::parse(source).unwrap();
+        let config = LintConfig::default();
+        UnusedSignal.check(&tree, source, &config)
+    }
+
+    #[test]
+    fn detects_unused_signal() {
+        let source = "signal my_signal\n\nfunc f():\n\tpass\n";
+        let diags = check(source);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].rule, "unused-signal");
+    }
+
+    #[test]
+    fn no_warning_when_emitted() {
+        let source = "signal state_changed(old: String, new: String)\n\nfunc f() -> void:\n\tstate_changed.emit(\"a\", \"b\")\n";
+        assert!(check(source).is_empty());
+    }
+
+    #[test]
+    fn no_warning_when_connected() {
+        let source = "signal my_signal\n\nfunc f() -> void:\n\tmy_signal.connect(_on_signal)\n\nfunc _on_signal():\n\tpass\n";
+        assert!(check(source).is_empty());
+    }
+
+    #[test]
+    fn no_warning_when_disconnected() {
+        let source = "signal my_signal\n\nfunc f() -> void:\n\tmy_signal.disconnect(_on_signal)\n\nfunc _on_signal():\n\tpass\n";
+        assert!(check(source).is_empty());
+    }
+
+    #[test]
+    fn no_warning_legacy_emit_signal() {
+        let source = "signal my_signal\n\nfunc f() -> void:\n\temit_signal(\"my_signal\")\n";
+        assert!(check(source).is_empty());
     }
 }
