@@ -233,6 +233,41 @@ fn warn_key(key: &str, section: &str) {
     );
 }
 
+/// Walk upward from `start` looking for the project root (directory containing gd.toml or project.godot).
+pub fn find_project_root(start: &Path) -> Option<PathBuf> {
+    let mut dir = if start.is_file() {
+        start.parent()?.to_path_buf()
+    } else {
+        start.to_path_buf()
+    };
+    loop {
+        if dir.join(CONFIG_FILE).is_file() || dir.join("project.godot").is_file() {
+            return Some(dir);
+        }
+        if !dir.pop() {
+            return None;
+        }
+    }
+}
+
+/// Walk upward from `start` looking for gd.toml.
+fn find_config(start: &Path) -> Option<PathBuf> {
+    let mut dir = if start.is_file() {
+        start.parent()?.to_path_buf()
+    } else {
+        start.to_path_buf()
+    };
+    loop {
+        let candidate = dir.join(CONFIG_FILE);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+        if !dir.pop() {
+            return None;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -308,40 +343,5 @@ mod tests {
         assert!(config.fmt.use_tabs);
         assert_eq!(config.fmt.indent_size, 4);
         assert_eq!(config.lint.max_function_length, 50);
-    }
-}
-
-/// Walk upward from `start` looking for the project root (directory containing gd.toml or project.godot).
-pub fn find_project_root(start: &Path) -> Option<PathBuf> {
-    let mut dir = if start.is_file() {
-        start.parent()?.to_path_buf()
-    } else {
-        start.to_path_buf()
-    };
-    loop {
-        if dir.join(CONFIG_FILE).is_file() || dir.join("project.godot").is_file() {
-            return Some(dir);
-        }
-        if !dir.pop() {
-            return None;
-        }
-    }
-}
-
-/// Walk upward from `start` looking for gd.toml.
-fn find_config(start: &Path) -> Option<PathBuf> {
-    let mut dir = if start.is_file() {
-        start.parent()?.to_path_buf()
-    } else {
-        start.to_path_buf()
-    };
-    loop {
-        let candidate = dir.join(CONFIG_FILE);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-        if !dir.pop() {
-            return None;
-        }
     }
 }

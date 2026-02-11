@@ -1201,8 +1201,10 @@ mod tests {
 
     #[test]
     fn test_blank_lines_around_functions_one() {
-        let mut config = crate::core::config::FmtConfig::default();
-        config.blank_lines_around_functions = 1;
+        let config = crate::core::config::FmtConfig {
+            blank_lines_around_functions: 1,
+            ..Default::default()
+        };
         let input = "var x = 1\n\n\nfunc a():\n\tpass\n\n\nfunc b():\n\tpass\n";
         let output = format_with_config(input, &config);
         // Only 1 blank line before/between functions
@@ -1214,8 +1216,10 @@ mod tests {
 
     #[test]
     fn test_trailing_newline_false() {
-        let mut config = crate::core::config::FmtConfig::default();
-        config.trailing_newline = false;
+        let config = crate::core::config::FmtConfig {
+            trailing_newline: false,
+            ..Default::default()
+        };
         let input = "func f():\n\tpass\n";
         let output = format_with_config(input, &config);
         assert!(!output.ends_with('\n'), "got: {output:?}");

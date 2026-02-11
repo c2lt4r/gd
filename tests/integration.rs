@@ -389,7 +389,7 @@ fn test_lint_sarif_output() {
         "SARIF tool name should be gd"
     );
     assert!(
-        sarif["runs"][0]["results"].as_array().unwrap().len() > 0,
+        !sarif["runs"][0]["results"].as_array().unwrap().is_empty(),
         "SARIF should contain results"
     );
 }
@@ -464,6 +464,7 @@ fn test_lsp_initialize() {
 
     // Clean up
     child.kill().ok();
+    child.wait().ok();
 }
 
 // ─── Formatter edge cases ───────────────────────────────────────────────────
@@ -1150,6 +1151,7 @@ fn test_lsp_formatting() {
     }
 
     child.kill().ok();
+    child.wait().ok();
 }
 
 // ─── Iteration 11 feature tests ─────────────────────────────────────────────
