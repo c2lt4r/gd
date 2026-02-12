@@ -2,6 +2,8 @@ use std::path::PathBuf;
 
 use tower_lsp::lsp_types::*;
 
+use super::util::{FUNCTION_KINDS, matches_name, node_range, node_text};
+
 /// Resolve go-to-definition at the given position within a single file.
 pub fn goto_definition(
     source: &str,
@@ -106,8 +108,6 @@ fn find_project_root(from: &std::path::Path) -> Option<PathBuf> {
     }
 }
 
-const FUNCTION_KINDS: &[&str] = &["function_definition", "constructor_definition"];
-
 /// Find a local definition (parameter or var) inside the enclosing function.
 fn find_local_definition(
     root: tree_sitter::Node,
@@ -207,15 +207,6 @@ fn find_var_in_body(
     None
 }
 
-fn matches_name(node: &tree_sitter::Node, name: &str, source: &str) -> bool {
-    node.child_by_field_name("name")
-        .is_some_and(|n| node_text(&n, source) == name)
-}
-
-fn node_text<'a>(node: &tree_sitter::Node, source: &'a str) -> &'a str {
-    node.utf8_text(source.as_bytes()).unwrap_or("unknown")
-}
-
 /// Resolve go-to-definition using workspace for cross-file support.
 pub fn goto_definition_cross_file(
     source: &str,
@@ -275,19 +266,6 @@ pub fn goto_definition_cross_file(
     }
 
     None
-}
-
-fn node_range(node: &tree_sitter::Node) -> Range {
-    Range::new(
-        Position::new(
-            node.start_position().row as u32,
-            node.start_position().column as u32,
-        ),
-        Position::new(
-            node.end_position().row as u32,
-            node.end_position().column as u32,
-        ),
-    )
 }
 
 #[cfg(test)]

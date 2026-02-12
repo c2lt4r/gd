@@ -92,6 +92,7 @@ fn generate_github(project: &GodotProject, args: &CiPlatformArgs) -> Result<()> 
         String::new()
     };
 
+    let repo_url = env!("CARGO_PKG_REPOSITORY");
     let content = format!(
         r#"name: GDScript CI
 
@@ -111,7 +112,7 @@ jobs:
 
       - name: Install gd toolchain
         run: |
-          curl -L https://github.com/c2lt4r/gd/releases/latest/download/gd-linux-x86_64 -o /usr/local/bin/gd
+          curl -L {repo_url}/releases/latest/download/gd-linux-x86_64 -o /usr/local/bin/gd
           chmod +x /usr/local/bin/gd
 
       - name: Check formatting
@@ -121,6 +122,7 @@ jobs:
         run: gd lint
 {export_job}"#,
         version = godot_version,
+        repo_url = repo_url,
         export_job = export_job
     );
 
@@ -133,8 +135,7 @@ jobs:
     println!();
     println!("Next steps:");
     println!("  1. Review and customize .github/workflows/ci.yml");
-    println!("  2. Update the download URL for the gd toolchain");
-    println!("  3. Commit and push to enable CI");
+    println!("  2. Commit and push to enable CI");
 
     Ok(())
 }
@@ -171,6 +172,7 @@ export:
         String::new()
     };
 
+    let repo_url = env!("CARGO_PKG_REPOSITORY");
     let content = format!(
         r#"image: barichello/godot-ci:{version}
 
@@ -180,11 +182,12 @@ stages:
 lint:
   stage: lint
   script:
-    - curl -L https://github.com/c2lt4r/gd/releases/latest/download/gd-linux-x86_64 -o /usr/local/bin/gd && chmod +x /usr/local/bin/gd
+    - curl -L {repo_url}/releases/latest/download/gd-linux-x86_64 -o /usr/local/bin/gd && chmod +x /usr/local/bin/gd
     - gd fmt --check
     - gd lint
 {export_job}"#,
         version = godot_version,
+        repo_url = repo_url,
         export_stage = export_stage,
         export_job = export_job
     );
@@ -198,8 +201,7 @@ lint:
     println!();
     println!("Next steps:");
     println!("  1. Review and customize .gitlab-ci.yml");
-    println!("  2. Update the download URL for the gd toolchain");
-    println!("  3. Commit and push to enable CI");
+    println!("  2. Commit and push to enable CI");
 
     Ok(())
 }

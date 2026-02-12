@@ -22,15 +22,26 @@ pub enum AddonsCommand {
     Remove(RemoveArgs),
     /// Search the Godot Asset Library
     Search(SearchArgs),
+    /// Check for addon updates from the Asset Library
+    Update(UpdateArgs),
+    /// Generate a lock file from currently installed addons
+    Lock,
 }
 
 #[derive(Args)]
 pub struct InstallArgs {
     /// Git URL, Asset Library ID (numeric), or addon name to install
+    #[arg(default_value = "")]
     pub source: String,
     /// Custom name for the addon directory
     #[arg(long)]
     pub name: Option<String>,
+    /// Expected Godot version (auto-detected if omitted); warns on mismatch
+    #[arg(long)]
+    pub godot_version: Option<String>,
+    /// Install all addons from gd-addons.lock
+    #[arg(long)]
+    pub locked: bool,
 }
 
 #[derive(Args)]
@@ -45,6 +56,13 @@ pub struct SearchArgs {
     pub query: String,
 }
 
+#[derive(Args)]
+pub struct UpdateArgs {
+    /// Actually apply updates (default: report only)
+    #[arg(long)]
+    pub apply: bool,
+}
+
 /// Godot Asset Library API base URL.
 const ASSET_API: &str = "https://godotengine.org/asset-library/api/asset";
 
@@ -54,6 +72,8 @@ pub fn exec(args: AddonsArgs) -> Result<()> {
         AddonsCommand::Install(install_args) => install_addon(install_args),
         AddonsCommand::Remove(remove_args) => remove_addon(remove_args),
         AddonsCommand::Search(search_args) => search_addons(search_args),
+        AddonsCommand::Update(update_args) => update_addons(update_args),
+        AddonsCommand::Lock => lock_addons(),
     }
 }
 
@@ -130,22 +150,47 @@ fn install_addon(args: InstallArgs) -> Result<()> {
     let project = crate::core::project::GodotProject::discover(&cwd)?;
     let addons_dir = project.root.join("addons");
 
+    // --locked: install everything from lock file
+    if args.locked {
+        return install_from_lockfile(&project.root, &addons_dir);
+    }
+
+    if args.source.is_empty() {
+        return Err(miette!(
+            "Please provide a source (name, ID, or URL), or use --locked"
+        ));
+    }
+
     // Create addons directory if it doesn't exist
     if !addons_dir.exists() {
         fs::create_dir(&addons_dir)
             .map_err(|e| miette!("Failed to create addons directory: {e}"))?;
     }
 
+    let godot_version = args
+        .godot_version
+        .unwrap_or_else(crate::core::project::detect_godot_version);
+
     // Determine if source is an Asset Library ID, git URL, or name
     if args.source.chars().all(|c| c.is_ascii_digit()) {
         // Numeric ID - install from Asset Library
-        install_from_asset_library(&args.source, args.name.as_deref(), &addons_dir)
+        install_from_asset_library(
+            &args.source,
+            args.name.as_deref(),
+            &addons_dir,
+            &godot_version,
+        )
     } else if args.source.starts_with("http") || args.source.starts_with("git") {
         // Git URL - use existing git clone logic
         install_from_git(&args.source, args.name.as_deref(), &addons_dir)
     } else {
         // Name - search Asset Library for exact match
-        install_from_asset_library_by_name(&args.source, args.name.as_deref(), &addons_dir)
+        install_from_asset_library_by_name(
+            &args.source,
+            args.name.as_deref(),
+            &addons_dir,
+            &godot_version,
+        )
     }
 }
 
@@ -285,6 +330,7 @@ fn install_from_asset_library(
     asset_id: &str,
     custom_name: Option<&str>,
     addons_dir: &std::path::Path,
+    godot_version: &str,
 ) -> Result<()> {
     println!(
         "Fetching asset {} from Godot Asset Library...",
@@ -303,6 +349,22 @@ fn install_from_asset_library(
 
     if asset.download_url.is_empty() {
         return Err(miette!("Asset has no download URL"));
+    }
+
+    // Warn if asset's Godot version doesn't match the project
+    if !asset.godot_version.is_empty() {
+        let asset_major_minor = major_minor(&asset.godot_version);
+        let project_major_minor = major_minor(godot_version);
+        if asset_major_minor != project_major_minor {
+            eprintln!(
+                "{}",
+                format!(
+                    "Warning: asset targets Godot {} but project uses {}",
+                    asset.godot_version, godot_version
+                )
+                .yellow()
+            );
+        }
     }
 
     println!(
@@ -449,6 +511,7 @@ fn install_from_asset_library_by_name(
     name: &str,
     custom_name: Option<&str>,
     addons_dir: &std::path::Path,
+    godot_version: &str,
 ) -> Result<()> {
     println!("Searching Asset Library for '{}'...", name);
 
@@ -467,7 +530,7 @@ fn install_from_asset_library_by_name(
         .ok_or_else(|| miette!("No exact match found for '{}'. Try 'gd addons search {}' to see available options.", name, name))?;
 
     // Install using the asset ID
-    install_from_asset_library(&asset.asset_id, custom_name, addons_dir)
+    install_from_asset_library(&asset.asset_id, custom_name, addons_dir, godot_version)
 }
 
 fn remove_addon(args: RemoveArgs) -> Result<()> {
@@ -590,6 +653,307 @@ fn search_addons(args: SearchArgs) -> Result<()> {
     Ok(())
 }
 
+// ── Update command ──────────────────────────────────────────────────────────
+
+struct UpdateInfo {
+    dir_name: String,
+    addon_name: String,
+    local_version: String,
+    remote_version: String,
+    asset_id: String,
+}
+
+fn update_addons(args: UpdateArgs) -> Result<()> {
+    let cwd =
+        std::env::current_dir().map_err(|e| miette!("Failed to get current directory: {e}"))?;
+    let project = crate::core::project::GodotProject::discover(&cwd)?;
+    let addons_dir = project.root.join("addons");
+
+    if !addons_dir.exists() {
+        println!("No addons directory found.");
+        return Ok(());
+    }
+
+    let entries =
+        fs::read_dir(&addons_dir).map_err(|e| miette!("Failed to read addons directory: {e}"))?;
+
+    let mut updatable = Vec::new();
+
+    for entry in entries {
+        let entry = entry.map_err(|e| miette!("Failed to read directory entry: {e}"))?;
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+
+        let plugin_cfg = path.join("plugin.cfg");
+        if !plugin_cfg.exists() {
+            continue;
+        }
+        let Ok(info) = parse_plugin_cfg(&plugin_cfg) else {
+            continue;
+        };
+        let dir_display = entry.file_name().to_string_lossy().to_string();
+        let addon_name = info.name.unwrap_or_else(|| dir_display.clone());
+        let local_version = info.version.clone().unwrap_or_default();
+
+        // Search Asset Library for this addon
+        let search_url = format!(
+            "{}?filter={}&max_results=5",
+            ASSET_API,
+            urlencoding::encode(&addon_name),
+        );
+        let Ok(mut resp) = ureq::get(&search_url).call() else {
+            eprintln!("  {} — could not search Asset Library", addon_name.dimmed());
+            continue;
+        };
+        let Ok(search_response) = resp.body_mut().read_json::<AssetSearchResponse>() else {
+            continue;
+        };
+
+        // Find exact match (case-insensitive)
+        if let Some(remote) = search_response
+            .result
+            .iter()
+            .find(|a| a.title.eq_ignore_ascii_case(&addon_name))
+        {
+            // Fetch detailed info to get the version
+            let detail_url = format!("{}/{}", ASSET_API, remote.asset_id);
+            if let Ok(mut detail_resp) = ureq::get(&detail_url).call()
+                && let Ok(detail) = detail_resp.body_mut().read_json::<AssetDetail>()
+                && detail.version != local_version
+                && !detail.version.is_empty()
+            {
+                updatable.push(UpdateInfo {
+                    dir_name: entry.file_name().to_string_lossy().to_string(),
+                    addon_name: addon_name.clone(),
+                    local_version: local_version.clone(),
+                    remote_version: detail.version.clone(),
+                    asset_id: remote.asset_id.clone(),
+                });
+            }
+        } else {
+            eprintln!(
+                "  {} — not found in Asset Library (local/git addon?)",
+                addon_name.dimmed()
+            );
+        }
+    }
+
+    if updatable.is_empty() {
+        println!("{}", "All addons are up to date.".green());
+        return Ok(());
+    }
+
+    println!(
+        "{}",
+        format!("{} update(s) available:", updatable.len())
+            .bright_cyan()
+            .bold()
+    );
+    for info in &updatable {
+        println!(
+            "  {} ({}) {} → {}",
+            info.addon_name.as_str().green().bold(),
+            info.dir_name.as_str().dimmed(),
+            info.local_version.as_str().yellow(),
+            info.remote_version.as_str().cyan()
+        );
+    }
+
+    if args.apply {
+        println!();
+        let godot_version = crate::core::project::detect_godot_version();
+        for info in &updatable {
+            println!("Updating {}...", info.addon_name.as_str().green().bold());
+            let addon_path = addons_dir.join(&info.dir_name);
+            // Remove old addon
+            fs::remove_dir_all(&addon_path)
+                .map_err(|e| miette!("Failed to remove old addon: {e}"))?;
+            // Re-install from Asset Library
+            install_from_asset_library(
+                &info.asset_id,
+                Some(info.dir_name.as_str()),
+                &addons_dir,
+                &godot_version,
+            )?;
+        }
+        println!("\n{}", "All addons updated!".green().bold());
+    } else {
+        println!(
+            "\nRun {} to apply updates.",
+            "gd addons update --apply".cyan()
+        );
+    }
+
+    Ok(())
+}
+
+// ── Lock command ────────────────────────────────────────────────────────────
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct AddonLockFile {
+    addon: Vec<AddonLock>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct AddonLock {
+    name: String,
+    source: String,
+    version: String,
+}
+
+fn lock_addons() -> Result<()> {
+    let cwd =
+        std::env::current_dir().map_err(|e| miette!("Failed to get current directory: {e}"))?;
+    let project = crate::core::project::GodotProject::discover(&cwd)?;
+    let addons_dir = project.root.join("addons");
+
+    if !addons_dir.exists() {
+        return Err(miette!("No addons directory found"));
+    }
+
+    let entries =
+        fs::read_dir(&addons_dir).map_err(|e| miette!("Failed to read addons directory: {e}"))?;
+
+    let mut locks = Vec::new();
+
+    for entry in entries {
+        let entry = entry.map_err(|e| miette!("Failed to read directory entry: {e}"))?;
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+
+        let plugin_cfg = path.join("plugin.cfg");
+        if !plugin_cfg.exists() {
+            continue;
+        }
+        let Ok(info) = parse_plugin_cfg(&plugin_cfg) else {
+            continue;
+        };
+        let addon_name = info
+            .name
+            .unwrap_or_else(|| entry.file_name().to_string_lossy().to_string());
+        let version = info.version.unwrap_or_default();
+
+        // Try to detect source from Asset Library
+        let source = detect_addon_source(&addon_name);
+
+        locks.push(AddonLock {
+            name: entry.file_name().to_string_lossy().to_string(),
+            source,
+            version,
+        });
+    }
+
+    if locks.is_empty() {
+        return Err(miette!("No addons with plugin.cfg found"));
+    }
+
+    locks.sort_by(|a, b| a.name.cmp(&b.name));
+
+    let lock_file = AddonLockFile { addon: locks };
+    let lock_path = project.root.join("gd-addons.lock");
+    let content = toml::to_string_pretty(&lock_file)
+        .map_err(|e| miette!("Failed to serialize lock file: {e}"))?;
+    fs::write(&lock_path, content).map_err(|e| miette!("Failed to write lock file: {e}"))?;
+
+    println!("{} gd-addons.lock", "Lock file generated:".green().bold());
+    println!(
+        "  {} addon(s) locked",
+        lock_file.addon.len().to_string().bright_white()
+    );
+
+    Ok(())
+}
+
+/// Try to find an addon in the Asset Library and return "asset:<id>", or "local" if not found.
+fn detect_addon_source(name: &str) -> String {
+    let search_url = format!(
+        "{}?filter={}&max_results=5",
+        ASSET_API,
+        urlencoding::encode(name),
+    );
+    if let Ok(mut resp) = ureq::get(&search_url).call()
+        && let Ok(search) = resp.body_mut().read_json::<AssetSearchResponse>()
+        && let Some(asset) = search
+            .result
+            .iter()
+            .find(|a| a.title.eq_ignore_ascii_case(name))
+    {
+        return format!("asset:{}", asset.asset_id);
+    }
+    "local".to_string()
+}
+
+fn install_from_lockfile(
+    project_root: &std::path::Path,
+    addons_dir: &std::path::Path,
+) -> Result<()> {
+    let lock_path = project_root.join("gd-addons.lock");
+    if !lock_path.exists() {
+        return Err(miette!(
+            "No gd-addons.lock found. Run 'gd addons lock' first."
+        ));
+    }
+
+    let content =
+        fs::read_to_string(&lock_path).map_err(|e| miette!("Failed to read lock file: {e}"))?;
+    let lock_file: AddonLockFile =
+        toml::from_str(&content).map_err(|e| miette!("Failed to parse lock file: {e}"))?;
+
+    if !addons_dir.exists() {
+        fs::create_dir(addons_dir)
+            .map_err(|e| miette!("Failed to create addons directory: {e}"))?;
+    }
+
+    let godot_version = crate::core::project::detect_godot_version();
+    let mut installed = 0;
+
+    for addon in &lock_file.addon {
+        let target = addons_dir.join(&addon.name);
+        if target.exists() {
+            println!("  {} — already installed, skipping", addon.name.dimmed());
+            continue;
+        }
+
+        if let Some(id) = addon.source.strip_prefix("asset:") {
+            println!("Installing {} from Asset Library...", addon.name.green());
+            install_from_asset_library(id, Some(&addon.name), addons_dir, &godot_version)?;
+            installed += 1;
+        } else {
+            eprintln!(
+                "  {} — source '{}' not supported for locked install, skipping",
+                addon.name.yellow(),
+                addon.source
+            );
+        }
+    }
+
+    println!(
+        "\n{} {} addon(s) installed from lock file",
+        "Done!".green().bold(),
+        installed
+    );
+
+    Ok(())
+}
+
+/// Extract "major.minor" from a version string like "4.3" or "4.3.1".
+fn major_minor(version: &str) -> &str {
+    let mut dots = 0;
+    for (i, ch) in version.char_indices() {
+        if ch == '.' {
+            dots += 1;
+            if dots == 2 {
+                return &version[..i];
+            }
+        }
+    }
+    version
+}
+
 // Asset Library API response structs
 #[derive(serde::Deserialize)]
 struct AssetSearchResponse {
@@ -609,4 +973,11 @@ struct AssetInfo {
     godot_version: String,
     #[serde(default)]
     download_url: String,
+}
+
+/// Detailed asset info (includes version field).
+#[derive(serde::Deserialize)]
+struct AssetDetail {
+    #[serde(default)]
+    version: String,
 }

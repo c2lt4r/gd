@@ -10,6 +10,7 @@ pub mod refactor;
 mod references;
 mod rename;
 mod symbols;
+mod util;
 mod workspace;
 
 use dashmap::DashMap;

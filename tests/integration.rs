@@ -3425,3 +3425,627 @@ fn test_lsp_change_signature_dry_run() {
         "dry-run should not modify file"
     );
 }
+
+// ── Feature: CI auto-detect download URL ─────────────────────────────────
+
+#[test]
+fn test_ci_github_uses_repo_url() {
+    let temp = setup_gd_project(&[("main.gd", "extends Node\n")]);
+
+    let output = gd_bin()
+        .args(["ci", "github"])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd ci github");
+
+    assert!(
+        output.status.success(),
+        "gd ci github should succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let ci_content = fs::read_to_string(temp.path().join(".github/workflows/ci.yml")).unwrap();
+    // Should use the repo URL from Cargo.toml (not hardcoded)
+    assert!(
+        ci_content.contains("releases/latest/download/gd-linux-x86_64"),
+        "CI should contain download URL, got: {ci_content}"
+    );
+    // Should NOT contain the old hardcoded URL without repo base
+    assert!(
+        !ci_content.contains("c2lt4r/gd/releases")
+            || ci_content.contains(env!("CARGO_PKG_REPOSITORY")),
+        "CI should use repo URL from Cargo.toml"
+    );
+    // "Update the download URL" should NOT appear in the output
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("Update the download URL"),
+        "should not tell user to update download URL"
+    );
+}
+
+#[test]
+fn test_ci_gitlab_uses_repo_url() {
+    let temp = setup_gd_project(&[("main.gd", "extends Node\n")]);
+
+    let output = gd_bin()
+        .args(["ci", "gitlab"])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd ci gitlab");
+
+    assert!(
+        output.status.success(),
+        "gd ci gitlab should succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let ci_content = fs::read_to_string(temp.path().join(".gitlab-ci.yml")).unwrap();
+    assert!(
+        ci_content.contains("releases/latest/download/gd-linux-x86_64"),
+        "GitLab CI should contain download URL, got: {ci_content}"
+    );
+}
+
+// ── Feature: addons lock ─────────────────────────────────────────────────
+
+#[test]
+fn test_addons_lock_generates_lockfile() {
+    let temp = setup_gd_project(&[("main.gd", "extends Node\n")]);
+
+    // Create an addon with plugin.cfg
+    let addon_dir = temp.path().join("addons/test_plugin");
+    fs::create_dir_all(&addon_dir).expect("create addon dir");
+    fs::write(
+        addon_dir.join("plugin.cfg"),
+        "[plugin]\nname=\"Test Plugin\"\ndescription=\"A test\"\nauthor=\"tester\"\nversion=\"1.0.0\"\nscript=\"plugin.gd\"\n",
+    )
+    .expect("write plugin.cfg");
+    fs::write(addon_dir.join("plugin.gd"), "extends EditorPlugin\n").expect("write plugin.gd");
+
+    let output = gd_bin()
+        .args(["addons", "lock"])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd addons lock");
+
+    assert!(
+        output.status.success(),
+        "gd addons lock should succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let lock_path = temp.path().join("gd-addons.lock");
+    assert!(lock_path.exists(), "gd-addons.lock should be created");
+
+    let lock_content = fs::read_to_string(&lock_path).unwrap();
+    assert!(
+        lock_content.contains("test_plugin"),
+        "lock file should contain addon name, got: {lock_content}"
+    );
+    assert!(
+        lock_content.contains("1.0.0"),
+        "lock file should contain version, got: {lock_content}"
+    );
+}
+
+#[test]
+fn test_addons_lock_no_addons_fails() {
+    let temp = setup_gd_project(&[("main.gd", "extends Node\n")]);
+
+    let output = gd_bin()
+        .args(["addons", "lock"])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd addons lock");
+
+    assert!(
+        !output.status.success(),
+        "gd addons lock should fail without addons directory"
+    );
+}
+
+#[test]
+fn test_addons_install_locked_requires_lockfile() {
+    let temp = setup_gd_project(&[("main.gd", "extends Node\n")]);
+
+    let output = gd_bin()
+        .args(["addons", "install", "--locked"])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd addons install --locked");
+
+    assert!(!output.status.success(), "should fail without lock file");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("lock") || stderr.contains("Lock"),
+        "should mention lock file, stderr: {stderr}"
+    );
+}
+
+// ── Feature: stats --diff ────────────────────────────────────────────────
+
+#[test]
+fn test_stats_diff_branch() {
+    let temp = tempfile::Builder::new()
+        .prefix("gdtest")
+        .tempdir()
+        .expect("create temp dir");
+
+    // Initialize a git repo with a .gd file on main
+    let path = temp.path();
+    Command::new("git")
+        .args(["init"])
+        .current_dir(path)
+        .output()
+        .expect("git init");
+    Command::new("git")
+        .args(["config", "user.email", "test@test.com"])
+        .current_dir(path)
+        .output()
+        .expect("git config email");
+    Command::new("git")
+        .args(["config", "user.name", "Test"])
+        .current_dir(path)
+        .output()
+        .expect("git config name");
+
+    fs::write(
+        path.join("project.godot"),
+        "[application]\nconfig/name=\"test\"\n",
+    )
+    .expect("write project.godot");
+    fs::write(
+        path.join("player.gd"),
+        "extends Node\n\n\nfunc _ready():\n\tpass\n",
+    )
+    .expect("write player.gd");
+
+    Command::new("git")
+        .args(["add", "."])
+        .current_dir(path)
+        .output()
+        .expect("git add");
+    Command::new("git")
+        .args(["commit", "-m", "initial"])
+        .current_dir(path)
+        .output()
+        .expect("git commit");
+
+    // Create a feature branch with more code
+    Command::new("git")
+        .args(["checkout", "-b", "feature"])
+        .current_dir(path)
+        .output()
+        .expect("git checkout -b");
+
+    fs::write(
+        path.join("enemy.gd"),
+        "extends Node\n\n\nfunc chase():\n\tpass\n\n\nfunc attack():\n\tpass\n",
+    )
+    .expect("write enemy.gd");
+
+    Command::new("git")
+        .args(["add", "."])
+        .current_dir(path)
+        .output()
+        .expect("git add");
+    Command::new("git")
+        .args(["commit", "-m", "add enemy"])
+        .current_dir(path)
+        .output()
+        .expect("git commit");
+
+    // Now diff against main
+    let output = gd_bin()
+        .args(["stats", "--diff", "main"])
+        .current_dir(path)
+        .output()
+        .expect("Failed to run gd stats --diff");
+
+    assert!(
+        output.status.success(),
+        "gd stats --diff should succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Should show comparison output (current vs other branch)
+    assert!(
+        stdout.contains("main") || stdout.contains("Current") || stdout.contains("Files"),
+        "should show branch comparison, got: {stdout}"
+    );
+}
+
+#[test]
+fn test_stats_diff_json() {
+    let temp = tempfile::Builder::new()
+        .prefix("gdtest")
+        .tempdir()
+        .expect("create temp dir");
+
+    let path = temp.path();
+    Command::new("git")
+        .args(["init"])
+        .current_dir(path)
+        .output()
+        .expect("git init");
+    Command::new("git")
+        .args(["config", "user.email", "test@test.com"])
+        .current_dir(path)
+        .output()
+        .expect("git config email");
+    Command::new("git")
+        .args(["config", "user.name", "Test"])
+        .current_dir(path)
+        .output()
+        .expect("git config name");
+
+    fs::write(
+        path.join("project.godot"),
+        "[application]\nconfig/name=\"test\"\n",
+    )
+    .expect("write project.godot");
+    fs::write(
+        path.join("player.gd"),
+        "extends Node\n\n\nfunc _ready():\n\tpass\n",
+    )
+    .expect("write player.gd");
+
+    Command::new("git")
+        .args(["add", "."])
+        .current_dir(path)
+        .output()
+        .expect("git add");
+    Command::new("git")
+        .args(["commit", "-m", "initial"])
+        .current_dir(path)
+        .output()
+        .expect("git commit");
+
+    // Run stats --diff main --format json (comparing current = main with itself)
+    let output = gd_bin()
+        .args(["stats", "--diff", "main", "--format", "json"])
+        .current_dir(path)
+        .output()
+        .expect("Failed to run gd stats --diff --format json");
+
+    assert!(
+        output.status.success(),
+        "gd stats --diff --format json should succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value =
+        serde_json::from_str(&stdout).expect("stats --diff --format json should output valid JSON");
+
+    assert!(
+        json.get("current").is_some(),
+        "should have 'current' key, got: {json}"
+    );
+    assert!(
+        json.get("other").is_some(),
+        "should have 'other' key, got: {json}"
+    );
+    assert!(
+        json.get("delta").is_some(),
+        "should have 'delta' key, got: {json}"
+    );
+}
+
+#[test]
+fn test_stats_diff_invalid_branch() {
+    let temp = tempfile::Builder::new()
+        .prefix("gdtest")
+        .tempdir()
+        .expect("create temp dir");
+
+    let path = temp.path();
+    Command::new("git")
+        .args(["init"])
+        .current_dir(path)
+        .output()
+        .expect("git init");
+    Command::new("git")
+        .args(["config", "user.email", "test@test.com"])
+        .current_dir(path)
+        .output()
+        .expect("git config email");
+    Command::new("git")
+        .args(["config", "user.name", "Test"])
+        .current_dir(path)
+        .output()
+        .expect("git config name");
+
+    fs::write(
+        path.join("project.godot"),
+        "[application]\nconfig/name=\"test\"\n",
+    )
+    .expect("write project.godot");
+    fs::write(path.join("main.gd"), "extends Node\n").expect("write main.gd");
+
+    Command::new("git")
+        .args(["add", "."])
+        .current_dir(path)
+        .output()
+        .expect("git add");
+    Command::new("git")
+        .args(["commit", "-m", "initial"])
+        .current_dir(path)
+        .output()
+        .expect("git commit");
+
+    let output = gd_bin()
+        .args(["stats", "--diff", "nonexistent-branch"])
+        .current_dir(path)
+        .output()
+        .expect("Failed to run gd stats --diff");
+
+    assert!(
+        !output.status.success(),
+        "should fail for nonexistent branch"
+    );
+}
+
+// ── Feature: introduce-variable ──────────────────────────────────────────
+
+#[test]
+fn test_lsp_introduce_variable_simple() {
+    let temp = setup_gd_project(&[(
+        "player.gd",
+        "func process(delta):\n\tposition.x += speed * delta\n",
+    )]);
+
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "introduce-variable",
+            "--file",
+            "player.gd",
+            "--line",
+            "2",
+            "--column",
+            "17",
+            "--end-column",
+            "29",
+            "--name",
+            "velocity",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp introduce-variable");
+
+    assert!(
+        output.status.success(),
+        "introduce-variable should succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["variable"], "velocity");
+    assert_eq!(json["expression"], "speed * delta");
+    assert_eq!(json["applied"], true);
+
+    let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+    assert!(
+        content.contains("var velocity = speed * delta"),
+        "should insert variable declaration, got: {content}"
+    );
+    assert!(
+        content.contains("position.x += velocity"),
+        "should replace expression with variable name, got: {content}"
+    );
+}
+
+#[test]
+fn test_lsp_introduce_variable_dry_run() {
+    let temp = setup_gd_project(&[(
+        "player.gd",
+        "func process(delta):\n\tposition.x += speed * delta\n",
+    )]);
+
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "introduce-variable",
+            "--file",
+            "player.gd",
+            "--line",
+            "2",
+            "--column",
+            "17",
+            "--end-column",
+            "29",
+            "--name",
+            "velocity",
+            "--dry-run",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp introduce-variable --dry-run");
+
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["applied"], false);
+
+    let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+    assert!(
+        !content.contains("var velocity"),
+        "dry-run should not modify file"
+    );
+}
+
+#[test]
+fn test_lsp_introduce_variable_call_expression() {
+    let temp = setup_gd_project(&[("player.gd", "func _ready():\n\tprint(get_health())\n")]);
+
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "introduce-variable",
+            "--file",
+            "player.gd",
+            "--line",
+            "2",
+            "--column",
+            "8",
+            "--end-column",
+            "20",
+            "--name",
+            "hp",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp introduce-variable call");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["applied"], true);
+    assert_eq!(json["expression"], "get_health()");
+
+    let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+    assert!(
+        content.contains("var hp = get_health()"),
+        "should extract call, got: {content}"
+    );
+    assert!(
+        content.contains("print(hp)"),
+        "should replace with var, got: {content}"
+    );
+}
+
+// ── Feature: introduce-parameter ─────────────────────────────────────────
+
+#[test]
+fn test_lsp_introduce_parameter_with_type() {
+    let temp = setup_gd_project(&[(
+        "player.gd",
+        "func move(delta):\n\tposition.x += 100.0 * delta\n",
+    )]);
+
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "introduce-parameter",
+            "--file",
+            "player.gd",
+            "--line",
+            "2",
+            "--column",
+            "16",
+            "--end-column",
+            "21",
+            "--name",
+            "speed",
+            "--type",
+            "float",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp introduce-parameter");
+
+    assert!(
+        output.status.success(),
+        "introduce-parameter should succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["expression"], "100.0");
+    assert_eq!(json["function"], "move");
+    assert_eq!(json["applied"], true);
+    assert!(
+        json["parameter"]
+            .as_str()
+            .unwrap()
+            .contains("speed: float = 100.0"),
+        "parameter should have type hint"
+    );
+
+    let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+    assert!(
+        content.contains("func move(delta, speed: float = 100.0)"),
+        "should add typed parameter, got: {content}"
+    );
+    assert!(
+        content.contains("position.x += speed * delta"),
+        "should replace literal with param name, got: {content}"
+    );
+}
+
+#[test]
+fn test_lsp_introduce_parameter_no_type() {
+    let temp = setup_gd_project(&[("player.gd", "func greet():\n\tprint(\"hello\")\n")]);
+
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "introduce-parameter",
+            "--file",
+            "player.gd",
+            "--line",
+            "2",
+            "--column",
+            "8",
+            "--end-column",
+            "15",
+            "--name",
+            "msg",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp introduce-parameter no type");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["applied"], true);
+
+    let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+    assert!(
+        content.contains("func greet(msg = \"hello\")"),
+        "should add untyped param with default, got: {content}"
+    );
+    assert!(
+        content.contains("print(msg)"),
+        "should replace expression, got: {content}"
+    );
+}
+
+#[test]
+fn test_lsp_introduce_parameter_dry_run() {
+    let temp = setup_gd_project(&[("player.gd", "func greet():\n\tprint(\"hello\")\n")]);
+
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "introduce-parameter",
+            "--file",
+            "player.gd",
+            "--line",
+            "2",
+            "--column",
+            "8",
+            "--end-column",
+            "15",
+            "--name",
+            "msg",
+            "--dry-run",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp introduce-parameter --dry-run");
+
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["applied"], false);
+
+    let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+    assert!(!content.contains("msg"), "dry-run should not modify file");
+}

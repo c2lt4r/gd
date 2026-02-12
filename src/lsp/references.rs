@@ -2,6 +2,8 @@ use std::collections::HashSet;
 
 use tower_lsp::lsp_types::*;
 
+use super::util::{FUNCTION_KINDS, node_range};
+
 /// Find all references to the symbol at the given position within the same file.
 pub fn find_references(
     source: &str,
@@ -214,8 +216,6 @@ pub fn find_references_cross_file(
 }
 
 // ── Scope-aware helpers ────────────────────────────────────────────────────
-
-const FUNCTION_KINDS: &[&str] = &["function_definition", "constructor_definition"];
 
 /// Find the enclosing function_definition or constructor_definition for a position.
 pub(super) fn enclosing_function(
@@ -642,19 +642,6 @@ fn is_scope_node(kind: &str) -> bool {
             | "elif_clause"
             | "else_clause"
             | "match_statement"
-    )
-}
-
-fn node_range(node: &tree_sitter::Node) -> Range {
-    Range::new(
-        Position::new(
-            node.start_position().row as u32,
-            node.start_position().column as u32,
-        ),
-        Position::new(
-            node.end_position().row as u32,
-            node.end_position().column as u32,
-        ),
     )
 }
 

@@ -156,6 +156,72 @@ pub enum LspCommand {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Check if a file can be safely deleted (find all cross-file references)
+    SafeDeleteFile {
+        /// Path to the GDScript file
+        #[arg(long)]
+        file: String,
+        /// Delete even if references exist
+        #[arg(long)]
+        force: bool,
+        /// Preview without deleting (default when --force is not set)
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Find all classes that implement (define) a given method
+    FindImplementations {
+        /// Method name to search for
+        #[arg(long)]
+        name: String,
+        /// Only include classes extending this type
+        #[arg(long)]
+        base: Option<String>,
+    },
+    /// Extract an expression into a local variable
+    IntroduceVariable {
+        /// Path to the GDScript file
+        #[arg(long)]
+        file: String,
+        /// Line number of the expression (1-based)
+        #[arg(long)]
+        line: usize,
+        /// Start column of the expression (1-based)
+        #[arg(long)]
+        column: usize,
+        /// End column of the expression (1-based)
+        #[arg(long)]
+        end_column: usize,
+        /// Name for the new variable
+        #[arg(long)]
+        name: String,
+        /// Preview without writing changes
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Turn an expression into a function parameter with a default value
+    IntroduceParameter {
+        /// Path to the GDScript file
+        #[arg(long)]
+        file: String,
+        /// Line number of the expression (1-based)
+        #[arg(long)]
+        line: usize,
+        /// Start column of the expression (1-based)
+        #[arg(long)]
+        column: usize,
+        /// End column of the expression (1-based)
+        #[arg(long)]
+        end_column: usize,
+        /// Name for the new parameter
+        #[arg(long)]
+        name: String,
+        /// Type hint for the parameter (e.g., "float", "String")
+        #[arg(long, rename_all = "snake_case")]
+        r#type: Option<String>,
+        /// Preview without writing changes
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Change a function's signature and update all call sites
     ChangeSignature {
         /// Path to the GDScript file
@@ -388,6 +454,62 @@ pub fn exec(args: LspArgs) -> Result<()> {
                     serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
                 println!("{json}");
             }
+            Ok(())
+        }
+        LspCommand::SafeDeleteFile {
+            file,
+            force,
+            dry_run,
+        } => {
+            let result = crate::lsp::query::query_safe_delete_file(&file, force, dry_run)?;
+            let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+            println!("{json}");
+            if !force && !result.references.is_empty() {
+                std::process::exit(1);
+            }
+            Ok(())
+        }
+        LspCommand::FindImplementations { name, base } => {
+            let result = crate::lsp::query::query_find_implementations(&name, base.as_deref())?;
+            let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+            println!("{json}");
+            Ok(())
+        }
+        LspCommand::IntroduceVariable {
+            file,
+            line,
+            column,
+            end_column,
+            name,
+            dry_run,
+        } => {
+            let result = crate::lsp::query::query_introduce_variable(
+                &file, line, column, end_column, &name, dry_run,
+            )?;
+            let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+            println!("{json}");
+            Ok(())
+        }
+        LspCommand::IntroduceParameter {
+            file,
+            line,
+            column,
+            end_column,
+            name,
+            r#type,
+            dry_run,
+        } => {
+            let result = crate::lsp::query::query_introduce_parameter(
+                &file,
+                line,
+                column,
+                end_column,
+                &name,
+                r#type.as_deref(),
+                dry_run,
+            )?;
+            let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+            println!("{json}");
             Ok(())
         }
         LspCommand::ChangeSignature {

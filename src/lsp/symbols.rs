@@ -1,5 +1,7 @@
 use tower_lsp::lsp_types::*;
 
+use super::util::{node_range, node_text};
+
 /// Extract document symbols (outline) from GDScript source.
 #[allow(deprecated)] // DocumentSymbol::deprecated field is deprecated in the lsp-types API
 pub fn document_symbols(source: &str) -> Option<DocumentSymbolResponse> {
@@ -23,7 +25,7 @@ fn collect_symbols(node: tree_sitter::Node, source: &str, symbols: &mut Vec<Docu
         match child.kind() {
             "class_name_statement" => {
                 if let Some(name_node) = child.child_by_field_name("name") {
-                    let name = node_text(&name_node, source);
+                    let name = node_text(&name_node, source).to_string();
                     symbols.push(DocumentSymbol {
                         name,
                         detail: Some("class_name".to_string()),
@@ -38,7 +40,7 @@ fn collect_symbols(node: tree_sitter::Node, source: &str, symbols: &mut Vec<Docu
             }
             "class_definition" => {
                 if let Some(name_node) = child.child_by_field_name("name") {
-                    let name = node_text(&name_node, source);
+                    let name = node_text(&name_node, source).to_string();
                     let mut children = Vec::new();
                     if let Some(body) = child.child_by_field_name("body") {
                         collect_symbols(body, source, &mut children);
@@ -61,7 +63,7 @@ fn collect_symbols(node: tree_sitter::Node, source: &str, symbols: &mut Vec<Docu
             }
             "function_definition" => {
                 if let Some(name_node) = child.child_by_field_name("name") {
-                    let name = node_text(&name_node, source);
+                    let name = node_text(&name_node, source).to_string();
                     let detail = build_function_detail(&child, source);
                     symbols.push(DocumentSymbol {
                         name,
@@ -77,7 +79,7 @@ fn collect_symbols(node: tree_sitter::Node, source: &str, symbols: &mut Vec<Docu
             }
             "variable_statement" => {
                 if let Some(name_node) = child.child_by_field_name("name") {
-                    let name = node_text(&name_node, source);
+                    let name = node_text(&name_node, source).to_string();
                     let kind = if is_onready(&child, source) {
                         SymbolKind::FIELD
                     } else {
@@ -97,7 +99,7 @@ fn collect_symbols(node: tree_sitter::Node, source: &str, symbols: &mut Vec<Docu
             }
             "const_statement" => {
                 if let Some(name_node) = child.child_by_field_name("name") {
-                    let name = node_text(&name_node, source);
+                    let name = node_text(&name_node, source).to_string();
                     symbols.push(DocumentSymbol {
                         name,
                         detail: Some("const".to_string()),
@@ -112,7 +114,7 @@ fn collect_symbols(node: tree_sitter::Node, source: &str, symbols: &mut Vec<Docu
             }
             "signal_statement" => {
                 if let Some(name_node) = child.child_by_field_name("name") {
-                    let name = node_text(&name_node, source);
+                    let name = node_text(&name_node, source).to_string();
                     symbols.push(DocumentSymbol {
                         name,
                         detail: Some("signal".to_string()),
@@ -127,7 +129,7 @@ fn collect_symbols(node: tree_sitter::Node, source: &str, symbols: &mut Vec<Docu
             }
             "enum_definition" => {
                 if let Some(name_node) = child.child_by_field_name("name") {
-                    let name = node_text(&name_node, source);
+                    let name = node_text(&name_node, source).to_string();
                     symbols.push(DocumentSymbol {
                         name,
                         detail: Some("enum".to_string()),
@@ -145,25 +147,6 @@ fn collect_symbols(node: tree_sitter::Node, source: &str, symbols: &mut Vec<Docu
     }
 }
 
-fn node_text(node: &tree_sitter::Node, source: &str) -> String {
-    node.utf8_text(source.as_bytes())
-        .unwrap_or("unknown")
-        .to_string()
-}
-
-fn node_range(node: &tree_sitter::Node) -> Range {
-    Range::new(
-        Position::new(
-            node.start_position().row as u32,
-            node.start_position().column as u32,
-        ),
-        Position::new(
-            node.end_position().row as u32,
-            node.end_position().column as u32,
-        ),
-    )
-}
-
 fn build_function_detail(node: &tree_sitter::Node, source: &str) -> String {
     let mut detail = "func(".to_string();
 
@@ -173,7 +156,7 @@ fn build_function_detail(node: &tree_sitter::Node, source: &str) -> String {
         let inner = params_text
             .strip_prefix('(')
             .and_then(|s| s.strip_suffix(')'))
-            .unwrap_or(&params_text);
+            .unwrap_or(params_text);
         detail.push_str(inner);
     }
 
@@ -181,7 +164,7 @@ fn build_function_detail(node: &tree_sitter::Node, source: &str) -> String {
 
     if let Some(return_type) = node.child_by_field_name("return_type") {
         detail.push_str(" -> ");
-        detail.push_str(&node_text(&return_type, source));
+        detail.push_str(node_text(&return_type, source));
     }
 
     detail

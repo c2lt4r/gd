@@ -5,6 +5,7 @@ use rayon::prelude::*;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use tree_sitter::Node;
 
 #[derive(Args)]
@@ -20,6 +21,9 @@ pub struct StatsArgs {
     /// Show top N complexity hotspots (longest functions)
     #[arg(long)]
     pub top: Option<usize>,
+    /// Compare stats against another git branch
+    #[arg(long)]
+    pub diff: Option<String>,
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -55,6 +59,23 @@ struct DirStats {
     functions: usize,
 }
 
+#[derive(Debug, Serialize)]
+struct StatsDiff {
+    current: ProjectStats,
+    other: ProjectStats,
+    other_branch: String,
+    delta: StatsDelta,
+}
+
+#[derive(Debug, Serialize)]
+struct StatsDelta {
+    files: i64,
+    lines_code: i64,
+    functions: i64,
+    classes: i64,
+    signals: i64,
+}
+
 #[derive(Debug, Default)]
 struct FileStats {
     path: PathBuf,
@@ -77,7 +98,52 @@ pub fn exec(args: StatsArgs) -> Result<()> {
         PathBuf::from(&args.paths[0])
     };
 
-    let files = crate::core::fs::collect_gdscript_files(&root)?;
+    // --diff mode: compare current vs another branch
+    if let Some(ref branch) = args.diff {
+        let current = collect_current_stats(&root, &args)?;
+        let other = collect_branch_stats(&root, branch)?;
+
+        let delta = StatsDelta {
+            files: current.files as i64 - other.files as i64,
+            lines_code: current.lines_code as i64 - other.lines_code as i64,
+            functions: current.functions as i64 - other.functions as i64,
+            classes: current.classes as i64 - other.classes as i64,
+            signals: current.signals as i64 - other.signals as i64,
+        };
+
+        let diff = StatsDiff {
+            current,
+            other,
+            other_branch: branch.clone(),
+            delta,
+        };
+
+        match args.format.as_str() {
+            "json" => {
+                let json = serde_json::to_string_pretty(&diff)
+                    .map_err(|e| miette!("Failed to serialize: {e}"))?;
+                println!("{json}");
+            }
+            "human" => output_human_diff(&diff),
+            _ => return Err(miette!("Invalid format: {}", args.format)),
+        }
+        return Ok(());
+    }
+
+    let stats = collect_current_stats(&root, &args)?;
+
+    // Output results
+    match args.format.as_str() {
+        "json" => output_json(&stats)?,
+        "human" => output_human(&stats, args.by_dir, args.top),
+        _ => return Err(miette!("Invalid format: {}", args.format)),
+    }
+
+    Ok(())
+}
+
+fn collect_current_stats(root: &Path, args: &StatsArgs) -> Result<ProjectStats> {
+    let files = crate::core::fs::collect_gdscript_files(root)?;
 
     if files.is_empty() {
         return Err(miette!("No .gd files found in {}", root.display()));
@@ -86,7 +152,7 @@ pub fn exec(args: StatsArgs) -> Result<()> {
     // Process files in parallel
     let file_stats: Vec<FileStats> = files
         .par_iter()
-        .filter_map(|path| analyze_file(path, &root).ok())
+        .filter_map(|path| analyze_file(path, root).ok())
         .collect();
 
     // Aggregate statistics
@@ -125,7 +191,7 @@ pub fn exec(args: StatsArgs) -> Result<()> {
             let dir = fs
                 .path
                 .parent()
-                .and_then(|p| p.strip_prefix(&root).ok())
+                .and_then(|p| p.strip_prefix(root).ok())
                 .map(|p| {
                     let s = p.to_string_lossy().to_string();
                     if s.is_empty() { ".".to_string() } else { s }
@@ -165,14 +231,7 @@ pub fn exec(args: StatsArgs) -> Result<()> {
         stats.directories = dirs;
     }
 
-    // Output results
-    match args.format.as_str() {
-        "json" => output_json(&stats)?,
-        "human" => output_human(&stats, args.by_dir, args.top),
-        _ => return Err(miette!("Invalid format: {}", args.format)),
-    }
-
-    Ok(())
+    Ok(stats)
 }
 
 fn analyze_file(path: &Path, root: &Path) -> Result<FileStats> {
@@ -203,6 +262,117 @@ fn analyze_file(path: &Path, root: &Path) -> Result<FileStats> {
 
     // Walk AST to count nodes
     walk_node(root_node, &source, &rel_path, &mut stats);
+
+    Ok(stats)
+}
+
+fn analyze_source(source: &str, rel_path: &str) -> FileStats {
+    let mut stats = FileStats {
+        path: PathBuf::from(rel_path),
+        ..Default::default()
+    };
+
+    // Count lines
+    let lines: Vec<&str> = source.lines().collect();
+    stats.lines_total = lines.len();
+
+    for line in &lines {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            stats.lines_blank += 1;
+        } else if trimmed.starts_with('#') {
+            stats.lines_comment += 1;
+        } else {
+            stats.lines_code += 1;
+        }
+    }
+
+    // Walk AST to count nodes
+    if let Ok(tree) = crate::core::parser::parse(source) {
+        walk_node(tree.root_node(), source, rel_path, &mut stats);
+    }
+
+    stats
+}
+
+fn collect_branch_stats(root: &Path, branch: &str) -> Result<ProjectStats> {
+    // List .gd files in the branch
+    let output = Command::new("git")
+        .args(["ls-tree", "-r", "--name-only", branch])
+        .current_dir(root)
+        .output()
+        .map_err(|e| miette!("Failed to run git: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(miette!(
+            "git ls-tree failed for '{}': {}",
+            branch,
+            stderr.trim()
+        ));
+    }
+
+    let file_list = String::from_utf8_lossy(&output.stdout);
+    let gd_files: Vec<&str> = file_list
+        .lines()
+        .filter(|f| f.ends_with(".gd") && !f.starts_with('.'))
+        .collect();
+
+    if gd_files.is_empty() {
+        return Ok(ProjectStats::default());
+    }
+
+    // Get content for each file and analyze
+    let file_stats: Vec<FileStats> = gd_files
+        .par_iter()
+        .filter_map(|rel_path| {
+            let git_path = format!("{branch}:{rel_path}");
+            let output = Command::new("git")
+                .args(["show", &git_path])
+                .current_dir(root)
+                .output()
+                .ok()?;
+            if !output.status.success() {
+                return None;
+            }
+            let content = String::from_utf8(output.stdout).ok()?;
+            Some(analyze_source(&content, rel_path))
+        })
+        .collect();
+
+    // Aggregate
+    let mut stats = ProjectStats {
+        files: file_stats.len(),
+        ..Default::default()
+    };
+
+    let mut all_function_lengths = Vec::new();
+
+    for fs in &file_stats {
+        stats.lines_total += fs.lines_total;
+        stats.lines_code += fs.lines_code;
+        stats.lines_blank += fs.lines_blank;
+        stats.lines_comment += fs.lines_comment;
+        stats.classes += fs.classes;
+        stats.functions += fs.functions;
+        stats.signals += fs.signals;
+        all_function_lengths.extend(&fs.function_lengths);
+
+        if let Some(ref func) = fs.longest_function {
+            if let Some(ref current_longest) = stats.longest_function {
+                if func.lines > current_longest.lines {
+                    stats.longest_function = Some(func.clone());
+                }
+            } else {
+                stats.longest_function = Some(func.clone());
+            }
+        }
+    }
+
+    if !all_function_lengths.is_empty() {
+        let sum: usize = all_function_lengths.iter().sum();
+        stats.avg_function_length = sum as f64 / all_function_lengths.len() as f64;
+    }
 
     Ok(stats)
 }
@@ -341,6 +511,85 @@ fn output_human(stats: &ProjectStats, show_dirs: bool, top_n: Option<usize>) {
             );
         }
     }
+}
+
+fn format_delta(val: i64) -> String {
+    if val > 0 {
+        format!("+{val}")
+    } else if val < 0 {
+        format!("{val}")
+    } else {
+        "0".to_string()
+    }
+}
+
+fn output_human_diff(diff: &StatsDiff) {
+    println!(
+        "{} vs {}",
+        "Stats Diff".bright_cyan().bold(),
+        diff.other_branch.bright_yellow()
+    );
+    println!("{}", "──────────────────────────────────────".cyan());
+    println!(
+        "  {:20} {:>10} {:>10} {:>10}",
+        "",
+        "Current".bright_white().bold(),
+        diff.other_branch.bright_white().bold(),
+        "Delta".bright_white().bold()
+    );
+    println!("{}", "──────────────────────────────────────".cyan());
+
+    let rows: Vec<(&str, usize, usize, i64)> = vec![
+        (
+            "Files",
+            diff.current.files,
+            diff.other.files,
+            diff.delta.files,
+        ),
+        (
+            "Lines (code)",
+            diff.current.lines_code,
+            diff.other.lines_code,
+            diff.delta.lines_code,
+        ),
+        (
+            "Functions",
+            diff.current.functions,
+            diff.other.functions,
+            diff.delta.functions,
+        ),
+        (
+            "Classes",
+            diff.current.classes,
+            diff.other.classes,
+            diff.delta.classes,
+        ),
+        (
+            "Signals",
+            diff.current.signals,
+            diff.other.signals,
+            diff.delta.signals,
+        ),
+    ];
+
+    for (label, current, other, delta) in rows {
+        let delta_str = format_delta(delta);
+        let delta_colored = if delta > 0 {
+            delta_str.green().to_string()
+        } else if delta < 0 {
+            delta_str.red().to_string()
+        } else {
+            delta_str.dimmed().to_string()
+        };
+        println!(
+            "  {:20} {:>10} {:>10} {:>10}",
+            label,
+            format_number(current).bright_white(),
+            format_number(other).bright_white(),
+            delta_colored,
+        );
+    }
+    println!("{}", "──────────────────────────────────────".cyan());
 }
 
 fn output_json(stats: &ProjectStats) -> Result<()> {

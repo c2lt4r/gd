@@ -1,5 +1,7 @@
 use tower_lsp::lsp_types::*;
 
+use super::util::{matches_name, node_range, node_text};
+
 /// Provide hover information at the given position.
 pub fn hover_at(source: &str, position: Position) -> Option<Hover> {
     let tree = crate::core::parser::parse(source).ok()?;
@@ -146,28 +148,6 @@ fn resolve_identifier(root: &tree_sitter::Node, name: &str, source: &str) -> Opt
         }
     }
     None
-}
-
-fn matches_name(node: &tree_sitter::Node, name: &str, source: &str) -> bool {
-    node.child_by_field_name("name")
-        .is_some_and(|n| node_text(&n, source) == name)
-}
-
-fn node_text<'a>(node: &tree_sitter::Node, source: &'a str) -> &'a str {
-    node.utf8_text(source.as_bytes()).unwrap_or("unknown")
-}
-
-fn node_range(node: &tree_sitter::Node) -> Range {
-    Range::new(
-        Position::new(
-            node.start_position().row as u32,
-            node.start_position().column as u32,
-        ),
-        Position::new(
-            node.end_position().row as u32,
-            node.end_position().column as u32,
-        ),
-    )
 }
 
 fn make_hover(code: &str, node: &tree_sitter::Node) -> Hover {

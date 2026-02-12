@@ -95,6 +95,38 @@ pub struct SymbolOutput {
     pub column: u32,
 }
 
+#[derive(Serialize)]
+pub struct SafeDeleteFileOutput {
+    pub file: String,
+    pub references: Vec<FileReference>,
+    pub deleted: bool,
+}
+
+#[derive(Serialize)]
+pub struct FileReference {
+    pub file: String,
+    pub line: u32,
+    pub kind: String,
+    pub text: String,
+}
+
+#[derive(Serialize)]
+pub struct ImplementationsOutput {
+    pub method: String,
+    pub implementations: Vec<ImplementationEntry>,
+}
+
+#[derive(Serialize)]
+pub struct ImplementationEntry {
+    pub file: String,
+    pub line: u32,
+    pub end_line: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extends: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub class_name: Option<String>,
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 pub(super) fn resolve_file(file: &str) -> Result<PathBuf> {
@@ -488,6 +520,162 @@ pub fn query_symbols(file: &str) -> Result<Vec<SymbolOutput>> {
     }
 }
 
+// ── Safe delete file ────────────────────────────────────────────────────────
+
+pub fn query_safe_delete_file(
+    file: &str,
+    force: bool,
+    dry_run: bool,
+) -> Result<SafeDeleteFileOutput> {
+    let path = resolve_file(file)?;
+    let project_root = find_root(&path)?;
+    let rel = crate::core::fs::relative_slash(&path, &project_root);
+    let res_path = format!("res://{rel}");
+
+    let workspace = super::workspace::WorkspaceIndex::new(project_root.clone());
+
+    let mut references = Vec::new();
+
+    // Find preload()/load() references
+    let preloads = super::refactor::find_preloads_to_file(&res_path, &workspace, &project_root);
+    for p in preloads {
+        references.push(FileReference {
+            file: p.file,
+            line: p.line,
+            kind: "preload".to_string(),
+            text: p.path,
+        });
+    }
+
+    // Find extends "res://..." references
+    for (fpath, content) in workspace.all_files() {
+        if fpath == path {
+            continue;
+        }
+        if let Ok(tree) = crate::core::parser::parse(&content) {
+            let root = tree.root_node();
+            let mut cursor = root.walk();
+            for child in root.children(&mut cursor) {
+                if child.kind() == "extends_statement" {
+                    for i in 0..child.named_child_count() {
+                        if let Some(str_node) = child.named_child(i)
+                            && str_node.kind() == "string"
+                            && let Ok(text) = str_node.utf8_text(content.as_bytes())
+                        {
+                            let unquoted = text.trim_matches('"').trim_matches('\'');
+                            if unquoted == res_path {
+                                references.push(FileReference {
+                                    file: crate::core::fs::relative_slash(&fpath, &project_root),
+                                    line: child.start_position().row as u32 + 1,
+                                    kind: "extends".to_string(),
+                                    text: unquoted.to_string(),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let deleted = if !dry_run && (force || references.is_empty()) {
+        std::fs::remove_file(&path).map_err(|e| miette::miette!("cannot delete {file}: {e}"))?;
+        true
+    } else {
+        false
+    };
+
+    Ok(SafeDeleteFileOutput {
+        file: rel,
+        references,
+        deleted,
+    })
+}
+
+// ── Find implementations ────────────────────────────────────────────────────
+
+pub fn query_find_implementations(name: &str, base: Option<&str>) -> Result<ImplementationsOutput> {
+    let cwd = std::env::current_dir()
+        .map_err(|e| miette::miette!("cannot get current directory: {e}"))?;
+    let project_root = find_root(&cwd)?;
+    let workspace = super::workspace::WorkspaceIndex::new(project_root.clone());
+
+    let mut implementations = Vec::new();
+
+    for (fpath, content) in workspace.all_files() {
+        if let Ok(tree) = crate::core::parser::parse(&content) {
+            let root = tree.root_node();
+
+            // Extract extends info
+            let mut extends_value = None;
+            let mut class_name_value = None;
+            let mut cursor = root.walk();
+            for child in root.children(&mut cursor) {
+                match child.kind() {
+                    "extends_statement" => {
+                        for i in 0..child.named_child_count() {
+                            if let Some(c) = child.named_child(i)
+                                && let Ok(text) = c.utf8_text(content.as_bytes())
+                            {
+                                let val = text.trim_matches('"').trim_matches('\'');
+                                extends_value = Some(val.to_string());
+                                break;
+                            }
+                        }
+                    }
+                    "class_name_statement" => {
+                        if let Some(c) = child.child(1)
+                            && let Ok(text) = c.utf8_text(content.as_bytes())
+                        {
+                            class_name_value = Some(text.to_string());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            // Filter by base if specified
+            if let Some(base_filter) = base {
+                match &extends_value {
+                    Some(ext) if ext == base_filter => {}
+                    _ => continue,
+                }
+            }
+
+            // Search for matching function definitions
+            let mut cursor2 = root.walk();
+            for child in root.children(&mut cursor2) {
+                let is_match = match child.kind() {
+                    "function_definition" => child
+                        .child_by_field_name("name")
+                        .and_then(|n| n.utf8_text(content.as_bytes()).ok())
+                        .is_some_and(|n| n == name),
+                    "constructor_definition" => name == "_init",
+                    _ => false,
+                };
+
+                if is_match {
+                    implementations.push(ImplementationEntry {
+                        file: crate::core::fs::relative_slash(&fpath, &project_root),
+                        line: child.start_position().row as u32 + 1,
+                        end_line: child.end_position().row as u32 + 1,
+                        extends: extends_value.clone(),
+                        class_name: class_name_value.clone(),
+                    });
+                }
+            }
+        }
+    }
+
+    // Sort by file path for deterministic output
+    implementations.sort_by(|a, b| a.file.cmp(&b.file));
+
+    Ok(ImplementationsOutput {
+        method: name.to_string(),
+        implementations,
+    })
+}
+
 // ── Refactoring queries ──────────────────────────────────────────────────────
 
 pub fn query_delete_symbol(
@@ -580,6 +768,50 @@ pub fn query_change_signature(
         rename_params,
         reorder,
         class,
+        dry_run,
+        &project_root,
+    )
+}
+
+pub fn query_introduce_variable(
+    file: &str,
+    line: usize,
+    column: usize,
+    end_column: usize,
+    name: &str,
+    dry_run: bool,
+) -> Result<super::refactor::IntroduceVariableOutput> {
+    let path = resolve_file(file)?;
+    let project_root = find_root(&path)?;
+    super::refactor::introduce_variable(
+        &path,
+        line,
+        column,
+        end_column,
+        name,
+        dry_run,
+        &project_root,
+    )
+}
+
+pub fn query_introduce_parameter(
+    file: &str,
+    line: usize,
+    column: usize,
+    end_column: usize,
+    name: &str,
+    type_hint: Option<&str>,
+    dry_run: bool,
+) -> Result<super::refactor::IntroduceParameterOutput> {
+    let path = resolve_file(file)?;
+    let project_root = find_root(&path)?;
+    super::refactor::introduce_parameter(
+        &path,
+        line,
+        column,
+        end_column,
+        name,
+        type_hint,
         dry_run,
         &project_root,
     )
