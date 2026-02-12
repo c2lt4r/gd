@@ -305,10 +305,20 @@ pub fn matches_ignore_pattern(path: &Path, base: &Path, patterns: &[String]) -> 
     if patterns.is_empty() {
         return false;
     }
-    // Canonicalize both paths to handle symlinks (e.g., macOS /var -> /private/var)
-    let canon_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    let canon_base = base.canonicalize().unwrap_or_else(|_| base.to_path_buf());
-    let relative = canon_path.strip_prefix(&canon_base).unwrap_or(&canon_path);
+    // Try plain strip_prefix first (works when both paths share the same root).
+    // Only fall back to canonicalize for symlink edge cases (e.g., macOS /var -> /private/var).
+    // Avoids Windows canonicalize returning \\?\C:\... extended-length paths that break strip_prefix.
+    let relative = path
+        .strip_prefix(base)
+        .map(|r| r.to_path_buf())
+        .unwrap_or_else(|_| {
+            let canon_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+            let canon_base = base.canonicalize().unwrap_or_else(|_| base.to_path_buf());
+            canon_path
+                .strip_prefix(&canon_base)
+                .unwrap_or(&canon_path)
+                .to_path_buf()
+        });
     // Normalize to forward slashes so patterns work on Windows
     let rel_str = relative.to_string_lossy().replace('\\', "/");
 

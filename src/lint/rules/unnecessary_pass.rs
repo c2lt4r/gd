@@ -19,10 +19,15 @@ impl LintRule for UnnecessaryPass {
 }
 
 fn check_node(node: Node, source_bytes: &[u8], _source: &str, diags: &mut Vec<LintDiagnostic>) {
-    // Check body nodes: if they have more than one named child and one is pass_statement
+    // Check body nodes: if they have more than one non-comment named child and one is pass_statement
     if node.kind() == "body" || node.kind() == "block" {
         let named_count = node.named_child_count();
-        if named_count > 1 {
+        // Don't count comments as "other statements" — a setter with just `pass  # Read-only`
+        // should not trigger this rule since pass is the only real statement.
+        let statement_count = (0..named_count)
+            .filter(|&i| node.named_child(i).is_some_and(|c| c.kind() != "comment"))
+            .count();
+        if statement_count > 1 {
             for i in 0..named_count {
                 if let Some(child) = node.named_child(i)
                     && child.kind() == "pass_statement"
@@ -82,5 +87,71 @@ fn generate_fix(node: &Node, source_bytes: &[u8]) -> Fix {
         byte_start,
         byte_end,
         replacement: String::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::config::LintConfig;
+
+    fn check(source: &str) -> Vec<LintDiagnostic> {
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_gdscript::LANGUAGE.into())
+            .unwrap();
+        let tree = parser.parse(source, None).unwrap();
+        UnnecessaryPass.check(&tree, source, &LintConfig::default())
+    }
+
+    #[test]
+    fn warns_on_pass_with_other_statements() {
+        let diags = check("func foo():\n\tvar x = 1\n\tpass\n");
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].rule, "unnecessary-pass");
+    }
+
+    #[test]
+    fn no_warning_on_pass_only() {
+        let diags = check("func foo():\n\tpass\n");
+        assert!(diags.is_empty());
+    }
+
+    #[test]
+    fn no_warning_on_pass_with_comment() {
+        // Read-only setter pattern: pass + comment should not trigger
+        let source = "\
+var scores: Dictionary:
+\tset(value):
+\t\tpass  # Read-only
+";
+        let diags = check(source);
+        assert!(
+            diags.is_empty(),
+            "pass with only a comment should not trigger unnecessary-pass, got: {:?}",
+            diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn no_warning_on_standalone_comment_before_pass() {
+        let source = "\
+func foo():
+\t# This function intentionally does nothing
+\tpass
+";
+        let diags = check(source);
+        assert!(diags.is_empty());
+    }
+
+    #[test]
+    fn still_warns_pass_with_real_statement_and_comment() {
+        let source = "\
+func foo():
+\tvar x = 1  # important
+\tpass
+";
+        let diags = check(source);
+        assert_eq!(diags.len(), 1);
     }
 }
