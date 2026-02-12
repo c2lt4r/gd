@@ -223,8 +223,8 @@ fn run_gut_tests(
         let mut gut_dirs: Vec<String> = Vec::new();
         for file in test_files {
             if let Some(parent) = file.parent() {
-                let rel = parent.strip_prefix(&project.root).unwrap_or(parent);
-                let dir_str = format!("res://{}", rel.display());
+                let rel = crate::core::fs::relative_slash(parent, &project.root);
+                let dir_str = format!("res://{rel}");
                 if !gut_dirs.contains(&dir_str) {
                     gut_dirs.push(dir_str);
                 }

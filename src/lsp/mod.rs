@@ -1,9 +1,11 @@
 mod actions;
+mod builtins;
 mod completion;
 mod definition;
 mod diagnostics;
 mod formatting;
 mod hover;
+pub mod query;
 mod references;
 mod rename;
 mod symbols;

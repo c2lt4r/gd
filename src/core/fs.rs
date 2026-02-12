@@ -1,4 +1,5 @@
 use miette::{Result, miette};
+use path_slash::PathExt;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
@@ -29,4 +30,13 @@ fn is_hidden_or_ignored(entry: &walkdir::DirEntry) -> bool {
     }
     let name = entry.file_name().to_string_lossy();
     name.starts_with('.') || name == "build" || name == ".godot" || name == ".import"
+}
+
+/// Make `path` relative to `base` and return a forward-slash string.
+///
+/// Uses `strip_prefix` (no canonicalization) to avoid Windows `\\?\` issues.
+/// Falls back to the full path if stripping fails.
+pub fn relative_slash(path: &Path, base: &Path) -> String {
+    let rel = path.strip_prefix(base).unwrap_or(path);
+    rel.to_slash_lossy().into_owned()
 }

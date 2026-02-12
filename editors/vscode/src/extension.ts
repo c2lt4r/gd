@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import * as cp from "child_process";
 import {
   LanguageClient,
   LanguageClientOptions,
@@ -104,6 +105,53 @@ export function activate(context: vscode.ExtensionContext): void {
       updateStatusBar("$(sync~spin) gd", "Restarting language server...");
       await stopClient();
       await startClient(context);
+    })
+  );
+
+  // Register format all command
+  context.subscriptions.push(
+    vscode.commands.registerCommand("gd.formatAll", async (uri?: vscode.Uri) => {
+      const gdPath = getConfig().get<string>("path", "gd");
+      const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      const targetPath = uri?.fsPath ?? workspaceFolder;
+
+      if (!targetPath) {
+        vscode.window.showErrorMessage("No workspace folder open.");
+        return;
+      }
+
+      if (!outputChannel) {
+        outputChannel = vscode.window.createOutputChannel("GDScript (gd)");
+      }
+
+      await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: "Formatting GDScript files...",
+          cancellable: false,
+        },
+        () =>
+          new Promise<void>((resolve) => {
+            cp.execFile(gdPath, ["fmt", targetPath], (err, stdout, stderr) => {
+              if (stdout) {
+                outputChannel!.appendLine(stdout);
+              }
+              if (stderr) {
+                outputChannel!.appendLine(stderr);
+              }
+
+              if (err) {
+                outputChannel!.show(true);
+                vscode.window.showErrorMessage(
+                  `gd fmt failed (exit code ${err.code}). See output channel for details.`
+                );
+              } else {
+                vscode.window.showInformationMessage("GDScript files formatted.");
+              }
+              resolve();
+            });
+          })
+      );
     })
   );
 

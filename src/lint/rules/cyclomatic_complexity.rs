@@ -13,7 +13,12 @@ impl LintRule for CyclomaticComplexity {
     fn check(&self, tree: &Tree, source: &str, config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
         let root = tree.root_node();
-        collect_functions(root, source, config.max_cyclomatic_complexity, &mut diags);
+        let max_complexity = config
+            .rules
+            .get("cyclomatic-complexity")
+            .and_then(|r| r.max_complexity)
+            .unwrap_or(config.max_cyclomatic_complexity);
+        collect_functions(root, source, max_complexity, &mut diags);
         diags
     }
 }

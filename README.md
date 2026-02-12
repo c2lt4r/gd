@@ -72,7 +72,7 @@ gd run
 | `gd addons` | Manage project addons (install, remove, search) |
 | `gd stats` | Show project statistics |
 | `gd ci` | Generate CI/CD pipeline configuration |
-| `gd lsp` | Start the Language Server Protocol server |
+| `gd lsp` | Start the LSP server, or run one-shot queries (see below) |
 | `gd deps` | Show script dependency graph |
 | `gd man` | Generate man page |
 | `gd upgrade` | Self-update to latest release |
@@ -245,8 +245,8 @@ All 46 built-in rules (38 default-enabled, 8 opt-in):
 | `max-file-lines` | Enforce maximum file length | warning | |
 | `max-line-length` | Enforce maximum line length | warning | |
 | `max-public-methods` | Enforce maximum public methods per class | warning | |
-| `print-statement` | Detect debug print calls | warning | |
-| `todo-comment` | Detect TODO/FIXME/HACK comments | warning | |
+| `print-statement` | Detect debug print calls | info | |
+| `todo-comment` | Detect TODO/FIXME/HACK comments | info | |
 | `unused-parameter` | Detect unused function parameters | warning | |
 
 ### Inline Suppression
@@ -333,7 +333,7 @@ extra_args = []
 
 | Option | Values | Description |
 |--------|--------|-------------|
-| `severity` | `"warning"`, `"error"`, `"off"` | Override severity or disable a rule |
+| `severity` | `"info"`, `"warning"`, `"error"`, `"off"` | Override severity or disable a rule |
 
 Set severity on an opt-in rule to enable it. Set `"off"` to disable any rule.
 
@@ -378,11 +378,46 @@ Example GitHub Actions step:
 - **Formatting** &mdash; format documents on save
 - **Code actions** &mdash; quick fixes for lint issues
 - **Document symbols** &mdash; outline of classes, functions, signals, and variables
-- **Hover** &mdash; type and documentation info on hover
+- **Hover** &mdash; type and documentation info on hover (with built-in Godot docs)
 - **Go to definition** &mdash; jump to function and variable declarations
 - **Find references** &mdash; find all usages across the project
 - **Rename** &mdash; rename symbols across files with prepare-rename support
-- **Completion** &mdash; context-aware autocomplete for symbols and builtins
+- **Completion** &mdash; context-aware autocomplete for symbols, builtins, and lifecycle methods
+
+### One-Shot CLI Queries
+
+`gd lsp` also exposes one-shot subcommands that output JSON to stdout — designed for AI tools and scripting:
+
+```sh
+# Rename a symbol across the project (applies to disk by default)
+gd lsp rename --file player.gd --line 5 --column 10 --new-name move_character
+
+# Preview without writing
+gd lsp rename --file player.gd --line 5 --column 10 --new-name move_character --dry-run
+
+# Find all references to a symbol
+gd lsp references --file player.gd --line 5 --column 10
+
+# Go to definition
+gd lsp definition --file player.gd --line 5 --column 10
+
+# Hover information
+gd lsp hover --file player.gd --line 5 --column 10
+
+# List completions
+gd lsp completions --file player.gd --line 5 --column 10
+
+# Available code actions / quick fixes
+gd lsp code-actions --file player.gd --line 5 --column 1
+
+# Run diagnostics (same as gd lint --format json)
+gd lsp diagnostics
+
+# List symbols in a file
+gd lsp symbols --file player.gd
+```
+
+All positions are **1-based** (line 1, column 1 is the first character). Paths in output are relative to the project root with forward slashes.
 
 ### Editor Setup
 

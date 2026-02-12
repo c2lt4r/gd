@@ -49,16 +49,45 @@ pub mod too_many_parameters;
 pub mod unused_parameter;
 
 use std::collections::HashMap;
+use std::fmt;
+use std::str::FromStr;
 use tree_sitter::Tree;
 
 use crate::core::config::{LintConfig, RuleConfig};
 
 /// Severity of a lint diagnostic.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+/// Ordered: Info < Warning < Error (used for `--severity` filtering).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Severity {
+    Info,
     Warning,
     Error,
+}
+
+impl FromStr for Severity {
+    type Err = String;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "info" => Ok(Severity::Info),
+            "warning" => Ok(Severity::Warning),
+            "error" => Ok(Severity::Error),
+            _ => Err(format!(
+                "invalid severity '{s}': expected info, warning, or error"
+            )),
+        }
+    }
+}
+
+impl fmt::Display for Severity {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Severity::Info => write!(f, "info"),
+            Severity::Warning => write!(f, "warning"),
+            Severity::Error => write!(f, "error"),
+        }
+    }
 }
 
 /// A single lint diagnostic.

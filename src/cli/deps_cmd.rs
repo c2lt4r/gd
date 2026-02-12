@@ -16,6 +16,9 @@ pub struct DepsArgs {
     /// Skip circular dependency detection
     #[arg(long)]
     pub no_cycle_check: bool,
+    /// Show reverse dependencies (files that depend on the given file)
+    #[arg(long)]
+    pub reverse: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -41,13 +44,35 @@ pub fn exec(args: DepsArgs) -> Result<()> {
     // Build dependency map
     let mut dep_map: HashMap<String, Vec<String>> = HashMap::new();
     for file_path in &files {
-        let rel = file_path
-            .strip_prefix(&root)
-            .unwrap_or(file_path)
-            .to_string_lossy()
-            .to_string();
+        let rel = crate::core::fs::relative_slash(file_path, &root);
         let deps = extract_dependencies(file_path)?;
         dep_map.insert(rel, deps);
+    }
+
+    // Reverse dependency mode
+    if let Some(target) = &args.reverse {
+        let dependents = find_reverse_deps(&dep_map, target);
+        match args.format.as_str() {
+            "tree" => output_reverse_tree(target, &dependents),
+            "json" => output_reverse_json(target, &dependents)?,
+            "dot" => {
+                // Dot format: show edges pointing to the target
+                println!("digraph reverse_dependencies {{");
+                println!("  rankdir=LR;");
+                println!("  node [shape=box];");
+                for dep in &dependents {
+                    println!("  \"{}\" -> \"{}\";", dep, target);
+                }
+                println!("}}");
+            }
+            _ => {
+                return Err(miette!(
+                    "Invalid format '{}'. Use: tree, dot, json",
+                    args.format
+                ));
+            }
+        }
+        return Ok(());
     }
 
     match args.format.as_str() {
@@ -269,6 +294,54 @@ fn output_json(dep_map: &HashMap<String, Vec<String>>, file_count: usize) -> Res
         files: file_count,
         dependencies: dep_map.clone(),
     };
+    let json = serde_json::to_string_pretty(&output)
+        .map_err(|e| miette!("Failed to serialize JSON: {e}"))?;
+    println!("{json}");
+    Ok(())
+}
+
+/// Find files that depend on `target`. Matches by:
+/// (a) exact match, (b) dep ends with `/target`, (c) `res://` + target.
+fn find_reverse_deps(dep_map: &HashMap<String, Vec<String>>, target: &str) -> Vec<String> {
+    let mut dependents: Vec<String> = dep_map
+        .iter()
+        .filter(|(_, deps)| {
+            deps.iter().any(|dep| {
+                dep == target
+                    || dep.ends_with(&format!("/{target}"))
+                    || dep == &format!("res://{target}")
+            })
+        })
+        .map(|(file, _)| file.clone())
+        .collect();
+    dependents.sort();
+    dependents
+}
+
+fn output_reverse_tree(target: &str, dependents: &[String]) {
+    println!("{}", "Reverse Dependencies".bright_cyan().bold());
+    println!("{}", "────────────────────────────".cyan());
+
+    if dependents.is_empty() {
+        println!("  {} {}", target.cyan(), "(no dependents found)".dimmed());
+    } else {
+        println!("  {}", target.cyan());
+        for (i, dep) in dependents.iter().enumerate() {
+            let prefix = if i == dependents.len() - 1 {
+                "└──"
+            } else {
+                "├──"
+            };
+            println!("    {} {}", prefix, dep.yellow());
+        }
+    }
+}
+
+fn output_reverse_json(target: &str, dependents: &[String]) -> Result<()> {
+    let output = serde_json::json!({
+        "file": target,
+        "dependents": dependents,
+    });
     let json = serde_json::to_string_pretty(&output)
         .map_err(|e| miette!("Failed to serialize JSON: {e}"))?;
     println!("{json}");

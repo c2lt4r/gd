@@ -48,6 +48,7 @@ pub fn lint_source(source: &str, uri: &Url) -> Vec<Diagnostic> {
             Diagnostic {
                 range: Range::new(start, end),
                 severity: Some(match d.severity {
+                    crate::lint::rules::Severity::Info => DiagnosticSeverity::INFORMATION,
                     crate::lint::rules::Severity::Warning => DiagnosticSeverity::WARNING,
                     crate::lint::rules::Severity::Error => DiagnosticSeverity::ERROR,
                 }),

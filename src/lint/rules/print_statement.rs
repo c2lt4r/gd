@@ -10,10 +10,6 @@ impl LintRule for PrintStatement {
         "print-statement"
     }
 
-    fn default_enabled(&self) -> bool {
-        false
-    }
-
     fn check(&self, tree: &Tree, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
         let root = tree.root_node();
@@ -51,7 +47,7 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
                         "found `{}()` call; consider removing before release",
                         func_name
                     ),
-                    severity: Severity::Warning,
+                    severity: Severity::Info,
                     line: node.start_position().row,
                     column: node.start_position().column,
                     end_column: Some(func_node.end_position().column),
@@ -240,8 +236,15 @@ func foo():
     // ── Opt-in ────────────────────────────────────────────────────────
 
     #[test]
-    fn is_opt_in() {
-        assert!(!PrintStatement.default_enabled());
+    fn is_default_enabled() {
+        assert!(PrintStatement.default_enabled());
+    }
+
+    #[test]
+    fn severity_is_info() {
+        let source = "func foo():\n\tprint(\"hello\")\n";
+        let diags = check(source);
+        assert_eq!(diags[0].severity, Severity::Info);
     }
 
     // ── Span correctness ──────────────────────────────────────────────

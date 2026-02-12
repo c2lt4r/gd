@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use miette::{Result, miette};
 use owo_colors::OwoColorize;
 use rayon::prelude::*;
+use similar::TextDiff;
 
 use crate::core::config::{Config, find_project_root};
 use crate::core::fs::collect_gdscript_files;
@@ -15,8 +16,37 @@ use crate::core::parser;
 use diagnostics::{FileLintResult, print_diagnostic, print_json, print_sarif};
 use rules::{Fix, LintDiagnostic, Severity, all_rules};
 
+/// Options bundle for `run_lint()`.
+pub struct LintOptions {
+    pub format: String,
+    pub fix: bool,
+    pub dry_run: bool,
+    pub severity_filter: Option<Severity>,
+    pub rule_filter: Vec<String>,
+    pub exclude_patterns: Vec<String>,
+    pub exclude_rules: Vec<String>,
+    pub summary: bool,
+    pub no_fail: bool,
+}
+
+impl Default for LintOptions {
+    fn default() -> Self {
+        Self {
+            format: "human".to_string(),
+            fix: false,
+            dry_run: false,
+            severity_filter: None,
+            rule_filter: Vec::new(),
+            exclude_patterns: Vec::new(),
+            exclude_rules: Vec::new(),
+            summary: false,
+            no_fail: false,
+        }
+    }
+}
+
 /// Entry point for the linter.
-pub fn run_lint(paths: &[String], format: &str, fix: bool) -> Result<()> {
+pub fn run_lint(paths: &[String], opts: &LintOptions) -> Result<()> {
     let cwd =
         std::env::current_dir().map_err(|e| miette!("Failed to get current directory: {e}"))?;
 
@@ -55,11 +85,15 @@ pub fn run_lint(paths: &[String], format: &str, fix: bool) -> Result<()> {
     // Use project root (not cwd) as base for ignore patterns
     let ignore_base = find_project_root(&config_search_dir).unwrap_or_else(|| cwd.clone());
 
+    // Merge CLI --exclude patterns with config ignore_patterns
+    let mut ignore_patterns = config.lint.ignore_patterns.clone();
+    ignore_patterns.extend(opts.exclude_patterns.iter().cloned());
+
     // Process files in parallel, skipping those matching ignore_patterns
     let file_results: Vec<(PathBuf, Vec<LintDiagnostic>)> = files
         .par_iter()
-        .filter(|path| !matches_ignore_pattern(path, &ignore_base, &config.lint.ignore_patterns))
-        .filter_map(|path| match lint_file(path, &rules, &config, fix) {
+        .filter(|path| !matches_ignore_pattern(path, &ignore_base, &ignore_patterns))
+        .filter_map(|path| match lint_file(path, &rules, &config, opts) {
             Ok(diags) => Some((path.clone(), diags)),
             Err(e) => {
                 eprintln!("{}: {}", path.display().red(), e);
@@ -68,56 +102,50 @@ pub fn run_lint(paths: &[String], format: &str, fix: bool) -> Result<()> {
         })
         .collect();
 
-    // Output results
+    // Post-collection filtering
+    let severity_threshold = opts.severity_filter.unwrap_or(Severity::Info);
+    let rule_filter: HashSet<&str> = opts.rule_filter.iter().map(|s| s.as_str()).collect();
+    let exclude_rules: HashSet<&str> = opts.exclude_rules.iter().map(|s| s.as_str()).collect();
+
+    let filtered_results: Vec<(PathBuf, Vec<&LintDiagnostic>)> = file_results
+        .iter()
+        .map(|(path, diags)| {
+            let filtered: Vec<&LintDiagnostic> = diags
+                .iter()
+                .filter(|d| d.severity >= severity_threshold)
+                .filter(|d| rule_filter.is_empty() || rule_filter.contains(d.rule))
+                .filter(|d| !exclude_rules.contains(d.rule))
+                .collect();
+            (path.clone(), filtered)
+        })
+        .collect();
+
+    // Count totals
+    let mut total_info = 0usize;
     let mut total_warnings = 0usize;
     let mut total_errors = 0usize;
 
-    match format {
-        "json" => {
-            let json_results: Vec<FileLintResult> = file_results
-                .iter()
-                .filter(|(_, diags)| !diags.is_empty())
-                .map(|(path, diags)| {
-                    for d in diags {
-                        match d.severity {
-                            Severity::Warning => total_warnings += 1,
-                            Severity::Error => total_errors += 1,
-                        }
-                    }
-                    FileLintResult {
-                        file: path.display().to_string(),
-                        diagnostics: diags
-                            .iter()
-                            .map(|d| LintDiagnostic {
-                                rule: d.rule,
-                                message: d.message.clone(),
-                                severity: d.severity,
-                                line: d.line,
-                                column: d.column,
-                                end_column: d.end_column,
-                                fix: None,
-                            })
-                            .collect(),
-                    }
-                })
-                .collect();
-            print_json(&json_results);
+    for (_, diags) in &filtered_results {
+        for d in diags {
+            match d.severity {
+                Severity::Info => total_info += 1,
+                Severity::Warning => total_warnings += 1,
+                Severity::Error => total_errors += 1,
+            }
         }
-        "sarif" => {
-            // Collect rule names for SARIF tool.driver.rules
-            let rule_names: Vec<&str> = rules.iter().map(|r| r.name()).collect();
+    }
 
-            let sarif_results: Vec<FileLintResult> = file_results
-                .iter()
-                .filter(|(_, diags)| !diags.is_empty())
-                .map(|(path, diags)| {
-                    for d in diags {
-                        match d.severity {
-                            Severity::Warning => total_warnings += 1,
-                            Severity::Error => total_errors += 1,
-                        }
-                    }
-                    FileLintResult {
+    if opts.summary {
+        // Summary mode: severity counts with per-rule breakdown
+        print_summary(&filtered_results);
+    } else {
+        // Normal output
+        match opts.format.as_str() {
+            "json" => {
+                let json_results: Vec<FileLintResult> = filtered_results
+                    .iter()
+                    .filter(|(_, diags)| !diags.is_empty())
+                    .map(|(path, diags)| FileLintResult {
                         file: path.display().to_string(),
                         diagnostics: diags
                             .iter()
@@ -131,45 +159,103 @@ pub fn run_lint(paths: &[String], format: &str, fix: bool) -> Result<()> {
                                 fix: None,
                             })
                             .collect(),
+                    })
+                    .collect();
+                print_json(&json_results);
+            }
+            "sarif" => {
+                let rule_names: Vec<&str> = rules.iter().map(|r| r.name()).collect();
+                let sarif_results: Vec<FileLintResult> = filtered_results
+                    .iter()
+                    .filter(|(_, diags)| !diags.is_empty())
+                    .map(|(path, diags)| FileLintResult {
+                        file: path.display().to_string(),
+                        diagnostics: diags
+                            .iter()
+                            .map(|d| LintDiagnostic {
+                                rule: d.rule,
+                                message: d.message.clone(),
+                                severity: d.severity,
+                                line: d.line,
+                                column: d.column,
+                                end_column: d.end_column,
+                                fix: None,
+                            })
+                            .collect(),
+                    })
+                    .collect();
+                print_sarif(&sarif_results, &rule_names);
+            }
+            _ => {
+                // Human format
+                for (path, diags) in &filtered_results {
+                    let source = std::fs::read_to_string(path).ok();
+                    for diag in diags {
+                        print_diagnostic(path, diag, source.as_deref());
                     }
-                })
-                .collect();
-            print_sarif(&sarif_results, &rule_names);
-        }
-        _ => {
-            // Human format - read source for span display
-            for (path, diags) in &file_results {
-                let source = std::fs::read_to_string(path).ok();
-                for diag in diags {
-                    match diag.severity {
-                        Severity::Warning => total_warnings += 1,
-                        Severity::Error => total_errors += 1,
-                    }
-                    print_diagnostic(path, diag, source.as_deref());
                 }
             }
         }
     }
 
-    let total = total_warnings + total_errors;
+    let total = total_info + total_warnings + total_errors;
     if total > 0 {
         eprintln!(
-            "\n{}: {} ({} {}, {} {})",
+            "\n{}: {} ({} {}, {} {}, {} {})",
             "lint result".bold(),
             format!("{} problems", total).bold(),
             total_errors,
             "errors".red(),
             total_warnings,
             "warnings".yellow(),
+            total_info,
+            "info".cyan(),
         );
     } else {
         eprintln!("{}", "No lint issues found.".green().bold());
     }
 
-    if total_errors > 0 {
+    if total_errors > 0 && !opts.no_fail {
         Err(miette!("Lint found {} error(s)", total_errors))
     } else {
         Ok(())
+    }
+}
+
+/// Print summary: severity counts with per-rule breakdown, sorted by count descending.
+fn print_summary(results: &[(PathBuf, Vec<&LintDiagnostic>)]) {
+    let mut by_severity: HashMap<Severity, HashMap<&str, usize>> = HashMap::new();
+
+    for (_, diags) in results {
+        for d in diags {
+            *by_severity
+                .entry(d.severity)
+                .or_default()
+                .entry(d.rule)
+                .or_insert(0) += 1;
+        }
+    }
+
+    // Print in order: Error, Warning, Info
+    for severity in [Severity::Error, Severity::Warning, Severity::Info] {
+        if let Some(rule_counts) = by_severity.get(&severity) {
+            let total: usize = rule_counts.values().copied().sum();
+            let mut sorted: Vec<(&&str, &usize)> = rule_counts.iter().collect();
+            sorted.sort_by(|a, b| b.1.cmp(a.1));
+
+            let breakdown: Vec<String> = sorted
+                .iter()
+                .map(|(rule, count)| format!("{}({})", rule, count))
+                .collect();
+
+            let label = match severity {
+                Severity::Error => format!("{} errors", total).red().bold().to_string(),
+                Severity::Warning => format!("{} warnings", total).yellow().bold().to_string(),
+                Severity::Info => format!("{} info", total).cyan().bold().to_string(),
+            };
+
+            eprintln!("{}: {}", label, breakdown.join(", "));
+        }
     }
 }
 
@@ -178,7 +264,7 @@ fn lint_file(
     path: &Path,
     rules: &[Box<dyn rules::LintRule>],
     config: &Config,
-    fix: bool,
+    opts: &LintOptions,
 ) -> Result<Vec<LintDiagnostic>> {
     let (source, tree) = parser::parse_file(path)?;
 
@@ -192,6 +278,7 @@ fn lint_file(
     for diag in &mut all_diags {
         if let Some(rule_config) = config.lint.rules.get(diag.rule) {
             match rule_config.severity.as_deref() {
+                Some("info") => diag.severity = Severity::Info,
                 Some("warning") => diag.severity = Severity::Warning,
                 Some("error") => diag.severity = Severity::Error,
                 _ => {}
@@ -207,14 +294,26 @@ fn lint_file(
     all_diags.retain(|d| !is_suppressed(d, &suppressions));
 
     // Apply fixes if requested
-    if fix {
+    if opts.fix {
         let fixes: Vec<&Fix> = all_diags.iter().filter_map(|d| d.fix.as_ref()).collect();
 
         if !fixes.is_empty() {
             let fixed_source = apply_fixes(&source, &fixes);
-            std::fs::write(path, &fixed_source)
-                .map_err(|e| miette!("Failed to write {}: {e}", path.display()))?;
-            eprintln!("{}: applied {} fix(es)", path.display(), fixes.len(),);
+
+            if opts.dry_run {
+                // Show diff instead of writing
+                let diff = TextDiff::from_lines(&source, &fixed_source);
+                let display_path = path.display();
+                eprintln!(
+                    "{}",
+                    diff.unified_diff()
+                        .header(&format!("a/{display_path}"), &format!("b/{display_path}"))
+                );
+            } else {
+                std::fs::write(path, &fixed_source)
+                    .map_err(|e| miette!("Failed to write {}: {e}", path.display()))?;
+                eprintln!("{}: applied {} fix(es)", path.display(), fixes.len(),);
+            }
         }
     }
 
@@ -320,7 +419,7 @@ pub fn matches_ignore_pattern(path: &Path, base: &Path, patterns: &[String]) -> 
                 .to_path_buf()
         });
     // Normalize to forward slashes so patterns work on Windows
-    let rel_str = relative.to_string_lossy().replace('\\', "/");
+    let rel_str = path_slash::PathExt::to_slash_lossy(relative.as_path());
 
     for pattern in patterns {
         if pattern.ends_with("/**") {

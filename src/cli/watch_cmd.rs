@@ -111,7 +111,8 @@ pub fn exec(args: WatchArgs) -> Result<()> {
                 if !args.no_lint {
                     let paths: Vec<String> =
                         gd_files.iter().map(|p| p.display().to_string()).collect();
-                    match crate::lint::run_lint(&paths, "human", false) {
+                    let lint_opts = crate::lint::LintOptions::default();
+                    match crate::lint::run_lint(&paths, &lint_opts) {
                         Ok(()) => {}
                         Err(e) => {
                             eprintln!("{} {e}", "lint error:".red().bold());

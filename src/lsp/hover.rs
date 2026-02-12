@@ -26,6 +26,25 @@ pub fn hover_at(source: &str, position: Position) -> Option<Hover> {
                 if let Some(hover) = resolve_identifier(&root, name, source) {
                     return Some(hover);
                 }
+                // Fall back to built-in Godot documentation
+                if let Some(doc) = super::builtins::lookup_type(name) {
+                    return Some(Hover {
+                        contents: HoverContents::Markup(MarkupContent {
+                            kind: MarkupKind::Markdown,
+                            value: super::builtins::format_type_hover(doc),
+                        }),
+                        range: Some(node_range(&current)),
+                    });
+                }
+                if let Some(doc) = super::builtins::lookup_function(name) {
+                    return Some(Hover {
+                        contents: HoverContents::Markup(MarkupContent {
+                            kind: MarkupKind::Markdown,
+                            value: super::builtins::format_function_hover(doc),
+                        }),
+                        range: Some(node_range(&current)),
+                    });
+                }
             }
             _ => {}
         }

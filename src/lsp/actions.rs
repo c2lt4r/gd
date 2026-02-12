@@ -55,6 +55,7 @@ pub fn provide_code_actions(uri: &Url, source: &str, range: &Range) -> Option<Co
                 ),
             ),
             severity: Some(match diag.severity {
+                crate::lint::rules::Severity::Info => DiagnosticSeverity::INFORMATION,
                 crate::lint::rules::Severity::Warning => DiagnosticSeverity::WARNING,
                 crate::lint::rules::Severity::Error => DiagnosticSeverity::ERROR,
             }),

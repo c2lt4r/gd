@@ -55,8 +55,22 @@
         "command": "gd.restartLsp",
         "title": "Restart Language Server",
         "category": "GDScript"
+      },
+      {
+        "command": "gd.formatAll",
+        "title": "Format All Files",
+        "category": "GDScript"
       }
     ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "gd.formatAll",
+          "when": "explorerResourceIsFolder",
+          "group": "2_workspace"
+        }
+      ]
+    },
     "configuration": {
       "title": "GDScript (gd)",
       "properties": {

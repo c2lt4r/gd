@@ -93,8 +93,24 @@ impl Default for LintConfig {
 /// Per-rule configuration in `[lint.rules.<name>]`.
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct RuleConfig {
-    /// Override severity: "warning", "error", or "off".
+    /// Override severity: "info", "warning", "error", or "off".
     pub severity: Option<String>,
+    /// Override max lines for long-function rule.
+    pub max_lines: Option<usize>,
+    /// Override max complexity for cyclomatic-complexity rule.
+    pub max_complexity: Option<usize>,
+    /// Override max params for too-many-parameters rule.
+    pub max_params: Option<usize>,
+    /// Override max depth for deeply-nested-code rule.
+    pub max_depth: Option<usize>,
+    /// magic-number: numeric literals that are always allowed (e.g. [0, 1, 0.5, 2.0]).
+    #[serde(default)]
+    pub allowed: Vec<f64>,
+    /// magic-number: function/constructor calls where numbers are fine (e.g. ["Vector2", "lerp"]).
+    #[serde(default)]
+    pub allowed_contexts: Vec<String>,
+    /// magic-number: only flag numbers whose absolute value >= this threshold.
+    pub min_value: Option<f64>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -174,7 +190,16 @@ fn warn_unknown_keys(raw: &toml::Value) {
         "rules",
         "ignore_patterns",
     ];
-    let known_rule = &["severity"];
+    let known_rule = &[
+        "severity",
+        "max_lines",
+        "max_complexity",
+        "max_params",
+        "max_depth",
+        "allowed",
+        "allowed_contexts",
+        "min_value",
+    ];
     let known_build = &["presets", "output_dir"];
     let known_run = &["godot_path", "extra_args"];
 
@@ -323,6 +348,19 @@ mod tests {
 
             [lint.rules.naming-convention]
             severity = "error"
+
+            [lint.rules.long-function]
+            severity = "warning"
+            max_lines = 80
+
+            [lint.rules.cyclomatic-complexity]
+            max_complexity = 15
+
+            [lint.rules.too-many-parameters]
+            max_params = 8
+
+            [lint.rules.deeply-nested-code]
+            max_depth = 6
 
             [build]
             presets = ["web"]

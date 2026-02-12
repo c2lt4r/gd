@@ -7,6 +7,7 @@ use super::rules::{LintDiagnostic, Severity};
 /// Print a diagnostic in human-readable format with optional source spans.
 pub fn print_diagnostic(path: &Path, diag: &LintDiagnostic, source: Option<&str>) {
     let severity_str = match diag.severity {
+        Severity::Info => "info".cyan().bold().to_string(),
         Severity::Warning => "warning".yellow().bold().to_string(),
         Severity::Error => "error".red().bold().to_string(),
     };
@@ -37,6 +38,7 @@ pub fn print_diagnostic(path: &Path, diag: &LintDiagnostic, source: Option<&str>
         let span_len = if end_col > col { end_col - col } else { 1 };
         let underline = "^".repeat(span_len);
         let colored_underline = match diag.severity {
+            Severity::Info => underline.cyan().bold().to_string(),
             Severity::Warning => underline.yellow().bold().to_string(),
             Severity::Error => underline.red().bold().to_string(),
         };
@@ -126,6 +128,7 @@ pub fn print_sarif(results: &[FileLintResult], rules: &[&str]) {
             sarif_results.push(json!({
                 "ruleId": diag.rule,
                 "level": match diag.severity {
+                    super::rules::Severity::Info => "note",
                     super::rules::Severity::Warning => "warning",
                     super::rules::Severity::Error => "error",
                 },

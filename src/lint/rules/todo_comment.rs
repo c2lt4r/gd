@@ -10,10 +10,6 @@ impl LintRule for TodoComment {
         "todo-comment"
     }
 
-    fn default_enabled(&self) -> bool {
-        false
-    }
-
     fn check(&self, tree: &Tree, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
         let root = tree.root_node();
@@ -34,7 +30,7 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
                 diags.push(LintDiagnostic {
                     rule: "todo-comment",
                     message: format!("comment contains {} marker", marker),
-                    severity: Severity::Warning,
+                    severity: Severity::Info,
                     line: node.start_position().row,
                     column: node.start_position().column,
                     end_column: Some(node.end_position().column),
@@ -180,8 +176,15 @@ mod tests {
     // ── Opt-in ────────────────────────────────────────────────────────
 
     #[test]
-    fn is_opt_in() {
-        assert!(!TodoComment.default_enabled());
+    fn is_default_enabled() {
+        assert!(TodoComment.default_enabled());
+    }
+
+    #[test]
+    fn severity_is_info() {
+        let source = "# TODO: implement this\n";
+        let diags = check(source);
+        assert_eq!(diags[0].severity, Severity::Info);
     }
 
     // ── Span correctness ──────────────────────────────────────────────

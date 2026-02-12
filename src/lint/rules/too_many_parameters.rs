@@ -13,7 +13,12 @@ impl LintRule for TooManyParameters {
     fn check(&self, tree: &Tree, source: &str, config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
         let root = tree.root_node();
-        check_node(root, source, config.max_function_params, &mut diags);
+        let max_params = config
+            .rules
+            .get("too-many-parameters")
+            .and_then(|r| r.max_params)
+            .unwrap_or(config.max_function_params);
+        check_node(root, source, max_params, &mut diags);
         diags
     }
 }

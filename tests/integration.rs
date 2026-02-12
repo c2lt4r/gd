@@ -1357,3 +1357,452 @@ fn test_lint_float_comparison_detected() {
         stderr
     );
 }
+
+// ─── LSP query subcommand tests ─────────────────────────────────────────────
+
+/// Create a temp Godot project with the given .gd files.
+/// Returns the TempDir (must stay alive for the duration of the test).
+fn setup_gd_project(files: &[(&str, &str)]) -> TempDir {
+    let temp = tempfile::Builder::new()
+        .prefix("gdtest")
+        .tempdir()
+        .expect("Failed to create temp dir");
+    fs::write(
+        temp.path().join("project.godot"),
+        "[application]\nconfig/name=\"test\"\n",
+    )
+    .expect("write project.godot");
+    for (name, content) in files {
+        fs::write(temp.path().join(name), content).expect("write .gd file");
+    }
+    temp
+}
+
+#[test]
+fn test_lsp_symbols_lists_all_declarations() {
+    let temp = setup_gd_project(&[(
+        "player.gd",
+        "var health := 100\nconst MAX_HP = 200\nsignal died\nenum State { IDLE, RUN }\n\n\nfunc attack() -> void:\n\tpass\n",
+    )]);
+
+    let output = gd_bin()
+        .args(["lsp", "symbols", "--file", "player.gd"])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp symbols");
+
+    assert!(output.status.success(), "should exit 0");
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("should output valid JSON");
+    let arr = json.as_array().expect("should be an array");
+
+    let names: Vec<&str> = arr.iter().map(|s| s["name"].as_str().unwrap()).collect();
+    assert!(names.contains(&"health"));
+    assert!(names.contains(&"MAX_HP"));
+    assert!(names.contains(&"died"));
+    assert!(names.contains(&"State"));
+    assert!(names.contains(&"attack"));
+
+    // Verify 1-based line numbers
+    let health = arr.iter().find(|s| s["name"] == "health").unwrap();
+    assert_eq!(health["line"], 1);
+    assert_eq!(health["kind"], "variable");
+}
+
+#[test]
+fn test_lsp_hover_shows_function_signature() {
+    let temp = setup_gd_project(&[(
+        "player.gd",
+        "func move(speed: float, dir: Vector2) -> void:\n\tpass\n",
+    )]);
+
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "hover",
+            "--file",
+            "player.gd",
+            "--line",
+            "1",
+            "--column",
+            "6",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp hover");
+
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let content = json["content"].as_str().unwrap();
+    assert!(
+        content.contains("func move"),
+        "hover should show function name, got: {content}"
+    );
+    assert!(
+        content.contains("speed: float"),
+        "hover should show parameters, got: {content}"
+    );
+}
+
+#[test]
+fn test_lsp_references_finds_all_usages() {
+    let temp = setup_gd_project(&[(
+        "player.gd",
+        "var speed = 10\n\n\nfunc run() -> void:\n\tprint(speed)\n\tspeed = 20\n",
+    )]);
+
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "references",
+            "--file",
+            "player.gd",
+            "--line",
+            "1",
+            "--column",
+            "5",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp references");
+
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["symbol"], "speed");
+    let refs = json["references"].as_array().unwrap();
+    // Declaration + 2 usages = 3
+    assert_eq!(refs.len(), 3, "should find declaration + 2 usages");
+    // All references should point to the same file
+    for r in refs {
+        assert_eq!(r["file"], "player.gd");
+    }
+}
+
+#[test]
+fn test_lsp_definition_jumps_to_declaration() {
+    let temp = setup_gd_project(&[(
+        "player.gd",
+        "var speed = 10\n\n\nfunc run() -> void:\n\tprint(speed)\n",
+    )]);
+
+    // Ask for definition of `speed` on the usage line (line 5, inside print)
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "definition",
+            "--file",
+            "player.gd",
+            "--line",
+            "5",
+            "--column",
+            "8",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp definition");
+
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["symbol"], "speed");
+    assert_eq!(json["file"], "player.gd");
+    assert_eq!(json["line"], 1, "definition should be on line 1");
+}
+
+#[test]
+fn test_lsp_rename_dry_run_does_not_modify_file() {
+    let temp = setup_gd_project(&[(
+        "player.gd",
+        "var speed = 10\n\n\nfunc run() -> void:\n\tspeed = 20\n",
+    )]);
+
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "rename",
+            "--file",
+            "player.gd",
+            "--line",
+            "1",
+            "--column",
+            "5",
+            "--new-name",
+            "velocity",
+            "--dry-run",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp rename --dry-run");
+
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["symbol"], "speed");
+    assert_eq!(json["new_name"], "velocity");
+    let changes = json["changes"].as_array().unwrap();
+    assert!(!changes.is_empty(), "should have edit entries");
+
+    // File should NOT be modified
+    let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+    assert!(
+        content.contains("var speed"),
+        "dry-run should not modify file on disk"
+    );
+}
+
+#[test]
+fn test_lsp_rename_applies_changes_to_disk() {
+    let temp = setup_gd_project(&[(
+        "player.gd",
+        "var speed = 10\n\n\nfunc run() -> void:\n\tprint(speed)\n\tspeed = 20\n",
+    )]);
+
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "rename",
+            "--file",
+            "player.gd",
+            "--line",
+            "1",
+            "--column",
+            "5",
+            "--new-name",
+            "velocity",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp rename");
+
+    assert!(output.status.success());
+
+    let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+    assert!(
+        !content.contains("speed"),
+        "all occurrences of 'speed' should be renamed"
+    );
+    assert!(
+        content.contains("var velocity"),
+        "declaration should be renamed"
+    );
+    assert!(
+        content.contains("print(velocity)"),
+        "usage in print should be renamed"
+    );
+    assert!(
+        content.contains("velocity = 20"),
+        "assignment should be renamed"
+    );
+}
+
+#[test]
+fn test_lsp_rename_cross_file() {
+    let temp = setup_gd_project(&[
+        (
+            "base.gd",
+            "var speed = 10\n\n\nfunc get_speed() -> int:\n\treturn speed\n",
+        ),
+        (
+            "child.gd",
+            "var speed = 5\n\n\nfunc run() -> void:\n\tspeed = 20\n",
+        ),
+    ]);
+
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "rename",
+            "--file",
+            "base.gd",
+            "--line",
+            "1",
+            "--column",
+            "5",
+            "--new-name",
+            "velocity",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp rename");
+
+    assert!(output.status.success());
+
+    // base.gd should be renamed
+    let base = fs::read_to_string(temp.path().join("base.gd")).unwrap();
+    assert!(base.contains("var velocity"), "base.gd should be renamed");
+
+    // child.gd has its own `speed` — cross-file rename finds matching identifiers
+    let child = fs::read_to_string(temp.path().join("child.gd")).unwrap();
+    // Both files have `speed` as a top-level identifier, so cross-file rename affects both
+    assert!(
+        child.contains("velocity"),
+        "cross-file rename should affect matching symbols in other files"
+    );
+}
+
+#[test]
+fn test_lsp_completions_includes_keywords_and_symbols() {
+    let temp = setup_gd_project(&[(
+        "player.gd",
+        "var health := 100\n\n\nfunc attack() -> void:\n\tpass\n",
+    )]);
+
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "completions",
+            "--file",
+            "player.gd",
+            "--line",
+            "5",
+            "--column",
+            "1",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp completions");
+
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let arr = json.as_array().expect("completions should be an array");
+    let labels: Vec<&str> = arr.iter().map(|c| c["label"].as_str().unwrap()).collect();
+
+    // Should include keywords
+    assert!(labels.contains(&"func"), "should include keyword 'func'");
+    assert!(labels.contains(&"var"), "should include keyword 'var'");
+    // Should include file symbols
+    assert!(
+        labels.contains(&"health"),
+        "should include variable 'health'"
+    );
+    assert!(
+        labels.contains(&"attack"),
+        "should include function 'attack'"
+    );
+    // Should include builtins
+    assert!(labels.contains(&"print"), "should include builtin 'print'");
+
+    // Verify kind field is present
+    let func_item = arr.iter().find(|c| c["label"] == "func").unwrap();
+    assert_eq!(func_item["kind"], "keyword");
+}
+
+#[test]
+fn test_lsp_diagnostics_outputs_json() {
+    let temp = setup_gd_project(&[(
+        "player.gd",
+        "var x = 10\n\n\nfunc test() -> void:\n\tprint(x)\n",
+    )]);
+
+    let output = gd_bin()
+        .args(["lsp", "diagnostics"])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp diagnostics");
+
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let arr = json.as_array().expect("diagnostics should be an array");
+    // Should have at least one file result
+    assert!(!arr.is_empty(), "should produce diagnostics");
+    // Each entry has file + diagnostics
+    let first = &arr[0];
+    assert!(first["file"].is_string());
+    assert!(first["diagnostics"].is_array());
+}
+
+#[test]
+fn test_lsp_code_actions_returns_fixes() {
+    let temp = setup_gd_project(&[(
+        "player.gd",
+        "extends Node\n\n\nfunc test() -> void:\n\tif x == true:\n\t\tpass\n",
+    )]);
+
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "code-actions",
+            "--file",
+            "player.gd",
+            "--line",
+            "5",
+            "--column",
+            "1",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp code-actions");
+
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let arr = json.as_array().expect("code-actions should be an array");
+    assert!(
+        !arr.is_empty(),
+        "should have at least one code action for == true"
+    );
+    let action = &arr[0];
+    assert!(
+        action["title"]
+            .as_str()
+            .unwrap()
+            .contains("comparison-with-boolean"),
+        "should reference the rule name"
+    );
+    assert!(action["edits"].is_array());
+}
+
+#[test]
+fn test_lsp_server_still_starts_without_subcommand() {
+    // `gd lsp` (no subcommand) should start the LSP server.
+    // We verify by sending an initialize request and getting a response.
+    use std::process::Stdio;
+
+    let temp = setup_gd_project(&[("main.gd", "extends Node\n")]);
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_gd"))
+        .arg("lsp")
+        .current_dir(temp.path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("Failed to spawn gd lsp");
+
+    let stdin = child.stdin.as_mut().unwrap();
+    let init_req = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "capabilities": {},
+            "rootUri": format!("file://{}", temp.path().display())
+        }
+    });
+    let body = serde_json::to_string(&init_req).unwrap();
+    let msg = format!("Content-Length: {}\r\n\r\n{}", body.len(), body);
+    stdin.write_all(msg.as_bytes()).unwrap();
+    stdin.flush().unwrap();
+
+    // Read the response header + body
+    let stdout = child.stdout.as_mut().unwrap();
+    let mut header = Vec::new();
+    let mut buf = [0u8; 1];
+    while !header.ends_with(b"\r\n\r\n") {
+        stdout.read_exact(&mut buf).expect("read header byte");
+        header.push(buf[0]);
+    }
+    let header_str = String::from_utf8_lossy(&header);
+    let length: usize = header_str
+        .lines()
+        .find_map(|l| l.strip_prefix("Content-Length: "))
+        .expect("Content-Length header")
+        .parse()
+        .expect("parse length");
+    let mut body_buf = vec![0u8; length];
+    stdout.read_exact(&mut body_buf).expect("read body");
+
+    let resp: serde_json::Value = serde_json::from_slice(&body_buf).unwrap();
+    assert_eq!(resp["id"], 1);
+    assert!(resp["result"]["capabilities"].is_object());
+
+    child.kill().ok();
+    child.wait().ok();
+}

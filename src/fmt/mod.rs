@@ -10,7 +10,7 @@ use rayon::prelude::*;
 use similar::TextDiff;
 use tree_sitter::Node;
 
-use crate::core::config::{Config, FmtConfig};
+use crate::core::config::{Config, FmtConfig, find_project_root};
 use crate::core::fs::collect_gdscript_files;
 use crate::core::parser;
 use printer::Printer;
@@ -22,6 +22,20 @@ pub fn run_fmt(paths: &[String], check: bool, diff: bool) -> Result<()> {
     let config = Config::load(&cwd)?;
 
     let files = collect_files(paths, &cwd)?;
+
+    if files.is_empty() {
+        eprintln!("{}", "No .gd files found.".yellow());
+        return Ok(());
+    }
+
+    // Filter out files matching ignore_patterns
+    let ignore_base = find_project_root(&cwd).unwrap_or_else(|| cwd.clone());
+    let files: Vec<PathBuf> = files
+        .into_iter()
+        .filter(|p| {
+            !crate::lint::matches_ignore_pattern(p, &ignore_base, &config.lint.ignore_patterns)
+        })
+        .collect();
 
     if files.is_empty() {
         eprintln!("{}", "No .gd files found.".yellow());

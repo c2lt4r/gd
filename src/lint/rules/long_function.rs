@@ -13,7 +13,11 @@ impl LintRule for LongFunction {
     fn check(&self, tree: &Tree, source: &str, config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
         let root = tree.root_node();
-        let max_lines = config.max_function_length;
+        let max_lines = config
+            .rules
+            .get("long-function")
+            .and_then(|r| r.max_lines)
+            .unwrap_or(config.max_function_length);
         check_node(root, source, max_lines, &mut diags);
         diags
     }

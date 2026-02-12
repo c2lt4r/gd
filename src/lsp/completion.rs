@@ -158,20 +158,34 @@ pub fn provide_completions(
 
     // Built-in types
     for &ty in BUILTIN_TYPES {
+        let documentation = super::builtins::lookup_type(ty).map(|doc| {
+            Documentation::MarkupContent(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: doc.description.to_string(),
+            })
+        });
         items.push(CompletionItem {
             label: ty.to_string(),
             kind: Some(CompletionItemKind::CLASS),
+            documentation,
             ..Default::default()
         });
     }
 
     // Built-in functions
     for &func in BUILTIN_FUNCTIONS {
+        let documentation = super::builtins::lookup_function(func).map(|doc| {
+            Documentation::MarkupContent(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: doc.description.to_string(),
+            })
+        });
         items.push(CompletionItem {
             label: func.to_string(),
             kind: Some(CompletionItemKind::FUNCTION),
             insert_text: Some(format!("{func}($0)")),
             insert_text_format: Some(InsertTextFormat::SNIPPET),
+            documentation,
             ..Default::default()
         });
     }

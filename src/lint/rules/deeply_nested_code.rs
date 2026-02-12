@@ -13,7 +13,12 @@ impl LintRule for DeeplyNestedCode {
     fn check(&self, tree: &Tree, source: &str, config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
         let root = tree.root_node();
-        collect_functions(root, source, config.max_nesting_depth, &mut diags);
+        let max_depth = config
+            .rules
+            .get("deeply-nested-code")
+            .and_then(|r| r.max_depth)
+            .unwrap_or(config.max_nesting_depth);
+        collect_functions(root, source, max_depth, &mut diags);
         diags
     }
 }
