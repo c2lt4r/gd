@@ -1,6 +1,5 @@
 use clap::{Args, Subcommand};
 use miette::Result;
-use owo_colors::OwoColorize;
 
 #[derive(Args)]
 pub struct LspArgs {
@@ -59,6 +58,9 @@ pub enum LspCommand {
         /// Path to the GDScript file
         #[arg(long)]
         file: String,
+        /// Filter by symbol kind (repeatable, comma-separated: function, method, variable, field, class, constant, enum, event)
+        #[arg(long)]
+        kind: Vec<String>,
     },
 }
 
@@ -88,10 +90,8 @@ pub fn exec(args: LspArgs) -> Result<()> {
             new_name,
             dry_run,
         } => {
-            let result =
+            let mut result =
                 crate::lsp::query::query_rename(&pos.file, pos.line, pos.column, &new_name)?;
-            let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
-            println!("{json}");
 
             if !dry_run {
                 let project_root = crate::core::config::find_project_root(
@@ -102,13 +102,15 @@ pub fn exec(args: LspArgs) -> Result<()> {
                 .ok_or_else(|| miette::miette!("no project.godot found"))?;
 
                 let count = crate::lsp::query::apply_rename(&result, &project_root)?;
-                eprintln!(
-                    "{} Applied rename across {} file{}",
-                    "✓".green().bold(),
+                result.summary = Some(format!(
+                    "Applied rename across {} file{}",
                     count,
                     if count == 1 { "" } else { "s" }
-                );
+                ));
             }
+
+            let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+            println!("{json}");
             Ok(())
         }
         LspCommand::References { pos } => {
@@ -145,8 +147,15 @@ pub fn exec(args: LspArgs) -> Result<()> {
             Ok(())
         }
         LspCommand::Diagnostics { paths } => crate::lsp::query::query_diagnostics(&paths),
-        LspCommand::Symbols { file } => {
-            let result = crate::lsp::query::query_symbols(&file)?;
+        LspCommand::Symbols { file, kind } => {
+            let mut result = crate::lsp::query::query_symbols(&file)?;
+            let kind_filter: Vec<String> = kind
+                .iter()
+                .flat_map(|s| s.split(',').map(|k| k.trim().to_lowercase().to_string()))
+                .collect();
+            if !kind_filter.is_empty() {
+                result.retain(|s| kind_filter.iter().any(|k| k == &s.kind));
+            }
             let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
             println!("{json}");
             Ok(())

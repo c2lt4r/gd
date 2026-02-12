@@ -11,6 +11,8 @@ pub struct RenameOutput {
     pub symbol: String,
     pub new_name: String,
     pub changes: Vec<FileEdits>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -248,6 +250,7 @@ pub fn query_rename(
         symbol,
         new_name: new_name.to_string(),
         changes,
+        summary: None,
     })
 }
 

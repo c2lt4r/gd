@@ -23,6 +23,11 @@ pub fn goto_definition(
     // Get the identifier text at the cursor
     let ident = node.utf8_text(source.as_bytes()).ok()?;
 
+    // If inside a function, check local declarations first
+    if let Some(result) = find_local_definition(root, point, ident, source, uri) {
+        return Some(result);
+    }
+
     // Search top-level nodes for a matching definition
     find_definition(&root, ident, source, uri)
 }
@@ -101,6 +106,107 @@ fn find_project_root(from: &std::path::Path) -> Option<PathBuf> {
     }
 }
 
+const FUNCTION_KINDS: &[&str] = &["function_definition", "constructor_definition"];
+
+/// Find a local definition (parameter or var) inside the enclosing function.
+fn find_local_definition(
+    root: tree_sitter::Node,
+    point: tree_sitter::Point,
+    name: &str,
+    source: &str,
+    uri: &Url,
+) -> Option<GotoDefinitionResponse> {
+    // Walk from leaf up to find enclosing function
+    let leaf = root.descendant_for_point_range(point, point)?;
+    let mut node = leaf;
+    let func = loop {
+        if FUNCTION_KINDS.contains(&node.kind()) {
+            break node;
+        }
+        node = node.parent()?;
+    };
+
+    // Check parameters
+    if let Some(params) = func.child_by_field_name("parameters") {
+        let mut cursor = params.walk();
+        if cursor.goto_first_child() {
+            loop {
+                let child = cursor.node();
+                match child.kind() {
+                    "identifier" if node_text(&child, source) == name => {
+                        return Some(GotoDefinitionResponse::Scalar(Location {
+                            uri: uri.clone(),
+                            range: node_range(&child),
+                        }));
+                    }
+                    "typed_parameter" | "default_parameter" | "typed_default_parameter" => {
+                        if let Some(name_node) = child.child(0)
+                            && name_node.kind() == "identifier"
+                            && node_text(&name_node, source) == name
+                        {
+                            return Some(GotoDefinitionResponse::Scalar(Location {
+                                uri: uri.clone(),
+                                range: node_range(&name_node),
+                            }));
+                        }
+                    }
+                    _ => {}
+                }
+                if !cursor.goto_next_sibling() {
+                    break;
+                }
+            }
+        }
+    }
+
+    // Check body for variable_statement and for_statement declarations
+    if let Some(body) = func.child_by_field_name("body")
+        && let Some(loc) = find_var_in_body(body, name, source, uri)
+    {
+        return Some(GotoDefinitionResponse::Scalar(loc));
+    }
+
+    None
+}
+
+/// Search a body node for a variable_statement or for_statement declaring `name`.
+fn find_var_in_body(
+    body: tree_sitter::Node,
+    name: &str,
+    source: &str,
+    uri: &Url,
+) -> Option<Location> {
+    let mut cursor = body.walk();
+    if !cursor.goto_first_child() {
+        return None;
+    }
+    loop {
+        let child = cursor.node();
+        if child.kind() == "variable_statement"
+            && let Some(name_node) = child.child_by_field_name("name")
+            && node_text(&name_node, source) == name
+        {
+            return Some(Location {
+                uri: uri.clone(),
+                range: node_range(&name_node),
+            });
+        }
+        if child.kind() == "for_statement"
+            && let Some(left) = child.child_by_field_name("left")
+            && node_text(&left, source) == name
+        {
+            return Some(Location {
+                uri: uri.clone(),
+                range: node_range(&left),
+            });
+        }
+        if !cursor.goto_next_sibling() {
+            break;
+        }
+    }
+    None
+}
+
 fn matches_name(node: &tree_sitter::Node, name: &str, source: &str) -> bool {
     node.child_by_field_name("name")
         .is_some_and(|n| node_text(&n, source) == name)
@@ -140,6 +246,11 @@ pub fn goto_definition_cross_file(
     }
 
     let ident = node.utf8_text(source.as_bytes()).ok()?;
+
+    // If inside a function, check local declarations first
+    if let Some(result) = find_local_definition(root, point, ident, source, uri) {
+        return Some(result);
+    }
 
     // Try single-file definition first
     if let Some(result) = find_definition(&root, ident, source, uri) {
@@ -244,5 +355,53 @@ mod tests {
         let uri = test_uri();
         let result = goto_definition("", &uri, Position::new(0, 0));
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn goto_local_variable_definition() {
+        let source = "func foo():\n\tvar x = 10\n\tprint(x)\n";
+        let uri = test_uri();
+        // Position on `x` usage at line 2, col 7
+        let result = goto_definition(source, &uri, Position::new(2, 7));
+        assert!(result.is_some());
+        if let Some(GotoDefinitionResponse::Scalar(loc)) = result {
+            assert_eq!(loc.range.start.line, 1, "should jump to local var x");
+            assert_eq!(loc.range.start.character, 5);
+        } else {
+            panic!("Expected Scalar response");
+        }
+    }
+
+    #[test]
+    fn goto_parameter_definition() {
+        let source = "func foo(speed):\n\tprint(speed)\n";
+        let uri = test_uri();
+        // Position on `speed` usage at line 1, col 7
+        let result = goto_definition(source, &uri, Position::new(1, 7));
+        assert!(result.is_some());
+        if let Some(GotoDefinitionResponse::Scalar(loc)) = result {
+            assert_eq!(loc.range.start.line, 0, "should jump to parameter");
+            assert_eq!(loc.range.start.character, 9);
+        } else {
+            panic!("Expected Scalar response");
+        }
+    }
+
+    #[test]
+    fn local_var_preferred_over_global() {
+        // Local `var speed` should take priority over global `var speed`
+        let source = "var speed = 10\n\nfunc foo():\n\tvar speed = 20\n\tprint(speed)\n";
+        let uri = test_uri();
+        // Position on `speed` at line 4, col 7 (inside print)
+        let result = goto_definition(source, &uri, Position::new(4, 7));
+        assert!(result.is_some());
+        if let Some(GotoDefinitionResponse::Scalar(loc)) = result {
+            assert_eq!(
+                loc.range.start.line, 3,
+                "should jump to local var, not global"
+            );
+        } else {
+            panic!("Expected Scalar response");
+        }
     }
 }

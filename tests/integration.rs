@@ -2055,3 +2055,205 @@ fn test_lsp_server_still_starts_without_subcommand() {
     child.kill().ok();
     child.wait().ok();
 }
+
+#[test]
+fn test_lsp_rename_local_variable_scoped() {
+    // Two functions each with `var x` — renaming `x` in foo should not affect bar
+    let temp = setup_gd_project(&[(
+        "player.gd",
+        "func foo():\n\tvar x = 1\n\tprint(x)\n\tx = 2\n\n\nfunc bar():\n\tvar x = 10\n\tprint(x)\n",
+    )]);
+
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "rename",
+            "--file",
+            "player.gd",
+            "--line",
+            "3", // print(x) in foo
+            "--column",
+            "8", // on `x`
+            "--new-name",
+            "y",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp rename");
+
+    assert!(output.status.success());
+
+    let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+    // foo's x should be renamed to y
+    assert!(
+        content.contains("var y = 1"),
+        "foo's var x should be renamed"
+    );
+    assert!(
+        content.contains("print(y)"),
+        "foo's print(x) should be renamed"
+    );
+    // bar's x should be untouched
+    assert!(
+        content.contains("var x = 10"),
+        "bar's var x should NOT be renamed"
+    );
+}
+
+#[test]
+fn test_lsp_references_local_variable_scoped() {
+    let temp = setup_gd_project(&[(
+        "player.gd",
+        "func foo(speed):\n\tprint(speed)\n\n\nfunc bar(speed):\n\tspeed = 20\n",
+    )]);
+
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "references",
+            "--file",
+            "player.gd",
+            "--line",
+            "2", // print(speed) in foo
+            "--column",
+            "8", // on `speed`
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp references");
+
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let refs = json["references"].as_array().unwrap();
+    // Should only find refs in foo: param `speed` + print(speed) = 2
+    assert_eq!(
+        refs.len(),
+        2,
+        "should find 2 refs in foo() only, got {}",
+        refs.len()
+    );
+    // All should be on lines 1-2
+    for r in refs {
+        let line = r["line"].as_u64().unwrap();
+        assert!(line <= 2, "all refs should be in foo(), got line {line}");
+    }
+}
+
+#[test]
+fn test_lsp_definition_local_variable() {
+    let temp = setup_gd_project(&[(
+        "player.gd",
+        "var speed = 10\n\n\nfunc foo():\n\tvar speed = 20\n\tprint(speed)\n",
+    )]);
+
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "definition",
+            "--file",
+            "player.gd",
+            "--line",
+            "6", // print(speed) in foo
+            "--column",
+            "8", // on `speed`
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp definition");
+
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    // Should jump to local var speed on line 5, not global var speed on line 1
+    assert_eq!(json["line"], 5, "should jump to local var, not global");
+}
+
+#[test]
+fn test_lsp_symbols_kind_filter() {
+    let temp = setup_gd_project(&[(
+        "player.gd",
+        "var health := 100\nconst MAX_HP = 200\nsignal died\nenum State { IDLE, RUN }\n\n\nfunc attack() -> void:\n\tpass\n",
+    )]);
+
+    // Filter by function only
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "symbols",
+            "--file",
+            "player.gd",
+            "--kind",
+            "function",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp symbols --kind");
+
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let arr = json.as_array().expect("should be array");
+    assert_eq!(arr.len(), 1, "should only find 1 function");
+    assert_eq!(arr[0]["name"], "attack");
+    assert_eq!(arr[0]["kind"], "function");
+}
+
+#[test]
+fn test_lsp_symbols_kind_filter_multiple() {
+    let temp = setup_gd_project(&[(
+        "player.gd",
+        "var health := 100\nconst MAX_HP = 200\nsignal died\nenum State { IDLE, RUN }\n\n\nfunc attack() -> void:\n\tpass\n",
+    )]);
+
+    // Filter by function and constant (comma-separated)
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "symbols",
+            "--file",
+            "player.gd",
+            "--kind",
+            "function,constant",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp symbols --kind multiple");
+
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let arr = json.as_array().expect("should be array");
+    assert_eq!(arr.len(), 2, "should find function + constant");
+    let names: Vec<&str> = arr.iter().map(|s| s["name"].as_str().unwrap()).collect();
+    assert!(names.contains(&"attack"));
+    assert!(names.contains(&"MAX_HP"));
+}
+
+#[test]
+fn test_lsp_symbols_kind_filter_repeatable() {
+    let temp = setup_gd_project(&[(
+        "player.gd",
+        "var health := 100\nconst MAX_HP = 200\n\n\nfunc attack() -> void:\n\tpass\n",
+    )]);
+
+    // Filter by function and variable (repeated --kind)
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "symbols",
+            "--file",
+            "player.gd",
+            "--kind",
+            "function",
+            "--kind",
+            "variable",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp symbols --kind repeatable");
+
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let arr = json.as_array().expect("should be array");
+    assert_eq!(arr.len(), 2, "should find function + variable");
+    let names: Vec<&str> = arr.iter().map(|s| s["name"].as_str().unwrap()).collect();
+    assert!(names.contains(&"attack"));
+    assert!(names.contains(&"health"));
+}

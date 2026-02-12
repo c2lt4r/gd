@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use tower_lsp::lsp_types::*;
 
 /// Find all references to the symbol at the given position within the same file.
@@ -20,8 +22,28 @@ pub fn find_references(
         return None;
     }
 
-    // Collect all matching identifiers in the file
     let mut locations = Vec::new();
+
+    // Check if this is a local variable inside a function
+    if let Some(func) = enclosing_function(root, point)
+        && is_local_in_function(func, target_name, source)
+    {
+        collect_scoped_references(
+            func,
+            source,
+            target_name,
+            uri,
+            include_declaration,
+            &mut locations,
+        );
+        return if locations.is_empty() {
+            None
+        } else {
+            Some(locations)
+        };
+    }
+
+    // Global: collect all matching identifiers in the file
     collect_references(
         root,
         source,
@@ -133,7 +155,26 @@ pub fn find_references_cross_file(
 
     let mut locations = Vec::new();
 
-    // Current file
+    // If local variable, only search within the enclosing function — no cross-file
+    if let Some(func) = enclosing_function(root, point)
+        && is_local_in_function(func, target_name, source)
+    {
+        collect_scoped_references(
+            func,
+            source,
+            target_name,
+            uri,
+            include_declaration,
+            &mut locations,
+        );
+        return if locations.is_empty() {
+            None
+        } else {
+            Some(locations)
+        };
+    }
+
+    // Global: current file
     collect_references(
         root,
         source,
@@ -170,6 +211,350 @@ pub fn find_references_cross_file(
     } else {
         Some(locations)
     }
+}
+
+// ── Scope-aware helpers ────────────────────────────────────────────────────
+
+const FUNCTION_KINDS: &[&str] = &["function_definition", "constructor_definition"];
+
+/// Find the enclosing function_definition or constructor_definition for a position.
+fn enclosing_function(
+    root: tree_sitter::Node,
+    point: tree_sitter::Point,
+) -> Option<tree_sitter::Node> {
+    let leaf = root.descendant_for_point_range(point, point)?;
+    let mut node = leaf;
+    loop {
+        if FUNCTION_KINDS.contains(&node.kind()) {
+            return Some(node);
+        }
+        node = node.parent()?;
+    }
+}
+
+/// Check if `name` is declared locally in a function (as param or var in the body).
+fn is_local_in_function(func: tree_sitter::Node, name: &str, source: &str) -> bool {
+    // Check parameters
+    if let Some(params) = func.child_by_field_name("parameters") {
+        let param_names = collect_param_names(params, source);
+        if param_names.contains(name) {
+            return true;
+        }
+    }
+
+    // Check body for variable_statement declarations
+    if let Some(body) = func.child_by_field_name("body")
+        && is_declared_in_body(body, name, source)
+    {
+        return true;
+    }
+
+    false
+}
+
+/// Collect parameter names from a function's parameters node.
+fn collect_param_names(params: tree_sitter::Node, source: &str) -> HashSet<String> {
+    let mut names = HashSet::new();
+    let mut cursor = params.walk();
+    if !cursor.goto_first_child() {
+        return names;
+    }
+    loop {
+        let child = cursor.node();
+        match child.kind() {
+            "identifier" => {
+                names.insert(source[child.byte_range()].to_string());
+            }
+            "typed_parameter" | "default_parameter" | "typed_default_parameter" => {
+                if let Some(name_node) = child.child(0)
+                    && name_node.kind() == "identifier"
+                {
+                    names.insert(source[name_node.byte_range()].to_string());
+                }
+            }
+            _ => {}
+        }
+        if !cursor.goto_next_sibling() {
+            break;
+        }
+    }
+    names
+}
+
+/// Check if `name` is declared in a body node via variable_statement or for_statement.
+fn is_declared_in_body(body: tree_sitter::Node, name: &str, source: &str) -> bool {
+    let mut cursor = body.walk();
+    if !cursor.goto_first_child() {
+        return false;
+    }
+    loop {
+        let child = cursor.node();
+        if child.kind() == "variable_statement"
+            && let Some(name_node) = child.child_by_field_name("name")
+            && name_node.utf8_text(source.as_bytes()).unwrap_or("") == name
+        {
+            return true;
+        }
+        if child.kind() == "for_statement"
+            && let Some(left) = child.child_by_field_name("left")
+            && left.utf8_text(source.as_bytes()).unwrap_or("") == name
+        {
+            return true;
+        }
+        if !cursor.goto_next_sibling() {
+            break;
+        }
+    }
+    false
+}
+
+/// Collect references within a function scope, respecting inner scopes that shadow the name.
+fn collect_scoped_references(
+    func: tree_sitter::Node,
+    source: &str,
+    target_name: &str,
+    uri: &Url,
+    include_declaration: bool,
+    locations: &mut Vec<Location>,
+) {
+    // Collect references from parameters
+    if let Some(params) = func.child_by_field_name("parameters") {
+        collect_scoped_refs_in_node(
+            params,
+            source,
+            target_name,
+            uri,
+            include_declaration,
+            locations,
+        );
+    }
+
+    // Collect references from body, respecting shadowing
+    if let Some(body) = func.child_by_field_name("body") {
+        collect_scoped_refs_in_body(
+            body,
+            source,
+            target_name,
+            uri,
+            include_declaration,
+            locations,
+        );
+    }
+}
+
+/// Walk a body node collecting references, skipping inner scopes that re-declare the name.
+fn collect_scoped_refs_in_body(
+    body: tree_sitter::Node,
+    source: &str,
+    target_name: &str,
+    uri: &Url,
+    include_declaration: bool,
+    locations: &mut Vec<Location>,
+) {
+    let mut cursor = body.walk();
+    if !cursor.goto_first_child() {
+        return;
+    }
+    loop {
+        let child = cursor.node();
+
+        // Skip nested functions entirely — they have their own scope
+        if FUNCTION_KINDS.contains(&child.kind()) || child.kind() == "lambda" {
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+            continue;
+        }
+
+        // For for_statement: if it re-declares the name as iterator, skip its body
+        if child.kind() == "for_statement"
+            && let Some(left) = child.child_by_field_name("left")
+            && left.utf8_text(source.as_bytes()).unwrap_or("") == target_name
+        {
+            // The iterator variable itself is a reference/declaration
+            if include_declaration {
+                locations.push(Location {
+                    uri: uri.clone(),
+                    range: node_range(&left),
+                });
+            }
+            // Collect in the iterable expression (right) but skip body — it's shadowed
+            if let Some(right) = child.child_by_field_name("right") {
+                collect_scoped_refs_in_node(
+                    right,
+                    source,
+                    target_name,
+                    uri,
+                    include_declaration,
+                    locations,
+                );
+            }
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+            continue;
+        }
+
+        // For scope nodes (if/while/etc), check if their body re-declares the name
+        if is_scope_node(child.kind()) {
+            collect_scoped_refs_in_scope_node(
+                child,
+                source,
+                target_name,
+                uri,
+                include_declaration,
+                locations,
+            );
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+            continue;
+        }
+
+        // Regular statement — collect refs normally
+        collect_scoped_refs_in_node(
+            child,
+            source,
+            target_name,
+            uri,
+            include_declaration,
+            locations,
+        );
+
+        if !cursor.goto_next_sibling() {
+            break;
+        }
+    }
+}
+
+/// Process a scope node (if/while/for/match), recursing into bodies while checking for shadowing.
+fn collect_scoped_refs_in_scope_node(
+    node: tree_sitter::Node,
+    source: &str,
+    target_name: &str,
+    uri: &Url,
+    include_declaration: bool,
+    locations: &mut Vec<Location>,
+) {
+    // For for_statement with iterator that shadows our target, handle specially
+    if node.kind() == "for_statement"
+        && let Some(left) = node.child_by_field_name("left")
+        && left.utf8_text(source.as_bytes()).unwrap_or("") == target_name
+    {
+        // Iterator shadows our name — collect in iterable but skip body
+        if include_declaration {
+            locations.push(Location {
+                uri: uri.clone(),
+                range: node_range(&left),
+            });
+        }
+        if let Some(right) = node.child_by_field_name("right") {
+            collect_scoped_refs_in_node(
+                right,
+                source,
+                target_name,
+                uri,
+                include_declaration,
+                locations,
+            );
+        }
+        return;
+    }
+
+    let mut cursor = node.walk();
+    if !cursor.goto_first_child() {
+        return;
+    }
+    loop {
+        let child = cursor.node();
+        if child.kind() == "body" || child.kind() == "block" {
+            // Check if this body re-declares the name — if so, skip (shadowed)
+            if !is_declared_in_body(child, target_name, source) {
+                collect_scoped_refs_in_body(
+                    child,
+                    source,
+                    target_name,
+                    uri,
+                    include_declaration,
+                    locations,
+                );
+            }
+        } else if is_scope_node(child.kind()) {
+            collect_scoped_refs_in_scope_node(
+                child,
+                source,
+                target_name,
+                uri,
+                include_declaration,
+                locations,
+            );
+        } else {
+            // Condition expressions, etc. — collect refs normally
+            collect_scoped_refs_in_node(
+                child,
+                source,
+                target_name,
+                uri,
+                include_declaration,
+                locations,
+            );
+        }
+        if !cursor.goto_next_sibling() {
+            break;
+        }
+    }
+}
+
+/// Simple recursive reference collection within a node (no scope awareness).
+fn collect_scoped_refs_in_node(
+    node: tree_sitter::Node,
+    source: &str,
+    target_name: &str,
+    uri: &Url,
+    include_declaration: bool,
+    locations: &mut Vec<Location>,
+) {
+    if (node.kind() == "identifier" || node.kind() == "name")
+        && node.utf8_text(source.as_bytes()).unwrap_or("") == target_name
+    {
+        if is_declaration(&node, source, target_name) {
+            if include_declaration {
+                locations.push(Location {
+                    uri: uri.clone(),
+                    range: node_range(&node),
+                });
+            }
+        } else {
+            locations.push(Location {
+                uri: uri.clone(),
+                range: node_range(&node),
+            });
+        }
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_scoped_refs_in_node(
+            child,
+            source,
+            target_name,
+            uri,
+            include_declaration,
+            locations,
+        );
+    }
+}
+
+fn is_scope_node(kind: &str) -> bool {
+    matches!(
+        kind,
+        "if_statement"
+            | "for_statement"
+            | "while_statement"
+            | "elif_clause"
+            | "else_clause"
+            | "match_statement"
+    )
 }
 
 fn node_range(node: &tree_sitter::Node) -> Range {
@@ -257,5 +642,132 @@ mod tests {
         let uri = test_uri();
         let result = find_references("", &uri, Position::new(0, 0), true);
         assert!(result.is_none());
+    }
+
+    // ── Scope-aware tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn local_var_refs_stay_in_function() {
+        // Two functions each with `var x` — renaming in one shouldn't affect the other
+        let source = "\
+func foo():
+\tvar x = 1
+\tprint(x)
+\tx = 2
+
+func bar():
+\tvar x = 10
+\tprint(x)
+";
+        let uri = test_uri();
+        // Position on `x` in foo() at line 2, col 7 (inside print)
+        let result = find_references(source, &uri, Position::new(2, 7), true);
+        assert!(result.is_some());
+        let locs = result.unwrap();
+        // Should find: var x (decl) + print(x) + x = 2 => 3 refs, all in foo()
+        assert_eq!(locs.len(), 3, "should find 3 refs in foo() only");
+        for loc in &locs {
+            assert!(
+                loc.range.start.line <= 3,
+                "all refs should be in foo(), got line {}",
+                loc.range.start.line
+            );
+        }
+    }
+
+    #[test]
+    fn parameter_refs_stay_in_function() {
+        let source = "\
+func foo(speed):
+\tprint(speed)
+
+func bar(speed):
+\tspeed = 20
+";
+        let uri = test_uri();
+        // Position on `speed` in foo() at line 1, col 7
+        let result = find_references(source, &uri, Position::new(1, 7), true);
+        assert!(result.is_some());
+        let locs = result.unwrap();
+        // Should find: speed param + print(speed) => 2 refs in foo() only
+        assert_eq!(locs.len(), 2, "should find 2 refs in foo() only");
+        for loc in &locs {
+            assert!(
+                loc.range.start.line <= 1,
+                "all refs should be in foo(), got line {}",
+                loc.range.start.line
+            );
+        }
+    }
+
+    #[test]
+    fn global_var_refs_span_file() {
+        // Top-level `var speed` should be found across all functions
+        let source = "\
+var speed = 10
+
+func foo():
+\tprint(speed)
+
+func bar():
+\tspeed = 20
+";
+        let uri = test_uri();
+        // Position on `speed` usage at line 3, col 7
+        let result = find_references(source, &uri, Position::new(3, 7), true);
+        assert!(result.is_some());
+        let locs = result.unwrap();
+        // Should find: var speed (decl) + print(speed) + speed = 20 => 3 refs
+        assert_eq!(locs.len(), 3, "should find 3 refs across file");
+    }
+
+    #[test]
+    fn for_loop_var_scoped() {
+        let source = "\
+func foo():
+\tvar i = 99
+\tfor i in range(10):
+\t\tprint(i)
+\tprint(i)
+";
+        let uri = test_uri();
+        // Position on `i` at line 1 (var i = 99)
+        let result = find_references(source, &uri, Position::new(1, 5), true);
+        assert!(result.is_some());
+        let locs = result.unwrap();
+        // var i decl (line 1) + for i iterator (line 2, collected as decl) + print(i) at line 4
+        assert!(
+            locs.len() >= 2,
+            "should find at least var i + print(i) after loop"
+        );
+    }
+
+    #[test]
+    fn shadowed_var_inner_scope() {
+        let source = "\
+func foo():
+\tvar x = 1
+\tprint(x)
+\tif true:
+\t\tvar x = 2
+\t\tprint(x)
+\tprint(x)
+";
+        let uri = test_uri();
+        // Position on outer `x` at line 2, col 7
+        let result = find_references(source, &uri, Position::new(2, 7), true);
+        assert!(result.is_some());
+        let locs = result.unwrap();
+        // Should find: var x (line 1) + print(x) (line 2) + print(x) (line 6)
+        // The if block's body declares `var x`, so it's skipped
+        assert_eq!(locs.len(), 3, "should skip shadowed if-block");
+        // None should be on lines 4 or 5 (inside the if block)
+        for loc in &locs {
+            assert!(
+                loc.range.start.line != 4 && loc.range.start.line != 5,
+                "should not include refs from shadowed if-block, got line {}",
+                loc.range.start.line
+            );
+        }
     }
 }
