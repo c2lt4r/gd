@@ -24,6 +24,13 @@ impl LintRule for UnusedSignal {
             return diags;
         }
 
+        // Event bus heuristic: if the file has no functions, it's likely an event
+        // bus or signal-only file where signals are used from other files.
+        // Suppress all unused-signal warnings in this case.
+        if !has_functions(root) {
+            return diags;
+        }
+
         // Second pass: find all referenced signals
         let mut referenced: HashSet<String> = HashSet::new();
         collect_references(root, src, &mut referenced);
@@ -48,6 +55,23 @@ impl LintRule for UnusedSignal {
 
         diags
     }
+}
+
+/// Check if the root scope has any function definitions.
+fn has_functions(root: Node) -> bool {
+    let mut cursor = root.walk();
+    if cursor.goto_first_child() {
+        loop {
+            let kind = cursor.node().kind();
+            if kind == "function_definition" || kind == "constructor_definition" {
+                return true;
+            }
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+    }
+    false
 }
 
 fn collect_signals(node: Node, src: &[u8], signals: &mut HashMap<String, (usize, usize)>) {
@@ -233,5 +257,27 @@ mod tests {
     fn no_warning_legacy_emit_signal() {
         let source = "signal my_signal\n\nfunc f() -> void:\n\temit_signal(\"my_signal\")\n";
         assert!(check(source).is_empty());
+    }
+
+    #[test]
+    fn event_bus_heuristic_suppresses_warnings() {
+        // File with only signals and no functions → event bus pattern
+        let source = "signal player_ready\nsignal player_died\nsignal score_changed\n";
+        assert!(check(source).is_empty());
+    }
+
+    #[test]
+    fn event_bus_with_vars_still_suppressed() {
+        // Signals + vars but no functions → still event bus
+        let source = "signal game_started\nsignal game_over\nvar description = \"Events\"\n";
+        assert!(check(source).is_empty());
+    }
+
+    #[test]
+    fn file_with_functions_still_warns() {
+        // Has functions → not event bus, should still warn
+        let source = "signal my_signal\n\nfunc f():\n\tpass\n";
+        let diags = check(source);
+        assert_eq!(diags.len(), 1);
     }
 }

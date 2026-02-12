@@ -712,10 +712,10 @@ fn test_lint_fix_does_not_crash() {
         "BadName should be renamed to bad_name, got: {}",
         fixed
     );
-    // self-assignment should be removed
+    // self-assignment should be fixed with self. prefix
     assert!(
-        !fixed.contains("x = x"),
-        "Self-assignment should be removed, got: {}",
+        fixed.contains("self.x = x"),
+        "Self-assignment `x = x` should become `self.x = x`, got: {}",
         fixed
     );
 }
@@ -740,8 +740,8 @@ fn test_lint_fix_self_assignment() {
 
     let fixed = fs::read_to_string(&file_path).unwrap();
     assert!(
-        !fixed.contains("x = x"),
-        "Self-assignment `x = x` should be removed by --fix, got: {}",
+        fixed.contains("self.x = x"),
+        "Self-assignment `x = x` should become `self.x = x` after --fix, got: {}",
         fixed
     );
     // The rest of the code should still be there
@@ -2328,6 +2328,98 @@ fn test_lsp_references_by_name_inner_class() {
         2,
         "should only find refs inside inner class Stats, got {:?}",
         refs
+    );
+}
+
+#[test]
+fn test_lsp_references_by_name_class_finds_autoload_callers() {
+    let temp = setup_gd_project(&[
+        (
+            "game_manager.gd",
+            "class_name GameManager\n\nvar score = 0\n\n\nfunc submit_vote(choice: int) -> void:\n\tscore += choice\n",
+        ),
+        (
+            "lobby_screen.gd",
+            "func _on_button_pressed() -> void:\n\tGameManager.submit_vote(1)\n",
+        ),
+        (
+            "hud.gd",
+            "func update() -> void:\n\tvar s = GameManager.score\n",
+        ),
+    ]);
+
+    // Should find: declaration in game_manager.gd + caller in lobby_screen.gd
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "references",
+            "--name",
+            "submit_vote",
+            "--class",
+            "GameManager",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp references --class autoload");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let refs = json["references"].as_array().unwrap();
+
+    // Should find: func declaration + score += choice (in game_manager.gd) + GameManager.submit_vote() (in lobby_screen.gd)
+    let files: Vec<&str> = refs.iter().filter_map(|r| r["file"].as_str()).collect();
+    assert!(
+        files.contains(&"lobby_screen.gd"),
+        "should find autoload caller in lobby_screen.gd, got: {files:?}"
+    );
+    assert!(
+        files.contains(&"game_manager.gd"),
+        "should find declaration in game_manager.gd, got: {files:?}"
+    );
+    assert!(
+        !files.contains(&"hud.gd"),
+        "should not include hud.gd (different member), got: {files:?}"
+    );
+}
+
+#[test]
+fn test_lsp_references_by_name_class_finds_property_access() {
+    let temp = setup_gd_project(&[
+        (
+            "game_manager.gd",
+            "class_name GameManager\n\nvar score = 0\n",
+        ),
+        (
+            "hud.gd",
+            "func update() -> void:\n\tvar s = GameManager.score\n",
+        ),
+    ]);
+
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "references",
+            "--name",
+            "score",
+            "--class",
+            "GameManager",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp references --class property");
+
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let refs = json["references"].as_array().unwrap();
+
+    let files: Vec<&str> = refs.iter().filter_map(|r| r["file"].as_str()).collect();
+    assert!(
+        files.contains(&"hud.gd"),
+        "should find GameManager.score access in hud.gd, got: {files:?}"
     );
 }
 

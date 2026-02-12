@@ -31,19 +31,24 @@ pub mod unused_preload;
 pub mod unused_signal;
 pub mod unused_variable;
 
+pub mod callable_null_check;
 pub mod class_definitions_order;
 pub mod cyclomatic_complexity;
 pub mod deeply_nested_code;
+pub mod duplicate_delegate;
 pub mod enum_naming;
 pub mod get_node_in_process;
+pub mod god_object;
 pub mod loop_variable_name;
 pub mod max_file_lines;
 pub mod max_line_length;
 pub mod max_public_methods;
 pub mod parameter_naming;
+pub mod parameter_shadows_field;
 pub mod physics_in_process;
 pub mod print_statement;
 pub mod redundant_else;
+pub mod signal_not_connected;
 pub mod todo_comment;
 pub mod too_many_parameters;
 pub mod unused_parameter;
@@ -184,6 +189,11 @@ pub fn all_rules(
         Box::new(max_public_methods::MaxPublicMethods),
         Box::new(print_statement::PrintStatement),
         Box::new(todo_comment::TodoComment),
+        Box::new(parameter_shadows_field::ParameterShadowsField),
+        Box::new(god_object::GodObject),
+        Box::new(duplicate_delegate::DuplicateDelegate),
+        Box::new(signal_not_connected::SignalNotConnected),
+        Box::new(callable_null_check::CallableNullCheck),
     ];
     all.into_iter()
         .filter(|r| {
@@ -191,13 +201,18 @@ pub fn all_rules(
             if disabled.iter().any(|d| d == name) {
                 return false;
             }
+            // severity = "off" disables any rule (default-enabled or opt-in)
+            if rules_config
+                .get(name)
+                .is_some_and(|c| c.severity.as_deref() == Some("off"))
+            {
+                return false;
+            }
             if r.default_enabled() {
                 true
             } else {
-                // Opt-in: only include if explicitly configured with severity != "off"
-                rules_config
-                    .get(name)
-                    .is_some_and(|c| c.severity.as_deref() != Some("off"))
+                // Opt-in: only include if explicitly configured
+                rules_config.get(name).is_some()
             }
         })
         .collect()

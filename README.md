@@ -7,12 +7,12 @@ Built with [tree-sitter](https://tree-sitter.github.io/) for accurate parsing an
 ## Features
 
 - **Format** GDScript files with an AST-based formatter aligned to the [GDScript style guide](https://docs.godotengine.org/en/stable/tutorials/scripting/gdscript/gdscript_styleguide.html)
-- **Lint** with 46 built-in rules (11 auto-fixable), SARIF output for CI
+- **Lint** with 51 built-in rules (12 auto-fixable), SARIF output for CI
 - **Run**, **build**, **test**, and **clean** your Godot project from the terminal
 - **Watch** for file changes and auto-lint/format on save
-- **Manage addons** from Git or the Godot Asset Library
+- **Manage addons** from Git or the Godot Asset Library (with lockfile and update support)
 - **Generate CI/CD** configurations for GitHub Actions and GitLab CI
-- **LSP server** with formatting, diagnostics, hover, go-to-definition, references, rename, and completion
+- **LSP server** with formatting, diagnostics, hover, go-to-definition, references, rename, completion, and 12 refactoring commands
 - **Analyze** your project with dependency graphs, class trees, and code statistics
 
 ## Installation
@@ -57,20 +57,20 @@ gd run
 | Command | Description |
 |---------|-------------|
 | `gd new <name>` | Create a new Godot project (templates: `default`, `2d`, `3d`, or `--from` GitHub) |
-| `gd init` | Initialize gd toolchain in an existing Godot project |
+| `gd init` | Initialize gd toolchain in an existing project (detects export paths) |
 | `gd fmt` | Format GDScript files |
 | `gd lint` | Lint GDScript files |
 | `gd run` | Run the Godot project |
 | `gd build` | Build/export the Godot project |
-| `gd check` | Check project for errors without building |
+| `gd check` | Check project for errors without building (`--format json`) |
 | `gd clean` | Clean build artifacts |
-| `gd test` | Run GDScript tests |
+| `gd test` | Run GDScript tests (`--format json` for structured output) |
 | `gd completions` | Generate shell completions (bash, zsh, fish, etc.) |
 | `gd tree` | Show project class hierarchy |
-| `gd doc` | Generate documentation from doc comments |
+| `gd doc` | Generate documentation from doc comments (`--format json`, `--check`) |
 | `gd watch` | Watch files and run fmt/lint on changes |
-| `gd addons` | Manage project addons (install, remove, search) |
-| `gd stats` | Show project statistics |
+| `gd addons` | Manage project addons (install, remove, search, update, lock) |
+| `gd stats` | Show project statistics (`--diff <branch>`, `--by-dir`, `--top N`) |
 | `gd ci` | Generate CI/CD pipeline configuration |
 | `gd lsp` | Start the LSP server, or run one-shot queries (see below) |
 | `gd deps` | Show script dependency graph |
@@ -130,6 +130,18 @@ gd addons list
 
 # Remove an addon
 gd addons remove my-addon
+
+# Check for updates
+gd addons update
+
+# Apply available updates
+gd addons update --apply
+
+# Generate a lock file for reproducible installs
+gd addons lock
+
+# Install all addons from the lock file
+gd addons install --locked
 ```
 
 ### Watch Mode
@@ -159,6 +171,25 @@ gd deps --format dot
 
 # Output as JSON
 gd deps --format json
+```
+
+### Statistics
+
+```sh
+# Show project statistics
+gd stats
+
+# JSON output
+gd stats --format json
+
+# Per-directory breakdown
+gd stats --by-dir
+
+# Top 5 longest functions (complexity hotspots)
+gd stats --top 5
+
+# Compare current branch vs main
+gd stats --diff main
 ```
 
 ### CI/CD Generation
@@ -193,11 +224,12 @@ The template system automatically finds `project.godot` within the repository to
 
 ## Lint Rules
 
-All 46 built-in rules (38 default-enabled, 8 opt-in):
+All 51 built-in rules (40 default-enabled, 11 opt-in):
 
 | Rule | Description | Severity | Fixable |
 |------|-------------|----------|---------|
 | `await-in-ready` | Detect `await` in `_ready()` | warning | |
+| `callable-null-check` | Warn on `.call()` without `.is_valid()` guard | warning | |
 | `comparison-with-boolean` | Flag explicit `== true`/`false` comparisons | warning | yes |
 | `comparison-with-itself` | Detect `x == x` self-comparisons | warning | |
 | `cyclomatic-complexity` | Warn on high cyclomatic complexity | warning | |
@@ -218,10 +250,11 @@ All 46 built-in rules (38 default-enabled, 8 opt-in):
 | `naming-convention` | Enforce snake_case/PascalCase naming | warning | yes |
 | `node-ready-order` | Detect node access before tree is ready | warning | |
 | `parameter-naming` | Enforce snake_case parameters | warning | yes |
+| `parameter-shadows-field` | Warn when parameter name shadows a class field | warning | |
 | `physics-in-process` | Detect physics calls in `_process()` | warning | |
 | `preload-type-hint` | Warn on untyped preload/load assignments | warning | |
 | `private-method-access` | Warn on calling private methods externally | warning | |
-| `redundant-else` | Detect unnecessary else after return | warning | |
+| `redundant-else` | Detect unnecessary else after return | warning | yes |
 | `return-type-mismatch` | Detect void/non-void return mismatches | warning | |
 | `self-assignment` | Detect `x = x` assignments | warning | yes |
 | `shadowed-variable` | Detect variable shadowing in inner scopes | warning | |
@@ -241,11 +274,14 @@ All 46 built-in rules (38 default-enabled, 8 opt-in):
 | Rule | Description | Severity | Fixable |
 |------|-------------|----------|---------|
 | `class-definitions-order` | Enforce canonical member ordering | warning | |
+| `duplicate-delegate` | Detect pure pass-through delegate functions | info | |
+| `god-object` | Warn on classes with too many functions/members/lines | warning | |
 | `magic-number` | Flag unexplained numeric literals | warning | |
 | `max-file-lines` | Enforce maximum file length | warning | |
 | `max-line-length` | Enforce maximum line length | warning | |
 | `max-public-methods` | Enforce maximum public methods per class | warning | |
 | `print-statement` | Detect debug print calls | info | |
+| `signal-not-connected` | Detect signals emitted but never connected | info | |
 | `todo-comment` | Detect TODO/FIXME/HACK comments | info | |
 | `unused-parameter` | Detect unused function parameters | warning | |
 
@@ -327,6 +363,9 @@ extra_args = []
 | `max_line_length` | `120` | Max line length before `max-line-length` warns |
 | `max_file_lines` | `500` | Max file lines before `max-file-lines` warns |
 | `max_public_methods` | `20` | Max public methods before `max-public-methods` warns |
+| `max_god_object_functions` | `20` | Max functions before `god-object` warns |
+| `max_god_object_members` | `15` | Max member variables before `god-object` warns |
+| `max_god_object_lines` | `500` | Max lines before `god-object` warns |
 | `ignore_patterns` | `[]` | Glob patterns for files to skip |
 
 **`[lint.rules.<name>]`** — per-rule overrides:
@@ -395,8 +434,11 @@ gd lsp rename --file player.gd --line 5 --column 10 --new-name move_character
 # Preview without writing
 gd lsp rename --file player.gd --line 5 --column 10 --new-name move_character --dry-run
 
-# Find all references to a symbol
+# Find all references to a symbol (by position)
 gd lsp references --file player.gd --line 5 --column 10
+
+# Find all references by name (project-wide search)
+gd lsp references --name speed
 
 # Go to definition
 gd lsp definition --file player.gd --line 5 --column 10
@@ -415,9 +457,58 @@ gd lsp diagnostics
 
 # List symbols in a file
 gd lsp symbols --file player.gd
+
+# Filter symbols by kind
+gd lsp symbols --file player.gd --kind function,signal
 ```
 
 All positions are **1-based** (line 1, column 1 is the first character). Paths in output are relative to the project root with forward slashes.
+
+### Refactoring Commands
+
+`gd lsp` includes structural refactoring commands that output JSON and support `--dry-run`:
+
+```sh
+# Delete a symbol (fails if references exist, use --force to override)
+gd lsp delete-symbol --file player.gd --name unused_func
+gd lsp delete-symbol --file player.gd --name unused_func --force
+
+# Delete multiple symbols at once
+gd lsp bulk-delete-symbol --file player.gd --names "a,b,c"
+
+# Move a symbol between files
+gd lsp move-symbol --name helper --from utils.gd --to helpers.gd
+
+# Move and update preload paths in callers
+gd lsp move-symbol --name helper --from utils.gd --to helpers.gd --update-callers
+
+# Extract code into a new function
+gd lsp extract-method --file player.gd --start-line 10 --end-line 15 --name do_attack
+
+# Extract symbols to a new file
+gd lsp extract-class --file player.gd --symbols "speed,health,take_damage" --to stats.gd
+
+# Inline a function at its call sites
+gd lsp inline-method --file player.gd --line 5 --column 2
+
+# Inline a pass-through delegate function
+gd lsp inline-delegate --file player.gd --name attack
+
+# Rename multiple symbols atomically
+gd lsp bulk-rename --file player.gd --renames "speed:velocity,health:hp"
+
+# Change function signature (add/remove/reorder/rename params)
+gd lsp change-signature --file player.gd --name move \
+  --add-param "speed: float = 1.0" --remove-param old_param --reorder "a,b,c"
+
+# Extract an expression into a local variable
+gd lsp introduce-variable --file player.gd --line 5 --column 10 --end-column 30 --name velocity
+
+# Turn a hardcoded value into a parameter with default
+gd lsp introduce-parameter --file player.gd --line 5 --column 10 --end-column 20 --name speed
+```
+
+All refactoring commands support `--dry-run` to preview changes without writing to disk.
 
 ### Editor Setup
 

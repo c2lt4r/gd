@@ -26,7 +26,8 @@
     "formatter"
   ],
   "activationEvents": [
-    "onLanguage:gdscript"
+    "onLanguage:gdscript",
+    "workspaceContains:**/*.gd"
   ],
   "main": "./out/extension.js",
   "contributes": {

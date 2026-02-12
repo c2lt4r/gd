@@ -65,6 +65,12 @@ pub struct LintConfig {
     pub max_file_lines: usize,
     /// Maximum public methods per class before max-public-methods warns.
     pub max_public_methods: usize,
+    /// Maximum total functions per class/script before god-object warns.
+    pub max_god_object_functions: usize,
+    /// Maximum member variables per class/script before god-object warns.
+    pub max_god_object_members: usize,
+    /// Maximum lines per class/script before god-object warns.
+    pub max_god_object_lines: usize,
     /// Per-rule severity overrides.
     #[serde(default)]
     pub rules: HashMap<String, RuleConfig>,
@@ -87,6 +93,9 @@ impl Default for LintConfig {
             max_line_length: 120,
             max_file_lines: 500,
             max_public_methods: 20,
+            max_god_object_functions: 20,
+            max_god_object_members: 15,
+            max_god_object_lines: 500,
             rules: HashMap::new(),
             ignore_patterns: Vec::new(),
             overrides: Vec::new(),
@@ -202,6 +211,9 @@ fn warn_unknown_keys(raw: &toml::Value) {
         "max_line_length",
         "max_file_lines",
         "max_public_methods",
+        "max_god_object_functions",
+        "max_god_object_members",
+        "max_god_object_lines",
         "rules",
         "ignore_patterns",
         "overrides",

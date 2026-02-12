@@ -34,6 +34,7 @@ Thumbs.db
 "#;
 
 pub const GD_TOML_TEMPLATE: &str = r#"# gd toolchain configuration
+# All options shown with their defaults. Uncomment to override.
 
 [fmt]
 use_tabs = true
@@ -46,12 +47,45 @@ max_line_length = 100
 [lint]
 disabled_rules = []
 # ignore_patterns = ["addons/**"]
+# max_function_length = 50
+# max_function_params = 5
+# max_cyclomatic_complexity = 10
+# max_nesting_depth = 4
+# max_line_length = 120
+# max_file_lines = 500
+# max_public_methods = 20
+# max_god_object_functions = 20
+# max_god_object_members = 15
+# max_god_object_lines = 500
 
+# Per-rule severity overrides
+# Set severity to enable opt-in rules, change level, or "off" to disable
 # [lint.rules.naming-convention]
 # severity = "error"
 
 # [lint.rules.magic-number]
-# severity = "off"
+# severity = "warning"      # enable opt-in rule
+
+# [lint.rules.print-statement]
+# severity = "off"          # disable a default rule
+
+# [lint.rules.god-object]
+# severity = "warning"      # enable opt-in rule
+
+# [lint.rules.duplicate-delegate]
+# severity = "info"         # enable opt-in rule
+
+# [lint.rules.signal-not-connected]
+# severity = "info"         # enable opt-in rule
+
+# Per-path rule exclusions
+# [[lint.overrides]]
+# paths = ["addons/**"]
+# exclude_rules = ["naming-convention"]
+
+# [[lint.overrides]]
+# paths = ["tests/**"]
+# exclude_rules = ["unused-variable"]
 
 [build]
 output_dir = "build"

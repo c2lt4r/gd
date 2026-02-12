@@ -1,6 +1,6 @@
 use tree_sitter::{Node, Tree};
 
-use super::{LintDiagnostic, LintRule, Severity};
+use super::{Fix, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
 
 pub struct RedundantElse;
@@ -34,7 +34,7 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
     }
 }
 
-fn check_if_statement(node: Node, _source: &str, diags: &mut Vec<LintDiagnostic>) {
+fn check_if_statement(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
     // Get the body of the if branch (first `body` child)
     let body = match node.child_by_field_name("body") {
         Some(b) => b,
@@ -72,7 +72,7 @@ fn check_if_statement(node: Node, _source: &str, diags: &mut Vec<LintDiagnostic>
                 line: child.start_position().row,
                 column: child.start_position().column,
                 end_column: None,
-                fix: None,
+                fix: generate_else_fix(&child, source),
             });
             return;
         }
@@ -108,6 +108,77 @@ fn body_always_terminates(body: Node) -> bool {
         Some(stmt) => is_terminator(stmt.kind()),
         None => false,
     }
+}
+
+fn generate_else_fix(else_node: &Node, source: &str) -> Option<Fix> {
+    let source_bytes = source.as_bytes();
+
+    // Get the body of the else clause
+    let body = else_node.child_by_field_name("body")?;
+
+    // Find the start of the line containing 'else:'
+    let mut else_line_start = else_node.start_byte();
+    while else_line_start > 0 && source_bytes[else_line_start - 1] != b'\n' {
+        else_line_start -= 1;
+    }
+
+    // Get indentation of the else clause (whitespace before 'else')
+    let else_indent = &source[else_line_start..else_node.start_byte()];
+
+    // Use the first/last child of the body to get the actual statement lines
+    // (body.start_position() points to the colon on the else: line, not the statements)
+    let first_stmt = body.child(0)?;
+    let last_stmt = body.child(body.child_count().checked_sub(1)?)?;
+    let body_first_line = first_stmt.start_position().row;
+    let body_last_line = last_stmt.end_position().row;
+
+    // Build line start offsets
+    let mut line_starts: Vec<usize> = vec![0];
+    for (i, &b) in source_bytes.iter().enumerate() {
+        if b == b'\n' {
+            line_starts.push(i + 1);
+        }
+    }
+
+    // Get byte range of the full body lines (including indentation)
+    let body_lines_start = line_starts[body_first_line];
+    let body_lines_end = if body_last_line + 1 < line_starts.len() {
+        line_starts[body_last_line + 1]
+    } else {
+        source_bytes.len()
+    };
+
+    let body_text = &source[body_lines_start..body_lines_end];
+
+    // Determine how much indent to strip: body indent minus else indent
+    let first_line = body_text.lines().next()?;
+    let first_line_indent_len = first_line.len() - first_line.trim_start().len();
+    let strip_len = first_line_indent_len.saturating_sub(else_indent.len());
+
+    // Dedent each body line to the else clause's indentation level
+    let mut result = String::new();
+    for line in body_text.lines() {
+        if line.trim().is_empty() {
+            result.push('\n');
+        } else if line.len() >= strip_len
+            && line.as_bytes()[..strip_len]
+                .iter()
+                .all(|b| b.is_ascii_whitespace())
+        {
+            result.push_str(&line[strip_len..]);
+            result.push('\n');
+        } else {
+            result.push_str(else_indent);
+            result.push_str(line.trim_start());
+            result.push('\n');
+        }
+    }
+
+    Some(Fix {
+        byte_start: else_line_start,
+        byte_end: body_lines_end,
+        replacement: result,
+    })
 }
 
 fn is_terminator(kind: &str) -> bool {
@@ -190,5 +261,50 @@ mod tests {
         let source = "func f(x: int) -> int:\n\tif x > 0:\n\t\tvar y := x * 2\n\t\tprint(y)\n\t\treturn y\n\telse:\n\t\treturn -x\n";
         let diags = check(source);
         assert_eq!(diags.len(), 1);
+    }
+
+    fn apply_fix(source: &str, fix: &Fix) -> String {
+        format!(
+            "{}{}{}",
+            &source[..fix.byte_start],
+            &fix.replacement,
+            &source[fix.byte_end..]
+        )
+    }
+
+    #[test]
+    fn fix_removes_else_and_dedents() {
+        let source = "func f(x: int) -> int:\n\tif x > 0:\n\t\treturn x\n\telse:\n\t\treturn -x\n";
+        let diags = check(source);
+        assert_eq!(diags.len(), 1);
+        let fix = diags[0].fix.as_ref().unwrap();
+        assert_eq!(
+            apply_fix(source, fix),
+            "func f(x: int) -> int:\n\tif x > 0:\n\t\treturn x\n\treturn -x\n"
+        );
+    }
+
+    #[test]
+    fn fix_dedents_multi_line_body() {
+        let source = "func f(x):\n\tif x > 0:\n\t\treturn x\n\telse:\n\t\tvar y = -x\n\t\tprint(y)\n\t\treturn y\n";
+        let diags = check(source);
+        assert_eq!(diags.len(), 1);
+        let fix = diags[0].fix.as_ref().unwrap();
+        assert_eq!(
+            apply_fix(source, fix),
+            "func f(x):\n\tif x > 0:\n\t\treturn x\n\tvar y = -x\n\tprint(y)\n\treturn y\n"
+        );
+    }
+
+    #[test]
+    fn fix_nested_preserves_relative_indent() {
+        let source = "func f(x):\n\tif x > 0:\n\t\treturn x\n\telse:\n\t\tfor i in range(10):\n\t\t\tprint(i)\n\t\treturn -x\n";
+        let diags = check(source);
+        assert_eq!(diags.len(), 1);
+        let fix = diags[0].fix.as_ref().unwrap();
+        assert_eq!(
+            apply_fix(source, fix),
+            "func f(x):\n\tif x > 0:\n\t\treturn x\n\tfor i in range(10):\n\t\tprint(i)\n\treturn -x\n"
+        );
     }
 }

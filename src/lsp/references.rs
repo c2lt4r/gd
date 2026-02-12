@@ -579,8 +579,17 @@ pub fn find_references_by_name(
                 } else if let Some(class_node) = find_inner_class(root, &content, class_name) {
                     // Inner class — only search inside it
                     collect_references(class_node, &content, name, &uri, true, &mut locations);
+                } else {
+                    // Search for ClassName.method() calls (autoload/singleton pattern)
+                    collect_qualified_references(
+                        root,
+                        &content,
+                        class_name,
+                        name,
+                        &uri,
+                        &mut locations,
+                    );
                 }
-                // No match — skip file
             } else {
                 collect_references(root, &content, name, &uri, true, &mut locations);
             }
@@ -597,6 +606,74 @@ pub fn find_references_by_name(
     });
 
     locations
+}
+
+/// Find references to `name` that are qualified with `class_name`, e.g.
+/// `GameManager.submit_vote()` when class_name="GameManager" and name="submit_vote".
+/// This covers the autoload/singleton calling pattern in Godot.
+fn collect_qualified_references(
+    node: tree_sitter::Node,
+    source: &str,
+    class_name: &str,
+    target_name: &str,
+    uri: &Url,
+    locations: &mut Vec<Location>,
+) {
+    // tree-sitter parses `GameManager.submit_vote()` as:
+    //   attribute {
+    //     identifier "GameManager"
+    //     "."
+    //     attribute_call {
+    //       identifier "submit_vote"
+    //       arguments { ... }
+    //     }
+    //   }
+    //
+    // And `GameManager.some_prop` (without call) as:
+    //   attribute {
+    //     identifier "GameManager"
+    //     "."
+    //     identifier "some_prop"
+    //   }
+    if node.kind() == "attribute" {
+        // Check if the first named child is an identifier matching class_name
+        if let Some(obj) = node.named_child(0)
+            && obj.kind() == "identifier"
+            && obj.utf8_text(source.as_bytes()).unwrap_or("") == class_name
+        {
+            // Look for the member name in attribute_call or as a direct identifier
+            let mut cursor = node.walk();
+            for child in node.children(&mut cursor) {
+                if child.kind() == "attribute_call" {
+                    // Method call: ClassName.method(args)
+                    if let Some(name_node) = child.named_child(0)
+                        && name_node.kind() == "identifier"
+                        && name_node.utf8_text(source.as_bytes()).unwrap_or("") == target_name
+                    {
+                        locations.push(Location {
+                            uri: uri.clone(),
+                            range: node_range(&name_node),
+                        });
+                    }
+                } else if child.kind() == "identifier"
+                    && child.utf8_text(source.as_bytes()).unwrap_or("") == target_name
+                    && child.start_byte() != node.start_byte()
+                {
+                    // Property access: ClassName.property (not the first identifier)
+                    locations.push(Location {
+                        uri: uri.clone(),
+                        range: node_range(&child),
+                    });
+                }
+            }
+        }
+    }
+
+    // Recurse into children
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_qualified_references(child, source, class_name, target_name, uri, locations);
+    }
 }
 
 /// Check if a file has a top-level `class_name` statement matching `target`.
