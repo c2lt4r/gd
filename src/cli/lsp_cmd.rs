@@ -73,7 +73,7 @@ pub enum LspCommand {
         /// Path to the GDScript file
         #[arg(long)]
         file: String,
-        /// Filter by symbol kind (repeatable, comma-separated: function, method, variable, field, class, constant, enum, event)
+        /// Filter by symbol kind (repeatable, comma-separated: function, method, variable, class, constant, enum, event; aliases: field/property = variable+field)
         #[arg(long)]
         kind: Vec<String>,
     },
@@ -281,7 +281,7 @@ pub enum LspCommand {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Replace a function's body (AST-aware, reads new body from stdin)
+    /// Replace a function's body (AST-aware, reads new body from stdin or --input-file)
     ReplaceBody {
         /// Path to the GDScript file
         #[arg(long)]
@@ -292,6 +292,9 @@ pub enum LspCommand {
         /// Inner class containing the function
         #[arg(long)]
         class: Option<String>,
+        /// Read content from a file instead of stdin
+        #[arg(long)]
+        input_file: Option<String>,
         /// Skip auto-formatting the result
         #[arg(long)]
         no_format: bool,
@@ -299,7 +302,7 @@ pub enum LspCommand {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Insert code before or after a named symbol (reads content from stdin)
+    /// Insert code before or after a named symbol (reads content from stdin or --input-file)
     Insert {
         /// Path to the GDScript file
         #[arg(long)]
@@ -313,6 +316,9 @@ pub enum LspCommand {
         /// Inner class containing the anchor symbol
         #[arg(long)]
         class: Option<String>,
+        /// Read content from a file instead of stdin
+        #[arg(long)]
+        input_file: Option<String>,
         /// Skip auto-formatting the result
         #[arg(long)]
         no_format: bool,
@@ -320,7 +326,7 @@ pub enum LspCommand {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Replace an entire symbol declaration (reads new content from stdin)
+    /// Replace an entire symbol declaration (reads new content from stdin or --input-file)
     ReplaceSymbol {
         /// Path to the GDScript file
         #[arg(long)]
@@ -331,6 +337,9 @@ pub enum LspCommand {
         /// Inner class containing the symbol
         #[arg(long)]
         class: Option<String>,
+        /// Read content from a file instead of stdin
+        #[arg(long)]
+        input_file: Option<String>,
         /// Skip auto-formatting the result
         #[arg(long)]
         no_format: bool,
@@ -338,7 +347,7 @@ pub enum LspCommand {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Replace a range of lines (reads new content from stdin)
+    /// Replace a range of lines (reads new content from stdin or --input-file)
     EditRange {
         /// Path to the GDScript file
         #[arg(long)]
@@ -349,6 +358,9 @@ pub enum LspCommand {
         /// Last line to replace (1-based, inclusive)
         #[arg(long)]
         end_line: usize,
+        /// Read content from a file instead of stdin
+        #[arg(long)]
+        input_file: Option<String>,
         /// Skip auto-formatting the result
         #[arg(long)]
         no_format: bool,
@@ -396,6 +408,20 @@ pub struct QueryPositionArgs {
     /// Column number (1-based)
     #[arg(long)]
     pub column: usize,
+}
+
+/// Read content from `--input-file` if provided, otherwise from stdin.
+fn read_content(input_file: Option<&str>) -> Result<String> {
+    if let Some(path) = input_file {
+        std::fs::read_to_string(path)
+            .map_err(|e| miette::miette!("cannot read input file '{}': {}", path, e))
+    } else {
+        let mut content = String::new();
+        std::io::stdin()
+            .read_to_string(&mut content)
+            .map_err(|e| miette::miette!("cannot read stdin: {e}"))?;
+        Ok(content)
+    }
 }
 
 pub fn exec(args: LspArgs) -> Result<()> {
@@ -493,6 +519,11 @@ pub fn exec(args: LspArgs) -> Result<()> {
             let kind_filter: Vec<String> = kind
                 .iter()
                 .flat_map(|s| s.split(',').map(|k| k.trim().to_lowercase().to_string()))
+                // "field" and "property" are aliases for "variable" + "field"
+                .flat_map(|k| match k.as_str() {
+                    "field" | "property" => vec!["variable".to_string(), "field".to_string()],
+                    other => vec![other.to_string()],
+                })
                 .collect();
             if !kind_filter.is_empty() {
                 result.retain(|s| kind_filter.iter().any(|k| k == &s.kind));
@@ -652,13 +683,11 @@ pub fn exec(args: LspArgs) -> Result<()> {
             file,
             name,
             class,
+            input_file,
             no_format,
             dry_run,
         } => {
-            let mut content = String::new();
-            std::io::stdin()
-                .read_to_string(&mut content)
-                .map_err(|e| miette::miette!("cannot read stdin: {e}"))?;
+            let content = read_content(input_file.as_deref())?;
             let result = crate::lsp::query::query_replace_body(
                 &file,
                 &name,
@@ -676,6 +705,7 @@ pub fn exec(args: LspArgs) -> Result<()> {
             after,
             before,
             class,
+            input_file,
             no_format,
             dry_run,
         } => {
@@ -688,10 +718,7 @@ pub fn exec(args: LspArgs) -> Result<()> {
                     ));
                 }
             };
-            let mut content = String::new();
-            std::io::stdin()
-                .read_to_string(&mut content)
-                .map_err(|e| miette::miette!("cannot read stdin: {e}"))?;
+            let content = read_content(input_file.as_deref())?;
             let result = crate::lsp::query::query_insert(
                 &file,
                 &anchor,
@@ -709,13 +736,11 @@ pub fn exec(args: LspArgs) -> Result<()> {
             file,
             name,
             class,
+            input_file,
             no_format,
             dry_run,
         } => {
-            let mut content = String::new();
-            std::io::stdin()
-                .read_to_string(&mut content)
-                .map_err(|e| miette::miette!("cannot read stdin: {e}"))?;
+            let content = read_content(input_file.as_deref())?;
             let result = crate::lsp::query::query_replace_symbol(
                 &file,
                 &name,
@@ -732,13 +757,11 @@ pub fn exec(args: LspArgs) -> Result<()> {
             file,
             start_line,
             end_line,
+            input_file,
             no_format,
             dry_run,
         } => {
-            let mut content = String::new();
-            std::io::stdin()
-                .read_to_string(&mut content)
-                .map_err(|e| miette::miette!("cannot read stdin: {e}"))?;
+            let content = read_content(input_file.as_deref())?;
             let result = crate::lsp::query::query_edit_range(
                 &file, start_line, end_line, &content, no_format, dry_run,
             )?;

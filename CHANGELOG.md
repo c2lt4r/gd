@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.11] - 2026-02-12
+
+### Added
+- Hover on member access (`foo.global_position`) shows builtin Godot member documentation with class, type, description, and docs link
+- Hover on `self.member` resolves to the same-file declaration
+- ~170 builtin member entries: Object, Node, CanvasItem, Node2D, Node3D, Control, CharacterBody2D/3D, RigidBody2D/3D, Sprite2D, Timer, AnimationPlayer, Tween, Vector2, Vector3, String, Array, Dictionary
+- `--input-file <path>` flag for `insert`, `replace-body`, `replace-symbol`, `edit-range` — read content from a file instead of stdin (fixes Windows pipe encoding issues with tabs)
+
+### Fixed
+- Hover on unresolvable identifiers inside a function no longer falls through to show the enclosing function signature
+- Hover on declaration keywords (`func`, `var`, `const`, `signal`, `class`, `enum`) only triggers when cursor is on the name, not on body contents
+
 ## [0.1.10] - 2026-02-12
 
 ### Added

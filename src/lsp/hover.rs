@@ -15,20 +15,53 @@ pub fn hover_at(source: &str, position: Position) -> Option<Hover> {
     let mut current = node;
     loop {
         match current.kind() {
-            "function_definition" => return hover_function(&current, source),
-            "variable_statement" => return Some(hover_variable(&current, source)),
-            "const_statement" => return Some(hover_const(&current, source)),
-            "signal_statement" => return Some(hover_signal(&current, source)),
+            "function_definition" => {
+                // Only show hover for the function's name identifier, not for
+                // arbitrary identifiers inside the function body.
+                if is_declaration_name(&current, &node) {
+                    return hover_function(&current, source);
+                }
+                return None;
+            }
+            "variable_statement" => {
+                if is_declaration_name(&current, &node) {
+                    return Some(hover_variable(&current, source));
+                }
+                return None;
+            }
+            "const_statement" => {
+                if is_declaration_name(&current, &node) {
+                    return Some(hover_const(&current, source));
+                }
+                return None;
+            }
+            "signal_statement" => {
+                if is_declaration_name(&current, &node) {
+                    return Some(hover_signal(&current, source));
+                }
+                return None;
+            }
             "class_name_statement" => return Some(hover_class_name(&current, source)),
-            "class_definition" => return hover_class(&current, source),
-            "enum_definition" => return hover_enum(&current, source),
+            "class_definition" => {
+                if is_declaration_name(&current, &node) {
+                    return hover_class(&current, source);
+                }
+                return None;
+            }
+            "enum_definition" => {
+                if is_declaration_name(&current, &node) {
+                    return hover_enum(&current, source);
+                }
+                return None;
+            }
             "identifier" | "name" => {
-                // For identifiers, try to resolve them to a declaration in the same file
                 let name = node_text(&current, source);
+
+                // 1. Try to resolve to a same-file declaration
                 if let Some(hover) = resolve_identifier(&root, name, source) {
                     return Some(hover);
                 }
-                // Fall back to built-in Godot documentation
+                // 2. Try builtin type
                 if let Some(doc) = super::builtins::lookup_type(name) {
                     return Some(Hover {
                         contents: HoverContents::Markup(MarkupContent {
@@ -38,6 +71,7 @@ pub fn hover_at(source: &str, position: Position) -> Option<Hover> {
                         range: Some(node_range(&current)),
                     });
                 }
+                // 3. Try builtin function
                 if let Some(doc) = super::builtins::lookup_function(name) {
                     return Some(Hover {
                         contents: HoverContents::Markup(MarkupContent {
@@ -47,11 +81,71 @@ pub fn hover_at(source: &str, position: Position) -> Option<Hover> {
                         range: Some(node_range(&current)),
                     });
                 }
+                // 4. Check if this is a member access (foo.bar) — try builtin member
+                if let Some(hover) = try_member_hover(&current, &root, source) {
+                    return Some(hover);
+                }
+                // 5. Nothing found — return None instead of walking up to
+                //    function_definition and showing the enclosing function.
+                return None;
             }
             _ => {}
         }
         current = current.parent()?;
     }
+}
+
+/// Check if `node` is (or is an ancestor of) the `name` field of `decl_node`.
+fn is_declaration_name(decl_node: &tree_sitter::Node, node: &tree_sitter::Node) -> bool {
+    if let Some(name_node) = decl_node.child_by_field_name("name") {
+        // The cursor node is at or inside the declaration's name
+        node.start_byte() >= name_node.start_byte() && node.end_byte() <= name_node.end_byte()
+    } else {
+        false
+    }
+}
+
+/// Try to resolve a member access pattern (foo.bar or self.bar).
+fn try_member_hover(
+    ident_node: &tree_sitter::Node,
+    root: &tree_sitter::Node,
+    source: &str,
+) -> Option<Hover> {
+    let parent = ident_node.parent()?;
+    if parent.kind() != "attribute" {
+        return None;
+    }
+    let name = node_text(ident_node, source);
+
+    // Check if this identifier is the member (right side), not the object (left side).
+    // In tree-sitter-gdscript, `attribute` has children: object, ".", member
+    // The object is child(0), the member is the `attribute` field or last named child.
+    let object_node = parent.child(0)?;
+    if ident_node.id() == object_node.id() {
+        // This is the object side (foo in foo.bar), not the member
+        return None;
+    }
+
+    // Handle self.member — resolve to same-file declarations
+    let object_text = node_text(&object_node, source);
+    if object_text == "self"
+        && let Some(hover) = resolve_identifier(root, name, source)
+    {
+        return Some(hover);
+    }
+
+    // Try builtin member lookup
+    if let Some(doc) = super::builtins::lookup_member(name) {
+        return Some(Hover {
+            contents: HoverContents::Markup(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: super::builtins::format_member_hover(doc),
+            }),
+            range: Some(node_range(ident_node)),
+        });
+    }
+
+    None
 }
 
 fn hover_function(node: &tree_sitter::Node, source: &str) -> Option<Hover> {

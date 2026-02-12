@@ -1703,6 +1703,135 @@ fn test_lsp_hover_shows_function_signature() {
 }
 
 #[test]
+fn test_lsp_hover_attribute_member_shows_builtin_docs() {
+    let temp = setup_gd_project(&[(
+        "player.gd",
+        "var projectile: Node2D\n\nfunc shoot() -> void:\n\tprojectile.global_position = Vector2.ZERO\n",
+    )]);
+
+    // Hover on "global_position" (line 4, column 15 is within "global_position")
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "hover",
+            "--file",
+            "player.gd",
+            "--line",
+            "4",
+            "--column",
+            "15",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp hover");
+
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let content = json["content"].as_str().unwrap();
+    assert!(
+        content.contains("global_position"),
+        "hover should show member name, got: {content}"
+    );
+    assert!(
+        content.contains("Node2D"),
+        "hover should show class name, got: {content}"
+    );
+}
+
+#[test]
+fn test_lsp_hover_self_member_resolves_to_declaration() {
+    let temp = setup_gd_project(&[(
+        "player.gd",
+        "var speed: float = 10.0\n\nfunc run() -> void:\n\tself.speed = 20.0\n",
+    )]);
+
+    // Hover on "speed" in self.speed (line 4, column 7)
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "hover",
+            "--file",
+            "player.gd",
+            "--line",
+            "4",
+            "--column",
+            "7",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp hover");
+
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let content = json["content"].as_str().unwrap();
+    assert!(
+        content.contains("var speed"),
+        "hover on self.speed should show var declaration, got: {content}"
+    );
+}
+
+#[test]
+fn test_lsp_hover_unresolvable_identifier_returns_no_hover() {
+    let temp = setup_gd_project(&[(
+        "player.gd",
+        "func run() -> void:\n\tsome_unknown_var = 10\n",
+    )]);
+
+    // Hover on "some_unknown_var" (line 2, column 2)
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "hover",
+            "--file",
+            "player.gd",
+            "--line",
+            "2",
+            "--column",
+            "2",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp hover");
+
+    // Should fail (no hover info) instead of showing enclosing function
+    assert!(
+        !output.status.success(),
+        "hover on unresolvable identifier should return no hover"
+    );
+}
+
+#[test]
+fn test_lsp_hover_on_function_name_still_works() {
+    let temp = setup_gd_project(&[(
+        "player.gd",
+        "func move(speed: float, dir: Vector2) -> void:\n\tpass\n",
+    )]);
+
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "hover",
+            "--file",
+            "player.gd",
+            "--line",
+            "1",
+            "--column",
+            "6",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp hover");
+
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let content = json["content"].as_str().unwrap();
+    assert!(
+        content.contains("func move"),
+        "hover on function name should still work, got: {content}"
+    );
+}
+
+#[test]
 fn test_lsp_references_finds_all_usages() {
     let temp = setup_gd_project(&[(
         "player.gd",
@@ -2561,6 +2690,29 @@ fn test_lsp_symbols_kind_filter_repeatable() {
     let names: Vec<&str> = arr.iter().map(|s| s["name"].as_str().unwrap()).collect();
     assert!(names.contains(&"attack"));
     assert!(names.contains(&"health"));
+}
+
+#[test]
+fn test_lsp_symbols_kind_field_alias() {
+    let temp = setup_gd_project(&[(
+        "player.gd",
+        "var health := 100\n@onready var label = $Label\nconst MAX_HP = 200\n\n\nfunc attack() -> void:\n\tpass\n",
+    )]);
+
+    // "field" should match both "variable" and "field" (onready)
+    let output = gd_bin()
+        .args(["lsp", "symbols", "--file", "player.gd", "--kind", "field"])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp symbols --kind field");
+
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let arr = json.as_array().expect("should be array");
+    assert_eq!(arr.len(), 2, "field alias should match var + onready var");
+    let names: Vec<&str> = arr.iter().map(|s| s["name"].as_str().unwrap()).collect();
+    assert!(names.contains(&"health"), "should include regular var");
+    assert!(names.contains(&"label"), "should include @onready var");
 }
 
 // ─── Refactoring command tests ──────────────────────────────────────────────
@@ -5248,6 +5400,46 @@ fn test_lsp_insert_no_anchor_fails() {
     assert!(
         !output.status.success(),
         "should fail without --after or --before"
+    );
+}
+
+#[test]
+fn test_lsp_insert_input_file() {
+    let temp = setup_gd_project(&[("player.gd", "extends Node\n\n\nfunc _ready():\n\tpass\n")]);
+
+    // Write content to a temp file instead of piping through stdin
+    let input_path = temp.path().join("_input.tmp");
+    fs::write(&input_path, "\nfunc _process(delta):\n\tpass\n").unwrap();
+
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "insert",
+            "--file",
+            "player.gd",
+            "--after",
+            "_ready",
+            "--no-format",
+            "--input-file",
+        ])
+        .arg(&input_path)
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp insert --input-file");
+
+    assert!(
+        output.status.success(),
+        "insert --input-file should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["operation"], "insert");
+    assert_eq!(json["applied"], true);
+
+    let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+    assert!(
+        content.contains("func _process(delta):"),
+        "inserted content should appear in file"
     );
 }
 
