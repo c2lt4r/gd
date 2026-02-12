@@ -3575,7 +3575,7 @@ fn test_stats_diff_branch() {
     // Initialize a git repo with a .gd file on main
     let path = temp.path();
     Command::new("git")
-        .args(["init"])
+        .args(["init", "-b", "main"])
         .current_dir(path)
         .output()
         .expect("git init");
@@ -3666,7 +3666,7 @@ fn test_stats_diff_json() {
 
     let path = temp.path();
     Command::new("git")
-        .args(["init"])
+        .args(["init", "-b", "main"])
         .current_dir(path)
         .output()
         .expect("git init");
