@@ -1875,6 +1875,163 @@ pub fn inline_method(
     })
 }
 
+// ── inline-method by name ────────────────────────────────────────────────────
+
+#[derive(Serialize, Debug)]
+pub struct InlineMethodByNameOutput {
+    pub function: String,
+    pub file: String,
+    pub call_sites_inlined: u32,
+    pub function_deleted: bool,
+    pub applied: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
+}
+
+/// Inline all (or list) call sites of a function by name within a file.
+/// With `all=true`, inlines every call site and deletes the function.
+/// With `all=false`, reports call sites in dry-run style.
+pub fn inline_method_by_name(
+    file: &Path,
+    name: &str,
+    all: bool,
+    dry_run: bool,
+    project_root: &Path,
+) -> Result<InlineMethodByNameOutput> {
+    let source =
+        std::fs::read_to_string(file).map_err(|e| miette::miette!("cannot read file: {e}"))?;
+    let tree = crate::core::parser::parse(&source)?;
+    let root = tree.root_node();
+
+    // Find function definition
+    let func_def = find_declaration_by_name(root, &source, name)
+        .ok_or_else(|| miette::miette!("no function named '{name}' found in this file"))?;
+    if !matches!(
+        func_def.kind(),
+        "function_definition" | "constructor_definition"
+    ) {
+        return Err(miette::miette!("'{name}' is not a function"));
+    }
+
+    let func_def_start = func_def.start_position().row;
+    let func_def_end = func_def.end_position().row;
+
+    // Find all call sites of this function in the file
+    let mut call_sites: Vec<(usize, usize)> = Vec::new();
+    collect_calls_to(root, name, &source, func_def_start, func_def_end, &mut call_sites);
+
+    if call_sites.is_empty() {
+        return Err(miette::miette!(
+            "no call sites for '{name}' found in this file"
+        ));
+    }
+
+    let relative_file = crate::core::fs::relative_slash(file, project_root);
+    let mut warnings = Vec::new();
+
+    if !all && call_sites.len() > 1 {
+        warnings.push(format!(
+            "function '{name}' has {} call sites — use --all to inline all",
+            call_sites.len()
+        ));
+    }
+
+    let sites_to_inline = if all {
+        call_sites.clone()
+    } else {
+        // Just inline the first call site
+        vec![call_sites[0]]
+    };
+
+    let mut inlined_count = 0u32;
+
+    if !dry_run {
+        // Inline call sites from bottom to top to preserve line numbers
+        let mut sorted_sites = sites_to_inline.clone();
+        sorted_sites.sort_by(|a, b| b.0.cmp(&a.0));
+
+        for (line, column) in &sorted_sites {
+            // Re-read and re-parse after each inline (source changes)
+            match inline_method(file, *line, *column, false, project_root) {
+                Ok(_) => inlined_count += 1,
+                Err(e) => warnings.push(format!("failed to inline at {}:{}: {e}", line, column)),
+            }
+        }
+
+        // If we inlined all sites and the function still exists, delete it
+        if all && inlined_count == sites_to_inline.len() as u32 {
+            let current_source = std::fs::read_to_string(file)
+                .map_err(|e| miette::miette!("cannot read file: {e}"))?;
+            let current_tree = crate::core::parser::parse(&current_source)?;
+            let current_root = current_tree.root_node();
+            if let Some(def) = find_declaration_by_name(current_root, &current_source, name) {
+                let (def_start, def_end) = declaration_full_range(def, &current_source);
+                let mut final_source = String::with_capacity(current_source.len());
+                final_source.push_str(&current_source[..def_start]);
+                final_source.push_str(&current_source[def_end..]);
+                normalize_blank_lines(&mut final_source);
+                std::fs::write(file, &final_source)
+                    .map_err(|e| miette::miette!("cannot write file: {e}"))?;
+            }
+        }
+    } else {
+        inlined_count = sites_to_inline.len() as u32;
+    }
+
+    // Check if function was deleted (either by inline_method for single callsite,
+    // or by our explicit deletion above for --all)
+    let function_deleted = if !dry_run && inlined_count > 0 {
+        let current_source = std::fs::read_to_string(file)
+            .map_err(|e| miette::miette!("cannot read file: {e}"))?;
+        let current_tree = crate::core::parser::parse(&current_source)?;
+        let current_root = current_tree.root_node();
+        find_declaration_by_name(current_root, &current_source, name).is_none()
+    } else {
+        false
+    };
+
+    Ok(InlineMethodByNameOutput {
+        function: name.to_string(),
+        file: relative_file,
+        call_sites_inlined: inlined_count,
+        function_deleted,
+        applied: !dry_run,
+        warnings,
+    })
+}
+
+/// Collect all call sites of `func_name` in the AST, excluding those within
+/// the function definition itself.
+fn collect_calls_to(
+    node: tree_sitter::Node,
+    func_name: &str,
+    source: &str,
+    func_def_start: usize,
+    func_def_end: usize,
+    out: &mut Vec<(usize, usize)>,
+) {
+    if node.kind() == "call" {
+        let callee = node
+            .child_by_field_name("function")
+            .or_else(|| node.named_child(0));
+        if let Some(callee) = callee
+            && let Ok(name) = callee.utf8_text(source.as_bytes())
+            && name == func_name
+            && callee.kind() != "attribute"
+        {
+            let row = node.start_position().row;
+            // Skip calls inside the function definition itself
+            if row < func_def_start || row > func_def_end {
+                out.push((row + 1, node.start_position().column + 1));
+            }
+        }
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_calls_to(child, func_name, source, func_def_start, func_def_end, out);
+    }
+}
+
 /// Count return statements recursively in a node subtree.
 fn count_return_statements(node: tree_sitter::Node, count: &mut usize) {
     if node.kind() == "return_statement" {
@@ -2115,6 +2272,7 @@ pub fn change_signature(
     name: &str,
     add_params: &[String],
     remove_params: &[String],
+    rename_params: &[String],
     reorder: Option<&str>,
     class: Option<&str>,
     dry_run: bool,
@@ -2168,6 +2326,30 @@ pub fn change_signature(
             existing_params.remove(i);
         } else {
             return Err(miette::miette!("parameter '{remove}' not found"));
+        }
+    }
+
+    // Apply renames
+    let mut rename_map: HashMap<String, String> = HashMap::new();
+    for rename in rename_params {
+        let Some((old_name, new_name)) = rename.split_once('=') else {
+            return Err(miette::miette!(
+                "invalid --rename-param format: '{rename}' (expected 'old_name=new_name')"
+            ));
+        };
+        let old_name = old_name.trim();
+        let new_name = new_name.trim();
+        if old_name.is_empty() || new_name.is_empty() {
+            return Err(miette::miette!(
+                "invalid --rename-param: both old and new names must be non-empty"
+            ));
+        }
+        let idx = existing_params.iter().position(|p| p.name == old_name);
+        if let Some(i) = idx {
+            existing_params[i].name = new_name.to_string();
+            rename_map.insert(old_name.to_string(), new_name.to_string());
+        } else {
+            return Err(miette::miette!("parameter '{old_name}' not found for rename"));
         }
     }
 
@@ -2251,7 +2433,7 @@ pub fn change_signature(
     let mut call_sites_updated = 0u32;
 
     if !dry_run {
-        // 1. Update function definition
+        // 1. Update function definition (signature + body renames)
         let mut new_source = source.clone();
         if let Some(pn) = params_node {
             // Replace content between parens
@@ -2260,6 +2442,25 @@ pub fn change_signature(
             let new_params_text = format!("({new_param_str})");
             new_source.replace_range(params_start..params_end, &new_params_text);
         }
+
+        // Rename param usages in function body
+        if !rename_map.is_empty() {
+            // Re-parse after signature change to get correct byte offsets
+            let new_tree = crate::core::parser::parse(&new_source)?;
+            let new_root = new_tree.root_node();
+            if let Some(new_func) = find_declaration_by_name(new_root, &new_source, name)
+                && let Some(body) = new_func.child_by_field_name("body")
+            {
+                let body_start = body.start_byte();
+                let body_end = body.end_byte();
+                let mut body_text = new_source[body_start..body_end].to_string();
+                for (old_name, new_name) in &rename_map {
+                    body_text = rename_identifier_in_text(&body_text, old_name, new_name);
+                }
+                new_source.replace_range(body_start..body_end, &body_text);
+            }
+        }
+
         std::fs::write(file, &new_source).map_err(|e| miette::miette!("cannot write file: {e}"))?;
 
         // 2. Update call sites
@@ -2291,6 +2492,7 @@ pub fn change_signature(
                         &existing_params,
                         remove_params,
                         add_params,
+                        &rename_map,
                         reorder,
                     );
                     let new_args_text = format!("({})", new_args.join(", "));
@@ -2366,6 +2568,37 @@ fn parse_param_spec(spec: &str) -> Result<ParamInfo> {
     })
 }
 
+/// Rename an identifier in text, only matching whole words (not substrings).
+fn rename_identifier_in_text(text: &str, old_name: &str, new_name: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let old_bytes = old_name.as_bytes();
+    let old_len = old_bytes.len();
+    let text_bytes = text.as_bytes();
+    let text_len = text_bytes.len();
+    let mut i = 0;
+
+    while i < text_len {
+        if i + old_len <= text_len && &text_bytes[i..i + old_len] == old_bytes {
+            // Check word boundary before
+            let before_ok = i == 0 || !is_ident_char(text_bytes[i - 1]);
+            // Check word boundary after
+            let after_ok = i + old_len >= text_len || !is_ident_char(text_bytes[i + old_len]);
+            if before_ok && after_ok {
+                result.push_str(new_name);
+                i += old_len;
+                continue;
+            }
+        }
+        result.push(text_bytes[i] as char);
+        i += 1;
+    }
+    result
+}
+
+fn is_ident_char(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_'
+}
+
 /// Rewrite call arguments based on parameter changes.
 fn rewrite_call_arguments(
     old_args: &[String],
@@ -2373,6 +2606,7 @@ fn rewrite_call_arguments(
     new_params: &[ParamInfo],
     remove_params: &[String],
     _add_params: &[String],
+    rename_map: &HashMap<String, String>,
     reorder: Option<&str>,
 ) -> Vec<String> {
     // Build old param name → arg value mapping
@@ -2380,6 +2614,13 @@ fn rewrite_call_arguments(
     for (i, param) in old_params.iter().enumerate() {
         if let Some(arg) = old_args.get(i) {
             arg_map.insert(param.name.clone(), arg.clone());
+        }
+    }
+
+    // Map renamed param entries: insert under new name too
+    for (old_name, new_name) in rename_map {
+        if let Some(arg) = arg_map.get(old_name).cloned() {
+            arg_map.insert(new_name.clone(), arg);
         }
     }
 
@@ -3800,6 +4041,100 @@ mod tests {
         );
     }
 
+    // ── inline-method by name ────────────────────────────────────────────
+
+    #[test]
+    fn inline_by_name_single_site() {
+        let temp = setup_project(&[(
+            "player.gd",
+            "func helper():\n\tprint(42)\n\n\nfunc _ready():\n\thelper()\n",
+        )]);
+        let result = inline_method_by_name(
+            &temp.path().join("player.gd"),
+            "helper",
+            false,
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        assert_eq!(result.call_sites_inlined, 1);
+        assert!(result.function_deleted);
+        let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+        assert!(
+            content.contains("print(42)"),
+            "should inline body, got: {content}"
+        );
+        assert!(
+            !content.contains("func helper()"),
+            "function should be deleted, got: {content}"
+        );
+    }
+
+    #[test]
+    fn inline_by_name_all_sites() {
+        let temp = setup_project(&[(
+            "player.gd",
+            "func helper():\n\tprint(42)\n\n\nfunc _ready():\n\thelper()\n\thelper()\n",
+        )]);
+        let result = inline_method_by_name(
+            &temp.path().join("player.gd"),
+            "helper",
+            true,
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        assert_eq!(result.call_sites_inlined, 2);
+        assert!(
+            result.function_deleted,
+            "all=true should delete function"
+        );
+        let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+        assert!(
+            !content.contains("func helper()"),
+            "function should be deleted, got: {content}"
+        );
+    }
+
+    #[test]
+    fn inline_by_name_dry_run() {
+        let temp = setup_project(&[(
+            "player.gd",
+            "func helper():\n\tprint(42)\n\n\nfunc _ready():\n\thelper()\n",
+        )]);
+        let result = inline_method_by_name(
+            &temp.path().join("player.gd"),
+            "helper",
+            true,
+            true,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(!result.applied);
+        assert!(!result.function_deleted);
+        assert_eq!(result.call_sites_inlined, 1);
+        let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+        assert!(
+            content.contains("func helper()"),
+            "dry run should not modify file"
+        );
+    }
+
+    #[test]
+    fn inline_by_name_not_found() {
+        let temp = setup_project(&[("player.gd", "func helper():\n\tpass\n")]);
+        let result = inline_method_by_name(
+            &temp.path().join("player.gd"),
+            "nonexistent",
+            false,
+            false,
+            temp.path(),
+        );
+        assert!(result.is_err());
+    }
+
     // ── change-signature (Feature 7) ─────────────────────────────────────
 
     #[test]
@@ -3812,6 +4147,7 @@ mod tests {
             &temp.path().join("player.gd"),
             "greet",
             &["greeting: String = \"hello\"".to_string()],
+            &[],
             &[],
             None,
             None,
@@ -3843,6 +4179,7 @@ mod tests {
             "greet",
             &[],
             &["title".to_string()],
+            &[],
             None,
             None,
             false,
@@ -3869,6 +4206,7 @@ mod tests {
             "greet",
             &[],
             &[],
+            &[],
             Some("c, a, b"),
             None,
             false,
@@ -3892,6 +4230,7 @@ mod tests {
             "greet",
             &[],
             &["nonexistent".to_string()],
+            &[],
             None,
             None,
             false,
@@ -3907,6 +4246,7 @@ mod tests {
             &temp.path().join("player.gd"),
             "greet",
             &["name".to_string()],
+            &[],
             &[],
             None,
             None,
@@ -3924,6 +4264,7 @@ mod tests {
             "greet",
             &["title".to_string()],
             &[],
+            &[],
             None,
             None,
             true,
@@ -3933,5 +4274,65 @@ mod tests {
         assert!(!result.applied);
         let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
         assert!(!content.contains("title"), "dry run should not modify file");
+    }
+
+    #[test]
+    fn change_sig_rename_param() {
+        let temp = setup_project(&[(
+            "player.gd",
+            "func attack(victim_id):\n\tprint(victim_id)\n\n\nfunc _ready():\n\tattack(42)\n",
+        )]);
+        let result = change_signature(
+            &temp.path().join("player.gd"),
+            "attack",
+            &[],
+            &[],
+            &["victim_id=target_id".to_string()],
+            None,
+            None,
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        assert!(
+            result.new_signature.contains("target_id"),
+            "signature should have new name, got: {}",
+            result.new_signature
+        );
+        assert!(
+            !result.new_signature.contains("victim_id"),
+            "signature should not have old name"
+        );
+        let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+        assert!(
+            content.contains("func attack(target_id)"),
+            "definition should be updated, got: {content}"
+        );
+        assert!(
+            content.contains("print(target_id)"),
+            "body usage should be renamed, got: {content}"
+        );
+        assert!(
+            !content.contains("victim_id"),
+            "old name should not appear, got: {content}"
+        );
+    }
+
+    #[test]
+    fn change_sig_rename_nonexistent_error() {
+        let temp = setup_project(&[("player.gd", "func greet(name):\n\tpass\n")]);
+        let result = change_signature(
+            &temp.path().join("player.gd"),
+            "greet",
+            &[],
+            &[],
+            &["nonexistent=new_name".to_string()],
+            None,
+            None,
+            false,
+            temp.path(),
+        );
+        assert!(result.is_err());
     }
 }

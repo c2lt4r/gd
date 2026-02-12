@@ -548,11 +548,24 @@ pub fn query_inline_method(
     super::refactor::inline_method(&path, line, column, dry_run, &project_root)
 }
 
+pub fn query_inline_method_by_name(
+    file: &str,
+    name: &str,
+    all: bool,
+    dry_run: bool,
+) -> Result<super::refactor::InlineMethodByNameOutput> {
+    let path = resolve_file(file)?;
+    let project_root = find_root(&path)?;
+    super::refactor::inline_method_by_name(&path, name, all, dry_run, &project_root)
+}
+
+#[allow(clippy::too_many_arguments)]
 pub fn query_change_signature(
     file: &str,
     name: &str,
     add_params: &[String],
     remove_params: &[String],
+    rename_params: &[String],
     reorder: Option<&str>,
     class: Option<&str>,
     dry_run: bool,
@@ -564,6 +577,7 @@ pub fn query_change_signature(
         name,
         add_params,
         remove_params,
+        rename_params,
         reorder,
         class,
         dry_run,

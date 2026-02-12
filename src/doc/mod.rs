@@ -1,5 +1,6 @@
 use miette::{Result, miette};
 use owo_colors::OwoColorize;
+use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
 use tree_sitter::{Node, Tree};
@@ -8,39 +9,48 @@ use crate::core::fs::collect_gdscript_files;
 use crate::core::parser::parse_file;
 
 /// Documentation for a signal.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct DocSignal {
     pub name: String,
     pub params: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub description: String,
 }
 
 /// Documentation for a property.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct DocProperty {
     pub name: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub type_hint: String,
     pub is_exported: bool,
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub description: String,
 }
 
 /// Documentation for a method.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct DocMethod {
     pub name: String,
     pub params: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub return_type: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub description: String,
 }
 
 /// Documentation for a class.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct DocClass {
     pub name: String,
     pub file: PathBuf,
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub extends: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub description: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub signals: Vec<DocSignal>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub properties: Vec<DocProperty>,
     pub methods: Vec<DocMethod>,
 }
@@ -354,6 +364,115 @@ pub fn run_doc(paths: &[String], output_dir: &str, stdout: bool) -> Result<()> {
     Ok(())
 }
 
+/// Output documentation as JSON to stdout.
+pub fn run_doc_json(paths: &[String]) -> Result<()> {
+    let paths_to_process = if paths.is_empty() {
+        vec![".".to_string()]
+    } else {
+        paths.to_vec()
+    };
+
+    let mut all_files = Vec::new();
+    for path_str in &paths_to_process {
+        let path = Path::new(path_str);
+        if path.is_dir() {
+            all_files.extend(collect_gdscript_files(path)?);
+        } else if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("gd") {
+            all_files.push(path.to_path_buf());
+        }
+    }
+
+    if all_files.is_empty() {
+        println!("[]");
+        return Ok(());
+    }
+
+    let mut docs = Vec::new();
+    for file_path in all_files {
+        let (source, tree) = parse_file(&file_path)?;
+        let doc = extract_docs(&source, &tree, &file_path);
+        docs.push(doc);
+    }
+
+    let json =
+        serde_json::to_string_pretty(&docs).map_err(|e| miette!("failed to serialize: {e}"))?;
+    println!("{json}");
+    Ok(())
+}
+
+/// Check that all public methods have doc comments.
+/// Returns Ok if all documented, Err with details if any are missing.
+pub fn run_doc_check(paths: &[String]) -> Result<()> {
+    let paths_to_process = if paths.is_empty() {
+        vec![".".to_string()]
+    } else {
+        paths.to_vec()
+    };
+
+    let mut all_files = Vec::new();
+    for path_str in &paths_to_process {
+        let path = Path::new(path_str);
+        if path.is_dir() {
+            all_files.extend(collect_gdscript_files(path)?);
+        } else if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("gd") {
+            all_files.push(path.to_path_buf());
+        }
+    }
+
+    if all_files.is_empty() {
+        println!("No GDScript files found");
+        return Ok(());
+    }
+
+    let mut undocumented: Vec<(String, String)> = Vec::new();
+    let mut total_methods = 0usize;
+    let mut documented_methods = 0usize;
+
+    for file_path in &all_files {
+        let (source, tree) = parse_file(file_path)?;
+        let doc = extract_docs(&source, &tree, file_path);
+
+        let file_display = file_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown");
+
+        for method in &doc.methods {
+            // Skip private methods (prefixed with _)
+            if method.name.starts_with('_') {
+                continue;
+            }
+            total_methods += 1;
+            if method.description.is_empty() {
+                undocumented.push((file_display.to_string(), method.name.clone()));
+            } else {
+                documented_methods += 1;
+            }
+        }
+    }
+
+    if undocumented.is_empty() {
+        println!(
+            "{} All {total_methods} public method{} documented",
+            "✓".green().bold(),
+            if total_methods == 1 { "" } else { "s" }
+        );
+        Ok(())
+    } else {
+        for (file, method) in &undocumented {
+            println!(
+                "{} {file}: {method}() missing doc comment",
+                "✗".red()
+            );
+        }
+        println!(
+            "\n{}/{} public methods documented",
+            documented_methods, total_methods
+        );
+        std::process::exit(1);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -431,5 +550,52 @@ func test_func():
             doc.methods[0].description,
             "This is a multi-line\ndocumentation comment\nfor a function."
         );
+    }
+
+    #[test]
+    fn test_doc_json_serialization() {
+        let source = r#"
+## A player.
+class_name Player
+extends Node2D
+
+## Move the player.
+func move(direction: Vector2) -> void:
+    pass
+
+func _ready():
+    pass
+"#;
+        let tree = parse(source).unwrap();
+        let path = Path::new("player.gd");
+        let doc = extract_docs(source, &tree, path);
+
+        let json = serde_json::to_string_pretty(&doc).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed["name"], "Player");
+        assert_eq!(parsed["extends"], "Node2D");
+        assert_eq!(parsed["methods"].as_array().unwrap().len(), 2);
+        assert_eq!(parsed["methods"][0]["name"], "move");
+        assert_eq!(parsed["methods"][0]["description"], "Move the player.");
+        // _ready has no doc comment → description field should be absent (skip_serializing_if)
+        assert!(parsed["methods"][1].get("description").is_none());
+    }
+
+    #[test]
+    fn test_doc_json_skip_empty_fields() {
+        let source = "func helper():\n\tpass\n";
+        let tree = parse(source).unwrap();
+        let path = Path::new("helper.gd");
+        let doc = extract_docs(source, &tree, path);
+
+        let json = serde_json::to_string(&doc).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        // No extends, description, signals, or properties
+        assert!(parsed.get("extends").is_none());
+        assert!(parsed.get("description").is_none());
+        assert!(parsed.get("signals").is_none());
+        assert!(parsed.get("properties").is_none());
     }
 }

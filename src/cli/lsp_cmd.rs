@@ -137,8 +137,21 @@ pub enum LspCommand {
     },
     /// Inline a function call, replacing it with the function body
     InlineMethod {
-        #[command(flatten)]
-        pos: QueryPositionArgs,
+        /// Path to the GDScript file
+        #[arg(long)]
+        file: String,
+        /// Function name to inline everywhere (alternative to --line/--column)
+        #[arg(long)]
+        name: Option<String>,
+        /// Inline all call sites and delete the function (requires --name)
+        #[arg(long, requires = "name")]
+        all: bool,
+        /// Line number of call site (1-based)
+        #[arg(long)]
+        line: Option<usize>,
+        /// Column number of call site (1-based)
+        #[arg(long)]
+        column: Option<usize>,
         /// Preview without writing changes
         #[arg(long)]
         dry_run: bool,
@@ -157,6 +170,9 @@ pub enum LspCommand {
         /// Remove parameter by name (repeatable)
         #[arg(long)]
         remove_param: Vec<String>,
+        /// Rename parameter (format: "old_name=new_name"; repeatable)
+        #[arg(long)]
+        rename_param: Vec<String>,
         /// Reorder parameters (comma-separated names in new order)
         #[arg(long)]
         reorder: Option<String>,
@@ -348,11 +364,32 @@ pub fn exec(args: LspArgs) -> Result<()> {
             println!("{json}");
             Ok(())
         }
-        LspCommand::InlineMethod { pos, dry_run } => {
-            let result =
-                crate::lsp::query::query_inline_method(&pos.file, pos.line, pos.column, dry_run)?;
-            let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
-            println!("{json}");
+        LspCommand::InlineMethod {
+            file,
+            name,
+            all,
+            line,
+            column,
+            dry_run,
+        } => {
+            if let Some(ref func_name) = name {
+                let result = crate::lsp::query::query_inline_method_by_name(
+                    &file, func_name, all, dry_run,
+                )?;
+                let json =
+                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+                println!("{json}");
+            } else {
+                let line = line
+                    .ok_or_else(|| miette::miette!("--line is required when not using --name"))?;
+                let column = column.ok_or_else(|| {
+                    miette::miette!("--column is required when not using --name")
+                })?;
+                let result = crate::lsp::query::query_inline_method(&file, line, column, dry_run)?;
+                let json =
+                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+                println!("{json}");
+            }
             Ok(())
         }
         LspCommand::ChangeSignature {
@@ -360,6 +397,7 @@ pub fn exec(args: LspArgs) -> Result<()> {
             name,
             add_param,
             remove_param,
+            rename_param,
             reorder,
             class,
             dry_run,
@@ -369,6 +407,7 @@ pub fn exec(args: LspArgs) -> Result<()> {
                 &name,
                 &add_param,
                 &remove_param,
+                &rename_param,
                 reorder.as_deref(),
                 class.as_deref(),
                 dry_run,
