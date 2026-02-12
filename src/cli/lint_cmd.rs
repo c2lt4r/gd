@@ -20,9 +20,9 @@ pub struct LintArgs {
     /// Minimum severity to show: info, warning, error
     #[arg(long)]
     pub severity: Option<String>,
-    /// Only show diagnostics from these rules (comma-separated)
+    /// Only show diagnostics from these rules (comma-separated, repeatable)
     #[arg(long)]
-    pub rule: Option<String>,
+    pub rule: Vec<String>,
     /// Exclude files matching these patterns (repeatable, same syntax as ignore_patterns)
     #[arg(long)]
     pub exclude: Vec<String>,
@@ -47,9 +47,9 @@ pub fn exec(args: LintArgs) -> Result<()> {
 
     let rule_filter: Vec<String> = args
         .rule
-        .as_deref()
-        .map(|s| s.split(',').map(|r| r.trim().to_string()).collect())
-        .unwrap_or_default();
+        .iter()
+        .flat_map(|s| s.split(',').map(|r| r.trim().to_string()))
+        .collect();
 
     let opts = LintOptions {
         format: args.format,

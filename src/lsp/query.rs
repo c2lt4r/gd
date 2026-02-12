@@ -87,6 +87,8 @@ pub struct FileEditEntry {
 pub struct SymbolOutput {
     pub name: String,
     pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
     pub line: u32,
     pub column: u32,
 }
@@ -189,6 +191,7 @@ fn flatten_symbols(symbols: &[DocumentSymbol]) -> Vec<SymbolOutput> {
         out.push(SymbolOutput {
             name: s.name.clone(),
             kind: symbol_kind_str(s.kind),
+            detail: s.detail.clone(),
             line: s.selection_range.start.line + 1,
             column: s.selection_range.start.character + 1,
         });
@@ -442,6 +445,7 @@ pub fn query_symbols(file: &str) -> Result<Vec<SymbolOutput>> {
             .map(|s| SymbolOutput {
                 name: s.name,
                 kind: symbol_kind_str(s.kind),
+                detail: None,
                 line: s.location.range.start.line + 1,
                 column: s.location.range.start.character + 1,
             })

@@ -88,6 +88,13 @@ fn check_body_for_unreachable(body: Node, source: &str, diags: &mut Vec<LintDiag
         }
 
         if is_terminator(child.kind()) && found_terminator.is_none() {
+            // Skip return statements that follow a pending() call (GUT test-skip pattern)
+            if child.kind() == "return_statement" && is_after_pending_call(child, source) {
+                if !cursor.goto_next_sibling() {
+                    break;
+                }
+                continue;
+            }
             found_terminator = Some(match child.kind() {
                 "return_statement" => "return",
                 "break_statement" => "break",
@@ -128,6 +135,38 @@ fn check_body_for_unreachable(body: Node, source: &str, diags: &mut Vec<LintDiag
     }
 }
 
+/// Check if a return_statement is immediately preceded by a `pending()` call (skipping comments).
+/// This is a GUT test-skip pattern: `pending("reason") / return`.
+fn is_after_pending_call(node: Node, source: &str) -> bool {
+    let mut prev = node.prev_named_sibling();
+    // Skip comment nodes
+    while let Some(p) = prev {
+        if p.kind() != "comment" {
+            return is_pending_call(p, source);
+        }
+        prev = p.prev_named_sibling();
+    }
+    false
+}
+
+/// Check if a node is an `expression_statement` containing a `pending(...)` call.
+fn is_pending_call(node: Node, source: &str) -> bool {
+    if node.kind() != "expression_statement" {
+        return false;
+    }
+    let Some(call) = node.named_child(0) else {
+        return false;
+    };
+    if call.kind() != "call" {
+        return false;
+    }
+    let Some(name_node) = call.named_child(0) else {
+        return false;
+    };
+    name_node.kind() == "identifier"
+        && name_node.utf8_text(source.as_bytes()).unwrap_or("") == "pending"
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -154,6 +193,29 @@ mod tests {
     #[test]
     fn still_detects_real_unreachable_code() {
         let source = "func f() -> void:\n\treturn\n\tvar x := 1\n";
+        let diags = check(source);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].rule, "unreachable-code");
+    }
+
+    #[test]
+    fn no_false_positive_pending_return_pattern() {
+        // GUT test-skip pattern: pending() + return + other code
+        let source = "func test_thing() -> void:\n\tpending(\"not implemented\")\n\treturn\n\tvar x := 1\n\tassert_eq(x, 1)\n";
+        assert!(check(source).is_empty());
+    }
+
+    #[test]
+    fn no_false_positive_pending_return_with_comment() {
+        // pending() + comment + return + other code
+        let source = "func test_thing() -> void:\n\tpending(\"wip\")\n\t# skipping for now\n\treturn\n\tvar x := 1\n";
+        assert!(check(source).is_empty());
+    }
+
+    #[test]
+    fn still_detects_unreachable_after_plain_return() {
+        // Plain return without preceding pending() should still warn
+        let source = "func f() -> void:\n\tprint(\"done\")\n\treturn\n\tvar x := 1\n";
         let diags = check(source);
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].rule, "unreachable-code");

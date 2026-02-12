@@ -2,7 +2,8 @@ use clap::Args;
 use miette::Result;
 use std::env;
 
-use crate::core::{config::Config, fs::collect_gdscript_files, parser};
+use crate::core::{config::Config, config::find_project_root, fs::collect_gdscript_files, parser};
+use crate::lint::matches_ignore_pattern;
 
 #[derive(Args)]
 pub struct CheckArgs {
@@ -12,7 +13,8 @@ pub struct CheckArgs {
 
 pub fn exec(args: CheckArgs) -> Result<()> {
     let cwd = env::current_dir().unwrap_or_default();
-    let _config = Config::load(&cwd)?;
+    let config = Config::load(&cwd)?;
+    let ignore_base = find_project_root(&cwd).unwrap_or_else(|| cwd.clone());
 
     let roots = if args.paths.is_empty() {
         vec![cwd]
@@ -26,6 +28,9 @@ pub fn exec(args: CheckArgs) -> Result<()> {
     for root in &roots {
         let files = collect_gdscript_files(root)?;
         for file in &files {
+            if matches_ignore_pattern(file, &ignore_base, &config.lint.ignore_patterns) {
+                continue;
+            }
             checked += 1;
             match parser::parse_file(file) {
                 Ok((source, tree)) => {

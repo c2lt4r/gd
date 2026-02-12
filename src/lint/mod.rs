@@ -93,13 +93,15 @@ pub fn run_lint(paths: &[String], opts: &LintOptions) -> Result<()> {
     let file_results: Vec<(PathBuf, Vec<LintDiagnostic>)> = files
         .par_iter()
         .filter(|path| !matches_ignore_pattern(path, &ignore_base, &ignore_patterns))
-        .filter_map(|path| match lint_file(path, &rules, &config, opts) {
-            Ok(diags) => Some((path.clone(), diags)),
-            Err(e) => {
-                eprintln!("{}: {}", path.display().red(), e);
-                None
-            }
-        })
+        .filter_map(
+            |path| match lint_file(path, &rules, &config, opts, &ignore_base) {
+                Ok(diags) => Some((path.clone(), diags)),
+                Err(e) => {
+                    eprintln!("{}: {}", path.display().red(), e);
+                    None
+                }
+            },
+        )
         .collect();
 
     // Post-collection filtering
@@ -199,20 +201,23 @@ pub fn run_lint(paths: &[String], opts: &LintOptions) -> Result<()> {
     }
 
     let total = total_info + total_warnings + total_errors;
-    if total > 0 {
-        eprintln!(
-            "\n{}: {} ({} {}, {} {}, {} {})",
-            "lint result".bold(),
-            format!("{} problems", total).bold(),
-            total_errors,
-            "errors".red(),
-            total_warnings,
-            "warnings".yellow(),
-            total_info,
-            "info".cyan(),
-        );
-    } else {
-        eprintln!("{}", "No lint issues found.".green().bold());
+    let is_machine_output = matches!(opts.format.as_str(), "json" | "sarif");
+    if !is_machine_output {
+        if total > 0 {
+            eprintln!(
+                "\n{}: {} ({} {}, {} {}, {} {})",
+                "lint result".bold(),
+                format!("{} problems", total).bold(),
+                total_errors,
+                "errors".red(),
+                total_warnings,
+                "warnings".yellow(),
+                total_info,
+                "info".cyan(),
+            );
+        } else {
+            eprintln!("{}", "No lint issues found.".green().bold());
+        }
     }
 
     if total_errors > 0 && !opts.no_fail {
@@ -265,11 +270,15 @@ fn lint_file(
     rules: &[Box<dyn rules::LintRule>],
     config: &Config,
     opts: &LintOptions,
+    ignore_base: &Path,
 ) -> Result<Vec<LintDiagnostic>> {
     let (source, tree) = parser::parse_file(path)?;
 
     let mut all_diags = Vec::new();
     for rule in rules {
+        if is_rule_excluded_by_override(path, ignore_base, rule.name(), &config.lint.overrides) {
+            continue;
+        }
         let diags = rule.check(&tree, &source, &config.lint);
         all_diags.extend(diags);
     }
@@ -439,6 +448,19 @@ pub fn matches_ignore_pattern(path: &Path, base: &Path, patterns: &[String]) -> 
         }
     }
     false
+}
+
+/// Check if a lint rule should be skipped for a file due to `[[lint.overrides]]`.
+pub fn is_rule_excluded_by_override(
+    path: &Path,
+    base: &Path,
+    rule_name: &str,
+    overrides: &[crate::core::config::LintOverride],
+) -> bool {
+    overrides.iter().any(|ov| {
+        ov.exclude_rules.iter().any(|r| r == rule_name)
+            && matches_ignore_pattern(path, base, &ov.paths)
+    })
 }
 
 /// Collect .gd files from the given paths, or from cwd if none specified.

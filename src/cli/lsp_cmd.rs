@@ -40,6 +40,9 @@ pub enum LspCommand {
     Completions {
         #[command(flatten)]
         pos: QueryPositionArgs,
+        /// Maximum number of results to return
+        #[arg(long)]
+        limit: Option<usize>,
     },
     /// List available code actions at a position
     CodeActions {
@@ -126,8 +129,11 @@ pub fn exec(args: LspArgs) -> Result<()> {
             println!("{json}");
             Ok(())
         }
-        LspCommand::Completions { pos } => {
-            let result = crate::lsp::query::query_completions(&pos.file, pos.line, pos.column)?;
+        LspCommand::Completions { pos, limit } => {
+            let mut result = crate::lsp::query::query_completions(&pos.file, pos.line, pos.column)?;
+            if let Some(n) = limit {
+                result.truncate(n);
+            }
             let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
             println!("{json}");
             Ok(())

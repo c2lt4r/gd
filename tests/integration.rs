@@ -1154,6 +1154,219 @@ fn test_lsp_formatting() {
     child.wait().ok();
 }
 
+// ─── Lint & tool improvements ───────────────────────────────────────────────
+
+#[test]
+fn test_lint_rule_repeatable() {
+    let temp = TempDir::new().expect("Failed to create temp dir");
+    let file_path = temp.path().join("multi_rule.gd");
+
+    // File with both naming-convention and duplicate-signal issues
+    fs::write(
+        &file_path,
+        "extends Node\n\nsignal died\nsignal died\n\nfunc BadName():\n\tpass\n",
+    )
+    .expect("write file");
+
+    // Using --rule twice should filter to both rules
+    let output = gd_bin()
+        .args([
+            "lint",
+            "--rule",
+            "naming-convention",
+            "--rule",
+            "duplicate-signal",
+        ])
+        .arg(&file_path)
+        .output()
+        .expect("Failed to run gd lint --rule --rule");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("naming-convention"),
+        "Should show naming-convention with --rule repeatable, stderr: {}",
+        stderr
+    );
+    assert!(
+        stderr.contains("duplicate-signal"),
+        "Should show duplicate-signal with --rule repeatable, stderr: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_lint_rule_comma_separated() {
+    let temp = TempDir::new().expect("Failed to create temp dir");
+    let file_path = temp.path().join("comma_rule.gd");
+
+    fs::write(
+        &file_path,
+        "extends Node\n\nsignal died\nsignal died\n\nfunc BadName():\n\tpass\n",
+    )
+    .expect("write file");
+
+    // Using comma-separated --rule should work
+    let output = gd_bin()
+        .args(["lint", "--rule", "naming-convention,duplicate-signal"])
+        .arg(&file_path)
+        .output()
+        .expect("Failed to run gd lint --rule comma");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("naming-convention"),
+        "Should show naming-convention with comma-separated --rule"
+    );
+    assert!(
+        stderr.contains("duplicate-signal"),
+        "Should show duplicate-signal with comma-separated --rule"
+    );
+}
+
+#[test]
+fn test_check_respects_ignore_patterns() {
+    let temp = tempfile::Builder::new()
+        .prefix("gdtest")
+        .tempdir()
+        .expect("Failed to create temp dir");
+
+    // gd.toml with ignore_patterns
+    fs::write(
+        temp.path().join("gd.toml"),
+        "[lint]\nignore_patterns = [\"vendor/**\"]\n",
+    )
+    .expect("write gd.toml");
+
+    // Create vendor/ directory with a broken file
+    let vendor = temp.path().join("vendor");
+    fs::create_dir_all(&vendor).expect("create vendor dir");
+    fs::write(vendor.join("broken.gd"), "func (:\n\t\tif if if\n").expect("write vendor/broken.gd");
+
+    // Create a clean root file
+    fs::write(
+        temp.path().join("main.gd"),
+        "extends Node\n\n\nfunc _ready() -> void:\n\tpass\n",
+    )
+    .expect("write main.gd");
+
+    let output = gd_bin()
+        .arg("check")
+        .arg(temp.path())
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd check");
+
+    assert!(
+        output.status.success(),
+        "gd check should pass when broken files are in ignored dirs, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn test_lint_overrides_exclude_rules_for_path() {
+    let temp = tempfile::Builder::new()
+        .prefix("gdtest")
+        .tempdir()
+        .expect("Failed to create temp dir");
+
+    // gd.toml with overrides excluding naming-convention for tests/
+    fs::write(
+        temp.path().join("gd.toml"),
+        "[[lint.overrides]]\npaths = [\"tests/**\"]\nexclude_rules = [\"naming-convention\"]\n",
+    )
+    .expect("write gd.toml");
+
+    // Create tests/ directory with a naming violation
+    let tests_dir = temp.path().join("tests");
+    fs::create_dir_all(&tests_dir).expect("create tests dir");
+    fs::write(
+        tests_dir.join("test_thing.gd"),
+        "extends Node\n\nfunc BadTestFunc():\n\tpass\n",
+    )
+    .expect("write tests/test_thing.gd");
+
+    // Create root file with same violation (should still be flagged)
+    fs::write(
+        temp.path().join("main.gd"),
+        "extends Node\n\nfunc BadName():\n\tpass\n",
+    )
+    .expect("write main.gd");
+
+    let output = gd_bin()
+        .arg("lint")
+        .arg(temp.path())
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lint");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // main.gd should still have naming-convention flagged
+    assert!(
+        stderr.contains("naming-convention"),
+        "main.gd should still have naming-convention, stderr: {}",
+        stderr
+    );
+    // test file should NOT have naming-convention (excluded by override),
+    // though it may still have other warnings like empty-function
+    let test_naming_lines: Vec<&str> = stderr
+        .lines()
+        .filter(|l| l.contains("test_thing.gd") && l.contains("naming-convention"))
+        .collect();
+    assert!(
+        test_naming_lines.is_empty(),
+        "tests/test_thing.gd should not have naming-convention due to override, stderr: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_lint_json_no_stderr_summary() {
+    let temp = TempDir::new().expect("Failed to create temp dir");
+    let file_path = temp.path().join("issues.gd");
+
+    fs::write(&file_path, "extends Node\n\nfunc BadName():\n\tpass\n").expect("write file");
+
+    let output = gd_bin()
+        .args(["lint", "--format", "json"])
+        .arg(&file_path)
+        .output()
+        .expect("Failed to run gd lint --format json");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("lint result"),
+        "JSON format should not have stderr summary, stderr: {}",
+        stderr
+    );
+    assert!(
+        !stderr.contains("problems"),
+        "JSON format should not have stderr summary, stderr: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_lint_sarif_no_stderr_summary() {
+    let temp = TempDir::new().expect("Failed to create temp dir");
+    let file_path = temp.path().join("issues.gd");
+
+    fs::write(&file_path, "extends Node\n\nfunc BadName():\n\tpass\n").expect("write file");
+
+    let output = gd_bin()
+        .args(["lint", "--format", "sarif"])
+        .arg(&file_path)
+        .output()
+        .expect("Failed to run gd lint --format sarif");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("lint result"),
+        "SARIF format should not have stderr summary, stderr: {}",
+        stderr
+    );
+}
+
 // ─── Iteration 11 feature tests ─────────────────────────────────────────────
 
 #[test]
@@ -1407,6 +1620,12 @@ fn test_lsp_symbols_lists_all_declarations() {
     let health = arr.iter().find(|s| s["name"] == "health").unwrap();
     assert_eq!(health["line"], 1);
     assert_eq!(health["kind"], "variable");
+
+    // Verify distinct kinds for const and enum
+    let max_hp = arr.iter().find(|s| s["name"] == "MAX_HP").unwrap();
+    assert_eq!(max_hp["kind"], "constant");
+    let state = arr.iter().find(|s| s["name"] == "State").unwrap();
+    assert_eq!(state["kind"], "enum");
 }
 
 #[test]
@@ -1683,6 +1902,36 @@ fn test_lsp_completions_includes_keywords_and_symbols() {
     // Verify kind field is present
     let func_item = arr.iter().find(|c| c["label"] == "func").unwrap();
     assert_eq!(func_item["kind"], "keyword");
+}
+
+#[test]
+fn test_lsp_completions_limit_caps_results() {
+    let temp = setup_gd_project(&[(
+        "player.gd",
+        "var health := 100\n\n\nfunc attack() -> void:\n\tpass\n",
+    )]);
+
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "completions",
+            "--file",
+            "player.gd",
+            "--line",
+            "5",
+            "--column",
+            "1",
+            "--limit",
+            "3",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp completions --limit");
+
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let arr = json.as_array().expect("completions should be an array");
+    assert_eq!(arr.len(), 3, "should cap at 3 results");
 }
 
 #[test]

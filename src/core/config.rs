@@ -71,6 +71,9 @@ pub struct LintConfig {
     /// Glob patterns for files to skip during linting.
     #[serde(default)]
     pub ignore_patterns: Vec<String>,
+    /// Per-path rule overrides.
+    #[serde(default)]
+    pub overrides: Vec<LintOverride>,
 }
 
 impl Default for LintConfig {
@@ -86,8 +89,20 @@ impl Default for LintConfig {
             max_public_methods: 20,
             rules: HashMap::new(),
             ignore_patterns: Vec::new(),
+            overrides: Vec::new(),
         }
     }
+}
+
+/// Per-path rule overrides in `[[lint.overrides]]`.
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+pub struct LintOverride {
+    /// Glob patterns matching file paths (same syntax as `ignore_patterns`).
+    #[serde(default)]
+    pub paths: Vec<String>,
+    /// Rules to exclude for files matching these paths.
+    #[serde(default)]
+    pub exclude_rules: Vec<String>,
 }
 
 /// Per-rule configuration in `[lint.rules.<name>]`.
@@ -189,6 +204,7 @@ fn warn_unknown_keys(raw: &toml::Value) {
         "max_public_methods",
         "rules",
         "ignore_patterns",
+        "overrides",
     ];
     let known_rule = &[
         "severity",
@@ -230,6 +246,19 @@ fn warn_unknown_keys(raw: &toml::Value) {
                     for key in rule_table.keys() {
                         if !known_rule.contains(&key.as_str()) {
                             warn_key(key, &format!("lint.rules.{rule_name}"));
+                        }
+                    }
+                }
+            }
+        }
+        // Validate [[lint.overrides]] entries
+        let known_override = &["paths", "exclude_rules"];
+        if let Some(toml::Value::Array(overrides)) = lint.get("overrides") {
+            for (i, entry) in overrides.iter().enumerate() {
+                if let Some(table) = entry.as_table() {
+                    for key in table.keys() {
+                        if !known_override.contains(&key.as_str()) {
+                            warn_key(key, &format!("lint.overrides[{i}]"));
                         }
                     }
                 }
@@ -345,6 +374,14 @@ mod tests {
             disabled_rules = ["unused-variable"]
             max_function_length = 80
             ignore_patterns = ["addons/**"]
+
+            [[lint.overrides]]
+            paths = ["**/test/**", "**/tests/**"]
+            exclude_rules = ["private-method-access", "unreachable-code"]
+
+            [[lint.overrides]]
+            paths = ["addons/**"]
+            exclude_rules = ["naming-convention"]
 
             [lint.rules.naming-convention]
             severity = "error"

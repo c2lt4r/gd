@@ -28,10 +28,25 @@ pub fn lint_source(source: &str, uri: &Url) -> Vec<Diagnostic> {
         }
     }
 
-    // Run all lint rules
+    // Run all lint rules, respecting [[lint.overrides]]
     let rules = crate::lint::rules::all_rules(&config.lint.disabled_rules, &config.lint.rules);
+    let file_path = uri.to_file_path().ok();
+    let override_base = file_path
+        .as_deref()
+        .and_then(crate::core::config::find_project_root)
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
     let mut diags = Vec::new();
     for rule in &rules {
+        if let Some(ref fp) = file_path
+            && crate::lint::is_rule_excluded_by_override(
+                fp,
+                &override_base,
+                rule.name(),
+                &config.lint.overrides,
+            )
+        {
+            continue;
+        }
         diags.extend(rule.check(&tree, source, &config.lint));
     }
 
