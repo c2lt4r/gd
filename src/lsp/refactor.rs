@@ -1918,7 +1918,14 @@ pub fn inline_method_by_name(
 
     // Find all call sites of this function in the file
     let mut call_sites: Vec<(usize, usize)> = Vec::new();
-    collect_calls_to(root, name, &source, func_def_start, func_def_end, &mut call_sites);
+    collect_calls_to(
+        root,
+        name,
+        &source,
+        func_def_start,
+        func_def_end,
+        &mut call_sites,
+    );
 
     if call_sites.is_empty() {
         return Err(miette::miette!(
@@ -1981,8 +1988,8 @@ pub fn inline_method_by_name(
     // Check if function was deleted (either by inline_method for single callsite,
     // or by our explicit deletion above for --all)
     let function_deleted = if !dry_run && inlined_count > 0 {
-        let current_source = std::fs::read_to_string(file)
-            .map_err(|e| miette::miette!("cannot read file: {e}"))?;
+        let current_source =
+            std::fs::read_to_string(file).map_err(|e| miette::miette!("cannot read file: {e}"))?;
         let current_tree = crate::core::parser::parse(&current_source)?;
         let current_root = current_tree.root_node();
         find_declaration_by_name(current_root, &current_source, name).is_none()
@@ -2349,7 +2356,9 @@ pub fn change_signature(
             existing_params[i].name = new_name.to_string();
             rename_map.insert(old_name.to_string(), new_name.to_string());
         } else {
-            return Err(miette::miette!("parameter '{old_name}' not found for rename"));
+            return Err(miette::miette!(
+                "parameter '{old_name}' not found for rename"
+            ));
         }
     }
 
@@ -4087,10 +4096,7 @@ mod tests {
         .unwrap();
         assert!(result.applied);
         assert_eq!(result.call_sites_inlined, 2);
-        assert!(
-            result.function_deleted,
-            "all=true should delete function"
-        );
+        assert!(result.function_deleted, "all=true should delete function");
         let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
         assert!(
             !content.contains("func helper()"),

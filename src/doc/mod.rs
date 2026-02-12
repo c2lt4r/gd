@@ -460,10 +460,7 @@ pub fn run_doc_check(paths: &[String]) -> Result<()> {
         Ok(())
     } else {
         for (file, method) in &undocumented {
-            println!(
-                "{} {file}: {method}() missing doc comment",
-                "✗".red()
-            );
+            println!("{} {file}: {method}() missing doc comment", "✗".red());
         }
         println!(
             "\n{}/{} public methods documented",

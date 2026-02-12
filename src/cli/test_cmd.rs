@@ -218,7 +218,10 @@ pub fn exec(args: TestArgs) -> Result<()> {
         "json" => true,
         _ => {
             // Exit code 2 for infrastructure errors
-            eprintln!("Error: invalid format '{}' (expected 'human' or 'json')", args.format);
+            eprintln!(
+                "Error: invalid format '{}' (expected 'human' or 'json')",
+                args.format
+            );
             std::process::exit(2);
         }
     };
@@ -329,14 +332,20 @@ pub fn exec(args: TestArgs) -> Result<()> {
 
     let (mode, result) = if has_gut {
         hprintln!(json_mode, "{} Running tests with GUT", "▶".green());
-        ("gut", run_gut_tests(&godot, &project, &args, &test_files, json_mode))
+        (
+            "gut",
+            run_gut_tests(&godot, &project, &args, &test_files, json_mode),
+        )
     } else {
         hprintln!(
             json_mode,
             "{} Running tests with Godot (no GUT addon)",
             "▶".green()
         );
-        ("script", run_script_tests(&godot, &project, &args, &test_files, json_mode))
+        (
+            "script",
+            run_script_tests(&godot, &project, &args, &test_files, json_mode),
+        )
     };
 
     let elapsed = start.elapsed();
@@ -709,11 +718,7 @@ fn run_script_tests(
                 let test_duration_ms = test_start.elapsed().as_millis() as u64;
 
                 if !json_mode && !args.quiet {
-                    println!(
-                        "{} {rel} (timed out after {}s)",
-                        "✗".red(),
-                        args.timeout
-                    );
+                    println!("{} {rel} (timed out after {}s)", "✗".red(), args.timeout);
                 }
 
                 results.push(TestResult {
@@ -762,10 +767,7 @@ fn run_script_tests(
                         // Show parsed error locations inline
                         for err in &errors {
                             if let Some(line_num) = err.line {
-                                println!(
-                                    "  {}:{line_num} {}",
-                                    err.file, err.message
-                                );
+                                println!("  {}:{line_num} {}", err.file, err.message);
                             } else if !err.file.is_empty() {
                                 println!("  {} {}", err.file, err.message);
                             } else {
@@ -1033,13 +1035,13 @@ Passing Tests         10
 
     #[test]
     fn test_is_engine_noise() {
-        assert!(is_engine_noise("WARNING: ObjectDB instances leaked at exit"));
+        assert!(is_engine_noise(
+            "WARNING: ObjectDB instances leaked at exit"
+        ));
         assert!(is_engine_noise("  Orphan StringName: @icon"));
         assert!(is_engine_noise("Vulkan: vkCreateInstance failed"));
         assert!(is_engine_noise("GLES3: shader compilation error"));
-        assert!(is_engine_noise(
-            "SCRIPT ERROR: gut_loader.gd:35 something"
-        ));
+        assert!(is_engine_noise("SCRIPT ERROR: gut_loader.gd:35 something"));
         assert!(!is_engine_noise("SCRIPT ERROR: Assertion failed."));
         assert!(!is_engine_noise("my normal output line"));
     }

@@ -26,6 +26,9 @@ pub fn exec(args: DocArgs) -> Result<()> {
     match args.format.as_str() {
         "human" => crate::doc::run_doc(&args.paths, &args.output_dir, args.stdout),
         "json" => crate::doc::run_doc_json(&args.paths),
-        _ => Err(miette::miette!("invalid format '{}' (expected 'human' or 'json')", args.format)),
+        _ => Err(miette::miette!(
+            "invalid format '{}' (expected 'human' or 'json')",
+            args.format
+        )),
     }
 }

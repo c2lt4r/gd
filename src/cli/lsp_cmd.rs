@@ -373,18 +373,16 @@ pub fn exec(args: LspArgs) -> Result<()> {
             dry_run,
         } => {
             if let Some(ref func_name) = name {
-                let result = crate::lsp::query::query_inline_method_by_name(
-                    &file, func_name, all, dry_run,
-                )?;
+                let result =
+                    crate::lsp::query::query_inline_method_by_name(&file, func_name, all, dry_run)?;
                 let json =
                     serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
                 println!("{json}");
             } else {
                 let line = line
                     .ok_or_else(|| miette::miette!("--line is required when not using --name"))?;
-                let column = column.ok_or_else(|| {
-                    miette::miette!("--column is required when not using --name")
-                })?;
+                let column = column
+                    .ok_or_else(|| miette::miette!("--column is required when not using --name"))?;
                 let result = crate::lsp::query::query_inline_method(&file, line, column, dry_run)?;
                 let json =
                     serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
