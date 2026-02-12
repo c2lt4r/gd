@@ -218,7 +218,7 @@ pub fn find_references_cross_file(
 const FUNCTION_KINDS: &[&str] = &["function_definition", "constructor_definition"];
 
 /// Find the enclosing function_definition or constructor_definition for a position.
-fn enclosing_function(
+pub(super) fn enclosing_function(
     root: tree_sitter::Node,
     point: tree_sitter::Point,
 ) -> Option<tree_sitter::Node> {
@@ -543,6 +543,94 @@ fn collect_scoped_refs_in_node(
             locations,
         );
     }
+}
+
+// ── Name-based reference search ──────────────────────────────────────────
+
+/// Find all references to a symbol by name across workspace files.
+/// If `file_filter` is Some, only search that file.
+/// If `class_filter` is Some, only search files whose `class_name` or inner class matches.
+pub fn find_references_by_name(
+    name: &str,
+    workspace: &super::workspace::WorkspaceIndex,
+    file_filter: Option<&std::path::Path>,
+    class_filter: Option<&str>,
+) -> Vec<Location> {
+    let mut locations = Vec::new();
+
+    for (path, content) in workspace.all_files() {
+        if let Some(filter_path) = file_filter
+            && path != filter_path
+        {
+            continue;
+        }
+
+        if let Ok(tree) = crate::core::parser::parse(&content) {
+            let root = tree.root_node();
+            let uri = match Url::from_file_path(&path) {
+                Ok(u) => u,
+                Err(_) => continue,
+            };
+
+            if let Some(class_name) = class_filter {
+                if has_class_name_statement(root, &content, class_name) {
+                    // Whole file is this class — search everything
+                    collect_references(root, &content, name, &uri, true, &mut locations);
+                } else if let Some(class_node) = find_inner_class(root, &content, class_name) {
+                    // Inner class — only search inside it
+                    collect_references(class_node, &content, name, &uri, true, &mut locations);
+                }
+                // No match — skip file
+            } else {
+                collect_references(root, &content, name, &uri, true, &mut locations);
+            }
+        }
+    }
+
+    // Sort for deterministic output (DashMap iteration order is non-deterministic)
+    locations.sort_by(|a, b| {
+        a.uri
+            .as_str()
+            .cmp(b.uri.as_str())
+            .then(a.range.start.line.cmp(&b.range.start.line))
+            .then(a.range.start.character.cmp(&b.range.start.character))
+    });
+
+    locations
+}
+
+/// Check if a file has a top-level `class_name` statement matching `target`.
+fn has_class_name_statement(root: tree_sitter::Node, source: &str, target: &str) -> bool {
+    let mut cursor = root.walk();
+    for child in root.children(&mut cursor) {
+        if child.kind() == "class_name_statement" {
+            let name = child.child_by_field_name("name").or_else(|| child.child(1));
+            if let Some(n) = name
+                && n.utf8_text(source.as_bytes()).unwrap_or("") == target
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Find a top-level inner `class_definition` matching `target`.
+fn find_inner_class<'a>(
+    root: tree_sitter::Node<'a>,
+    source: &str,
+    target: &str,
+) -> Option<tree_sitter::Node<'a>> {
+    let mut cursor = root.walk();
+    for child in root.children(&mut cursor) {
+        if child.kind() == "class_definition"
+            && let Some(name_node) = child.child_by_field_name("name")
+            && name_node.utf8_text(source.as_bytes()).unwrap_or("") == target
+        {
+            return Some(child);
+        }
+    }
+    None
 }
 
 fn is_scope_node(kind: &str) -> bool {

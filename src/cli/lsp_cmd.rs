@@ -22,8 +22,21 @@ pub enum LspCommand {
     },
     /// Find all references to a symbol
     References {
-        #[command(flatten)]
-        pos: QueryPositionArgs,
+        /// Search by symbol name across the project (alternative to --file/--line/--column)
+        #[arg(long)]
+        name: Option<String>,
+        /// Path to the GDScript file
+        #[arg(long)]
+        file: Option<String>,
+        /// Line number (1-based)
+        #[arg(long)]
+        line: Option<usize>,
+        /// Column number (1-based)
+        #[arg(long)]
+        column: Option<usize>,
+        /// Filter results to a specific class (requires --name)
+        #[arg(long, requires = "name")]
+        class: Option<String>,
     },
     /// Go to the definition of a symbol
     Definition {
@@ -61,6 +74,98 @@ pub enum LspCommand {
         /// Filter by symbol kind (repeatable, comma-separated: function, method, variable, field, class, constant, enum, event)
         #[arg(long)]
         kind: Vec<String>,
+    },
+    /// Delete a symbol from a file (top-level or within an inner class)
+    DeleteSymbol {
+        /// Path to the GDScript file
+        #[arg(long)]
+        file: String,
+        /// Symbol name to delete (alternative to --line)
+        #[arg(long)]
+        name: Option<String>,
+        /// Line number of declaration to delete (1-based; alternative to --name)
+        #[arg(long)]
+        line: Option<usize>,
+        /// Inner class to operate within
+        #[arg(long)]
+        class: Option<String>,
+        /// Delete even if references exist elsewhere
+        #[arg(long)]
+        force: bool,
+        /// Preview without writing changes
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Move a symbol from one file to another (top-level or between classes)
+    MoveSymbol {
+        /// Symbol name to move
+        #[arg(long)]
+        name: String,
+        /// Source file
+        #[arg(long)]
+        from: String,
+        /// Destination file (created if doesn't exist)
+        #[arg(long)]
+        to: String,
+        /// Source inner class
+        #[arg(long)]
+        class: Option<String>,
+        /// Target inner class (defaults to top-level)
+        #[arg(long)]
+        target_class: Option<String>,
+        /// Preview without writing changes
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Extract a range of lines into a new function
+    ExtractMethod {
+        /// Path to the GDScript file
+        #[arg(long)]
+        file: String,
+        /// First line to extract (1-based, inclusive)
+        #[arg(long)]
+        start_line: usize,
+        /// Last line to extract (1-based, inclusive)
+        #[arg(long)]
+        end_line: usize,
+        /// Name for the extracted function
+        #[arg(long)]
+        name: String,
+        /// Preview without writing changes
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Inline a function call, replacing it with the function body
+    InlineMethod {
+        #[command(flatten)]
+        pos: QueryPositionArgs,
+        /// Preview without writing changes
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Change a function's signature and update all call sites
+    ChangeSignature {
+        /// Path to the GDScript file
+        #[arg(long)]
+        file: String,
+        /// Function name
+        #[arg(long)]
+        name: String,
+        /// Add parameter (format: "name: Type = default" or just "name"; repeatable)
+        #[arg(long)]
+        add_param: Vec<String>,
+        /// Remove parameter by name (repeatable)
+        #[arg(long)]
+        remove_param: Vec<String>,
+        /// Reorder parameters (comma-separated names in new order)
+        #[arg(long)]
+        reorder: Option<String>,
+        /// Inner class containing the function
+        #[arg(long)]
+        class: Option<String>,
+        /// Preview without writing changes
+        #[arg(long)]
+        dry_run: bool,
     },
 }
 
@@ -113,8 +218,28 @@ pub fn exec(args: LspArgs) -> Result<()> {
             println!("{json}");
             Ok(())
         }
-        LspCommand::References { pos } => {
-            let result = crate::lsp::query::query_references(&pos.file, pos.line, pos.column)?;
+        LspCommand::References {
+            name,
+            file,
+            line,
+            column,
+            class,
+        } => {
+            let result = if let Some(ref name) = name {
+                crate::lsp::query::query_references_by_name(
+                    name,
+                    file.as_deref(),
+                    class.as_deref(),
+                )?
+            } else {
+                let file = file
+                    .ok_or_else(|| miette::miette!("--file is required when not using --name"))?;
+                let line = line
+                    .ok_or_else(|| miette::miette!("--line is required when not using --name"))?;
+                let column = column
+                    .ok_or_else(|| miette::miette!("--column is required when not using --name"))?;
+                crate::lsp::query::query_references(&file, line, column)?
+            };
             let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
             println!("{json}");
             Ok(())
@@ -156,6 +281,98 @@ pub fn exec(args: LspArgs) -> Result<()> {
             if !kind_filter.is_empty() {
                 result.retain(|s| kind_filter.iter().any(|k| k == &s.kind));
             }
+            let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+            println!("{json}");
+            Ok(())
+        }
+        LspCommand::DeleteSymbol {
+            file,
+            name,
+            line,
+            class,
+            force,
+            dry_run,
+        } => {
+            if name.is_none() && line.is_none() {
+                return Err(miette::miette!("either --name or --line is required"));
+            }
+            if name.is_some() && line.is_some() {
+                return Err(miette::miette!("--name and --line are mutually exclusive"));
+            }
+            let result = crate::lsp::query::query_delete_symbol(
+                &file,
+                name.as_deref(),
+                line,
+                force,
+                dry_run,
+                class.as_deref(),
+            )?;
+            let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+            println!("{json}");
+            if !force && !result.references.is_empty() {
+                std::process::exit(1);
+            }
+            Ok(())
+        }
+        LspCommand::MoveSymbol {
+            name,
+            from,
+            to,
+            class,
+            target_class,
+            dry_run,
+        } => {
+            let result = crate::lsp::query::query_move_symbol(
+                &name,
+                &from,
+                &to,
+                dry_run,
+                class.as_deref(),
+                target_class.as_deref(),
+            )?;
+            let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+            println!("{json}");
+            Ok(())
+        }
+        LspCommand::ExtractMethod {
+            file,
+            start_line,
+            end_line,
+            name,
+            dry_run,
+        } => {
+            let result = crate::lsp::query::query_extract_method(
+                &file, start_line, end_line, &name, dry_run,
+            )?;
+            let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+            println!("{json}");
+            Ok(())
+        }
+        LspCommand::InlineMethod { pos, dry_run } => {
+            let result =
+                crate::lsp::query::query_inline_method(&pos.file, pos.line, pos.column, dry_run)?;
+            let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+            println!("{json}");
+            Ok(())
+        }
+        LspCommand::ChangeSignature {
+            file,
+            name,
+            add_param,
+            remove_param,
+            reorder,
+            class,
+            dry_run,
+        } => {
+            let result = crate::lsp::query::query_change_signature(
+                &file,
+                &name,
+                &add_param,
+                &remove_param,
+                reorder.as_deref(),
+                class.as_deref(),
+                dry_run,
+            )?;
             let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
             println!("{json}");
             Ok(())

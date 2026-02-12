@@ -6,6 +6,7 @@ mod diagnostics;
 mod formatting;
 mod hover;
 pub mod query;
+pub mod refactor;
 mod references;
 mod rename;
 mod symbols;

@@ -2167,6 +2167,180 @@ fn test_lsp_definition_local_variable() {
     assert_eq!(json["line"], 5, "should jump to local var, not global");
 }
 
+// ─── Name-based references tests ─────────────────────────────────────────
+
+#[test]
+fn test_lsp_references_by_name() {
+    let temp = setup_gd_project(&[
+        (
+            "player.gd",
+            "var speed = 10\n\n\nfunc run() -> void:\n\tprint(speed)\n\tspeed = 20\n",
+        ),
+        (
+            "enemy.gd",
+            "var speed = 5\n\n\nfunc chase() -> void:\n\tspeed = 30\n",
+        ),
+    ]);
+
+    let output = gd_bin()
+        .args(["lsp", "references", "--name", "speed"])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp references --name");
+
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["symbol"], "speed");
+    let refs = json["references"].as_array().unwrap();
+    // player.gd: var speed + print(speed) + speed = 20 = 3
+    // enemy.gd: var speed + speed = 30 = 2
+    assert_eq!(refs.len(), 5, "should find 5 total refs across both files");
+}
+
+#[test]
+fn test_lsp_references_by_name_with_file_filter() {
+    let temp = setup_gd_project(&[
+        (
+            "player.gd",
+            "var speed = 10\n\n\nfunc run() -> void:\n\tspeed = 20\n",
+        ),
+        (
+            "enemy.gd",
+            "var speed = 5\n\n\nfunc chase() -> void:\n\tspeed = 30\n",
+        ),
+    ]);
+
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "references",
+            "--name",
+            "speed",
+            "--file",
+            "player.gd",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp references --name --file");
+
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let refs = json["references"].as_array().unwrap();
+    // Only player.gd: var speed + speed = 20 = 2
+    assert_eq!(refs.len(), 2, "should only find refs in player.gd");
+    for r in refs {
+        assert_eq!(r["file"], "player.gd");
+    }
+}
+
+#[test]
+fn test_lsp_references_by_name_with_class_filter() {
+    let temp = setup_gd_project(&[
+        (
+            "player.gd",
+            "class_name Player\n\nvar speed = 10\n\n\nfunc run() -> void:\n\tspeed = 20\n",
+        ),
+        (
+            "enemy.gd",
+            "class_name Enemy\n\nvar speed = 5\n\n\nfunc chase() -> void:\n\tspeed = 30\n",
+        ),
+    ]);
+
+    let output = gd_bin()
+        .args(["lsp", "references", "--name", "speed", "--class", "Player"])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp references --name --class");
+
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let refs = json["references"].as_array().unwrap();
+    // Only Player class (player.gd): var speed + speed = 20 = 2
+    assert_eq!(
+        refs.len(),
+        2,
+        "should only find refs in Player class, got {:?}",
+        refs
+    );
+    for r in refs {
+        assert_eq!(r["file"], "player.gd");
+    }
+}
+
+#[test]
+fn test_lsp_references_by_name_inner_class() {
+    let temp = setup_gd_project(&[(
+        "player.gd",
+        "var speed = 10\n\n\nclass Stats:\n\tvar speed = 5\n\n\tfunc get_speed() -> int:\n\t\treturn speed\n",
+    )]);
+
+    let output = gd_bin()
+        .args(["lsp", "references", "--name", "speed", "--class", "Stats"])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp references --name --class inner");
+
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let refs = json["references"].as_array().unwrap();
+    // Only inside class Stats: var speed + return speed = 2
+    assert_eq!(
+        refs.len(),
+        2,
+        "should only find refs inside inner class Stats, got {:?}",
+        refs
+    );
+}
+
+#[test]
+fn test_lsp_references_by_name_no_match() {
+    let temp = setup_gd_project(&[(
+        "player.gd",
+        "var health = 100\n\n\nfunc hit() -> void:\n\thealth -= 10\n",
+    )]);
+
+    let output = gd_bin()
+        .args(["lsp", "references", "--name", "nonexistent_symbol"])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp references --name nonexistent");
+
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let refs = json["references"].as_array().unwrap();
+    assert_eq!(refs.len(), 0, "should find 0 refs for nonexistent symbol");
+}
+
+#[test]
+fn test_lsp_references_position_mode_still_works() {
+    // Existing position-based mode should still work
+    let temp = setup_gd_project(&[(
+        "player.gd",
+        "var speed = 10\n\n\nfunc run() -> void:\n\tprint(speed)\n",
+    )]);
+
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "references",
+            "--file",
+            "player.gd",
+            "--line",
+            "1",
+            "--column",
+            "5",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp references positional");
+
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["symbol"], "speed");
+    let refs = json["references"].as_array().unwrap();
+    assert!(refs.len() >= 2, "position-based mode should still work");
+}
+
 #[test]
 fn test_lsp_symbols_kind_filter() {
     let temp = setup_gd_project(&[(
@@ -2256,4 +2430,998 @@ fn test_lsp_symbols_kind_filter_repeatable() {
     let names: Vec<&str> = arr.iter().map(|s| s["name"].as_str().unwrap()).collect();
     assert!(names.contains(&"attack"));
     assert!(names.contains(&"health"));
+}
+
+// ─── Refactoring command tests ──────────────────────────────────────────────
+
+#[test]
+fn test_lsp_delete_symbol_function() {
+    let temp = setup_gd_project(&[(
+        "player.gd",
+        "var health = 100\n\n\nfunc unused():\n\tpass\n\n\nfunc _ready():\n\tpass\n",
+    )]);
+
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "delete-symbol",
+            "--file",
+            "player.gd",
+            "--name",
+            "unused",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp delete-symbol");
+
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["symbol"], "unused");
+    assert_eq!(json["kind"], "function");
+    assert_eq!(json["applied"], true);
+
+    let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+    assert!(!content.contains("unused"), "function should be removed");
+    assert!(content.contains("health"), "other symbols should remain");
+    assert!(content.contains("_ready"), "other functions should remain");
+}
+
+#[test]
+fn test_lsp_delete_symbol_dry_run() {
+    let temp = setup_gd_project(&[(
+        "player.gd",
+        "func unused():\n\tpass\n\n\nfunc keep():\n\tpass\n",
+    )]);
+
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "delete-symbol",
+            "--file",
+            "player.gd",
+            "--name",
+            "unused",
+            "--dry-run",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp delete-symbol --dry-run");
+
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["applied"], false);
+
+    let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+    assert!(content.contains("unused"), "dry-run should not modify file");
+}
+
+#[test]
+fn test_lsp_delete_symbol_with_references() {
+    let temp = setup_gd_project(&[(
+        "player.gd",
+        "var speed = 10\n\n\nfunc run():\n\tprint(speed)\n",
+    )]);
+
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "delete-symbol",
+            "--file",
+            "player.gd",
+            "--name",
+            "speed",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp delete-symbol");
+
+    // Should exit non-zero when references exist
+    assert!(
+        !output.status.success(),
+        "should fail when references exist"
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["applied"], false);
+    assert!(
+        !json["references"].as_array().unwrap().is_empty(),
+        "should list references"
+    );
+}
+
+#[test]
+fn test_lsp_delete_symbol_force() {
+    let temp = setup_gd_project(&[(
+        "player.gd",
+        "var speed = 10\n\n\nfunc run():\n\tprint(speed)\n",
+    )]);
+
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "delete-symbol",
+            "--file",
+            "player.gd",
+            "--name",
+            "speed",
+            "--force",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp delete-symbol --force");
+
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["applied"], true);
+
+    let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+    assert!(!content.contains("var speed"), "should be deleted");
+}
+
+#[test]
+fn test_lsp_delete_symbol_by_line() {
+    let temp = setup_gd_project(&[(
+        "player.gd",
+        "var a = 1\n\n\nfunc target():\n\tpass\n\n\nfunc keep():\n\tpass\n",
+    )]);
+
+    let output = gd_bin()
+        .args(["lsp", "delete-symbol", "--file", "player.gd", "--line", "4"])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp delete-symbol --line");
+
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["symbol"], "target");
+    assert_eq!(json["applied"], true);
+}
+
+#[test]
+fn test_lsp_move_symbol_to_new_file() {
+    let temp = setup_gd_project(&[("source.gd", "var keep = 1\n\n\nfunc helper():\n\tpass\n")]);
+
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "move-symbol",
+            "--name",
+            "helper",
+            "--from",
+            "source.gd",
+            "--to",
+            "helpers.gd",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp move-symbol");
+
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["symbol"], "helper");
+    assert_eq!(json["applied"], true);
+
+    assert!(
+        temp.path().join("helpers.gd").exists(),
+        "target file should be created"
+    );
+    let target = fs::read_to_string(temp.path().join("helpers.gd")).unwrap();
+    assert!(target.contains("func helper()"));
+    let source = fs::read_to_string(temp.path().join("source.gd")).unwrap();
+    assert!(!source.contains("helper"));
+    assert!(source.contains("keep"));
+}
+
+#[test]
+fn test_lsp_move_symbol_to_existing_file() {
+    let temp = setup_gd_project(&[
+        (
+            "source.gd",
+            "func to_move():\n\tpass\n\n\nfunc stay():\n\tpass\n",
+        ),
+        ("target.gd", "func existing():\n\tpass\n"),
+    ]);
+
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "move-symbol",
+            "--name",
+            "to_move",
+            "--from",
+            "source.gd",
+            "--to",
+            "target.gd",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp move-symbol to existing");
+
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["applied"], true);
+
+    let target = fs::read_to_string(temp.path().join("target.gd")).unwrap();
+    assert!(target.contains("func existing()"));
+    assert!(target.contains("func to_move()"));
+}
+
+#[test]
+fn test_lsp_move_symbol_dry_run() {
+    let temp = setup_gd_project(&[(
+        "source.gd",
+        "func helper():\n\tpass\n\n\nfunc keep():\n\tpass\n",
+    )]);
+
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "move-symbol",
+            "--name",
+            "helper",
+            "--from",
+            "source.gd",
+            "--to",
+            "target.gd",
+            "--dry-run",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp move-symbol --dry-run");
+
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["applied"], false);
+
+    assert!(
+        !temp.path().join("target.gd").exists(),
+        "dry-run should not create file"
+    );
+    let source = fs::read_to_string(temp.path().join("source.gd")).unwrap();
+    assert!(
+        source.contains("helper"),
+        "dry-run should not modify source"
+    );
+}
+
+#[test]
+fn test_lsp_extract_method_simple() {
+    let temp = setup_gd_project(&[(
+        "player.gd",
+        "func _ready():\n\tvar x = 1\n\tprint(x)\n\tprint(\"done\")\n",
+    )]);
+
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "extract-method",
+            "--file",
+            "player.gd",
+            "--start-line",
+            "4",
+            "--end-line",
+            "4",
+            "--name",
+            "do_print",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp extract-method");
+
+    assert!(
+        output.status.success(),
+        "extract-method should succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["applied"], true);
+    assert!(json["function"].as_str().unwrap().contains("func do_print"));
+
+    let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+    assert!(
+        content.contains("func do_print():"),
+        "new function should be created, got: {content}"
+    );
+    assert!(
+        content.contains("do_print()"),
+        "call site should exist, got: {content}"
+    );
+}
+
+#[test]
+fn test_lsp_extract_method_with_params() {
+    let temp = setup_gd_project(&[(
+        "player.gd",
+        "func process():\n\tvar health = 100\n\tvar armor = 50\n\tprint(health)\n\tprint(armor)\n\tprint(\"end\")\n",
+    )]);
+
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "extract-method",
+            "--file",
+            "player.gd",
+            "--start-line",
+            "4",
+            "--end-line",
+            "5",
+            "--name",
+            "show_stats",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp extract-method with params");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["applied"], true);
+    let params = json["parameters"].as_array().unwrap();
+    assert_eq!(params.len(), 2, "should capture 2 parameters");
+}
+
+#[test]
+fn test_lsp_extract_method_with_return() {
+    let temp = setup_gd_project(&[(
+        "player.gd",
+        "func process():\n\tvar health = 100\n\thealth -= 10\n\tprint(health)\n",
+    )]);
+
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "extract-method",
+            "--file",
+            "player.gd",
+            "--start-line",
+            "3",
+            "--end-line",
+            "3",
+            "--name",
+            "take_damage",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp extract-method with return");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["applied"], true);
+    assert_eq!(json["returns"], "health");
+
+    let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+    assert!(
+        content.contains("health = take_damage(health)"),
+        "call site should assign return, got: {content}"
+    );
+    assert!(
+        content.contains("return health"),
+        "function should return, got: {content}"
+    );
+}
+
+#[test]
+fn test_lsp_extract_method_dry_run() {
+    let temp = setup_gd_project(&[(
+        "player.gd",
+        "func _ready():\n\tprint(\"hello\")\n\tprint(\"world\")\n",
+    )]);
+
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "extract-method",
+            "--file",
+            "player.gd",
+            "--start-line",
+            "2",
+            "--end-line",
+            "2",
+            "--name",
+            "greet",
+            "--dry-run",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp extract-method --dry-run");
+
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["applied"], false);
+
+    let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+    assert!(
+        !content.contains("func greet"),
+        "dry-run should not modify file"
+    );
+}
+
+// ──────────────────────────────────────────────
+// Feature 5: Async extraction detection
+// ──────────────────────────────────────────────
+
+#[test]
+fn test_lsp_extract_method_async_warning() {
+    let temp = setup_gd_project(&[(
+        "player.gd",
+        "func process():\n\tawait get_tree().create_timer(1.0).timeout\n\tprint(\"done\")\n",
+    )]);
+
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "extract-method",
+            "--file",
+            "player.gd",
+            "--start-line",
+            "2",
+            "--end-line",
+            "2",
+            "--name",
+            "wait_a_bit",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp extract-method");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["applied"], true);
+    let warnings = json["warnings"].as_array().unwrap();
+    assert!(
+        !warnings.is_empty(),
+        "should warn about await in extracted code"
+    );
+    assert!(warnings[0].as_str().unwrap().contains("await"));
+}
+
+#[test]
+fn test_lsp_extract_method_no_async_no_warning() {
+    let temp = setup_gd_project(&[(
+        "player.gd",
+        "func process():\n\tprint(\"hello\")\n\tprint(\"world\")\n",
+    )]);
+
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "extract-method",
+            "--file",
+            "player.gd",
+            "--start-line",
+            "2",
+            "--end-line",
+            "2",
+            "--name",
+            "greet",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp extract-method");
+
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    // warnings should be absent or empty
+    assert!(
+        json.get("warnings").is_none() || json["warnings"].as_array().unwrap().is_empty(),
+        "no async warnings expected"
+    );
+}
+
+// ──────────────────────────────────────────────
+// Feature 2: Multiple return values
+// ──────────────────────────────────────────────
+
+#[test]
+fn test_lsp_extract_method_multi_return() {
+    let temp = setup_gd_project(&[(
+        "player.gd",
+        "func process():\n\tvar x = 1\n\tvar y = 2\n\tx += 1\n\ty += 1\n\tprint(x)\n\tprint(y)\n",
+    )]);
+
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "extract-method",
+            "--file",
+            "player.gd",
+            "--start-line",
+            "4",
+            "--end-line",
+            "5",
+            "--name",
+            "increment",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp extract-method multi-return");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["applied"], true);
+    let return_vars = json["return_vars"].as_array().unwrap();
+    assert_eq!(return_vars.len(), 2, "should have 2 return vars");
+
+    let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+    assert!(
+        content.contains("Dictionary"),
+        "should use Dictionary return type, got: {content}"
+    );
+    assert!(
+        content.contains("_result"),
+        "should have _result variable, got: {content}"
+    );
+}
+
+// ──────────────────────────────────────────────
+// Feature 3: Inner class member operations
+// ──────────────────────────────────────────────
+
+#[test]
+fn test_lsp_delete_symbol_inner_class() {
+    let temp = setup_gd_project(&[(
+        "player.gd",
+        "class Inner:\n\tvar keep = 1\n\tfunc unused():\n\t\tpass\n\n\nfunc _ready():\n\tpass\n",
+    )]);
+
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "delete-symbol",
+            "--file",
+            "player.gd",
+            "--name",
+            "unused",
+            "--class",
+            "Inner",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp delete-symbol --class");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["symbol"], "unused");
+    assert_eq!(json["applied"], true);
+
+    let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+    assert!(
+        !content.contains("unused"),
+        "inner class function should be removed"
+    );
+    assert!(content.contains("keep"), "other members should remain");
+    assert!(content.contains("_ready"), "top-level should remain");
+}
+
+#[test]
+fn test_lsp_move_symbol_with_class() {
+    let temp = setup_gd_project(&[
+        (
+            "source.gd",
+            "class Src:\n\tvar keep = 1\n\tfunc helper():\n\t\tpass\n",
+        ),
+        ("target.gd", "func existing():\n\tpass\n"),
+    ]);
+
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "move-symbol",
+            "--name",
+            "helper",
+            "--from",
+            "source.gd",
+            "--to",
+            "target.gd",
+            "--class",
+            "Src",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp move-symbol --class");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["applied"], true);
+
+    let target = fs::read_to_string(temp.path().join("target.gd")).unwrap();
+    assert!(
+        target.contains("func helper()"),
+        "target should have the function, got: {target}"
+    );
+    let source = fs::read_to_string(temp.path().join("source.gd")).unwrap();
+    assert!(
+        !source.contains("helper"),
+        "source class should no longer have helper"
+    );
+    assert!(source.contains("keep"), "other members should remain");
+}
+
+// ──────────────────────────────────────────────
+// Feature 4: Enum member delete
+// ──────────────────────────────────────────────
+
+#[test]
+fn test_lsp_delete_enum_member() {
+    let temp = setup_gd_project(&[(
+        "state.gd",
+        "enum State { IDLE, RUNNING, JUMPING }\n\nfunc _ready():\n\tpass\n",
+    )]);
+
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "delete-symbol",
+            "--file",
+            "state.gd",
+            "--name",
+            "State.RUNNING",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp delete-symbol enum member");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["applied"], true);
+    assert_eq!(json["kind"], "enum_member");
+
+    let content = fs::read_to_string(temp.path().join("state.gd")).unwrap();
+    assert!(
+        !content.contains("RUNNING"),
+        "RUNNING should be removed, got: {content}"
+    );
+    assert!(content.contains("IDLE"), "IDLE should remain");
+    assert!(content.contains("JUMPING"), "JUMPING should remain");
+}
+
+#[test]
+fn test_lsp_delete_enum_member_dry_run() {
+    let temp = setup_gd_project(&[("state.gd", "enum State { IDLE, RUNNING }\n")]);
+
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "delete-symbol",
+            "--file",
+            "state.gd",
+            "--name",
+            "State.IDLE",
+            "--dry-run",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp delete-symbol enum member --dry-run");
+
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["applied"], false);
+
+    let content = fs::read_to_string(temp.path().join("state.gd")).unwrap();
+    assert!(content.contains("IDLE"), "dry-run should not modify file");
+}
+
+// ──────────────────────────────────────────────
+// Feature 1: Preload path detection on move
+// ──────────────────────────────────────────────
+
+#[test]
+fn test_lsp_move_symbol_reports_preloads() {
+    let temp = setup_gd_project(&[
+        ("source.gd", "var keep = 1\n\n\nfunc helper():\n\tpass\n"),
+        (
+            "user.gd",
+            "var s = preload(\"res://source.gd\")\n\nfunc _ready():\n\tpass\n",
+        ),
+    ]);
+
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "move-symbol",
+            "--name",
+            "helper",
+            "--from",
+            "source.gd",
+            "--to",
+            "target.gd",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp move-symbol");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["applied"], true);
+
+    // Should report preloads referencing the source file
+    let preloads = json["preloads"].as_array();
+    assert!(
+        preloads.is_some() && !preloads.unwrap().is_empty(),
+        "should report preload references to source file, got: {json}"
+    );
+}
+
+// ──────────────────────────────────────────────
+// Feature 8: Self-reference warnings on move
+// ──────────────────────────────────────────────
+
+#[test]
+fn test_lsp_move_symbol_self_ref_warning() {
+    let temp = setup_gd_project(&[
+        (
+            "source.gd",
+            "class Src:\n\tvar health = 100\n\tfunc take_damage():\n\t\tself.health -= 10\n",
+        ),
+        ("target.gd", "class Dst:\n\tvar armor = 50\n"),
+    ]);
+
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "move-symbol",
+            "--name",
+            "take_damage",
+            "--from",
+            "source.gd",
+            "--to",
+            "target.gd",
+            "--class",
+            "Src",
+            "--target-class",
+            "Dst",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp move-symbol with self-ref");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["applied"], true);
+
+    // Should warn about self.health not existing in Dst
+    let warnings = json["warnings"].as_array();
+    assert!(
+        warnings.is_some() && !warnings.unwrap().is_empty(),
+        "should warn about missing self.health in target class, got: {json}"
+    );
+    assert!(
+        warnings.unwrap()[0].as_str().unwrap().contains("health"),
+        "warning should mention 'health'"
+    );
+}
+
+// ──────────────────────────────────────────────
+// Feature 6: Inline method
+// ──────────────────────────────────────────────
+
+#[test]
+fn test_lsp_inline_method_simple() {
+    let temp = setup_gd_project(&[(
+        "player.gd",
+        "func greet():\n\tprint(\"hello\")\n\n\nfunc _ready():\n\tgreet()\n\tprint(\"done\")\n",
+    )]);
+
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "inline-method",
+            "--file",
+            "player.gd",
+            "--line",
+            "6",
+            "--column",
+            "2",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp inline-method");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["function"], "greet");
+    assert_eq!(json["applied"], true);
+
+    let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+    assert!(
+        content.contains("print(\"hello\")"),
+        "inlined body should be present, got: {content}"
+    );
+}
+
+#[test]
+fn test_lsp_inline_method_with_params() {
+    let temp = setup_gd_project(&[(
+        "player.gd",
+        "func double(x):\n\treturn x * 2\n\n\nfunc _ready():\n\tvar result = double(5)\n\tprint(result)\n",
+    )]);
+
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "inline-method",
+            "--file",
+            "player.gd",
+            "--line",
+            "6",
+            "--column",
+            "16",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp inline-method with params");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["function"], "double");
+    assert_eq!(json["applied"], true);
+
+    let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+    assert!(
+        content.contains("5 * 2"),
+        "should substitute params, got: {content}"
+    );
+}
+
+// ──────────────────────────────────────────────
+// Feature 7: Change function signature
+// ──────────────────────────────────────────────
+
+#[test]
+fn test_lsp_change_signature_add_param() {
+    let temp = setup_gd_project(&[
+        ("player.gd", "func attack(target):\n\tprint(target)\n"),
+        (
+            "main.gd",
+            "var p = preload(\"res://player.gd\")\n\nfunc _ready():\n\tp.attack(\"enemy\")\n",
+        ),
+    ]);
+
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "change-signature",
+            "--file",
+            "player.gd",
+            "--name",
+            "attack",
+            "--add-param",
+            "damage: int = 10",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp change-signature");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["function"], "attack");
+    assert_eq!(json["applied"], true);
+
+    let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+    assert!(
+        content.contains("damage"),
+        "new param should be in definition, got: {content}"
+    );
+    assert!(
+        content.contains("int"),
+        "type hint should be present, got: {content}"
+    );
+}
+
+#[test]
+fn test_lsp_change_signature_remove_param() {
+    let temp = setup_gd_project(&[(
+        "player.gd",
+        "func attack(target, damage):\n\tprint(target)\n\n\nfunc _ready():\n\tattack(\"enemy\", 10)\n",
+    )]);
+
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "change-signature",
+            "--file",
+            "player.gd",
+            "--name",
+            "attack",
+            "--remove-param",
+            "damage",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp change-signature remove");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["applied"], true);
+
+    let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+    assert!(
+        content.contains("func attack(target)"),
+        "damage param should be removed from definition, got: {content}"
+    );
+    assert!(
+        content.contains("attack(\"enemy\")"),
+        "damage arg should be removed from call site, got: {content}"
+    );
+}
+
+#[test]
+fn test_lsp_change_signature_dry_run() {
+    let temp = setup_gd_project(&[("player.gd", "func attack(target):\n\tprint(target)\n")]);
+
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "change-signature",
+            "--file",
+            "player.gd",
+            "--name",
+            "attack",
+            "--add-param",
+            "damage",
+            "--dry-run",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp change-signature --dry-run");
+
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["applied"], false);
+
+    let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+    assert!(
+        !content.contains("damage"),
+        "dry-run should not modify file"
+    );
 }

@@ -97,7 +97,7 @@ pub struct SymbolOutput {
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-fn resolve_file(file: &str) -> Result<PathBuf> {
+pub(super) fn resolve_file(file: &str) -> Result<PathBuf> {
     let cwd = std::env::current_dir()
         .map_err(|e| miette::miette!("cannot get current directory: {e}"))?;
     let path = cwd.join(file);
@@ -107,16 +107,16 @@ fn resolve_file(file: &str) -> Result<PathBuf> {
     Ok(path)
 }
 
-fn make_uri(path: &Path) -> Result<Url> {
+pub(super) fn make_uri(path: &Path) -> Result<Url> {
     Url::from_file_path(path).map_err(|_| miette::miette!("invalid path: {}", path.display()))
 }
 
-fn find_root(path: &Path) -> Result<PathBuf> {
+pub(super) fn find_root(path: &Path) -> Result<PathBuf> {
     crate::core::config::find_project_root(path)
         .ok_or_else(|| miette::miette!("no project.godot found above {}", path.display()))
 }
 
-fn url_to_relative(url: &Url, base: &Path) -> String {
+pub(super) fn url_to_relative(url: &Url, base: &Path) -> String {
     if let Ok(path) = url.to_file_path() {
         return crate::core::fs::relative_slash(&path, base);
     }
@@ -275,6 +275,38 @@ pub fn query_references(file: &str, line: usize, column: usize) -> Result<Refere
         .collect();
 
     Ok(ReferencesOutput { symbol, references })
+}
+
+pub fn query_references_by_name(
+    name: &str,
+    file: Option<&str>,
+    class: Option<&str>,
+) -> Result<ReferencesOutput> {
+    let (project_root, file_path) = if let Some(f) = file {
+        let path = resolve_file(f)?;
+        let root = find_root(&path)?;
+        (root, Some(path))
+    } else {
+        let cwd = std::env::current_dir()
+            .map_err(|e| miette::miette!("cannot get current directory: {e}"))?;
+        let root = find_root(&cwd)?;
+        (root, None)
+    };
+
+    let workspace = super::workspace::WorkspaceIndex::new(project_root.clone());
+
+    let locations =
+        super::references::find_references_by_name(name, &workspace, file_path.as_deref(), class);
+
+    let references = locations
+        .iter()
+        .map(|loc| range_to_location(&loc.range, &loc.uri, &project_root))
+        .collect();
+
+    Ok(ReferencesOutput {
+        symbol: name.to_string(),
+        references,
+    })
 }
 
 pub fn query_definition(file: &str, line: usize, column: usize) -> Result<DefinitionOutput> {
@@ -454,6 +486,89 @@ pub fn query_symbols(file: &str) -> Result<Vec<SymbolOutput>> {
             })
             .collect()),
     }
+}
+
+// ── Refactoring queries ──────────────────────────────────────────────────────
+
+pub fn query_delete_symbol(
+    file: &str,
+    name: Option<&str>,
+    line: Option<usize>,
+    force: bool,
+    dry_run: bool,
+    class: Option<&str>,
+) -> Result<super::refactor::DeleteSymbolOutput> {
+    let path = resolve_file(file)?;
+    let project_root = find_root(&path)?;
+    super::refactor::delete_symbol(&path, name, line, force, dry_run, &project_root, class)
+}
+
+pub fn query_move_symbol(
+    name: &str,
+    from: &str,
+    to: &str,
+    dry_run: bool,
+    class: Option<&str>,
+    target_class: Option<&str>,
+) -> Result<super::refactor::MoveSymbolOutput> {
+    let from_path = resolve_file(from)?;
+    let project_root = find_root(&from_path)?;
+    let to_path = project_root.join(to);
+    super::refactor::move_symbol(
+        name,
+        &from_path,
+        &to_path,
+        dry_run,
+        &project_root,
+        class,
+        target_class,
+    )
+}
+
+pub fn query_extract_method(
+    file: &str,
+    start_line: usize,
+    end_line: usize,
+    name: &str,
+    dry_run: bool,
+) -> Result<super::refactor::ExtractMethodOutput> {
+    let path = resolve_file(file)?;
+    let project_root = find_root(&path)?;
+    super::refactor::extract_method(&path, start_line, end_line, name, dry_run, &project_root)
+}
+
+pub fn query_inline_method(
+    file: &str,
+    line: usize,
+    column: usize,
+    dry_run: bool,
+) -> Result<super::refactor::InlineMethodOutput> {
+    let path = resolve_file(file)?;
+    let project_root = find_root(&path)?;
+    super::refactor::inline_method(&path, line, column, dry_run, &project_root)
+}
+
+pub fn query_change_signature(
+    file: &str,
+    name: &str,
+    add_params: &[String],
+    remove_params: &[String],
+    reorder: Option<&str>,
+    class: Option<&str>,
+    dry_run: bool,
+) -> Result<super::refactor::ChangeSignatureOutput> {
+    let path = resolve_file(file)?;
+    let project_root = find_root(&path)?;
+    super::refactor::change_signature(
+        &path,
+        name,
+        add_params,
+        remove_params,
+        reorder,
+        class,
+        dry_run,
+        &project_root,
+    )
 }
 
 // ── Apply rename ────────────────────────────────────────────────────────────
