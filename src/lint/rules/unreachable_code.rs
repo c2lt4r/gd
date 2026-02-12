@@ -131,6 +131,7 @@ fn check_body_for_unreachable(body: Node, source: &str, diags: &mut Vec<LintDiag
                 byte_end,
                 replacement: String::new(),
             }),
+            context_lines: None,
         });
     }
 }

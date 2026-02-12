@@ -83,6 +83,7 @@ fn check_param_name(name_node: Node, source: &str, diags: &mut Vec<LintDiagnosti
                 byte_end: name_node.end_byte(),
                 replacement: fixed,
             }),
+            context_lines: None,
         });
     }
 }

@@ -33,6 +33,7 @@ impl LintRule for MaxPublicMethods {
                 column: 0,
                 fix: None,
                 end_column: None,
+                context_lines: None,
             });
         }
 
@@ -93,6 +94,7 @@ fn check_classes(node: Node, source: &str, max_methods: usize, diags: &mut Vec<L
                             column: child.start_position().column,
                             fix: None,
                             end_column: None,
+                            context_lines: None,
                         });
                     }
                 }

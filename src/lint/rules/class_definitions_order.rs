@@ -116,6 +116,7 @@ fn check_member_order(parent: Node, source: &str, diags: &mut Vec<LintDiagnostic
                     column: child.start_position().column,
                     end_column: None,
                     fix: None,
+                    context_lines: None,
                 });
             } else if cat > highest_cat {
                 highest_cat = cat;

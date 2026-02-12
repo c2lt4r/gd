@@ -27,6 +27,7 @@ pub struct LintOptions {
     pub exclude_rules: Vec<String>,
     pub summary: bool,
     pub no_fail: bool,
+    pub context: Option<usize>,
 }
 
 impl Default for LintOptions {
@@ -41,6 +42,7 @@ impl Default for LintOptions {
             exclude_rules: Vec::new(),
             summary: false,
             no_fail: false,
+            context: None,
         }
     }
 }
@@ -147,20 +149,40 @@ pub fn run_lint(paths: &[String], opts: &LintOptions) -> Result<()> {
                 let json_results: Vec<FileLintResult> = filtered_results
                     .iter()
                     .filter(|(_, diags)| !diags.is_empty())
-                    .map(|(path, diags)| FileLintResult {
-                        file: path.display().to_string(),
-                        diagnostics: diags
-                            .iter()
-                            .map(|d| LintDiagnostic {
-                                rule: d.rule,
-                                message: d.message.clone(),
-                                severity: d.severity,
-                                line: d.line,
-                                column: d.column,
-                                end_column: d.end_column,
-                                fix: None,
-                            })
-                            .collect(),
+                    .map(|(path, diags)| {
+                        let source = opts
+                            .context
+                            .and_then(|_| std::fs::read_to_string(path).ok());
+                        let source_lines: Vec<&str> = source
+                            .as_deref()
+                            .map(|s| s.lines().collect())
+                            .unwrap_or_default();
+                        FileLintResult {
+                            file: path.display().to_string(),
+                            diagnostics: diags
+                                .iter()
+                                .map(|d| {
+                                    let context_lines = opts.context.map(|ctx| {
+                                        let start = d.line.saturating_sub(ctx);
+                                        let end = (d.line + ctx + 1).min(source_lines.len());
+                                        source_lines[start..end]
+                                            .iter()
+                                            .map(|s| s.to_string())
+                                            .collect::<Vec<_>>()
+                                    });
+                                    LintDiagnostic {
+                                        rule: d.rule,
+                                        message: d.message.clone(),
+                                        severity: d.severity,
+                                        line: d.line,
+                                        column: d.column,
+                                        end_column: d.end_column,
+                                        fix: None,
+                                        context_lines,
+                                    }
+                                })
+                                .collect(),
+                        }
                     })
                     .collect();
                 print_json(&json_results);
@@ -182,6 +204,7 @@ pub fn run_lint(paths: &[String], opts: &LintOptions) -> Result<()> {
                                 column: d.column,
                                 end_column: d.end_column,
                                 fix: None,
+                                context_lines: None,
                             })
                             .collect(),
                     })
@@ -193,7 +216,7 @@ pub fn run_lint(paths: &[String], opts: &LintOptions) -> Result<()> {
                 for (path, diags) in &filtered_results {
                     let source = std::fs::read_to_string(path).ok();
                     for diag in diags {
-                        print_diagnostic(path, diag, source.as_deref());
+                        print_diagnostic(path, diag, source.as_deref(), opts.context);
                     }
                 }
             }

@@ -7,7 +7,7 @@ Built with [tree-sitter](https://tree-sitter.github.io/) for accurate parsing an
 ## Features
 
 - **Format** GDScript files with an AST-based formatter aligned to the [GDScript style guide](https://docs.godotengine.org/en/stable/tutorials/scripting/gdscript/gdscript_styleguide.html)
-- **Lint** with 51 built-in rules (12 auto-fixable), SARIF output for CI
+- **Lint** with 52 built-in rules (12 auto-fixable), SARIF output for CI
 - **Run**, **build**, **test**, and **clean** your Godot project from the terminal
 - **Watch** for file changes and auto-lint/format on save
 - **Manage addons** from Git or the Godot Asset Library (with lockfile and update support)
@@ -110,6 +110,9 @@ gd lint --format sarif
 
 # Lint specific files
 gd lint scripts/player.gd
+
+# Show surrounding code context (like grep -C)
+gd lint --context 3
 ```
 
 ### Addons
@@ -224,7 +227,7 @@ The template system automatically finds `project.godot` within the repository to
 
 ## Lint Rules
 
-All 51 built-in rules (40 default-enabled, 11 opt-in):
+All 52 built-in rules (40 default-enabled, 12 opt-in):
 
 | Rule | Description | Severity | Fixable |
 |------|-------------|----------|---------|
@@ -273,6 +276,7 @@ All 51 built-in rules (40 default-enabled, 11 opt-in):
 
 | Rule | Description | Severity | Fixable |
 |------|-------------|----------|---------|
+| `breakpoint-statement` | Detect leftover `breakpoint` statements | info | |
 | `class-definitions-order` | Enforce canonical member ordering | warning | |
 | `duplicate-delegate` | Detect pure pass-through delegate functions | info | |
 | `god-object` | Warn on classes with too many functions/members/lines | warning | |

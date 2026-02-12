@@ -1,6 +1,7 @@
 //! Lint rules module - each rule analyzes the tree-sitter AST.
 
 pub mod await_in_ready;
+pub mod breakpoint_statement;
 pub mod comparison_with_boolean;
 pub mod comparison_with_itself;
 pub mod duplicate_function;
@@ -109,6 +110,9 @@ pub struct LintDiagnostic {
     /// If this diagnostic is auto-fixable, this holds the replacement.
     #[serde(skip)]
     pub fix: Option<Fix>,
+    /// Surrounding source lines (populated by `--context N`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_lines: Option<Vec<String>>,
 }
 
 /// An auto-fix: replace a byte range with new text.
@@ -194,6 +198,7 @@ pub fn all_rules(
         Box::new(duplicate_delegate::DuplicateDelegate),
         Box::new(signal_not_connected::SignalNotConnected),
         Box::new(callable_null_check::CallableNullCheck),
+        Box::new(breakpoint_statement::BreakpointStatement),
     ];
     all.into_iter()
         .filter(|r| {

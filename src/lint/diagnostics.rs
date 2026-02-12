@@ -5,7 +5,12 @@ use std::path::Path;
 use super::rules::{LintDiagnostic, Severity};
 
 /// Print a diagnostic in human-readable format with optional source spans.
-pub fn print_diagnostic(path: &Path, diag: &LintDiagnostic, source: Option<&str>) {
+pub fn print_diagnostic(
+    path: &Path,
+    diag: &LintDiagnostic,
+    source: Option<&str>,
+    context: Option<usize>,
+) {
     let severity_str = match diag.severity {
         Severity::Info => "info".cyan().bold().to_string(),
         Severity::Warning => "warning".yellow().bold().to_string(),
@@ -20,20 +25,58 @@ pub fn print_diagnostic(path: &Path, diag: &LintDiagnostic, source: Option<&str>
         diag.rule.dimmed(),
     );
 
-    // Show source span with underline if we have source and end_column
-    if let (Some(source), Some(end_col)) = (source, diag.end_column)
-        && let Some(line_text) = source.lines().nth(diag.line)
+    let Some(source) = source else { return };
+    let lines: Vec<&str> = source.lines().collect();
+
+    if let Some(ctx) = context {
+        // Context mode: show N lines before and after the diagnostic line
+        let start = diag.line.saturating_sub(ctx);
+        let end = (diag.line + ctx + 1).min(lines.len());
+        let max_line_num = end; // 1-indexed
+        let gutter_width = format!("{}", max_line_num).len();
+
+        eprintln!("{:>width$} {}", "", "|".cyan(), width = gutter_width);
+
+        for (i, line) in lines[start..end].iter().enumerate() {
+            let line_idx = start + i;
+            let num = format!("{}", line_idx + 1);
+            if line_idx == diag.line {
+                // Highlight the diagnostic line
+                eprintln!("{} {} {}", num.cyan().bold(), "|".cyan(), line,);
+                // Print underline if we have end_column
+                if let Some(end_col) = diag.end_column {
+                    let col = diag.column;
+                    let span_len = if end_col > col { end_col - col } else { 1 };
+                    let underline = "^".repeat(span_len);
+                    let colored_underline = match diag.severity {
+                        Severity::Info => underline.cyan().bold().to_string(),
+                        Severity::Warning => underline.yellow().bold().to_string(),
+                        Severity::Error => underline.red().bold().to_string(),
+                    };
+                    eprintln!(
+                        "{:>width$} {} {:>col$}{}",
+                        "",
+                        "|".cyan(),
+                        "",
+                        colored_underline,
+                        width = gutter_width,
+                        col = col,
+                    );
+                }
+            } else {
+                eprintln!("{} {} {}", num.dimmed(), "|".cyan(), line.dimmed(),);
+            }
+        }
+    } else if let Some(end_col) = diag.end_column
+        && let Some(line_text) = lines.get(diag.line)
     {
+        // Default: show just the diagnostic line with underline (existing behavior)
         let line_num = format!("{}", diag.line + 1);
         let gutter_width = line_num.len();
 
-        // Print gutter separator
         eprintln!("{:>width$} {}", "", "|".cyan(), width = gutter_width);
+        eprintln!("{} {} {}", line_num.cyan(), "|".cyan(), line_text);
 
-        // Print the source line with line number
-        eprintln!("{} {} {}", line_num.cyan(), "|".cyan(), line_text,);
-
-        // Print the underline
         let col = diag.column;
         let span_len = if end_col > col { end_col - col } else { 1 };
         let underline = "^".repeat(span_len);

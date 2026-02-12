@@ -35,6 +35,7 @@ impl LintRule for DuplicatedLoad {
                         column: col,
                         end_column: Some(end_col),
                         fix: None,
+                        context_lines: None,
                     });
                 }
             }

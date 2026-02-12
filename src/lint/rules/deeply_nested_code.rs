@@ -101,6 +101,7 @@ fn check_depth(
                     column: child.start_position().column,
                     fix: None,
                     end_column: None,
+                    context_lines: None,
                 });
                 return true;
             }

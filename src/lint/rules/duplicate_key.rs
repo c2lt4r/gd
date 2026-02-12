@@ -56,6 +56,7 @@ fn check_dict(dict_node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
                         column: key_node.start_position().column,
                         end_column: None,
                         fix: None,
+                        context_lines: None,
                     });
                 }
             }

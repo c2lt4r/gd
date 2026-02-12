@@ -73,6 +73,7 @@ fn check_if_statement(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>)
                 column: child.start_position().column,
                 end_column: None,
                 fix: generate_else_fix(&child, source),
+                context_lines: None,
             });
             return;
         }

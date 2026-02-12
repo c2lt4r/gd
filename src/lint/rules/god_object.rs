@@ -49,6 +49,7 @@ impl LintRule for GodObject {
                 column: 0,
                 end_column: None,
                 fix: None,
+                context_lines: None,
             });
         }
 
@@ -148,6 +149,7 @@ fn check_classes(
                             column: child.start_position().column,
                             end_column: None,
                             fix: None,
+                            context_lines: None,
                         });
                     }
 

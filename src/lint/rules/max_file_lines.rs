@@ -27,6 +27,7 @@ impl LintRule for MaxFileLines {
                 column: 0,
                 fix: None,
                 end_column: None,
+                context_lines: None,
             }]
         } else {
             Vec::new()

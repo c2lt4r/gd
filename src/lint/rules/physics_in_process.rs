@@ -125,6 +125,7 @@ fn make_diagnostic(method: &str, node: Node) -> LintDiagnostic {
         column: node.start_position().column,
         end_column: None,
         fix: None,
+        context_lines: None,
     }
 }
 

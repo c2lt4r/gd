@@ -1,10 +1,16 @@
 # Changelog
 
+## [0.1.10] - 2026-02-12
+
+### Added
+- `gd lint --context N` — show N surrounding lines per diagnostic (human + JSON output)
+
 ## [0.1.9] - 2026-02-12
 
 ### Added
-- 5 new lint rules: `parameter-shadows-field`, `god-object` (opt-in), `duplicate-delegate` (opt-in), `signal-not-connected` (opt-in), `callable-null-check`
+- 6 new lint rules: `parameter-shadows-field`, `god-object` (opt-in), `duplicate-delegate` (opt-in), `signal-not-connected` (opt-in), `callable-null-check`, `breakpoint-statement` (opt-in)
 - `redundant-else` lint rule is now auto-fixable (removes else, dedents body)
+- `todo-comment` now detects `BUG`, `DEPRECATED`, `WARNING` markers (matching Godot editor)
 - Event bus heuristic for `unused-signal` — files with no functions suppress warnings
 - `gd init` detects build output directory from Godot's `export_presets.cfg`
 - `gd.toml` template now includes all config options with defaults (commented out)
@@ -13,6 +19,9 @@
 ### Fixed
 - `severity = "off"` now correctly disables default-enabled lint rules
 - `self-assignment` fix now prepends `self.` instead of deleting the line
+- `parameter-shadows-field` suppressed when body uses `self.<param>` (intentional DI pattern)
+- `empty-function` no longer false-positives on `@abstract` methods
+- `unused-parameter` skips variadic rest parameters (`...args`)
 - `gd lsp references --class` now matches autoload class names
 
 ## [0.1.8] - 2026-02-12

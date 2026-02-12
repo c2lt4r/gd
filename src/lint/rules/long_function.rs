@@ -45,6 +45,7 @@ fn check_node(node: Node, source: &str, max_lines: usize, diags: &mut Vec<LintDi
                 column: node.start_position().column,
                 fix: None,
                 end_column: None,
+                context_lines: None,
             });
         }
     }

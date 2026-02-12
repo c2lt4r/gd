@@ -37,6 +37,7 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
                         byte_end: name_node.end_byte(),
                         replacement: fixed,
                     }),
+                    context_lines: None,
                 });
             }
         }
@@ -89,6 +90,7 @@ fn check_enum_values(enum_node: Node, source: &str, diags: &mut Vec<LintDiagnost
                                         byte_end: name_node.end_byte(),
                                         replacement: fixed,
                                     }),
+                                    context_lines: None,
                                 });
                             }
                         }

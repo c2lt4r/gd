@@ -129,6 +129,7 @@ fn check_params(
                     column: name_node.start_position().column,
                     end_column: Some(name_node.end_position().column),
                     fix: None,
+                    context_lines: None,
                 });
             }
             if !cursor.goto_next_sibling() {

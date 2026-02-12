@@ -84,6 +84,7 @@ fn check_function(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
             column: *col,
             end_column: Some(*col + name.len()),
             fix: None,
+            context_lines: None,
         });
     }
 }
@@ -115,6 +116,8 @@ fn collect_parameters(
                     );
                 }
             }
+            // Variadic rest parameter (...args): skip, always implicitly used
+            "variadic_parameter" => {}
             // Typed, default, or typed+default: name is first child (identifier)
             "typed_parameter" | "default_parameter" | "typed_default_parameter" => {
                 if let Some(name_node) = child.child(0)

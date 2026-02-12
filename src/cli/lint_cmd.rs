@@ -35,6 +35,9 @@ pub struct LintArgs {
     /// Exit 0 even when errors are found
     #[arg(long)]
     pub no_fail: bool,
+    /// Show N lines of surrounding context for each diagnostic (like grep -C)
+    #[arg(long)]
+    pub context: Option<usize>,
 }
 
 pub fn exec(args: LintArgs) -> Result<()> {
@@ -61,6 +64,7 @@ pub fn exec(args: LintArgs) -> Result<()> {
         exclude_rules: args.exclude_rule,
         summary: args.summary,
         no_fail: args.no_fail,
+        context: args.context,
     };
 
     crate::lint::run_lint(&args.paths, &opts)

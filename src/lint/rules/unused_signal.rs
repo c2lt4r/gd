@@ -49,6 +49,7 @@ impl LintRule for UnusedSignal {
                     column: *column,
                     end_column: None,
                     fix: None,
+                    context_lines: None,
                 });
             }
         }

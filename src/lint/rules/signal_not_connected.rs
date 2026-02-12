@@ -47,6 +47,7 @@ impl LintRule for SignalNotConnected {
                     column: *column,
                     end_column: None,
                     fix: None,
+                    context_lines: None,
                 });
             }
         }

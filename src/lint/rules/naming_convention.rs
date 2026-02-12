@@ -46,6 +46,7 @@ fn check_node(
                             byte_end: name_node.end_byte(),
                             replacement: fixed,
                         }),
+                        context_lines: None,
                     });
                 }
             }
@@ -70,6 +71,7 @@ fn check_node(
                             byte_end: name_node.end_byte(),
                             replacement: fixed,
                         }),
+                        context_lines: None,
                     });
                 }
             }
@@ -92,6 +94,7 @@ fn check_node(
                             byte_end: name_node.end_byte(),
                             replacement: fixed,
                         }),
+                        context_lines: None,
                     });
                 }
             }
@@ -116,6 +119,7 @@ fn check_node(
                             byte_end: name_node.end_byte(),
                             replacement: fixed,
                         }),
+                        context_lines: None,
                     });
                 }
             }
@@ -138,6 +142,7 @@ fn check_node(
                             byte_end: name_node.end_byte(),
                             replacement: fixed,
                         }),
+                        context_lines: None,
                     });
                 }
             }

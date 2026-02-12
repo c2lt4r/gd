@@ -109,6 +109,7 @@ fn check_function(func: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
         column: func.start_position().column,
         end_column: None,
         fix: None,
+        context_lines: None,
     });
 }
 

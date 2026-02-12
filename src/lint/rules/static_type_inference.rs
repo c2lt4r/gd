@@ -47,6 +47,7 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
                 column: col,
                 end_column: None,
                 fix: None,
+                context_lines: None,
             });
         }
     }

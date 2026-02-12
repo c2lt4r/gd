@@ -41,6 +41,7 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
                     byte_end: iter_node.end_byte(),
                     replacement: fixed,
                 }),
+                context_lines: None,
             });
         }
     }

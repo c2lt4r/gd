@@ -67,6 +67,7 @@ fn check_function_body(body: Node, source: &str, diags: &mut Vec<LintDiagnostic>
                     byte_end: *name_byte_start,
                     replacement: "_".to_string(),
                 }),
+                context_lines: None,
             });
         }
     }

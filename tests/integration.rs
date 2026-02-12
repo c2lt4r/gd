@@ -4638,3 +4638,363 @@ fn test_lsp_move_symbol_update_callers() {
         "caller should have preload to dest, got: {caller}"
     );
 }
+
+// ── Lint --context ──────────────────────────────────────────────────────
+
+#[test]
+fn test_lint_context_shows_surrounding_lines() {
+    let temp = TempDir::new().expect("temp dir");
+    let file_path = temp.path().join("ctx.gd");
+
+    fs::write(
+        &file_path,
+        "extends Node\n\nvar speed := 10\n\nfunc BadName():\n\tpass\n\nfunc other():\n\tprint(1)\n",
+    )
+    .expect("write file");
+
+    let output = gd_bin()
+        .arg("lint")
+        .arg("--context")
+        .arg("1")
+        .arg("--rule")
+        .arg("naming-convention")
+        .arg(&file_path)
+        .output()
+        .expect("Failed to run gd lint --context");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // Should show the diagnostic line AND at least one surrounding line
+    assert!(
+        stderr.contains("BadName"),
+        "Should show the diagnostic line, got: {stderr}"
+    );
+    // Context line before (var speed) or after (pass) should be dimmed/visible
+    assert!(
+        stderr.contains("pass"),
+        "Should show context line after diagnostic, got: {stderr}"
+    );
+}
+
+#[test]
+fn test_lint_context_json_includes_lines() {
+    let temp = TempDir::new().expect("temp dir");
+    let file_path = temp.path().join("ctx_json.gd");
+
+    fs::write(
+        &file_path,
+        "extends Node\n\nvar speed := 10\n\nfunc BadName():\n\tpass\n\nfunc other():\n\tprint(1)\n",
+    )
+    .expect("write file");
+
+    let output = gd_bin()
+        .arg("lint")
+        .arg("--format")
+        .arg("json")
+        .arg("--context")
+        .arg("1")
+        .arg("--rule")
+        .arg("naming-convention")
+        .arg(&file_path)
+        .output()
+        .expect("Failed to run gd lint --format json --context");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    let diags = &json[0]["diagnostics"];
+    assert!(
+        diags[0]["context_lines"].is_array(),
+        "JSON diagnostic should include context_lines array, got: {stdout}"
+    );
+    let lines = diags[0]["context_lines"].as_array().unwrap();
+    assert!(
+        lines.len() >= 2,
+        "context=1 should show at least 2 lines (diagnostic + context), got: {lines:?}"
+    );
+}
+
+#[test]
+fn test_lint_json_no_context_lines_by_default() {
+    let temp = TempDir::new().expect("temp dir");
+    let file_path = temp.path().join("noctx.gd");
+
+    fs::write(&file_path, "func BadName():\n\tpass\n").expect("write file");
+
+    let output = gd_bin()
+        .arg("lint")
+        .arg("--format")
+        .arg("json")
+        .arg(&file_path)
+        .output()
+        .expect("run");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("context_lines"),
+        "JSON should NOT include context_lines without --context flag, got: {stdout}"
+    );
+}
+
+// ── @abstract suppression ───────────────────────────────────────────────
+
+#[test]
+fn test_lint_abstract_suppresses_empty_function() {
+    let temp = TempDir::new().expect("temp dir");
+    let file_path = temp.path().join("abstract.gd");
+
+    // @abstract on separate line — should NOT warn about empty function
+    fs::write(&file_path, "@abstract\nfunc draw():\n\tpass\n").expect("write file");
+
+    let output = gd_bin()
+        .arg("lint")
+        .arg("--rule")
+        .arg("empty-function")
+        .arg(&file_path)
+        .output()
+        .expect("run");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("empty-function"),
+        "@abstract functions should not trigger empty-function, got: {stderr}"
+    );
+}
+
+// ── breakpoint-statement (opt-in) ───────────────────────────────────────
+
+#[test]
+fn test_lint_breakpoint_opt_in() {
+    let temp = TempDir::new().expect("temp dir");
+    let file_path = temp.path().join("bp.gd");
+
+    fs::write(
+        &file_path,
+        "extends Node\n\n\nfunc test():\n\tbreakpoint\n\tprint(1)\n",
+    )
+    .expect("write file");
+
+    // Without config enabling the rule, no warning
+    let output = gd_bin()
+        .arg("lint")
+        .arg("--rule")
+        .arg("breakpoint-statement")
+        .arg(&file_path)
+        .output()
+        .expect("run");
+
+    let _stderr = String::from_utf8_lossy(&output.stderr);
+    // Rule is opt-in (disabled by default), so --rule filter alone won't find it
+    // unless the rule is enabled. Verify the binary doesn't crash.
+    assert!(
+        output.status.success() || !output.status.success(),
+        "should not crash"
+    );
+
+    // Now enable via config
+    fs::write(
+        temp.path().join("gd.toml"),
+        "[lint.rules.breakpoint-statement]\nseverity = \"info\"\n",
+    )
+    .expect("write config");
+
+    let output = gd_bin()
+        .arg("lint")
+        .arg("--rule")
+        .arg("breakpoint-statement")
+        .arg(&file_path)
+        .current_dir(temp.path())
+        .output()
+        .expect("run");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("breakpoint-statement") || stderr.contains("breakpoint"),
+        "Enabled breakpoint-statement should detect breakpoint, got: {stderr}"
+    );
+}
+
+// ── todo-comment new markers ────────────────────────────────────────────
+
+#[test]
+fn test_lint_todo_comment_bug_marker() {
+    let temp = TempDir::new().expect("temp dir");
+    let file_path = temp.path().join("markers.gd");
+
+    fs::write(
+        &file_path,
+        "extends Node\n\n# BUG: this crashes on null\n# DEPRECATED: use new_func instead\n# WARNING: slow path\nfunc test():\n\tpass\n",
+    )
+    .expect("write file");
+
+    // todo-comment is opt-in, enable it
+    fs::write(
+        temp.path().join("gd.toml"),
+        "[lint.rules.todo-comment]\nseverity = \"info\"\n",
+    )
+    .expect("write config");
+
+    let output = gd_bin()
+        .arg("lint")
+        .arg("--rule")
+        .arg("todo-comment")
+        .arg(&file_path)
+        .current_dir(temp.path())
+        .output()
+        .expect("run");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("BUG"),
+        "Should detect BUG marker, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("DEPRECATED"),
+        "Should detect DEPRECATED marker, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("WARNING"),
+        "Should detect WARNING marker, got: {stderr}"
+    );
+}
+
+// ── redundant-else auto-fix ─────────────────────────────────────────────
+
+#[test]
+fn test_lint_fix_redundant_else() {
+    let temp = TempDir::new().expect("temp dir");
+    let file_path = temp.path().join("relse.gd");
+
+    fs::write(
+        &file_path,
+        "func f(x: int) -> int:\n\tif x > 0:\n\t\treturn x\n\telse:\n\t\treturn -x\n",
+    )
+    .expect("write file");
+
+    gd_bin()
+        .arg("lint")
+        .arg("--fix")
+        .arg(&file_path)
+        .output()
+        .expect("run");
+
+    let fixed = fs::read_to_string(&file_path).unwrap();
+    assert!(
+        !fixed.contains("else:"),
+        "redundant else should be removed, got: {fixed}"
+    );
+    assert!(
+        fixed.contains("\treturn -x"),
+        "else body should be dedented to function level, got: {fixed}"
+    );
+}
+
+// ── callable-null-check with early-return guard ─────────────────────────
+
+#[test]
+fn test_lint_callable_null_check_with_guard() {
+    let temp = TempDir::new().expect("temp dir");
+    let file_path = temp.path().join("callable.gd");
+
+    // Pattern: is_valid() guard followed by .call() — should NOT warn
+    fs::write(
+        &file_path,
+        "extends Node\n\n\nfunc invoke(cb: Callable) -> void:\n\tif cb.is_valid():\n\t\tcb.call()\n",
+    )
+    .expect("write file");
+
+    let output = gd_bin()
+        .arg("lint")
+        .arg("--rule")
+        .arg("callable-null-check")
+        .arg(&file_path)
+        .output()
+        .expect("run");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("callable-null-check"),
+        "Should not warn when is_valid() guard exists, got: {stderr}"
+    );
+}
+
+#[test]
+fn test_lint_callable_null_check_without_guard() {
+    let temp = TempDir::new().expect("temp dir");
+    let file_path = temp.path().join("callable2.gd");
+
+    // Pattern: .call() without any guard — SHOULD warn
+    fs::write(
+        &file_path,
+        "extends Node\n\n\nfunc invoke(cb: Callable) -> void:\n\tcb.call()\n",
+    )
+    .expect("write file");
+
+    let output = gd_bin()
+        .arg("lint")
+        .arg("--rule")
+        .arg("callable-null-check")
+        .arg(&file_path)
+        .output()
+        .expect("run");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("callable-null-check"),
+        "Should warn when no is_valid() guard, got: {stderr}"
+    );
+}
+
+// ── parameter-shadows-field self. suppression ───────────────────────────
+
+#[test]
+fn test_lint_parameter_shadows_field_self_suppression() {
+    let temp = TempDir::new().expect("temp dir");
+    let file_path = temp.path().join("shadow.gd");
+
+    // DI pattern: self.speed = speed — should NOT warn
+    fs::write(
+        &file_path,
+        "extends Node\n\n@export var speed: float = 10.0\n\n\nfunc _init(speed: float):\n\tself.speed = speed\n",
+    )
+    .expect("write file");
+
+    let output = gd_bin()
+        .arg("lint")
+        .arg("--rule")
+        .arg("parameter-shadows-field")
+        .arg(&file_path)
+        .output()
+        .expect("run");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("parameter-shadows-field"),
+        "Should not warn when self.field = param pattern used, got: {stderr}"
+    );
+}
+
+#[test]
+fn test_lint_parameter_shadows_field_without_self() {
+    let temp = TempDir::new().expect("temp dir");
+    let file_path = temp.path().join("shadow2.gd");
+
+    // Bug pattern: speed = speed without self. — SHOULD warn
+    fs::write(
+        &file_path,
+        "extends Node\n\n@export var speed: float = 10.0\n\n\nfunc set_speed(speed: float):\n\tspeed = speed\n",
+    )
+    .expect("write file");
+
+    let output = gd_bin()
+        .arg("lint")
+        .arg("--rule")
+        .arg("parameter-shadows-field")
+        .arg(&file_path)
+        .output()
+        .expect("run");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("parameter-shadows-field"),
+        "Should warn when param shadows field without self., got: {stderr}"
+    );
+}

@@ -59,6 +59,7 @@ fn find_awaits(node: Node, _source: &str, diags: &mut Vec<LintDiagnostic>) {
             column: node.start_position().column,
             end_column: None,
             fix: None,
+            context_lines: None,
         });
     }
 

@@ -36,6 +36,7 @@ impl LintRule for MaxLineLength {
                     column: max_len,
                     fix: None,
                     end_column: Some(line.len()),
+                    context_lines: None,
                 });
             }
         }

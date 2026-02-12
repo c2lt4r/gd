@@ -65,6 +65,7 @@ fn find_get_node_calls(node: Node, source: &str, func_name: &str, diags: &mut Ve
             column: node.start_position().column,
             end_column: Some(node.end_position().column),
             fix: None,
+            context_lines: None,
         });
     }
 
@@ -87,6 +88,7 @@ fn find_get_node_calls(node: Node, source: &str, func_name: &str, diags: &mut Ve
                 column: node.start_position().column,
                 end_column: None,
                 fix: None,
+                context_lines: None,
             });
         }
     }
@@ -139,6 +141,7 @@ fn check_attribute_get_node(
                     column: node.start_position().column,
                     end_column: None,
                     fix: None,
+                    context_lines: None,
                 });
             }
         }

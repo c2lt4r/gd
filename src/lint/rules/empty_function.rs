@@ -32,7 +32,11 @@ fn check_scope(scope: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
         loop {
             let child = cursor.node();
 
-            if child.kind() == "function_definition" && is_empty_body(child) {
+            if child.kind() == "function_definition"
+                && is_empty_body(child)
+                && !has_annotation(child, source, "abstract")
+                && !prev_sibling_has_annotation(child, source, "abstract")
+            {
                 empty_funcs.push(child);
                 if is_virtual_stub(child, source) {
                     has_virtual_stubs = true;
@@ -82,8 +86,73 @@ fn check_scope(scope: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
             column: func.start_position().column,
             fix: None,
             end_column: None,
+            context_lines: None,
         });
     }
+}
+
+/// Check if a node has a specific annotation (e.g. `@abstract`).
+fn has_annotation(node: Node, source: &str, annotation_name: &str) -> bool {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == "annotations" {
+            let mut annot_cursor = child.walk();
+            for annot in child.children(&mut annot_cursor) {
+                if annot.kind() == "annotation" {
+                    let mut ident_cursor = annot.walk();
+                    for ident_child in annot.children(&mut ident_cursor) {
+                        if ident_child.kind() == "identifier"
+                            && ident_child.utf8_text(source.as_bytes()).ok()
+                                == Some(annotation_name)
+                        {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Check if the previous sibling is an annotation node containing a specific annotation.
+/// Tree-sitter puts annotations on separate lines as sibling `annotation` (singular) or
+/// `annotations` (plural) nodes rather than children of the function.
+fn prev_sibling_has_annotation(node: Node, source: &str, annotation_name: &str) -> bool {
+    let Some(prev) = node.prev_named_sibling() else {
+        return false;
+    };
+    match prev.kind() {
+        // Single annotation on its own line: annotation > identifier
+        "annotation" => {
+            let mut cursor = prev.walk();
+            for child in prev.children(&mut cursor) {
+                if child.kind() == "identifier"
+                    && child.utf8_text(source.as_bytes()).ok() == Some(annotation_name)
+                {
+                    return true;
+                }
+            }
+        }
+        // Multiple annotations block: annotations > annotation > identifier
+        "annotations" => {
+            let mut cursor = prev.walk();
+            for annot in prev.children(&mut cursor) {
+                if annot.kind() == "annotation" {
+                    let mut ident_cursor = annot.walk();
+                    for child in annot.children(&mut ident_cursor) {
+                        if child.kind() == "identifier"
+                            && child.utf8_text(source.as_bytes()).ok() == Some(annotation_name)
+                        {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+    false
 }
 
 /// Check if a function has only `pass` in its body.
@@ -215,6 +284,27 @@ mod tests {
     fn warns_on_standalone_empty_handler() {
         // Empty signal handler with no virtual stub context
         let source = "func _on_button_pressed() -> void:\n\tpass\n\nfunc do_stuff() -> void:\n\tprint(\"hi\")\n";
+        assert_eq!(check(source).len(), 1);
+    }
+
+    #[test]
+    fn no_warning_on_abstract_function() {
+        // @abstract on same line as func
+        let source = "@abstract func draw():\n\tpass\n";
+        assert!(check(source).is_empty());
+    }
+
+    #[test]
+    fn no_warning_on_abstract_function_separate_line() {
+        // @abstract on separate line from func
+        let source = "@abstract\nfunc draw():\n\tpass\n";
+        assert!(check(source).is_empty());
+    }
+
+    #[test]
+    fn warns_on_non_abstract_empty() {
+        // @abstract on the class, not the function — function should still warn
+        let source = "func draw():\n\tpass\n";
         assert_eq!(check(source).len(), 1);
     }
 

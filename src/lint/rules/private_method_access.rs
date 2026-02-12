@@ -78,6 +78,7 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
                 column: method_col,
                 fix: None,
                 end_column: None,
+                context_lines: None,
             });
         }
     }
@@ -113,6 +114,7 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
                     column: method_node.start_position().column,
                     fix: None,
                     end_column: None,
+                    context_lines: None,
                 });
             }
         }

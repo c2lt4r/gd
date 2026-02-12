@@ -18,8 +18,16 @@ impl LintRule for TodoComment {
     }
 }
 
-/// Markers to detect in comments.
-const MARKERS: &[&str] = &["TODO", "FIXME", "HACK", "XXX"];
+/// Markers to detect in comments. Matches Godot's editor highlight keywords.
+const MARKERS: &[&str] = &[
+    "TODO",
+    "FIXME",
+    "HACK",
+    "XXX",
+    "BUG",
+    "DEPRECATED",
+    "WARNING",
+];
 
 fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
     if node.kind() == "comment" {
@@ -35,6 +43,7 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
                     column: node.start_position().column,
                     end_column: Some(node.end_position().column),
                     fix: None,
+                    context_lines: None,
                 });
                 // Only report the first marker per comment
                 break;
@@ -96,6 +105,30 @@ mod tests {
         let diags = check(source);
         assert_eq!(diags.len(), 1);
         assert!(diags[0].message.contains("XXX"));
+    }
+
+    #[test]
+    fn detects_bug() {
+        let source = "# BUG: crashes on null input\n";
+        let diags = check(source);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("BUG"));
+    }
+
+    #[test]
+    fn detects_deprecated() {
+        let source = "# DEPRECATED: use new_func instead\n";
+        let diags = check(source);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("DEPRECATED"));
+    }
+
+    #[test]
+    fn detects_warning() {
+        let source = "# WARNING: not thread-safe\n";
+        let diags = check(source);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("WARNING"));
     }
 
     // ── Case insensitive ──────────────────────────────────────────────

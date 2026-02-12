@@ -178,6 +178,7 @@ fn check_node(
                         column: node.start_position().column,
                         fix: None,
                         end_column: None,
+                        context_lines: None,
                     });
                 }
             }

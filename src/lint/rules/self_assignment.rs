@@ -53,6 +53,7 @@ fn check_node(node: Node, source_bytes: &[u8], source: &str, diags: &mut Vec<Lin
                         column: node.start_position().column,
                         end_column: Some(node.end_position().column),
                         fix: Some(fix),
+                        context_lines: None,
                     });
                 }
             }
