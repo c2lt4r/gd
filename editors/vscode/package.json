@@ -2,7 +2,7 @@
   "name": "gd-gdscript",
   "displayName": "GDScript (gd)",
   "description": "GDScript language support powered by the gd toolchain — formatting, linting, go-to-definition, and more",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "publisher": "c2lt4r",
   "license": "MIT",
   "repository": {

@@ -64,7 +64,8 @@ fn check_functions(
             if (child.kind() == "function_definition" || child.kind() == "constructor_definition")
                 && let Some(params) = child.child_by_field_name("parameters")
             {
-                check_params(params, src, fields, diags);
+                let body = child.child_by_field_name("body");
+                check_params(params, body, src, fields, diags);
             }
             if !cursor.goto_next_sibling() {
                 break;
@@ -99,6 +100,7 @@ fn check_classes(node: Node, src: &[u8], diags: &mut Vec<LintDiagnostic>) {
 
 fn check_params(
     params_node: Node,
+    body: Option<Node>,
     src: &[u8],
     fields: &HashSet<String>,
     diags: &mut Vec<LintDiagnostic>,
@@ -117,6 +119,7 @@ fn check_params(
             if let Some(name_node) = name_node
                 && let Ok(name) = name_node.utf8_text(src)
                 && fields.contains(name)
+                && !body.is_some_and(|b| body_uses_self_field(b, src, name))
             {
                 diags.push(LintDiagnostic {
                     rule: "parameter-shadows-field",
@@ -133,6 +136,49 @@ fn check_params(
             }
         }
     }
+}
+
+/// Check if the function body contains `self.<field_name>`.
+/// If so, the shadowing is intentional (DI / initialization pattern).
+fn body_uses_self_field(node: Node, src: &[u8], field_name: &str) -> bool {
+    // Look for attribute nodes: self.field_name
+    if node.kind() == "attribute" {
+        let mut cursor = node.walk();
+        let children: Vec<_> = node.children(&mut cursor).collect();
+        if let Some(first) = children.first()
+            && first.kind() == "identifier"
+            && first.utf8_text(src).ok() == Some("self")
+        {
+            for child in &children[1..] {
+                if child.kind() == "identifier" && child.utf8_text(src).ok() == Some(field_name) {
+                    return true;
+                }
+                if child.kind() == "attribute_call"
+                    && let Some(id) = child
+                        .children(&mut child.walk())
+                        .find(|c| c.kind() == "identifier")
+                    && id.utf8_text(src).ok() == Some(field_name)
+                {
+                    return true;
+                }
+            }
+        }
+    }
+
+    // Recurse into children
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            if body_uses_self_field(cursor.node(), src, field_name) {
+                return true;
+            }
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+    }
+
+    false
 }
 
 #[cfg(test)]
@@ -163,9 +209,17 @@ mod tests {
     }
 
     #[test]
-    fn detects_in_constructor() {
+    fn no_warning_when_self_used_in_constructor() {
+        // self.health = health is the intentional DI pattern
         let source =
             "var health: int\n\nfunc _init(health: int) -> void:\n\tself.health = health\n";
+        assert!(check(source).is_empty());
+    }
+
+    #[test]
+    fn detects_in_constructor_without_self() {
+        // health = health is likely a bug (assigns param to itself)
+        let source = "var health: int\n\nfunc _init(health: int) -> void:\n\thealth = health\n";
         let diags = check(source);
         assert_eq!(diags.len(), 1);
         assert!(diags[0].message.contains("health"));
@@ -185,8 +239,14 @@ mod tests {
     }
 
     #[test]
-    fn inner_class_fields() {
+    fn inner_class_no_warning_with_self() {
         let source = "class Inner:\n\tvar value: int\n\n\tfunc set_value(value: int) -> void:\n\t\tself.value = value\n";
+        assert!(check(source).is_empty());
+    }
+
+    #[test]
+    fn inner_class_warns_without_self() {
+        let source = "class Inner:\n\tvar value: int\n\n\tfunc set_value(value: int) -> void:\n\t\tvalue = value\n";
         let diags = check(source);
         assert_eq!(diags.len(), 1);
         assert!(diags[0].message.contains("value"));

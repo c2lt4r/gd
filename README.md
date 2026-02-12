@@ -515,7 +515,7 @@ All refactoring commands support `--dry-run` to preview changes without writing 
 **VS Code:** Download the `.vsix` from the [latest release](https://github.com/c2lt4r/gd/releases/latest), then install it with:
 
 ```sh
-code --install-extension gd-gdscript-0.1.1.vsix
+code --install-extension gd-gdscript-0.1.2.vsix
 ```
 
 **Neovim (nvim-lspconfig):**
