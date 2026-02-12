@@ -82,10 +82,22 @@ pub fn hover_at(source: &str, position: Position) -> Option<Hover> {
                     });
                 }
                 // 4. Check if this is a member access (foo.bar) — try builtin member
+                //    or self.member — resolve to same-file declaration
                 if let Some(hover) = try_member_hover(&current, &root, source) {
                     return Some(hover);
                 }
-                // 5. Nothing found — return None instead of walking up to
+                // 5. Try builtin member as standalone identifier (GDScript allows
+                //    inherited members without self prefix: velocity, move_and_slide, etc.)
+                if let Some(doc) = super::builtins::lookup_member(name) {
+                    return Some(Hover {
+                        contents: HoverContents::Markup(MarkupContent {
+                            kind: MarkupKind::Markdown,
+                            value: super::builtins::format_member_hover(doc),
+                        }),
+                        range: Some(node_range(&current)),
+                    });
+                }
+                // 6. Nothing found — return None instead of walking up to
                 //    function_definition and showing the enclosing function.
                 return None;
             }

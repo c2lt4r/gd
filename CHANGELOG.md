@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.1.12] - 2026-02-12
+
+### Added
+- `gd check` structural validation — catches patterns tree-sitter accepts but Godot rejects
+  - Top-level statements: flags expressions, loops, if/match at module root (only declarations allowed)
+  - Indentation consistency: detects orphaned indented blocks in body nodes (e.g. code left after removing `else:`)
+- Hover on standalone inherited members (`velocity`, `move_and_slide`) without `self.` prefix now shows builtin docs
+- `gd lsp symbols --kind field` / `--kind property` now matches both `variable` and `field` symbol kinds
+
+### Fixed
+- VS Code extension now bundles dependencies with esbuild — fixes broken 0.1.2 vsix that was missing `vscode-languageclient`
+
+### Changed
+- VS Code extension version bumped to 0.1.3 (esbuild bundling)
+
 ## [0.1.11] - 2026-02-12
 
 ### Added

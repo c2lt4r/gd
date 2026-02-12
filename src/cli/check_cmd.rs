@@ -4,6 +4,7 @@ use std::path::Path;
 use clap::Args;
 use miette::Result;
 use serde::Serialize;
+use tree_sitter::Node;
 
 use crate::core::{config::Config, config::find_project_root, fs::collect_gdscript_files, parser};
 use crate::lint::matches_ignore_pattern;
@@ -59,13 +60,31 @@ pub fn exec(args: CheckArgs) -> Result<()> {
             match parser::parse_file(file) {
                 Ok((source, tree)) => {
                     let root_node = tree.root_node();
-                    if root_node.has_error() {
+                    let has_parse_errors = root_node.has_error();
+                    let structural = validate_structure(&root_node);
+
+                    if has_parse_errors || !structural.is_empty() {
                         error_count += 1;
-                        let mut cursor = root_node.walk();
                         if json_mode {
-                            collect_errors(&mut cursor, file, &cwd, &mut parse_errors);
+                            let rel = crate::core::fs::relative_slash(file, &cwd);
+                            if has_parse_errors {
+                                let mut cursor = root_node.walk();
+                                collect_errors(&mut cursor, file, &cwd, &mut parse_errors);
+                            }
+                            for err in &structural {
+                                parse_errors.push(ParseError {
+                                    file: rel.clone(),
+                                    line: err.line,
+                                    column: err.column,
+                                    message: err.message.clone(),
+                                });
+                            }
                         } else {
-                            report_errors(&mut cursor, &source, file);
+                            if has_parse_errors {
+                                let mut cursor = root_node.walk();
+                                report_errors(&mut cursor, &source, file);
+                            }
+                            report_structural(&structural, &source, file);
                         }
                     }
                 }
@@ -112,6 +131,138 @@ pub fn exec(args: CheckArgs) -> Result<()> {
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// Structural validation — catches patterns tree-sitter accepts but Godot rejects
+// ---------------------------------------------------------------------------
+
+struct StructuralError {
+    line: u32,
+    column: u32,
+    message: String,
+}
+
+/// Run structural checks that go beyond tree-sitter error nodes.
+fn validate_structure(root: &Node) -> Vec<StructuralError> {
+    let mut errors = Vec::new();
+    check_top_level_statements(root, &mut errors);
+    check_indentation_consistency(root, &mut errors);
+    errors
+}
+
+/// Check 1: Only declarations are valid at the top level of a GDScript file.
+/// Bare expressions, loops, if-statements etc. at root level are rejected by Godot.
+fn check_top_level_statements(root: &Node, errors: &mut Vec<StructuralError>) {
+    let mut cursor = root.walk();
+    for child in root.children(&mut cursor) {
+        if !child.is_named() || child.kind() == "comment" {
+            continue;
+        }
+        if !is_valid_top_level(child.kind()) {
+            let pos = child.start_position();
+            errors.push(StructuralError {
+                line: pos.row as u32 + 1,
+                column: pos.column as u32 + 1,
+                message: format!(
+                    "unexpected `{}` at top level — only declarations are allowed here",
+                    friendly_kind(child.kind()),
+                ),
+            });
+        }
+    }
+}
+
+fn is_valid_top_level(kind: &str) -> bool {
+    matches!(
+        kind,
+        "extends_statement"
+            | "class_name_statement"
+            | "variable_statement"
+            | "const_statement"
+            | "function_definition"
+            | "constructor_definition"
+            | "signal_statement"
+            | "enum_definition"
+            | "class_definition"
+            | "annotation"
+            | "decorated_definition"
+    )
+}
+
+/// Check 2: Within any `body` node, all non-comment children should be at the
+/// same indentation column. A child indented deeper than its siblings indicates
+/// an orphaned block (e.g. code left over after removing an `else:`).
+/// Godot rejects these but tree-sitter silently accepts them.
+fn check_indentation_consistency(node: &Node, errors: &mut Vec<StructuralError>) {
+    if node.kind() == "body" {
+        check_body_indentation(node, errors);
+    }
+
+    // Recurse into children
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            check_indentation_consistency(&cursor.node(), errors);
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+    }
+}
+
+fn check_body_indentation(body: &Node, errors: &mut Vec<StructuralError>) {
+    // Find the expected indentation from the first non-comment named child.
+    let mut expected_col: Option<usize> = None;
+    let mut cursor = body.walk();
+
+    for child in body.children(&mut cursor) {
+        if !child.is_named() || child.kind() == "comment" {
+            continue;
+        }
+        let col = child.start_position().column;
+        match expected_col {
+            None => expected_col = Some(col),
+            Some(exp) if col > exp => {
+                let pos = child.start_position();
+                errors.push(StructuralError {
+                    line: pos.row as u32 + 1,
+                    column: pos.column as u32 + 1,
+                    message: format!(
+                        "unexpected indentation — `{}` is indented deeper than surrounding code (expected column {})",
+                        friendly_kind(child.kind()),
+                        exp + 1,
+                    ),
+                });
+            }
+            _ => {}
+        }
+    }
+}
+
+fn friendly_kind(kind: &str) -> &str {
+    match kind {
+        "expression_statement" => "expression",
+        "variable_statement" => "var statement",
+        "const_statement" => "const statement",
+        "function_definition" => "function",
+        "constructor_definition" => "constructor",
+        "for_statement" => "for loop",
+        "while_statement" => "while loop",
+        "if_statement" => "if statement",
+        "match_statement" => "match statement",
+        "return_statement" => "return statement",
+        "break_statement" => "break statement",
+        "continue_statement" => "continue statement",
+        "pass_statement" => "pass statement",
+        "assignment_statement" => "assignment",
+        "augmented_assignment_statement" => "assignment",
+        other => other,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tree-sitter error reporting (existing)
+// ---------------------------------------------------------------------------
+
 fn report_errors(cursor: &mut tree_sitter::TreeCursor, source: &str, file: &Path) {
     use owo_colors::OwoColorize;
     loop {
@@ -135,6 +286,22 @@ fn report_errors(cursor: &mut tree_sitter::TreeCursor, source: &str, file: &Path
         if !cursor.goto_next_sibling() {
             break;
         }
+    }
+}
+
+fn report_structural(errors: &[StructuralError], source: &str, file: &Path) {
+    use owo_colors::OwoColorize;
+    for err in errors {
+        let line = source.lines().nth(err.line as usize - 1).unwrap_or("");
+        eprintln!(
+            "{}:{}:{} {} {}",
+            file.display(),
+            err.line,
+            err.column,
+            "error:".red().bold(),
+            err.message,
+        );
+        eprintln!("  {line}");
     }
 }
 
@@ -163,5 +330,108 @@ fn collect_errors(
         if !cursor.goto_next_sibling() {
             break;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::core::parser;
+
+    use super::*;
+
+    fn structural_errors(source: &str) -> Vec<StructuralError> {
+        let tree = parser::parse(source).unwrap();
+        validate_structure(&tree.root_node())
+    }
+
+    // -- Top-level statement checks --
+
+    #[test]
+    fn valid_top_level_no_errors() {
+        let source = "extends Node\n\nvar x := 1\nconst Y = 2\n\nfunc _ready():\n\tpass\n";
+        assert!(structural_errors(source).is_empty());
+    }
+
+    #[test]
+    fn top_level_for_loop_is_error() {
+        let source = "extends Node\n\nfor i in range(10):\n\tprint(i)\n";
+        let errs = structural_errors(source);
+        assert_eq!(errs.len(), 1);
+        assert!(errs[0].message.contains("top level"));
+    }
+
+    #[test]
+    fn top_level_expression_is_error() {
+        let source = "extends Node\n\nprint(\"hello\")\n";
+        let errs = structural_errors(source);
+        assert_eq!(errs.len(), 1);
+        assert!(errs[0].message.contains("top level"));
+    }
+
+    #[test]
+    fn top_level_if_is_error() {
+        let source = "extends Node\n\nif true:\n\tpass\n";
+        let errs = structural_errors(source);
+        assert_eq!(errs.len(), 1);
+        assert!(errs[0].message.contains("top level"));
+    }
+
+    #[test]
+    fn top_level_return_is_error() {
+        let source = "return 42\n";
+        let errs = structural_errors(source);
+        assert_eq!(errs.len(), 1);
+        assert!(errs[0].message.contains("top level"));
+    }
+
+    // -- Indentation consistency checks --
+
+    #[test]
+    fn consistent_indentation_no_errors() {
+        let source = "func f(x: int) -> int:\n\tif x > 0:\n\t\treturn x\n\telse:\n\t\treturn -x\n";
+        assert!(structural_errors(source).is_empty());
+    }
+
+    #[test]
+    fn orphaned_block_after_return_detected() {
+        // Simulates removing else: but leaving body indented too deep
+        let source = "func f(m: int) -> int:\n\tmatch m:\n\t\t0:\n\t\t\tif m == 1:\n\t\t\t\treturn 1\n\t\t\t# comment\n\t\t\t\tvar q := 2\n\t\t\t\treturn q\n\t\t_:\n\t\t\treturn 0\n";
+        let errs = structural_errors(source);
+        assert!(!errs.is_empty(), "should detect orphaned indented block");
+        assert!(errs[0].message.contains("indentation"));
+    }
+
+    #[test]
+    fn dedented_body_code_at_top_level_detected() {
+        // Function body code accidentally at column 0
+        let source = "extends Node\n\nvar items: Array = []\n\nfor i in range(10):\n\titems.append(i)\n\nfunc _ready():\n\tpass\n";
+        let errs = structural_errors(source);
+        assert!(!errs.is_empty());
+    }
+
+    #[test]
+    fn multiline_expression_not_false_positive() {
+        // Continuation lines inside a single statement node are fine
+        let source = "func f() -> Quaternion:\n\tvar result := Quaternion(\n\t\t1.0,\n\t\t2.0,\n\t\t3.0,\n\t\t4.0\n\t).normalized()\n\treturn result\n";
+        assert!(structural_errors(source).is_empty());
+    }
+
+    #[test]
+    fn multiline_function_call_not_false_positive() {
+        let source = "func f() -> void:\n\tsome_function(\n\t\targ1,\n\t\targ2,\n\t\targ3\n\t)\n\tprint(\"done\")\n";
+        assert!(structural_errors(source).is_empty());
+    }
+
+    #[test]
+    fn multiline_array_not_false_positive() {
+        let source =
+            "func f() -> Array:\n\tvar arr := [\n\t\t1,\n\t\t2,\n\t\t3,\n\t]\n\treturn arr\n";
+        assert!(structural_errors(source).is_empty());
+    }
+
+    #[test]
+    fn multiline_dict_not_false_positive() {
+        let source = "func f() -> Dictionary:\n\tvar d := {\n\t\t\"a\": 1,\n\t\t\"b\": 2,\n\t}\n\treturn d\n";
+        assert!(structural_errors(source).is_empty());
     }
 }
