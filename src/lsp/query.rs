@@ -908,6 +908,94 @@ pub fn query_extract_class(
     super::refactor::extract_class(&path, &names, &to_path, dry_run, &project_root)
 }
 
+// ── AST-aware edit commands ──────────────────────────────────────────────────
+
+pub fn query_replace_body(
+    file: &str,
+    name: &str,
+    class: Option<&str>,
+    content: &str,
+    no_format: bool,
+    dry_run: bool,
+) -> Result<super::refactor::EditOutput> {
+    let path = resolve_file(file)?;
+    let project_root = find_root(&path)?;
+    super::refactor::replace_body(
+        &path,
+        name,
+        class,
+        content,
+        no_format,
+        dry_run,
+        &project_root,
+    )
+}
+
+pub fn query_insert(
+    file: &str,
+    anchor: &str,
+    after: bool,
+    class: Option<&str>,
+    content: &str,
+    no_format: bool,
+    dry_run: bool,
+) -> Result<super::refactor::EditOutput> {
+    let path = resolve_file(file)?;
+    let project_root = find_root(&path)?;
+    super::refactor::insert(
+        &path,
+        anchor,
+        after,
+        class,
+        content,
+        no_format,
+        dry_run,
+        &project_root,
+    )
+}
+
+pub fn query_replace_symbol(
+    file: &str,
+    name: &str,
+    class: Option<&str>,
+    content: &str,
+    no_format: bool,
+    dry_run: bool,
+) -> Result<super::refactor::EditOutput> {
+    let path = resolve_file(file)?;
+    let project_root = find_root(&path)?;
+    super::refactor::replace_symbol(
+        &path,
+        name,
+        class,
+        content,
+        no_format,
+        dry_run,
+        &project_root,
+    )
+}
+
+pub fn query_edit_range(
+    file: &str,
+    start_line: usize,
+    end_line: usize,
+    content: &str,
+    no_format: bool,
+    dry_run: bool,
+) -> Result<super::refactor::EditOutput> {
+    let path = resolve_file(file)?;
+    let project_root = find_root(&path)?;
+    super::refactor::edit_range(
+        &path,
+        start_line,
+        end_line,
+        content,
+        no_format,
+        dry_run,
+        &project_root,
+    )
+}
+
 // ── Apply rename ────────────────────────────────────────────────────────────
 
 pub fn apply_rename(output: &RenameOutput, project_root: &Path) -> Result<usize> {

@@ -1,0 +1,787 @@
+use std::path::Path;
+
+use miette::Result;
+use serde::Serialize;
+
+use super::{
+    declaration_full_range, find_class_definition, find_declaration_by_name,
+    find_declaration_in_class, line_starts, re_indent_to_depth,
+};
+
+// ── Output ──────────────────────────────────────────────────────────────────
+
+#[derive(Serialize, Debug)]
+pub struct EditOutput {
+    pub file: String,
+    pub operation: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub symbol: Option<String>,
+    pub applied: bool,
+    pub lines_changed: u32,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
+}
+
+// ── Shared helpers ──────────────────────────────────────────────────────────
+
+/// Count ERROR/MISSING nodes in a tree-sitter tree.
+fn count_error_nodes(node: &tree_sitter::Node) -> usize {
+    let mut count = if node.is_error() || node.is_missing() {
+        1
+    } else {
+        0
+    };
+    for i in 0..node.child_count() {
+        if let Some(child) = node.child(i) {
+            count += count_error_nodes(&child);
+        }
+    }
+    count
+}
+
+/// Validate that an edit didn't introduce new parse errors compared to the original.
+fn validate_no_new_errors(original: &str, edited: &str) -> Result<()> {
+    let orig_errors = crate::core::parser::parse(original)
+        .map(|t| count_error_nodes(&t.root_node()))
+        .unwrap_or(0);
+    let new_tree = crate::core::parser::parse(edited)?;
+    let new_errors = count_error_nodes(&new_tree.root_node());
+    if new_errors > orig_errors {
+        return Err(miette::miette!(
+            "edit introduced parse errors ({orig_errors} -> {new_errors})"
+        ));
+    }
+    Ok(())
+}
+
+/// Format GDScript source using the project's formatter config.
+fn format_source(source: &str, project_root: &Path) -> Result<String> {
+    let config = crate::core::config::Config::load(project_root)?;
+    let tree = crate::core::parser::parse(source)?;
+    let mut printer = crate::fmt::printer::Printer::from_config(&config.fmt);
+    printer.format(&tree.root_node(), source);
+    let formatted = printer.finish();
+    if let Some(err) = crate::fmt::verify_format(source, &formatted, &config.fmt) {
+        return Err(miette::miette!("format safety check failed: {err}"));
+    }
+    Ok(formatted)
+}
+
+// ── replace-body ────────────────────────────────────────────────────────────
+
+pub fn replace_body(
+    file: &Path,
+    name: &str,
+    class: Option<&str>,
+    new_body: &str,
+    no_format: bool,
+    dry_run: bool,
+    project_root: &Path,
+) -> Result<EditOutput> {
+    let source =
+        std::fs::read_to_string(file).map_err(|e| miette::miette!("cannot read file: {e}"))?;
+    let tree = crate::core::parser::parse(&source)?;
+    let root = tree.root_node();
+    let rel = crate::core::fs::relative_slash(file, project_root);
+
+    // Find the target function/constructor
+    let decl = if let Some(cls) = class {
+        let class_node = find_class_definition(root, &source, cls)
+            .ok_or_else(|| miette::miette!("class '{cls}' not found in {rel}"))?;
+        find_declaration_in_class(class_node, &source, name)
+            .ok_or_else(|| miette::miette!("symbol '{name}' not found in class '{cls}'"))?
+    } else {
+        find_declaration_by_name(root, &source, name)
+            .ok_or_else(|| miette::miette!("symbol '{name}' not found in {rel}"))?
+    };
+
+    let kind = decl.kind();
+    if kind != "function_definition" && kind != "constructor_definition" {
+        return Err(miette::miette!(
+            "'{name}' is a {}, not a function — replace-body only works on functions",
+            super::declaration_kind_str(kind)
+        ));
+    }
+
+    // Get the body node
+    let body = decl
+        .child_by_field_name("body")
+        .ok_or_else(|| miette::miette!("function '{name}' has no body"))?;
+
+    // Find the first named child (actual statement) to get indentation.
+    // The body node itself starts right after `:`, including the newline.
+    let first_stmt = body
+        .named_child(0)
+        .ok_or_else(|| miette::miette!("function '{name}' has an empty body"))?;
+
+    let body_end = body.end_byte();
+
+    // Determine target indentation from the first statement's line
+    let stmt_line = first_stmt.start_position().row;
+    let starts = line_starts(&source);
+    let line_start = starts[stmt_line];
+    let line_end = starts.get(stmt_line + 1).copied().unwrap_or(source.len());
+    let first_line = &source[line_start..line_end].trim_end_matches('\n');
+    let target_indent_count = first_line.len() - first_line.trim_start().len();
+
+    // Determine indent unit: if tabs, count tabs; if spaces, count spaces
+    let target_tabs = if first_line.starts_with('\t') {
+        target_indent_count
+    } else {
+        // For space indentation, approximate tab depth
+        target_indent_count / 4
+    };
+
+    // Re-indent the new body to match
+    let reindented = re_indent_to_depth(new_body.trim_end(), target_tabs);
+
+    // Build the new source — replace from first statement to body end
+    // Keep everything up to (and including) the newline after `:` on the signature line
+    let mut result = String::with_capacity(source.len());
+    result.push_str(&source[..line_start]);
+    result.push_str(&reindented);
+    if !reindented.ends_with('\n') {
+        result.push('\n');
+    }
+    result.push_str(&source[body_end..]);
+
+    // Validate
+    validate_no_new_errors(&source, &result)?;
+
+    // Format
+    let final_source = if no_format {
+        result
+    } else {
+        format_source(&result, project_root)?
+    };
+
+    let lines_changed = diff_line_count(&source, &final_source);
+
+    if !dry_run {
+        std::fs::write(file, &final_source)
+            .map_err(|e| miette::miette!("cannot write file: {e}"))?;
+    }
+
+    Ok(EditOutput {
+        file: rel,
+        operation: "replace-body",
+        symbol: Some(name.to_string()),
+        applied: !dry_run,
+        lines_changed,
+        warnings: vec![],
+    })
+}
+
+// ── insert ──────────────────────────────────────────────────────────────────
+
+#[allow(clippy::too_many_arguments)]
+pub fn insert(
+    file: &Path,
+    anchor_name: &str,
+    after: bool, // true = --after, false = --before
+    class: Option<&str>,
+    content: &str,
+    no_format: bool,
+    dry_run: bool,
+    project_root: &Path,
+) -> Result<EditOutput> {
+    let source =
+        std::fs::read_to_string(file).map_err(|e| miette::miette!("cannot read file: {e}"))?;
+    let tree = crate::core::parser::parse(&source)?;
+    let root = tree.root_node();
+    let rel = crate::core::fs::relative_slash(file, project_root);
+
+    let decl = if let Some(cls) = class {
+        let class_node = find_class_definition(root, &source, cls)
+            .ok_or_else(|| miette::miette!("class '{cls}' not found in {rel}"))?;
+        find_declaration_in_class(class_node, &source, anchor_name)
+            .ok_or_else(|| miette::miette!("symbol '{anchor_name}' not found in class '{cls}'"))?
+    } else {
+        find_declaration_by_name(root, &source, anchor_name)
+            .ok_or_else(|| miette::miette!("symbol '{anchor_name}' not found in {rel}"))?
+    };
+
+    let (full_start, full_end) = declaration_full_range(decl, &source);
+
+    let insert_point = if after { full_end } else { full_start };
+
+    // Build new source
+    let mut result = String::with_capacity(source.len() + content.len());
+    result.push_str(&source[..insert_point]);
+
+    // Ensure proper newline separation
+    if after {
+        if !result.ends_with('\n') {
+            result.push('\n');
+        }
+        result.push_str(content.trim_end());
+        result.push('\n');
+    } else {
+        let trimmed = content.trim_end();
+        result.push_str(trimmed);
+        if !trimmed.ends_with('\n') {
+            result.push('\n');
+        }
+    }
+
+    result.push_str(&source[insert_point..]);
+
+    // Validate
+    validate_no_new_errors(&source, &result)?;
+
+    // Format
+    let final_source = if no_format {
+        result
+    } else {
+        format_source(&result, project_root)?
+    };
+
+    let lines_changed = diff_line_count(&source, &final_source);
+
+    if !dry_run {
+        std::fs::write(file, &final_source)
+            .map_err(|e| miette::miette!("cannot write file: {e}"))?;
+    }
+
+    Ok(EditOutput {
+        file: rel,
+        operation: "insert",
+        symbol: Some(anchor_name.to_string()),
+        applied: !dry_run,
+        lines_changed,
+        warnings: vec![],
+    })
+}
+
+// ── replace-symbol ──────────────────────────────────────────────────────────
+
+pub fn replace_symbol(
+    file: &Path,
+    name: &str,
+    class: Option<&str>,
+    new_content: &str,
+    no_format: bool,
+    dry_run: bool,
+    project_root: &Path,
+) -> Result<EditOutput> {
+    let source =
+        std::fs::read_to_string(file).map_err(|e| miette::miette!("cannot read file: {e}"))?;
+    let tree = crate::core::parser::parse(&source)?;
+    let root = tree.root_node();
+    let rel = crate::core::fs::relative_slash(file, project_root);
+
+    let decl = if let Some(cls) = class {
+        let class_node = find_class_definition(root, &source, cls)
+            .ok_or_else(|| miette::miette!("class '{cls}' not found in {rel}"))?;
+        find_declaration_in_class(class_node, &source, name)
+            .ok_or_else(|| miette::miette!("symbol '{name}' not found in class '{cls}'"))?
+    } else {
+        find_declaration_by_name(root, &source, name)
+            .ok_or_else(|| miette::miette!("symbol '{name}' not found in {rel}"))?
+    };
+
+    let (full_start, full_end) = declaration_full_range(decl, &source);
+
+    // Build new source
+    let mut result = String::with_capacity(source.len());
+    result.push_str(&source[..full_start]);
+    let trimmed = new_content.trim_end();
+    result.push_str(trimmed);
+    if !trimmed.ends_with('\n') {
+        result.push('\n');
+    }
+    result.push_str(&source[full_end..]);
+
+    // Validate
+    validate_no_new_errors(&source, &result)?;
+
+    // Format
+    let final_source = if no_format {
+        result
+    } else {
+        format_source(&result, project_root)?
+    };
+
+    let lines_changed = diff_line_count(&source, &final_source);
+
+    if !dry_run {
+        std::fs::write(file, &final_source)
+            .map_err(|e| miette::miette!("cannot write file: {e}"))?;
+    }
+
+    Ok(EditOutput {
+        file: rel,
+        operation: "replace-symbol",
+        symbol: Some(name.to_string()),
+        applied: !dry_run,
+        lines_changed,
+        warnings: vec![],
+    })
+}
+
+// ── edit-range ──────────────────────────────────────────────────────────────
+
+pub fn edit_range(
+    file: &Path,
+    start_line: usize, // 1-based inclusive
+    end_line: usize,   // 1-based inclusive
+    new_content: &str,
+    no_format: bool,
+    dry_run: bool,
+    project_root: &Path,
+) -> Result<EditOutput> {
+    let source =
+        std::fs::read_to_string(file).map_err(|e| miette::miette!("cannot read file: {e}"))?;
+    let rel = crate::core::fs::relative_slash(file, project_root);
+
+    if start_line == 0 || end_line == 0 {
+        return Err(miette::miette!("line numbers are 1-based"));
+    }
+    if start_line > end_line {
+        return Err(miette::miette!(
+            "start-line ({start_line}) must be <= end-line ({end_line})"
+        ));
+    }
+
+    let starts = line_starts(&source);
+    let total_lines = starts.len();
+
+    if start_line > total_lines {
+        return Err(miette::miette!(
+            "start-line {start_line} exceeds file length ({total_lines} lines)"
+        ));
+    }
+
+    let start_byte = starts[start_line - 1];
+    let end_byte = if end_line >= total_lines {
+        source.len()
+    } else {
+        starts[end_line] // start of the line *after* end_line
+    };
+
+    // Build new source
+    let mut result = String::with_capacity(source.len());
+    result.push_str(&source[..start_byte]);
+    let trimmed = new_content.trim_end();
+    result.push_str(trimmed);
+    if !trimmed.ends_with('\n') {
+        result.push('\n');
+    }
+    result.push_str(&source[end_byte..]);
+
+    // Validate
+    validate_no_new_errors(&source, &result)?;
+
+    // Format
+    let final_source = if no_format {
+        result
+    } else {
+        format_source(&result, project_root)?
+    };
+
+    let lines_changed = diff_line_count(&source, &final_source);
+
+    if !dry_run {
+        std::fs::write(file, &final_source)
+            .map_err(|e| miette::miette!("cannot write file: {e}"))?;
+    }
+
+    Ok(EditOutput {
+        file: rel,
+        operation: "edit-range",
+        symbol: None,
+        applied: !dry_run,
+        lines_changed,
+        warnings: vec![],
+    })
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
+
+/// Count the number of lines that differ between two strings.
+fn diff_line_count(old: &str, new: &str) -> u32 {
+    let old_lines: Vec<&str> = old.lines().collect();
+    let new_lines: Vec<&str> = new.lines().collect();
+    let max = old_lines.len().max(new_lines.len());
+    let mut changed = 0u32;
+    for i in 0..max {
+        let a = old_lines.get(i).copied().unwrap_or("");
+        let b = new_lines.get(i).copied().unwrap_or("");
+        if a != b {
+            changed += 1;
+        }
+    }
+    // Also count extra lines in longer file
+    changed
+}
+
+// ── Tests ───────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    fn setup(files: &[(&str, &str)]) -> TempDir {
+        let temp = tempfile::Builder::new()
+            .prefix("gdtest")
+            .tempdir()
+            .expect("create temp dir");
+        fs::write(
+            temp.path().join("project.godot"),
+            "[application]\nconfig/name=\"test\"\n",
+        )
+        .expect("write project.godot");
+        for (name, content) in files {
+            fs::write(temp.path().join(name), content).expect("write file");
+        }
+        temp
+    }
+
+    // ── replace-body ────────────────────────────────────────────────────
+
+    #[test]
+    fn replace_body_basic() {
+        let temp = setup(&[("player.gd", "extends Node\n\n\nfunc _ready():\n\tpass\n")]);
+        let file = temp.path().join("player.gd");
+        let result = replace_body(
+            &file,
+            "_ready",
+            None,
+            "\tprint(\"hello\")\n",
+            true, // no_format to keep it simple
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        assert_eq!(result.operation, "replace-body");
+        assert_eq!(result.symbol, Some("_ready".to_string()));
+
+        let content = fs::read_to_string(&file).unwrap();
+        assert!(content.contains("print(\"hello\")"));
+        assert!(!content.contains("\tpass"));
+        assert!(content.contains("func _ready():"));
+    }
+
+    #[test]
+    fn replace_body_dry_run() {
+        let temp = setup(&[("player.gd", "extends Node\n\n\nfunc _ready():\n\tpass\n")]);
+        let file = temp.path().join("player.gd");
+        let result = replace_body(
+            &file,
+            "_ready",
+            None,
+            "\tprint(\"hello\")\n",
+            true,
+            true, // dry_run
+            temp.path(),
+        )
+        .unwrap();
+        assert!(!result.applied);
+
+        let content = fs::read_to_string(&file).unwrap();
+        assert!(content.contains("\tpass"), "dry-run should not modify file");
+    }
+
+    #[test]
+    fn replace_body_multiline() {
+        let temp = setup(&[("player.gd", "extends Node\n\n\nfunc move(delta):\n\tpass\n")]);
+        let file = temp.path().join("player.gd");
+        let result = replace_body(
+            &file,
+            "move",
+            None,
+            "\tvar speed = 10\n\tposition += speed * delta\n",
+            true,
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+
+        let content = fs::read_to_string(&file).unwrap();
+        assert!(content.contains("\tvar speed = 10"));
+        assert!(content.contains("\tposition += speed * delta"));
+    }
+
+    #[test]
+    fn replace_body_in_class() {
+        let temp = setup(&[(
+            "player.gd",
+            "extends Node\n\n\nclass Inner:\n\tfunc foo():\n\t\tpass\n",
+        )]);
+        let file = temp.path().join("player.gd");
+        let result = replace_body(
+            &file,
+            "foo",
+            Some("Inner"),
+            "\t\tprint(1)\n",
+            true,
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+
+        let content = fs::read_to_string(&file).unwrap();
+        assert!(content.contains("\t\tprint(1)"));
+    }
+
+    #[test]
+    fn replace_body_non_function_rejected() {
+        let temp = setup(&[("player.gd", "extends Node\nvar speed = 10\n")]);
+        let file = temp.path().join("player.gd");
+        let result = replace_body(&file, "speed", None, "\t42\n", true, false, temp.path());
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("variable"));
+    }
+
+    #[test]
+    fn replace_body_constructor() {
+        let temp = setup(&[("player.gd", "extends Node\n\n\nfunc _init():\n\tpass\n")]);
+        let file = temp.path().join("player.gd");
+        let result = replace_body(
+            &file,
+            "_init",
+            None,
+            "\tprint(\"init\")\n",
+            true,
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+
+        let content = fs::read_to_string(&file).unwrap();
+        assert!(content.contains("print(\"init\")"));
+    }
+
+    #[test]
+    fn replace_body_reindents_from_zero() {
+        let temp = setup(&[("player.gd", "extends Node\n\n\nfunc _ready():\n\tpass\n")]);
+        let file = temp.path().join("player.gd");
+        // Content with no indentation — should be reindented to 1 tab
+        let result = replace_body(
+            &file,
+            "_ready",
+            None,
+            "print(\"hello\")\nprint(\"world\")\n",
+            true,
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+
+        let content = fs::read_to_string(&file).unwrap();
+        assert!(content.contains("\tprint(\"hello\")"));
+        assert!(content.contains("\tprint(\"world\")"));
+    }
+
+    // ── insert ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn insert_after() {
+        let temp = setup(&[("player.gd", "extends Node\n\n\nfunc _ready():\n\tpass\n")]);
+        let file = temp.path().join("player.gd");
+        let result = insert(
+            &file,
+            "_ready",
+            true, // after
+            None,
+            "\nfunc _process(delta):\n\tpass\n",
+            true,
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        assert_eq!(result.operation, "insert");
+
+        let content = fs::read_to_string(&file).unwrap();
+        assert!(content.contains("func _process(delta):"));
+        // _process should come after _ready
+        let ready_pos = content.find("func _ready()").unwrap();
+        let process_pos = content.find("func _process(delta)").unwrap();
+        assert!(process_pos > ready_pos);
+    }
+
+    #[test]
+    fn insert_before() {
+        let temp = setup(&[("player.gd", "extends Node\n\n\nfunc _ready():\n\tpass\n")]);
+        let file = temp.path().join("player.gd");
+        let result = insert(
+            &file,
+            "_ready",
+            false, // before
+            None,
+            "var speed = 10\n",
+            true,
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+
+        let content = fs::read_to_string(&file).unwrap();
+        assert!(content.contains("var speed = 10"));
+        let var_pos = content.find("var speed").unwrap();
+        let ready_pos = content.find("func _ready()").unwrap();
+        assert!(var_pos < ready_pos);
+    }
+
+    #[test]
+    fn insert_dry_run() {
+        let temp = setup(&[("player.gd", "extends Node\n\n\nfunc _ready():\n\tpass\n")]);
+        let file = temp.path().join("player.gd");
+        let result = insert(
+            &file,
+            "_ready",
+            true,
+            None,
+            "\nfunc foo():\n\tpass\n",
+            true,
+            true, // dry_run
+            temp.path(),
+        )
+        .unwrap();
+        assert!(!result.applied);
+
+        let content = fs::read_to_string(&file).unwrap();
+        assert!(!content.contains("func foo()"));
+    }
+
+    // ── replace-symbol ──────────────────────────────────────────────────
+
+    #[test]
+    fn replace_symbol_var() {
+        let temp = setup(&[(
+            "player.gd",
+            "extends Node\nvar speed = 10\n\n\nfunc _ready():\n\tpass\n",
+        )]);
+        let file = temp.path().join("player.gd");
+        let result = replace_symbol(
+            &file,
+            "speed",
+            None,
+            "var speed: float = 42.0\n",
+            true,
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        assert_eq!(result.operation, "replace-symbol");
+
+        let content = fs::read_to_string(&file).unwrap();
+        assert!(content.contains("var speed: float = 42.0"));
+        assert!(!content.contains("var speed = 10"));
+    }
+
+    #[test]
+    fn replace_symbol_function() {
+        let temp = setup(&[(
+            "player.gd",
+            "extends Node\n\n\nfunc old_func():\n\tvar x = 1\n\tprint(x)\n",
+        )]);
+        let file = temp.path().join("player.gd");
+        let result = replace_symbol(
+            &file,
+            "old_func",
+            None,
+            "func new_func():\n\tprint(\"replaced\")\n",
+            true,
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+
+        let content = fs::read_to_string(&file).unwrap();
+        assert!(content.contains("func new_func():"));
+        assert!(content.contains("print(\"replaced\")"));
+        assert!(!content.contains("old_func"));
+    }
+
+    #[test]
+    fn replace_symbol_dry_run() {
+        let temp = setup(&[("player.gd", "extends Node\nvar speed = 10\n")]);
+        let file = temp.path().join("player.gd");
+        let result = replace_symbol(
+            &file,
+            "speed",
+            None,
+            "var speed = 99\n",
+            true,
+            true,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(!result.applied);
+
+        let content = fs::read_to_string(&file).unwrap();
+        assert!(content.contains("var speed = 10"));
+    }
+
+    // ── edit-range ──────────────────────────────────────────────────────
+
+    #[test]
+    fn edit_range_basic() {
+        let temp = setup(&[(
+            "player.gd",
+            "extends Node\nvar a = 1\nvar b = 2\nvar c = 3\n",
+        )]);
+        let file = temp.path().join("player.gd");
+        let result = edit_range(
+            &file,
+            2,
+            3, // replace lines 2-3
+            "var x = 10\nvar y = 20\n",
+            true,
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        assert_eq!(result.operation, "edit-range");
+        assert!(result.symbol.is_none());
+
+        let content = fs::read_to_string(&file).unwrap();
+        assert!(content.contains("var x = 10"));
+        assert!(content.contains("var y = 20"));
+        assert!(!content.contains("var a = 1"));
+        assert!(!content.contains("var b = 2"));
+        assert!(content.contains("var c = 3"));
+    }
+
+    #[test]
+    fn edit_range_dry_run() {
+        let temp = setup(&[("player.gd", "extends Node\nvar a = 1\nvar b = 2\n")]);
+        let file = temp.path().join("player.gd");
+        let result =
+            edit_range(&file, 2, 2, "var replaced = 99\n", true, true, temp.path()).unwrap();
+        assert!(!result.applied);
+
+        let content = fs::read_to_string(&file).unwrap();
+        assert!(content.contains("var a = 1"));
+    }
+
+    #[test]
+    fn edit_range_invalid_lines() {
+        let temp = setup(&[("player.gd", "extends Node\nvar a = 1\n")]);
+        let file = temp.path().join("player.gd");
+        let result = edit_range(&file, 3, 1, "x\n", true, false, temp.path());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn edit_range_zero_line() {
+        let temp = setup(&[("player.gd", "extends Node\nvar a = 1\n")]);
+        let file = temp.path().join("player.gd");
+        let result = edit_range(&file, 0, 1, "x\n", true, false, temp.path());
+        assert!(result.is_err());
+    }
+}

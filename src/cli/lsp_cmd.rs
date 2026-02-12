@@ -1,3 +1,5 @@
+use std::io::Read;
+
 use clap::{Args, Subcommand};
 use miette::Result;
 
@@ -275,6 +277,81 @@ pub enum LspCommand {
         /// Destination file path
         #[arg(long)]
         to: String,
+        /// Preview without writing changes
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Replace a function's body (AST-aware, reads new body from stdin)
+    ReplaceBody {
+        /// Path to the GDScript file
+        #[arg(long)]
+        file: String,
+        /// Function name whose body to replace
+        #[arg(long)]
+        name: String,
+        /// Inner class containing the function
+        #[arg(long)]
+        class: Option<String>,
+        /// Skip auto-formatting the result
+        #[arg(long)]
+        no_format: bool,
+        /// Preview without writing changes
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Insert code before or after a named symbol (reads content from stdin)
+    Insert {
+        /// Path to the GDScript file
+        #[arg(long)]
+        file: String,
+        /// Insert after this symbol
+        #[arg(long, conflicts_with = "before")]
+        after: Option<String>,
+        /// Insert before this symbol
+        #[arg(long, conflicts_with = "after")]
+        before: Option<String>,
+        /// Inner class containing the anchor symbol
+        #[arg(long)]
+        class: Option<String>,
+        /// Skip auto-formatting the result
+        #[arg(long)]
+        no_format: bool,
+        /// Preview without writing changes
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Replace an entire symbol declaration (reads new content from stdin)
+    ReplaceSymbol {
+        /// Path to the GDScript file
+        #[arg(long)]
+        file: String,
+        /// Symbol name to replace
+        #[arg(long)]
+        name: String,
+        /// Inner class containing the symbol
+        #[arg(long)]
+        class: Option<String>,
+        /// Skip auto-formatting the result
+        #[arg(long)]
+        no_format: bool,
+        /// Preview without writing changes
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Replace a range of lines (reads new content from stdin)
+    EditRange {
+        /// Path to the GDScript file
+        #[arg(long)]
+        file: String,
+        /// First line to replace (1-based, inclusive)
+        #[arg(long)]
+        start_line: usize,
+        /// Last line to replace (1-based, inclusive)
+        #[arg(long)]
+        end_line: usize,
+        /// Skip auto-formatting the result
+        #[arg(long)]
+        no_format: bool,
         /// Preview without writing changes
         #[arg(long)]
         dry_run: bool,
@@ -566,6 +643,104 @@ pub fn exec(args: LspArgs) -> Result<()> {
                 &name,
                 r#type.as_deref(),
                 dry_run,
+            )?;
+            let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+            println!("{json}");
+            Ok(())
+        }
+        LspCommand::ReplaceBody {
+            file,
+            name,
+            class,
+            no_format,
+            dry_run,
+        } => {
+            let mut content = String::new();
+            std::io::stdin()
+                .read_to_string(&mut content)
+                .map_err(|e| miette::miette!("cannot read stdin: {e}"))?;
+            let result = crate::lsp::query::query_replace_body(
+                &file,
+                &name,
+                class.as_deref(),
+                &content,
+                no_format,
+                dry_run,
+            )?;
+            let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+            println!("{json}");
+            Ok(())
+        }
+        LspCommand::Insert {
+            file,
+            after,
+            before,
+            class,
+            no_format,
+            dry_run,
+        } => {
+            let (anchor, is_after) = match (after, before) {
+                (Some(a), None) => (a, true),
+                (None, Some(b)) => (b, false),
+                _ => {
+                    return Err(miette::miette!(
+                        "exactly one of --after or --before is required"
+                    ));
+                }
+            };
+            let mut content = String::new();
+            std::io::stdin()
+                .read_to_string(&mut content)
+                .map_err(|e| miette::miette!("cannot read stdin: {e}"))?;
+            let result = crate::lsp::query::query_insert(
+                &file,
+                &anchor,
+                is_after,
+                class.as_deref(),
+                &content,
+                no_format,
+                dry_run,
+            )?;
+            let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+            println!("{json}");
+            Ok(())
+        }
+        LspCommand::ReplaceSymbol {
+            file,
+            name,
+            class,
+            no_format,
+            dry_run,
+        } => {
+            let mut content = String::new();
+            std::io::stdin()
+                .read_to_string(&mut content)
+                .map_err(|e| miette::miette!("cannot read stdin: {e}"))?;
+            let result = crate::lsp::query::query_replace_symbol(
+                &file,
+                &name,
+                class.as_deref(),
+                &content,
+                no_format,
+                dry_run,
+            )?;
+            let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+            println!("{json}");
+            Ok(())
+        }
+        LspCommand::EditRange {
+            file,
+            start_line,
+            end_line,
+            no_format,
+            dry_run,
+        } => {
+            let mut content = String::new();
+            std::io::stdin()
+                .read_to_string(&mut content)
+                .map_err(|e| miette::miette!("cannot read stdin: {e}"))?;
+            let result = crate::lsp::query::query_edit_range(
+                &file, start_line, end_line, &content, no_format, dry_run,
             )?;
             let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
             println!("{json}");

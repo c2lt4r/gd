@@ -510,9 +510,16 @@ gd lsp introduce-variable --file player.gd --line 5 --column 10 --end-column 30 
 
 # Turn a hardcoded value into a parameter with default
 gd lsp introduce-parameter --file player.gd --line 5 --column 10 --end-column 20 --name speed
+
+# AST-aware editing (reads new content from stdin)
+echo -e '\tprint("hello")' | gd lsp replace-body --file player.gd --name _ready
+echo 'func _process(delta):\n\tpass' | gd lsp insert --file player.gd --after _ready
+echo 'var speed: float = 42.0' | gd lsp replace-symbol --file player.gd --name speed
+echo '\t# replaced' | gd lsp edit-range --file player.gd --start-line 5 --end-line 7
 ```
 
 All refactoring commands support `--dry-run` to preview changes without writing to disk.
+Edit commands also support `--no-format` to skip auto-formatting and `--class` for inner class targets.
 
 ### Editor Setup
 

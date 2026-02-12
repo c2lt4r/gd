@@ -4,6 +4,11 @@
 
 ### Added
 - `gd lint --context N` — show N surrounding lines per diagnostic (human + JSON output)
+- `gd lsp replace-body` — AST-aware function body replacement (reads from stdin)
+- `gd lsp insert` — insert code before/after a named symbol (reads from stdin)
+- `gd lsp replace-symbol` — replace entire symbol declaration (reads from stdin)
+- `gd lsp edit-range` — line-range replacement fallback (reads from stdin)
+- All edit commands: `--no-format` to skip auto-formatting, `--class` for inner classes, `--dry-run` to preview
 
 ## [0.1.9] - 2026-02-12
 

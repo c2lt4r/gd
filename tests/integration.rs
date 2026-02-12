@@ -4998,3 +4998,460 @@ fn test_lint_parameter_shadows_field_without_self() {
         "Should warn when param shadows field without self., got: {stderr}"
     );
 }
+
+// ── AST-aware edit commands ─────────────────────────────────────────────────
+
+/// Helper: run a gd lsp subcommand with stdin content piped in.
+fn run_lsp_edit(dir: &std::path::Path, args: &[&str], stdin_content: &str) -> std::process::Output {
+    use std::process::Stdio;
+    let mut child = Command::new(env!("CARGO_BIN_EXE_gd"))
+        .args(args)
+        .current_dir(dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("Failed to spawn gd lsp");
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(stdin_content.as_bytes())
+        .unwrap();
+    child.wait_with_output().expect("Failed to wait on child")
+}
+
+#[test]
+fn test_lsp_replace_body() {
+    let temp = setup_gd_project(&[("player.gd", "extends Node\n\n\nfunc _ready():\n\tpass\n")]);
+
+    let output = run_lsp_edit(
+        temp.path(),
+        &[
+            "lsp",
+            "replace-body",
+            "--file",
+            "player.gd",
+            "--name",
+            "_ready",
+            "--no-format",
+        ],
+        "\tprint(\"hello\")\n",
+    );
+
+    assert!(output.status.success(), "replace-body should succeed");
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["operation"], "replace-body");
+    assert_eq!(json["symbol"], "_ready");
+    assert_eq!(json["applied"], true);
+
+    let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+    assert!(content.contains("print(\"hello\")"));
+    assert!(!content.contains("\tpass"));
+    assert!(content.contains("func _ready():"));
+}
+
+#[test]
+fn test_lsp_replace_body_dry_run() {
+    let temp = setup_gd_project(&[("player.gd", "extends Node\n\n\nfunc _ready():\n\tpass\n")]);
+
+    let output = run_lsp_edit(
+        temp.path(),
+        &[
+            "lsp",
+            "replace-body",
+            "--file",
+            "player.gd",
+            "--name",
+            "_ready",
+            "--no-format",
+            "--dry-run",
+        ],
+        "\tprint(\"hello\")\n",
+    );
+
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["applied"], false);
+
+    let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+    assert!(content.contains("\tpass"), "dry-run should not modify file");
+}
+
+#[test]
+fn test_lsp_replace_body_reindents() {
+    let temp = setup_gd_project(&[("player.gd", "extends Node\n\n\nfunc _ready():\n\tpass\n")]);
+
+    // Send content with no indentation — should be reindented to 1 tab
+    let output = run_lsp_edit(
+        temp.path(),
+        &[
+            "lsp",
+            "replace-body",
+            "--file",
+            "player.gd",
+            "--name",
+            "_ready",
+            "--no-format",
+        ],
+        "print(\"a\")\nprint(\"b\")\n",
+    );
+
+    assert!(output.status.success());
+    let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+    assert!(content.contains("\tprint(\"a\")"));
+    assert!(content.contains("\tprint(\"b\")"));
+}
+
+#[test]
+fn test_lsp_replace_body_non_function_fails() {
+    let temp = setup_gd_project(&[("player.gd", "extends Node\nvar speed = 10\n")]);
+
+    let output = run_lsp_edit(
+        temp.path(),
+        &[
+            "lsp",
+            "replace-body",
+            "--file",
+            "player.gd",
+            "--name",
+            "speed",
+            "--no-format",
+        ],
+        "\t42\n",
+    );
+
+    assert!(!output.status.success(), "should fail for non-function");
+}
+
+#[test]
+fn test_lsp_replace_body_with_class() {
+    let temp = setup_gd_project(&[(
+        "player.gd",
+        "extends Node\n\n\nclass Inner:\n\tfunc foo():\n\t\tpass\n",
+    )]);
+
+    let output = run_lsp_edit(
+        temp.path(),
+        &[
+            "lsp",
+            "replace-body",
+            "--file",
+            "player.gd",
+            "--name",
+            "foo",
+            "--class",
+            "Inner",
+            "--no-format",
+        ],
+        "\t\tprint(1)\n",
+    );
+
+    assert!(output.status.success());
+    let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+    assert!(content.contains("\t\tprint(1)"));
+}
+
+#[test]
+fn test_lsp_insert_after() {
+    let temp = setup_gd_project(&[("player.gd", "extends Node\n\n\nfunc _ready():\n\tpass\n")]);
+
+    let output = run_lsp_edit(
+        temp.path(),
+        &[
+            "lsp",
+            "insert",
+            "--file",
+            "player.gd",
+            "--after",
+            "_ready",
+            "--no-format",
+        ],
+        "\nfunc _process(delta):\n\tpass\n",
+    );
+
+    assert!(output.status.success(), "insert --after should succeed");
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["operation"], "insert");
+    assert_eq!(json["applied"], true);
+
+    let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+    assert!(content.contains("func _process(delta):"));
+    let ready_pos = content.find("func _ready()").unwrap();
+    let process_pos = content.find("func _process(delta)").unwrap();
+    assert!(process_pos > ready_pos);
+}
+
+#[test]
+fn test_lsp_insert_before() {
+    let temp = setup_gd_project(&[("player.gd", "extends Node\n\n\nfunc _ready():\n\tpass\n")]);
+
+    let output = run_lsp_edit(
+        temp.path(),
+        &[
+            "lsp",
+            "insert",
+            "--file",
+            "player.gd",
+            "--before",
+            "_ready",
+            "--no-format",
+        ],
+        "var speed = 10\n",
+    );
+
+    assert!(output.status.success(), "insert --before should succeed");
+    let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+    assert!(content.contains("var speed = 10"));
+    let var_pos = content.find("var speed").unwrap();
+    let ready_pos = content.find("func _ready()").unwrap();
+    assert!(var_pos < ready_pos);
+}
+
+#[test]
+fn test_lsp_insert_dry_run() {
+    let temp = setup_gd_project(&[("player.gd", "extends Node\n\n\nfunc _ready():\n\tpass\n")]);
+
+    let output = run_lsp_edit(
+        temp.path(),
+        &[
+            "lsp",
+            "insert",
+            "--file",
+            "player.gd",
+            "--after",
+            "_ready",
+            "--no-format",
+            "--dry-run",
+        ],
+        "\nfunc foo():\n\tpass\n",
+    );
+
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["applied"], false);
+
+    let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+    assert!(!content.contains("func foo()"));
+}
+
+#[test]
+fn test_lsp_insert_no_anchor_fails() {
+    let temp = setup_gd_project(&[("player.gd", "extends Node\n\n\nfunc _ready():\n\tpass\n")]);
+
+    let output = run_lsp_edit(
+        temp.path(),
+        &["lsp", "insert", "--file", "player.gd", "--no-format"],
+        "var x = 1\n",
+    );
+
+    assert!(
+        !output.status.success(),
+        "should fail without --after or --before"
+    );
+}
+
+#[test]
+fn test_lsp_replace_symbol() {
+    let temp = setup_gd_project(&[(
+        "player.gd",
+        "extends Node\nvar speed = 10\n\n\nfunc _ready():\n\tpass\n",
+    )]);
+
+    let output = run_lsp_edit(
+        temp.path(),
+        &[
+            "lsp",
+            "replace-symbol",
+            "--file",
+            "player.gd",
+            "--name",
+            "speed",
+            "--no-format",
+        ],
+        "var speed: float = 42.0\n",
+    );
+
+    assert!(output.status.success(), "replace-symbol should succeed");
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["operation"], "replace-symbol");
+    assert_eq!(json["symbol"], "speed");
+    assert_eq!(json["applied"], true);
+
+    let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+    assert!(content.contains("var speed: float = 42.0"));
+    assert!(!content.contains("var speed = 10"));
+}
+
+#[test]
+fn test_lsp_replace_symbol_function() {
+    let temp = setup_gd_project(&[(
+        "player.gd",
+        "extends Node\n\n\nfunc old_func():\n\tvar x = 1\n\tprint(x)\n",
+    )]);
+
+    let output = run_lsp_edit(
+        temp.path(),
+        &[
+            "lsp",
+            "replace-symbol",
+            "--file",
+            "player.gd",
+            "--name",
+            "old_func",
+            "--no-format",
+        ],
+        "func new_func():\n\tprint(\"replaced\")\n",
+    );
+
+    assert!(output.status.success());
+    let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+    assert!(content.contains("func new_func():"));
+    assert!(content.contains("print(\"replaced\")"));
+    assert!(!content.contains("old_func"));
+}
+
+#[test]
+fn test_lsp_replace_symbol_dry_run() {
+    let temp = setup_gd_project(&[("player.gd", "extends Node\nvar speed = 10\n")]);
+
+    let output = run_lsp_edit(
+        temp.path(),
+        &[
+            "lsp",
+            "replace-symbol",
+            "--file",
+            "player.gd",
+            "--name",
+            "speed",
+            "--no-format",
+            "--dry-run",
+        ],
+        "var speed = 99\n",
+    );
+
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["applied"], false);
+
+    let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+    assert!(content.contains("var speed = 10"));
+}
+
+#[test]
+fn test_lsp_edit_range() {
+    let temp = setup_gd_project(&[(
+        "player.gd",
+        "extends Node\nvar a = 1\nvar b = 2\nvar c = 3\n",
+    )]);
+
+    let output = run_lsp_edit(
+        temp.path(),
+        &[
+            "lsp",
+            "edit-range",
+            "--file",
+            "player.gd",
+            "--start-line",
+            "2",
+            "--end-line",
+            "3",
+            "--no-format",
+        ],
+        "var x = 10\nvar y = 20\n",
+    );
+
+    assert!(output.status.success(), "edit-range should succeed");
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["operation"], "edit-range");
+    assert_eq!(json["applied"], true);
+    assert!(json.get("symbol").is_none() || json["symbol"].is_null());
+
+    let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+    assert!(content.contains("var x = 10"));
+    assert!(content.contains("var y = 20"));
+    assert!(!content.contains("var a = 1"));
+    assert!(!content.contains("var b = 2"));
+    assert!(content.contains("var c = 3"));
+}
+
+#[test]
+fn test_lsp_edit_range_dry_run() {
+    let temp = setup_gd_project(&[("player.gd", "extends Node\nvar a = 1\nvar b = 2\n")]);
+
+    let output = run_lsp_edit(
+        temp.path(),
+        &[
+            "lsp",
+            "edit-range",
+            "--file",
+            "player.gd",
+            "--start-line",
+            "2",
+            "--end-line",
+            "2",
+            "--no-format",
+            "--dry-run",
+        ],
+        "var replaced = 99\n",
+    );
+
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["applied"], false);
+
+    let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+    assert!(content.contains("var a = 1"));
+}
+
+#[test]
+fn test_lsp_edit_range_invalid_lines() {
+    let temp = setup_gd_project(&[("player.gd", "extends Node\nvar a = 1\n")]);
+
+    let output = run_lsp_edit(
+        temp.path(),
+        &[
+            "lsp",
+            "edit-range",
+            "--file",
+            "player.gd",
+            "--start-line",
+            "5",
+            "--end-line",
+            "3",
+            "--no-format",
+        ],
+        "x\n",
+    );
+
+    assert!(!output.status.success(), "should fail with invalid range");
+}
+
+#[test]
+fn test_lsp_replace_body_with_format() {
+    let temp = setup_gd_project(&[("player.gd", "extends Node\n\n\nfunc _ready():\n\tpass\n")]);
+
+    // Don't pass --no-format — formatter should run
+    let output = run_lsp_edit(
+        temp.path(),
+        &[
+            "lsp",
+            "replace-body",
+            "--file",
+            "player.gd",
+            "--name",
+            "_ready",
+        ],
+        "\tprint( \"hello\" )\n",
+    );
+
+    assert!(
+        output.status.success(),
+        "replace-body with format should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+    assert!(content.contains("print("), "result should contain print");
+    assert!(content.contains("func _ready():"), "signature preserved");
+}
