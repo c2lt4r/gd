@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use miette::Result;
+use serde::Serialize;
 use tree_sitter::Node;
 
 use super::{
@@ -316,6 +317,71 @@ pub fn find_preloads_to_file(
         }
     }
     refs
+}
+
+/// After moving a symbol, update preload/load paths in files that reference
+/// the source file. For each file with a preload of the source, add a matching
+/// preload of the destination file.
+pub fn update_callers_after_move(
+    source_res_path: &str,
+    dest_res_path: &str,
+    preloads: &[PreloadRef],
+    project_root: &Path,
+) -> Result<Vec<CallerUpdate>> {
+    let mut updates = Vec::new();
+
+    for preload_ref in preloads {
+        let file_path = project_root.join(&preload_ref.file);
+        if !file_path.exists() {
+            continue;
+        }
+        let content = std::fs::read_to_string(&file_path)
+            .map_err(|e| miette::miette!("cannot read {}: {e}", preload_ref.file))?;
+
+        // Find the preload/load line and add a matching one for the destination
+        let line_idx = (preload_ref.line - 1) as usize;
+        let lines: Vec<&str> = content.lines().collect();
+        if line_idx >= lines.len() {
+            continue;
+        }
+
+        let preload_line = lines[line_idx];
+
+        // Build a new preload line by replacing the source path with dest path
+        let new_preload_line = preload_line.replace(source_res_path, dest_res_path);
+        if new_preload_line == preload_line {
+            continue; // couldn't substitute
+        }
+
+        // Derive a variable name from the dest path for the new preload
+        // If the original line was `var Foo = preload(...)` or `const Foo = preload(...)`,
+        // we'll add a new line with a derived name
+        let mut new_content = String::with_capacity(content.len() + new_preload_line.len() + 1);
+        for (i, line) in lines.iter().enumerate() {
+            new_content.push_str(line);
+            new_content.push('\n');
+            if i == line_idx {
+                new_content.push_str(&new_preload_line);
+                new_content.push('\n');
+            }
+        }
+
+        std::fs::write(&file_path, &new_content)
+            .map_err(|e| miette::miette!("cannot write {}: {e}", preload_ref.file))?;
+
+        updates.push(CallerUpdate {
+            file: preload_ref.file.clone(),
+            added_preload: new_preload_line.trim().to_string(),
+        });
+    }
+
+    Ok(updates)
+}
+
+#[derive(Serialize, Debug)]
+pub struct CallerUpdate {
+    pub file: String,
+    pub added_preload: String,
 }
 
 fn find_preloads_in_tree(

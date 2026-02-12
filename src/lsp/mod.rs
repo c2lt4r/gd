@@ -8,7 +8,7 @@ mod hover;
 pub mod query;
 pub mod refactor;
 mod references;
-mod rename;
+pub(crate) mod rename;
 mod symbols;
 mod util;
 mod workspace;

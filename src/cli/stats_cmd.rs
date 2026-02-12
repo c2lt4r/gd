@@ -193,7 +193,8 @@ fn collect_current_stats(root: &Path, args: &StatsArgs) -> Result<ProjectStats> 
                 .parent()
                 .and_then(|p| p.strip_prefix(root).ok())
                 .map(|p| {
-                    let s = p.to_string_lossy().to_string();
+                    use path_slash::PathExt;
+                    let s = p.to_slash_lossy().to_string();
                     if s.is_empty() { ".".to_string() } else { s }
                 })
                 .unwrap_or_else(|| ".".to_string());

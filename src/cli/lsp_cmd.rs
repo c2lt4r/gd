@@ -113,6 +113,9 @@ pub enum LspCommand {
         /// Target inner class (defaults to top-level)
         #[arg(long)]
         target_class: Option<String>,
+        /// Update preload/load paths in files that reference the source
+        #[arg(long)]
+        update_callers: bool,
         /// Preview without writing changes
         #[arg(long)]
         dry_run: bool,
@@ -218,6 +221,60 @@ pub enum LspCommand {
         /// Type hint for the parameter (e.g., "float", "String")
         #[arg(long, rename_all = "snake_case")]
         r#type: Option<String>,
+        /// Preview without writing changes
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Delete multiple symbols in one pass without line-shifting issues
+    BulkDeleteSymbol {
+        /// Path to the GDScript file
+        #[arg(long)]
+        file: String,
+        /// Comma-separated symbol names to delete
+        #[arg(long)]
+        names: String,
+        /// Delete even if references exist
+        #[arg(long)]
+        force: bool,
+        /// Preview without writing changes
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Rename multiple symbols atomically
+    BulkRename {
+        /// Path to the GDScript file
+        #[arg(long)]
+        file: String,
+        /// Comma-separated rename pairs (format: "old1:new1,old2:new2")
+        #[arg(long)]
+        renames: String,
+        /// Preview without writing changes
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Inline a pure pass-through delegate function
+    InlineDelegate {
+        /// Path to the GDScript file
+        #[arg(long)]
+        file: String,
+        /// Name of the delegate function
+        #[arg(long)]
+        name: String,
+        /// Preview without writing changes
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Extract multiple symbols into a new class file
+    ExtractClass {
+        /// Path to the source GDScript file
+        #[arg(long)]
+        file: String,
+        /// Comma-separated symbol names to extract
+        #[arg(long)]
+        symbols: String,
+        /// Destination file path
+        #[arg(long)]
+        to: String,
         /// Preview without writing changes
         #[arg(long)]
         dry_run: bool,
@@ -402,6 +459,7 @@ pub fn exec(args: LspArgs) -> Result<()> {
             to,
             class,
             target_class,
+            update_callers,
             dry_run,
         } => {
             let result = crate::lsp::query::query_move_symbol(
@@ -411,6 +469,7 @@ pub fn exec(args: LspArgs) -> Result<()> {
                 dry_run,
                 class.as_deref(),
                 target_class.as_deref(),
+                update_callers,
             )?;
             let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
             println!("{json}");
@@ -532,6 +591,49 @@ pub fn exec(args: LspArgs) -> Result<()> {
                 class.as_deref(),
                 dry_run,
             )?;
+            let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+            println!("{json}");
+            Ok(())
+        }
+        LspCommand::BulkDeleteSymbol {
+            file,
+            names,
+            force,
+            dry_run,
+        } => {
+            let result =
+                crate::lsp::query::query_bulk_delete_symbol(&file, &names, force, dry_run)?;
+            let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+            println!("{json}");
+            Ok(())
+        }
+        LspCommand::BulkRename {
+            file,
+            renames,
+            dry_run,
+        } => {
+            let result = crate::lsp::query::query_bulk_rename(&file, &renames, dry_run)?;
+            let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+            println!("{json}");
+            Ok(())
+        }
+        LspCommand::InlineDelegate {
+            file,
+            name,
+            dry_run,
+        } => {
+            let result = crate::lsp::query::query_inline_delegate(&file, &name, dry_run)?;
+            let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+            println!("{json}");
+            Ok(())
+        }
+        LspCommand::ExtractClass {
+            file,
+            symbols,
+            to,
+            dry_run,
+        } => {
+            let result = crate::lsp::query::query_extract_class(&file, &symbols, &to, dry_run)?;
             let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
             println!("{json}");
             Ok(())

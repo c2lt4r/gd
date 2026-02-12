@@ -1,6 +1,9 @@
+use std::env;
+use std::path::Path;
+
 use clap::Args;
 use miette::Result;
-use std::env;
+use serde::Serialize;
 
 use crate::core::{config::Config, config::find_project_root, fs::collect_gdscript_files, parser};
 use crate::lint::matches_ignore_pattern;
@@ -9,6 +12,25 @@ use crate::lint::matches_ignore_pattern;
 pub struct CheckArgs {
     /// Files or directories to check (defaults to current directory)
     pub paths: Vec<String>,
+    /// Output format (human or json)
+    #[arg(long, default_value = "human")]
+    pub format: String,
+}
+
+#[derive(Serialize)]
+struct CheckOutput {
+    files_checked: u32,
+    files_with_errors: u32,
+    errors: Vec<ParseError>,
+    ok: bool,
+}
+
+#[derive(Serialize)]
+struct ParseError {
+    file: String,
+    line: u32,
+    column: u32,
+    message: String,
 }
 
 pub fn exec(args: CheckArgs) -> Result<()> {
@@ -17,13 +39,15 @@ pub fn exec(args: CheckArgs) -> Result<()> {
     let ignore_base = find_project_root(&cwd).unwrap_or_else(|| cwd.clone());
 
     let roots = if args.paths.is_empty() {
-        vec![cwd]
+        vec![cwd.clone()]
     } else {
         args.paths.iter().map(std::path::PathBuf::from).collect()
     };
 
-    let mut errors = 0u32;
+    let json_mode = args.format == "json";
+    let mut error_count = 0u32;
     let mut checked = 0u32;
+    let mut parse_errors = Vec::new();
 
     for root in &roots {
         let files = collect_gdscript_files(root)?;
@@ -36,22 +60,50 @@ pub fn exec(args: CheckArgs) -> Result<()> {
                 Ok((source, tree)) => {
                     let root_node = tree.root_node();
                     if root_node.has_error() {
-                        errors += 1;
-                        // Walk to find ERROR nodes
+                        error_count += 1;
                         let mut cursor = root_node.walk();
-                        report_errors(&mut cursor, &source, file);
+                        if json_mode {
+                            collect_errors(&mut cursor, file, &cwd, &mut parse_errors);
+                        } else {
+                            report_errors(&mut cursor, &source, file);
+                        }
                     }
                 }
                 Err(e) => {
-                    errors += 1;
-                    eprintln!("{e}");
+                    error_count += 1;
+                    if json_mode {
+                        let rel = crate::core::fs::relative_slash(file, &cwd);
+                        parse_errors.push(ParseError {
+                            file: rel,
+                            line: 0,
+                            column: 0,
+                            message: format!("{e}"),
+                        });
+                    } else {
+                        eprintln!("{e}");
+                    }
                 }
             }
         }
     }
 
-    if errors > 0 {
-        eprintln!("\n{checked} files checked, {errors} with parse errors");
+    if json_mode {
+        let output = CheckOutput {
+            files_checked: checked,
+            files_with_errors: error_count,
+            errors: parse_errors,
+            ok: error_count == 0,
+        };
+        let json = serde_json::to_string_pretty(&output).map_err(|e| miette::miette!("{e}"))?;
+        println!("{json}");
+        if !output.ok {
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
+
+    if error_count > 0 {
+        eprintln!("\n{checked} files checked, {error_count} with parse errors");
         std::process::exit(1);
     }
 
@@ -60,7 +112,7 @@ pub fn exec(args: CheckArgs) -> Result<()> {
     Ok(())
 }
 
-fn report_errors(cursor: &mut tree_sitter::TreeCursor, source: &str, file: &std::path::Path) {
+fn report_errors(cursor: &mut tree_sitter::TreeCursor, source: &str, file: &Path) {
     use owo_colors::OwoColorize;
     loop {
         let node = cursor.node();
@@ -78,6 +130,34 @@ fn report_errors(cursor: &mut tree_sitter::TreeCursor, source: &str, file: &std:
         }
         if cursor.goto_first_child() {
             report_errors(cursor, source, file);
+            cursor.goto_parent();
+        }
+        if !cursor.goto_next_sibling() {
+            break;
+        }
+    }
+}
+
+fn collect_errors(
+    cursor: &mut tree_sitter::TreeCursor,
+    file: &Path,
+    base: &Path,
+    out: &mut Vec<ParseError>,
+) {
+    loop {
+        let node = cursor.node();
+        if node.is_error() || node.is_missing() {
+            let start = node.start_position();
+            let rel = crate::core::fs::relative_slash(file, base);
+            out.push(ParseError {
+                file: rel,
+                line: start.row as u32 + 1,
+                column: start.column as u32 + 1,
+                message: "parse error".to_string(),
+            });
+        }
+        if cursor.goto_first_child() {
+            collect_errors(cursor, file, base, out);
             cursor.goto_parent();
         }
         if !cursor.goto_next_sibling() {

@@ -698,11 +698,12 @@ pub fn query_move_symbol(
     dry_run: bool,
     class: Option<&str>,
     target_class: Option<&str>,
+    update_callers: bool,
 ) -> Result<super::refactor::MoveSymbolOutput> {
     let from_path = resolve_file(from)?;
     let project_root = find_root(&from_path)?;
     let to_path = project_root.join(to);
-    super::refactor::move_symbol(
+    let mut result = super::refactor::move_symbol(
         name,
         &from_path,
         &to_path,
@@ -710,7 +711,36 @@ pub fn query_move_symbol(
         &project_root,
         class,
         target_class,
-    )
+    )?;
+
+    // Update callers after successful move
+    if update_callers && !dry_run && result.applied && !result.preloads.is_empty() {
+        let from_relative = crate::core::fs::relative_slash(&from_path, &project_root);
+        let to_relative = crate::core::fs::relative_slash(&to_path, &project_root);
+        let source_res = format!("res://{from_relative}");
+        let dest_res = format!("res://{to_relative}");
+
+        match super::refactor::update_callers_after_move(
+            &source_res,
+            &dest_res,
+            &result.preloads,
+            &project_root,
+        ) {
+            Ok(updates) => {
+                for update in &updates {
+                    result.warnings.push(format!(
+                        "updated {}: added {}",
+                        update.file, update.added_preload
+                    ));
+                }
+            }
+            Err(e) => {
+                result.warnings.push(format!("caller update error: {e}"));
+            }
+        }
+    }
+
+    Ok(result)
 }
 
 pub fn query_extract_method(
@@ -817,6 +847,67 @@ pub fn query_introduce_parameter(
     )
 }
 
+// ── Bulk operations ──────────────────────────────────────────────────────
+
+pub fn query_bulk_delete_symbol(
+    file: &str,
+    names_str: &str,
+    force: bool,
+    dry_run: bool,
+) -> Result<super::refactor::BulkDeleteSymbolOutput> {
+    let path = resolve_file(file)?;
+    let project_root = find_root(&path)?;
+    let names: Vec<String> = names_str.split(',').map(|s| s.trim().to_string()).collect();
+    super::refactor::bulk_delete_symbol(&path, &names, force, dry_run, &project_root)
+}
+
+pub fn query_bulk_rename(
+    file: &str,
+    renames_str: &str,
+    dry_run: bool,
+) -> Result<super::refactor::BulkRenameOutput> {
+    let path = resolve_file(file)?;
+    let project_root = find_root(&path)?;
+    let mut renames = Vec::new();
+    for pair in renames_str.split(',') {
+        let pair = pair.trim();
+        let parts: Vec<&str> = pair.splitn(2, ':').collect();
+        if parts.len() != 2 {
+            return Err(miette::miette!(
+                "invalid rename pair '{pair}': expected 'old:new'"
+            ));
+        }
+        renames.push((parts[0].trim().to_string(), parts[1].trim().to_string()));
+    }
+    super::refactor::bulk_rename(&path, &renames, dry_run, &project_root)
+}
+
+pub fn query_inline_delegate(
+    file: &str,
+    name: &str,
+    dry_run: bool,
+) -> Result<super::refactor::InlineDelegateOutput> {
+    let path = resolve_file(file)?;
+    let project_root = find_root(&path)?;
+    super::refactor::inline_delegate(&path, name, dry_run, &project_root)
+}
+
+pub fn query_extract_class(
+    file: &str,
+    symbols_str: &str,
+    to: &str,
+    dry_run: bool,
+) -> Result<super::refactor::ExtractClassOutput> {
+    let path = resolve_file(file)?;
+    let project_root = find_root(&path)?;
+    let to_path = project_root.join(to);
+    let names: Vec<String> = symbols_str
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .collect();
+    super::refactor::extract_class(&path, &names, &to_path, dry_run, &project_root)
+}
+
 // ── Apply rename ────────────────────────────────────────────────────────────
 
 pub fn apply_rename(output: &RenameOutput, project_root: &Path) -> Result<usize> {
@@ -845,6 +936,23 @@ pub fn apply_rename(output: &RenameOutput, project_root: &Path) -> Result<usize>
         files_changed += 1;
     }
     Ok(files_changed)
+}
+
+/// Convert a `WorkspaceEdit` from `rename_cross_file` into a `RenameOutput`.
+/// Used by `bulk_rename` to avoid going through `resolve_file` / `find_root`.
+pub fn convert_rename_edit(
+    edit: &WorkspaceEdit,
+    project_root: &Path,
+    old_name: &str,
+    new_name: &str,
+) -> RenameOutput {
+    let changes = convert_workspace_edit(edit, project_root);
+    RenameOutput {
+        symbol: old_name.to_string(),
+        new_name: new_name.to_string(),
+        changes,
+        summary: None,
+    }
 }
 
 // ── Internal converters ─────────────────────────────────────────────────────

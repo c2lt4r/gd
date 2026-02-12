@@ -1,14 +1,22 @@
+mod bulk_delete;
+mod bulk_rename;
 mod change_signature;
 mod delete_symbol;
+mod extract_class;
 mod extract_method;
+mod inline_delegate;
 mod inline_method;
 mod introduce_parameter;
 mod introduce_variable;
 mod move_symbol;
 
+pub use bulk_delete::*;
+pub use bulk_rename::*;
 pub use change_signature::*;
 pub use delete_symbol::*;
+pub use extract_class::*;
 pub use extract_method::*;
+pub use inline_delegate::*;
 pub use inline_method::*;
 pub use introduce_parameter::*;
 pub use introduce_variable::*;
