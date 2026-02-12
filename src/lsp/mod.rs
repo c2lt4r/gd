@@ -45,7 +45,21 @@ impl Backend {
         let Some(ws) = self.workspace.get() else {
             return;
         };
+
+        // Load config once for the whole workspace instead of per-file
+        let config = crate::core::config::Config::load(ws.project_root()).unwrap_or_default();
+        let ignore_base = ws.project_root().to_path_buf();
+
         for (path, content) in ws.all_files() {
+            // Skip files matching ignore_patterns before any linting
+            if crate::lint::matches_ignore_pattern(
+                &path,
+                &ignore_base,
+                &config.lint.ignore_patterns,
+            ) {
+                continue;
+            }
+
             let Ok(uri) = Url::from_file_path(&path) else {
                 continue;
             };

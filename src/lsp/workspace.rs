@@ -31,6 +31,11 @@ impl WorkspaceIndex {
         }
     }
 
+    /// The project root directory.
+    pub fn project_root(&self) -> &Path {
+        &self.project_root
+    }
+
     /// Convert a `res://` path to an absolute filesystem path.
     pub fn resolve_res_path(&self, res_path: &str) -> Option<PathBuf> {
         let rel = res_path.strip_prefix("res://")?;
