@@ -14,9 +14,14 @@
     - `stack`, `vars`, `expand` — inspect call stack and variables
     - `eval` — evaluate expressions at breakpoints (member-access only)
   - `gd debug break --file <path> --line <N>` — one-shot: set breakpoint, wait for hit, dump stack + variables (`--format json`)
+  - `gd debug break --name <func>` — break on function entry by name (resolves to file:line automatically)
+  - `gd debug break --condition <expr>` — conditional breakpoints (only trigger when expression is true)
+  - `gd debug eval --expr <expr>` — evaluate expression while paused at a breakpoint (`--format json`)
+  - `gd debug continue/next/step/pause` — non-interactive execution control
   - `gd debug status` — show DAP connection and threads (`--format json`)
   - `gd debug stop` — terminate the running game
   - Cross-platform path resolution (WSL `/mnt/c/` to `C:/` conversion)
+- Static completions now include engine methods from class_db based on `extends` clause (e.g. `extends Node2D` adds `apply_scale`, `add_child`, etc.)
 
 ### Fixed
 - Godot Dictionary errors from missing `name`/`checksums` fields in DAP source objects

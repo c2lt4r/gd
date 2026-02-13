@@ -75,7 +75,7 @@ gd run
 | `gd addons` | Manage project addons (install, remove, search, update, lock) |
 | `gd stats` | Show project statistics (`--diff <branch>`, `--by-dir`, `--top N`) |
 | `gd ci` | Generate CI/CD pipeline configuration |
-| `gd debug` | Debug a running Godot game via DAP (attach, breakpoints, stepping, eval) |
+| `gd debug` | Debug a running Godot game via DAP (breakpoints, stepping, eval, conditional breaks) |
 | `gd lsp` | Start the LSP server, or run one-shot queries (see below) |
 | `gd deps` | Show script dependency graph (`--include-resources` for `.tscn`/`.tres`) |
 | `gd man` | Generate man page |
@@ -242,6 +242,21 @@ gd debug status
 # Set breakpoint, wait for hit, dump stack + variables, then resume
 gd debug break --file scripts/player.gd --line 42
 
+# Break on function entry by name (no line number needed)
+gd debug break --name apply_input
+
+# Conditional breakpoint (only triggers when expression is true)
+gd debug break --file scripts/player.gd --line 42 --condition "speed > 20.0"
+
+# Evaluate expression while paused at breakpoint
+gd debug eval --expr "self.speed"
+
+# Execution control (non-interactive)
+gd debug continue
+gd debug next      # step over
+gd debug step      # step into
+gd debug pause
+
 # Terminate the running game
 gd debug stop
 
@@ -251,6 +266,7 @@ gd debug attach
 # JSON output for scripting
 gd debug break --file scripts/player.gd --line 42 --format json
 gd debug status --format json
+gd debug eval --expr "self.position" --format json
 ```
 
 Interactive session commands (`gd debug attach`):

@@ -448,9 +448,10 @@ fn dispatch_dap_set_breakpoints(
         .iter()
         .filter_map(|l| l.as_u64().map(|n| n as u32))
         .collect();
+    let condition = params.get("condition").and_then(|c| c.as_str());
 
     let dap = server.dap.lock().unwrap();
-    match dap.as_ref().unwrap().set_breakpoints(path, &lines) {
+    match dap.as_ref().unwrap().set_breakpoints(path, &lines, condition) {
         Some(body) => ok_response(body),
         None => error_response("setBreakpoints failed"),
     }

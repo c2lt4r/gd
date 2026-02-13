@@ -114,10 +114,22 @@ impl DapClient {
     }
 
     /// Set breakpoints for a source file. `path` must be a full Windows path.
-    pub fn set_breakpoints(&self, path: &str, lines: &[u32]) -> Option<Value> {
+    /// If `condition` is provided, each breakpoint will include the condition expression.
+    pub fn set_breakpoints(
+        &self,
+        path: &str,
+        lines: &[u32],
+        condition: Option<&str>,
+    ) -> Option<Value> {
         let breakpoints: Vec<Value> = lines
             .iter()
-            .map(|&l| serde_json::json!({"line": l}))
+            .map(|&l| {
+                let mut bp = serde_json::json!({"line": l});
+                if let Some(cond) = condition {
+                    bp["condition"] = serde_json::json!(cond);
+                }
+                bp
+            })
             .collect();
         let name = path.rsplit('/').next().unwrap_or(path);
         self.send_request(

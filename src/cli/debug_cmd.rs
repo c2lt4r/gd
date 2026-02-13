@@ -21,19 +21,45 @@ pub enum DebugCommand {
     Status(StatusArgs),
     /// Terminate the running game
     Stop,
+    /// Continue execution (resume from breakpoint)
+    Continue,
+    /// Step over (next line)
+    Next,
+    /// Step into function call
+    Step,
+    /// Pause execution
+    Pause,
+    /// Evaluate an expression in the current scope
+    Eval(EvalArgs),
 }
 
 #[derive(Args)]
 pub struct BreakArgs {
     /// Script file path (relative to project root, e.g. scripts/kart.gd)
     #[arg(long)]
-    pub file: String,
+    pub file: Option<String>,
     /// Line numbers to set breakpoints on
     #[arg(long, num_args = 1..)]
     pub line: Vec<u32>,
+    /// Function name to break on (resolves to file:line automatically)
+    #[arg(long)]
+    pub name: Option<String>,
+    /// Condition expression (breakpoint only triggers when true)
+    #[arg(long)]
+    pub condition: Option<String>,
     /// Timeout in seconds to wait for breakpoint hit (default: 30)
     #[arg(long, default_value = "30")]
     pub timeout: u64,
+    /// Output format
+    #[arg(long, default_value = "human")]
+    pub format: OutputFormat,
+}
+
+#[derive(Args)]
+pub struct EvalArgs {
+    /// Expression to evaluate (e.g. "self.speed", "position.x")
+    #[arg(long)]
+    pub expr: String,
     /// Output format
     #[arg(long, default_value = "human")]
     pub format: OutputFormat,
@@ -78,6 +104,11 @@ pub fn exec(args: DebugArgs) -> Result<()> {
         DebugCommand::Break(a) => cmd_break(a),
         DebugCommand::Status(a) => cmd_status(a),
         DebugCommand::Stop => cmd_stop(),
+        DebugCommand::Continue => cmd_continue(),
+        DebugCommand::Next => cmd_next(),
+        DebugCommand::Step => cmd_step(),
+        DebugCommand::Pause => cmd_pause(),
+        DebugCommand::Eval(a) => cmd_eval(a),
     }
 }
 
@@ -303,22 +334,45 @@ fn print_help() {
 // ── One-shot: break ──────────────────────────────────────────────────
 
 fn cmd_break(args: BreakArgs) -> Result<()> {
-    if args.line.is_empty() {
-        return Err(miette!("At least one --line is required"));
-    }
+    // Resolve --name to file:line if provided
+    let (file, lines) = if let Some(ref func_name) = args.name {
+        let (resolved_file, resolved_line) = resolve_function_name(func_name)?;
+        let lines = if args.line.is_empty() {
+            vec![resolved_line]
+        } else {
+            args.line.clone()
+        };
+        (resolved_file, lines)
+    } else {
+        let file = args
+            .file
+            .as_ref()
+            .ok_or_else(|| miette!("--file is required when not using --name"))?
+            .clone();
+        if args.line.is_empty() {
+            return Err(miette!(
+                "At least one --line is required when not using --name"
+            ));
+        }
+        (file, args.line.clone())
+    };
 
     // Resolve path using daemon's project path
-    let path = resolve_script_path(&args.file)
+    let path = resolve_script_path(&file)
         .ok_or_else(|| miette!("Cannot resolve script path — is the daemon connected to Godot?"))?;
 
-    let lines: Vec<serde_json::Value> = args.line.iter().map(|&l| serde_json::json!(l)).collect();
+    let lines_json: Vec<serde_json::Value> = lines.iter().map(|&l| serde_json::json!(l)).collect();
+
+    // Build breakpoint params (with optional condition)
+    let bp_params = if let Some(ref cond) = args.condition {
+        serde_json::json!({"path": path, "lines": lines_json, "condition": cond})
+    } else {
+        serde_json::json!({"path": path, "lines": lines_json})
+    };
 
     // Set breakpoints
-    let bp_body = daemon_dap(
-        "dap_set_breakpoints",
-        serde_json::json!({"path": path, "lines": lines}),
-    )
-    .ok_or_else(|| miette!("Failed to set breakpoints — is Godot editor running?"))?;
+    let bp_body = daemon_dap("dap_set_breakpoints", bp_params)
+        .ok_or_else(|| miette!("Failed to set breakpoints — is Godot editor running?"))?;
 
     let results = parse_breakpoint_results(&bp_body);
 
@@ -331,7 +385,7 @@ fn cmd_break(args: BreakArgs) -> Result<()> {
         println!(
             "  {} {}:{} [{}]",
             "Breakpoint".bold(),
-            args.file.cyan(),
+            file.cyan(),
             bp.line,
             status,
         );
@@ -486,6 +540,95 @@ fn cmd_stop() -> Result<()> {
     })?;
     println!("{} Game terminated", "■".red());
     Ok(())
+}
+
+// ── One-shot: continue/next/step/pause/eval ─────────────────────────
+
+fn cmd_continue() -> Result<()> {
+    daemon_dap("dap_continue", serde_json::json!({}))
+        .ok_or_else(|| miette!("Failed to continue — is a game running and paused?"))?;
+    println!("{}", "Continued".green());
+    Ok(())
+}
+
+fn cmd_next() -> Result<()> {
+    daemon_dap("dap_next", serde_json::json!({}))
+        .ok_or_else(|| miette!("Failed to step — is a game running and paused?"))?;
+    println!("{}", "Stepped over".green());
+    Ok(())
+}
+
+fn cmd_step() -> Result<()> {
+    daemon_dap("dap_step_in", serde_json::json!({}))
+        .ok_or_else(|| miette!("Failed to step — is a game running and paused?"))?;
+    println!("{}", "Stepped in".green());
+    Ok(())
+}
+
+fn cmd_pause() -> Result<()> {
+    daemon_dap("dap_pause", serde_json::json!({}))
+        .ok_or_else(|| miette!("Failed to pause — is a game running?"))?;
+    println!("{}", "Paused".green());
+    Ok(())
+}
+
+fn cmd_eval(args: EvalArgs) -> Result<()> {
+    let frame_id = get_stack_frames().first().map(|f| f.id).unwrap_or(0);
+    let result = daemon_dap(
+        "dap_evaluate",
+        serde_json::json!({"expression": args.expr, "context": "repl", "frame_id": frame_id}),
+    )
+    .ok_or_else(|| {
+        miette!(
+            "Evaluate failed — game must be paused at a breakpoint.\n  Godot only supports member-access expressions (e.g. self.speed)."
+        )
+    })?;
+
+    let value = result["result"].as_str().unwrap_or("?");
+    let type_name = result["type"].as_str().unwrap_or("");
+
+    match args.format {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&result).unwrap());
+        }
+        OutputFormat::Human => {
+            if type_name.is_empty() {
+                println!("{} = {}", args.expr.cyan(), value.green());
+            } else {
+                println!(
+                    "{} {} = {}",
+                    type_name.dimmed(),
+                    args.expr.cyan(),
+                    value.green()
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+// ── Helper: resolve function name to file:line ──────────────────────
+
+/// Resolve a function name to (file, line) by searching project symbols.
+fn resolve_function_name(name: &str) -> Result<(String, u32)> {
+    let cwd =
+        std::env::current_dir().map_err(|e| miette!("cannot get current directory: {e}"))?;
+    let project_root = crate::core::config::find_project_root(&cwd)
+        .ok_or_else(|| miette!("no project.godot found"))?;
+
+    let files = crate::core::fs::collect_gdscript_files(&project_root)
+        .map_err(|e| miette!("failed to collect GDScript files: {e}"))?;
+    for file_path in &files {
+        let rel = crate::core::fs::relative_slash(file_path, &project_root);
+        if let Ok(symbols) = crate::lsp::query::query_symbols(&rel) {
+            for sym in &symbols {
+                if sym.name == name && sym.kind == "function" {
+                    return Ok((rel, sym.line));
+                }
+            }
+        }
+    }
+    Err(miette!("function '{}' not found in project", name))
 }
 
 // ── Shared helpers ──────────────────────────────────────────────────

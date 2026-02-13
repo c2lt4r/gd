@@ -107,6 +107,38 @@ pub fn method_exists(class: &str, method: &str) -> bool {
     false
 }
 
+/// Return all methods for a class, walking the inheritance chain.
+/// Each entry is `(method_name, return_type, defining_class)`.
+pub fn class_methods(class: &str) -> Vec<(&'static str, &'static str, &'static str)> {
+    // Resolve to a &'static str from CLASSES so all borrows are 'static
+    let Some(start) = generated::CLASSES
+        .binary_search_by_key(&class, |c| c.name)
+        .ok()
+        .map(|i| generated::CLASSES[i].name)
+    else {
+        return Vec::new();
+    };
+
+    let mut result = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut current: &'static str = start;
+    loop {
+        let prefix = format!("{current}.");
+        for &(key, ret_type) in generated::METHODS {
+            if let Some(method_name) = key.strip_prefix(&prefix)
+                && seen.insert(method_name)
+            {
+                result.push((method_name, ret_type, current));
+            }
+        }
+        match parent_class(current) {
+            Some(parent) => current = parent,
+            None => break,
+        }
+    }
+    result
+}
+
 /// Curated list of methods that require the node to be in the scene tree.
 pub fn is_tree_dependent_method(method: &str) -> bool {
     matches!(
@@ -252,5 +284,26 @@ mod tests {
         // Viewport constants should be accessible via SubViewport
         assert!(constant_exists("Viewport", "MSAA_4X"));
         assert!(constant_exists("SubViewport", "MSAA_4X")); // inherited
+    }
+
+    #[test]
+    fn test_class_methods() {
+        let methods = class_methods("Node2D");
+        let names: Vec<&str> = methods.iter().map(|(name, _, _)| *name).collect();
+        // Node2D own methods
+        assert!(names.contains(&"apply_scale"));
+        // Inherited from Node
+        assert!(names.contains(&"add_child"));
+        // Each entry should have a return type and defining class
+        let apply_scale = methods.iter().find(|(n, _, _)| *n == "apply_scale").unwrap();
+        assert_eq!(apply_scale.2, "Node2D");
+        let add_child = methods.iter().find(|(n, _, _)| *n == "add_child").unwrap();
+        assert_eq!(add_child.2, "Node");
+    }
+
+    #[test]
+    fn test_class_methods_unknown_class() {
+        let methods = class_methods("NonExistentClass");
+        assert!(methods.is_empty());
     }
 }

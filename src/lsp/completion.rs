@@ -220,7 +220,45 @@ pub fn provide_completions(
         }
     }
 
+    // Engine methods from class_db based on extends clause
+    if let Ok(tree) = crate::core::parser::parse(source)
+        && let Some(extends_class) = find_extends_class(tree.root_node(), source)
+    {
+        collect_class_db_methods(&extends_class, &mut items);
+    }
+
     items
+}
+
+/// Find the class name from the `extends` statement at the top of the file.
+fn find_extends_class(root: tree_sitter::Node, source: &str) -> Option<String> {
+    let mut cursor = root.walk();
+    for child in root.children(&mut cursor) {
+        if child.kind() == "extends_statement" {
+            let mut inner = child.walk();
+            for c in child.children(&mut inner) {
+                if c.kind() != "extends" {
+                    let text = c.utf8_text(source.as_bytes()).ok()?;
+                    if crate::class_db::class_exists(text) {
+                        return Some(text.to_string());
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Add engine methods from the class_db for the given class and its ancestors.
+fn collect_class_db_methods(class: &str, items: &mut Vec<CompletionItem>) {
+    for (method_name, ret_type, owner_class) in crate::class_db::class_methods(class) {
+        items.push(CompletionItem {
+            label: method_name.to_string(),
+            kind: Some(CompletionItemKind::METHOD),
+            detail: Some(format!("{owner_class}.{method_name}() -> {ret_type}")),
+            ..Default::default()
+        });
+    }
 }
 
 /// Collect symbols from a file's AST as completion items.
@@ -424,5 +462,43 @@ func attack(target):
         let detail = move_item.detail.as_deref().unwrap();
         assert!(detail.contains("speed: float"));
         assert!(detail.contains("-> bool"));
+    }
+
+    #[test]
+    fn extends_adds_class_db_methods() {
+        let source = "extends Node2D\n\nfunc _ready():\n\tpass\n";
+        let items = provide_completions(source, Position::new(0, 0), None);
+        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        // Node2D own method
+        assert!(labels.contains(&"apply_scale"));
+        // Inherited from Node
+        assert!(labels.contains(&"add_child"));
+    }
+
+    #[test]
+    fn extends_method_detail_shows_class() {
+        let source = "extends Node2D\n";
+        let items = provide_completions(source, Position::new(0, 0), None);
+        let add_child = items
+            .iter()
+            .find(|i| i.label == "add_child" && i.kind == Some(CompletionItemKind::METHOD))
+            .unwrap();
+        let detail = add_child.detail.as_deref().unwrap();
+        assert!(detail.contains("Node.add_child()"));
+    }
+
+    #[test]
+    fn no_class_db_methods_without_extends() {
+        let source = "func _ready():\n\tpass\n";
+        let items = provide_completions(source, Position::new(0, 0), None);
+        // add_child should not appear (only lifecycle snippets and file symbols)
+        let engine_methods: Vec<&CompletionItem> = items
+            .iter()
+            .filter(|i| {
+                i.kind == Some(CompletionItemKind::METHOD)
+                    && i.detail.as_deref().is_some_and(|d| d.contains("Node."))
+            })
+            .collect();
+        assert!(engine_methods.is_empty());
     }
 }

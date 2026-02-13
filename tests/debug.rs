@@ -14,6 +14,11 @@ fn test_debug_help() {
     assert!(stdout.contains("break"));
     assert!(stdout.contains("status"));
     assert!(stdout.contains("stop"));
+    assert!(stdout.contains("continue"));
+    assert!(stdout.contains("next"));
+    assert!(stdout.contains("step"));
+    assert!(stdout.contains("pause"));
+    assert!(stdout.contains("eval"));
 }
 
 #[test]
@@ -26,6 +31,8 @@ fn test_debug_break_help() {
     assert!(output.status.success());
     assert!(stdout.contains("--file"));
     assert!(stdout.contains("--line"));
+    assert!(stdout.contains("--name"));
+    assert!(stdout.contains("--condition"));
     assert!(stdout.contains("--timeout"));
     assert!(stdout.contains("--format"));
 }
