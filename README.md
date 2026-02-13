@@ -476,12 +476,15 @@ gd lsp symbols --file player.gd --kind function,signal
 ```
 
 # View lines from a file (human-readable by default)
-gd lsp view --file player.gd --start-line 10 --end-line 20
+gd lsp view --file player.gd --range 10-20
 gd lsp view --file player.gd --start-line 15 --context 3
 gd lsp view --file player.gd --format json  # structured output for AI tools
 
 # Create a new GDScript file with scaffolding
 gd lsp create-file --file enemies/boss.gd --extends CharacterBody2D --class-name Boss
+
+# Create a file with custom content (from stdin or --input-file)
+echo 'extends Node2D' | gd lsp create-file --file utils/helper.gd
 ```
 
 All positions are **1-based** (line 1, column 1 is the first character). Paths in output are relative to the project root with forward slashes.
@@ -533,7 +536,7 @@ gd lsp introduce-parameter --file player.gd --line 5 --column 10 --end-column 20
 echo -e '\tprint("hello")' | gd lsp replace-body --file player.gd --name _ready
 echo 'func _process(delta):\n\tpass' | gd lsp insert --file player.gd --after _ready
 echo 'var speed: float = 42.0' | gd lsp replace-symbol --file player.gd --name speed
-echo '\t# replaced' | gd lsp edit-range --file player.gd --start-line 5 --end-line 7
+echo '\t# replaced' | gd lsp edit-range --file player.gd --range 5-7
 
 # Or use --input-file to avoid stdin pipe encoding issues (recommended on Windows)
 gd lsp insert --file player.gd --after _ready --input-file /tmp/new_func.gd

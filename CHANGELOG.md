@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.1.21] - 2026-02-13
+
+### Changed
+- `gd lsp view --format json` now returns a single `content` string instead of a per-line object array (~3x fewer tokens)
+- `gd lsp references` output now includes a `context` field with the trimmed source line for each reference
+
+### Added
+- `gd lsp view --range 5-20` shorthand for `--start-line 5 --end-line 20`
+- `gd lsp edit-range --range 5-20` shorthand for `--start-line 5 --end-line 20`
+- `gd lsp create-file --input-file` reads initial file content from a file (or stdin when piped) instead of generating boilerplate
+
 ## [0.1.20] - 2026-02-13
 
 ### Fixed

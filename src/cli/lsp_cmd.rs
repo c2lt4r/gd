@@ -1,4 +1,4 @@
-use std::io::Read;
+use std::io::{IsTerminal, Read};
 
 use clap::{Args, Subcommand};
 use miette::Result;
@@ -92,6 +92,9 @@ pub enum LspCommand {
         /// Path to the GDScript file
         #[arg(long)]
         file: String,
+        /// Line range as START-END (e.g. 5-20; 1-based, inclusive)
+        #[arg(long, conflicts_with_all = ["start_line", "end_line"])]
+        range: Option<String>,
         /// First line to show (1-based, inclusive; default: 1)
         #[arg(long)]
         start_line: Option<usize>,
@@ -309,17 +312,20 @@ pub enum LspCommand {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Create a new GDScript file with boilerplate
+    /// Create a new GDScript file with boilerplate (or custom content from stdin/--input-file)
     CreateFile {
         /// Path for the new file
         #[arg(long)]
         file: String,
-        /// Base class to extend (default: "Node")
+        /// Base class to extend (default: "Node"; ignored when --input-file or stdin is used)
         #[arg(long, default_value = "Node")]
         extends: String,
-        /// Optional class_name declaration
+        /// Optional class_name declaration (ignored when --input-file or stdin is used)
         #[arg(long)]
         class_name: Option<String>,
+        /// Read initial content from a file instead of generating boilerplate
+        #[arg(long)]
+        input_file: Option<String>,
         /// Preview without writing
         #[arg(long)]
         dry_run: bool,
@@ -395,12 +401,15 @@ pub enum LspCommand {
         /// Path to the GDScript file
         #[arg(long)]
         file: String,
+        /// Line range as START-END (e.g. 5-20; 1-based, inclusive)
+        #[arg(long, conflicts_with_all = ["start_line", "end_line"])]
+        range: Option<String>,
         /// First line to replace (1-based, inclusive)
         #[arg(long)]
-        start_line: usize,
+        start_line: Option<usize>,
         /// Last line to replace (1-based, inclusive)
         #[arg(long)]
-        end_line: usize,
+        end_line: Option<usize>,
         /// Read content from a file instead of stdin
         #[arg(long)]
         input_file: Option<String>,
@@ -451,6 +460,31 @@ pub struct QueryPositionArgs {
     /// Column number (1-based)
     #[arg(long)]
     pub column: usize,
+}
+
+/// Parse a range string like "5-20" into (start, end) line numbers.
+fn parse_range(range: &str) -> Result<(usize, usize)> {
+    let parts: Vec<&str> = range.splitn(2, '-').collect();
+    if parts.len() != 2 {
+        return Err(miette::miette!(
+            "invalid range '{range}' — expected START-END (e.g. 5-20)"
+        ));
+    }
+    let start: usize = parts[0]
+        .parse()
+        .map_err(|_| miette::miette!("invalid start line in range: '{}'", parts[0]))?;
+    let end: usize = parts[1]
+        .parse()
+        .map_err(|_| miette::miette!("invalid end line in range: '{}'", parts[1]))?;
+    if start == 0 || end == 0 {
+        return Err(miette::miette!("line numbers are 1-based"));
+    }
+    if start > end {
+        return Err(miette::miette!(
+            "start ({start}) must be <= end ({end}) in range"
+        ));
+    }
+    Ok((start, end))
 }
 
 /// Read content from `--input-file` if provided, otherwise from stdin.
@@ -593,11 +627,18 @@ pub fn exec(args: LspArgs) -> Result<()> {
         }
         LspCommand::View {
             file,
+            range,
             start_line,
             end_line,
             context,
             format,
         } => {
+            let (start_line, end_line) = if let Some(ref r) = range {
+                let (s, e) = parse_range(r)?;
+                (Some(s), Some(e))
+            } else {
+                (start_line, end_line)
+            };
             let result = crate::lsp::query::query_view(&file, start_line, end_line, context)?;
             if format.as_deref() == Some("json") {
                 let json =
@@ -610,8 +651,9 @@ pub fn exec(args: LspArgs) -> Result<()> {
                 } else {
                     1
                 };
-                for vl in &result.lines {
-                    println!("{:>width$}\t{}", vl.line, vl.content, width = width);
+                for (i, line) in result.content.lines().enumerate() {
+                    let line_num = result.start_line as usize + i;
+                    println!("{line_num:>width$}\t{line}", width = width);
                 }
             }
             Ok(())
@@ -767,12 +809,21 @@ pub fn exec(args: LspArgs) -> Result<()> {
             file,
             extends,
             class_name,
+            input_file,
             dry_run,
         } => {
+            let custom_content = if input_file.is_some() {
+                Some(read_content(input_file.as_deref())?)
+            } else if std::io::stdin().is_terminal() {
+                None
+            } else {
+                Some(read_content(None)?)
+            };
             let result = crate::lsp::query::query_create_file(
                 &file,
                 &extends,
                 class_name.as_deref(),
+                custom_content.as_deref(),
                 dry_run,
             )?;
             let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
@@ -855,15 +906,25 @@ pub fn exec(args: LspArgs) -> Result<()> {
         }
         LspCommand::EditRange {
             file,
+            range,
             start_line,
             end_line,
             input_file,
             no_format,
             dry_run,
         } => {
+            let (start, end) = if let Some(ref r) = range {
+                parse_range(r)?
+            } else {
+                let s = start_line
+                    .ok_or_else(|| miette::miette!("--start-line or --range is required"))?;
+                let e = end_line
+                    .ok_or_else(|| miette::miette!("--end-line or --range is required"))?;
+                (s, e)
+            };
             let content = read_content(input_file.as_deref())?;
             let result = crate::lsp::query::query_edit_range(
-                &file, start_line, end_line, &content, no_format, dry_run,
+                &file, start, end, &content, no_format, dry_run,
             )?;
             let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
             println!("{json}");

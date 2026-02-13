@@ -33,16 +33,17 @@ pub struct TextEditOutput {
 #[derive(Serialize)]
 pub struct ReferencesOutput {
     pub symbol: String,
-    pub references: Vec<LocationOutput>,
+    pub references: Vec<ReferenceOutput>,
 }
 
 #[derive(Serialize)]
-pub struct LocationOutput {
+pub struct ReferenceOutput {
     pub file: String,
     pub line: u32,
     pub column: u32,
     pub end_line: u32,
     pub end_column: u32,
+    pub context: String,
 }
 
 #[derive(Serialize)]
@@ -143,12 +144,6 @@ pub struct ViewOutput {
     pub start_line: u32,
     pub end_line: u32,
     pub total_lines: u32,
-    pub lines: Vec<ViewLine>,
-}
-
-#[derive(Serialize)]
-pub struct ViewLine {
-    pub line: u32,
     pub content: String,
 }
 
@@ -201,13 +196,35 @@ fn to_position(line: usize, column: usize) -> Position {
     Position::new((line - 1) as u32, (column - 1) as u32)
 }
 
-fn range_to_location(range: &Range, uri: &Url, base: &Path) -> LocationOutput {
-    LocationOutput {
-        file: url_to_relative(uri, base),
-        line: range.start.line + 1,
+fn range_to_reference(
+    range: &Range,
+    uri: &Url,
+    base: &Path,
+    file_cache: &mut std::collections::HashMap<String, String>,
+) -> ReferenceOutput {
+    let file = url_to_relative(uri, base);
+    let line_num = range.start.line + 1;
+    let context = if let Ok(path) = uri.to_file_path() {
+        let key = path.to_string_lossy().to_string();
+        let source = file_cache
+            .entry(key)
+            .or_insert_with(|| std::fs::read_to_string(&path).unwrap_or_default());
+        source
+            .lines()
+            .nth(range.start.line as usize)
+            .unwrap_or("")
+            .trim()
+            .to_string()
+    } else {
+        String::new()
+    };
+    ReferenceOutput {
+        file,
+        line: line_num,
         column: range.start.character + 1,
         end_line: range.end.line + 1,
         end_column: range.end.character + 1,
+        context,
     }
 }
 
@@ -375,9 +392,10 @@ pub fn query_references(file: &str, line: usize, column: usize) -> Result<Refere
         super::references::find_references_cross_file(&source, &uri, position, true, &workspace)
             .unwrap_or_default();
 
+    let mut file_cache = std::collections::HashMap::new();
     let references = locations
         .iter()
-        .map(|loc| range_to_location(&loc.range, &loc.uri, &project_root))
+        .map(|loc| range_to_reference(&loc.range, &loc.uri, &project_root, &mut file_cache))
         .collect();
 
     Ok(ReferencesOutput { symbol, references })
@@ -404,9 +422,10 @@ pub fn query_references_by_name(
     let locations =
         super::references::find_references_by_name(name, &workspace, file_path.as_deref(), class);
 
+    let mut file_cache = std::collections::HashMap::new();
     let references = locations
         .iter()
-        .map(|loc| range_to_location(&loc.range, &loc.uri, &project_root))
+        .map(|loc| range_to_reference(&loc.range, &loc.uri, &project_root, &mut file_cache))
         .collect();
 
     Ok(ReferencesOutput {
@@ -1076,6 +1095,7 @@ pub fn query_create_file(
     file: &str,
     extends: &str,
     class_name: Option<&str>,
+    custom_content: Option<&str>,
     dry_run: bool,
 ) -> Result<CreateFileOutput> {
     let path = std::path::Path::new(file);
@@ -1092,14 +1112,19 @@ pub fn query_create_file(
         return Err(miette::miette!("file already exists: {file}"));
     }
 
-    let mut content = String::new();
-    content.push_str(&format!("extends {extends}\n"));
-    if let Some(cn) = class_name {
-        content.push_str(&format!("class_name {cn}\n"));
-    }
-    content.push_str("\n\n");
-    content.push_str("func _ready() -> void:\n\tpass\n\n\n");
-    content.push_str("func _process(delta: float) -> void:\n\tpass\n");
+    let content = if let Some(custom) = custom_content {
+        custom.to_string()
+    } else {
+        let mut buf = String::new();
+        buf.push_str(&format!("extends {extends}\n"));
+        if let Some(cn) = class_name {
+            buf.push_str(&format!("class_name {cn}\n"));
+        }
+        buf.push_str("\n\n");
+        buf.push_str("func _ready() -> void:\n\tpass\n\n\n");
+        buf.push_str("func _process(delta: float) -> void:\n\tpass\n");
+        buf
+    };
 
     let lines = content.lines().count() as u32;
 
@@ -1143,14 +1168,7 @@ pub fn query_view(
         end = (end + ctx).min(total);
     }
 
-    let lines: Vec<ViewLine> = all_lines[start - 1..end]
-        .iter()
-        .enumerate()
-        .map(|(i, content)| ViewLine {
-            line: (start + i) as u32,
-            content: content.to_string(),
-        })
-        .collect();
+    let content = all_lines[start - 1..end].join("\n");
 
     let project_root = find_root(&resolved)?;
     let rel = crate::core::fs::relative_slash(&resolved, &project_root);
@@ -1160,7 +1178,7 @@ pub fn query_view(
         start_line: start as u32,
         end_line: end as u32,
         total_lines: total as u32,
-        lines,
+        content,
     })
 }
 
