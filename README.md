@@ -7,7 +7,7 @@ Built with [tree-sitter](https://tree-sitter.github.io/) for accurate parsing an
 ## Features
 
 - **Format** GDScript files with an AST-based formatter aligned to the [GDScript style guide](https://docs.godotengine.org/en/stable/tutorials/scripting/gdscript/gdscript_styleguide.html)
-- **Lint** with 57 built-in rules (12 auto-fixable), SARIF output for CI
+- **Lint** with 58 built-in rules (13 auto-fixable), SARIF output for CI
 - **Run**, **build**, **test**, and **clean** your Godot project from the terminal
 - **Watch** for file changes and auto-lint/format on save
 - **Manage addons** from Git or the Godot Asset Library (with lockfile and update support)
@@ -227,7 +227,7 @@ The template system automatically finds `project.godot` within the repository to
 
 ## Lint Rules
 
-All 57 built-in rules (42 default-enabled, 15 opt-in):
+All 58 built-in rules (42 default-enabled, 16 opt-in):
 
 | Rule | Description | Severity | Fixable |
 |------|-------------|----------|---------|
@@ -269,7 +269,7 @@ All 57 built-in rules (42 default-enabled, 15 opt-in):
 | `unnecessary-pass` | Detect `pass` in non-empty function bodies | warning | yes |
 | `unreachable-code` | Detect code after return/break/continue | warning | yes |
 | `untyped-array` | Suggest typed array annotations | warning | |
-| `untyped-array-literal` | Warn on `var x := [...]` without typed Array annotation | warning | |
+| `untyped-array-literal` | Warn on `var x := [...]` without typed Array annotation | warning | yes |
 | `unused-preload` | Detect unused preload variables | warning | |
 | `unused-signal` | Detect signals that are never emitted | warning | |
 | `unused-variable` | Detect unused local variables | warning | yes |
@@ -292,6 +292,7 @@ All 57 built-in rules (42 default-enabled, 15 opt-in):
 | `signal-not-connected` | Detect signals emitted but never connected | info | |
 | `todo-comment` | Detect TODO/FIXME/HACK comments | info | |
 | `unused-parameter` | Detect unused function parameters | warning | |
+| `use-before-assign` | Detect method calls accessing uninitialized members | warning | |
 | `variant-inference` | Warn on `:=` inferring Variant from dict/array access | warning | |
 
 ### Inline Suppression
@@ -474,9 +475,10 @@ gd lsp symbols --file player.gd
 gd lsp symbols --file player.gd --kind function,signal
 ```
 
-# View lines from a file (with optional range and context)
+# View lines from a file (human-readable by default)
 gd lsp view --file player.gd --start-line 10 --end-line 20
 gd lsp view --file player.gd --start-line 15 --context 3
+gd lsp view --file player.gd --format json  # structured output for AI tools
 
 # Create a new GDScript file with scaffolding
 gd lsp create-file --file enemies/boss.gd --extends CharacterBody2D --class-name Boss

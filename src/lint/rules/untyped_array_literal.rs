@@ -1,6 +1,6 @@
 use tree_sitter::{Node, Tree};
 
-use super::{LintDiagnostic, LintRule, Severity};
+use super::{Fix, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
 
 pub struct UntypedArrayLiteral;
@@ -35,9 +35,8 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
 
 fn check_variable(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
     // Check if this uses := (inferred type via inferred_type node)
-    let is_inferred = node
-        .child_by_field_name("type")
-        .is_some_and(|t| t.kind() == "inferred_type");
+    let type_node = node.child_by_field_name("type");
+    let is_inferred = type_node.is_some_and(|t| t.kind() == "inferred_type");
     if !is_inferred {
         return;
     }
@@ -70,6 +69,22 @@ fn check_variable(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
         .and_then(|n| n.utf8_text(source.as_bytes()).ok())
         .unwrap_or("?");
 
+    // Build auto-fix when type is inferable: replace ` :=` with `: Array[T] =`
+    // The inferred_type node covers `:=`. There may be a space before it in source.
+    let fix = suggested_type.and_then(|elem_type| {
+        let inferred = type_node?;
+        let mut start = inferred.start_byte();
+        // Consume preceding whitespace so we get `var x: Array[T]` not `var x : Array[T]`
+        while start > 0 && source.as_bytes()[start - 1] == b' ' {
+            start -= 1;
+        }
+        Some(Fix {
+            byte_start: start,
+            byte_end: inferred.end_byte(),
+            replacement: format!(": Array[{elem_type}] ="),
+        })
+    });
+
     let message = if let Some(elem_type) = suggested_type {
         format!(
             "array literal infers `Variant` with `:=`; consider `var {var_name}: Array[{elem_type}] = [...]`"
@@ -86,7 +101,7 @@ fn check_variable(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
         line: node.start_position().row,
         column: node.start_position().column,
         end_column: None,
-        fix: None,
+        fix,
         context_lines: None,
     });
 }
@@ -219,6 +234,42 @@ mod tests {
         let source = "const ITEMS := [\"a\", \"b\"]\n";
         let diags = check(source);
         assert!(diags.is_empty());
+    }
+
+    #[test]
+    fn autofix_string_array() {
+        let source = "func f():\n\tvar x := [\"a\", \"b\"]\n";
+        let diags = check(source);
+        assert_eq!(diags.len(), 1);
+        let fix = diags[0].fix.as_ref().expect("should have auto-fix");
+        let fixed = format!(
+            "{}{}{}",
+            &source[..fix.byte_start],
+            fix.replacement,
+            &source[fix.byte_end..]
+        );
+        // `:=` replaced with `: Array[String] =`
+        assert!(
+            fixed.contains("var x: Array[String] ="),
+            "fixed was: {fixed}"
+        );
+    }
+
+    #[test]
+    fn autofix_int_array() {
+        let source = "func f():\n\tvar nums := [1, 2, 3]\n";
+        let diags = check(source);
+        assert_eq!(diags.len(), 1);
+        let fix = diags[0].fix.as_ref().expect("should have auto-fix");
+        assert_eq!(fix.replacement, ": Array[int] =");
+    }
+
+    #[test]
+    fn no_autofix_mixed_array() {
+        let source = "func f():\n\tvar x := [1, \"a\"]\n";
+        let diags = check(source);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].fix.is_none());
     }
 
     #[test]

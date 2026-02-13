@@ -32,6 +32,7 @@ pub mod unreachable_code;
 pub mod untyped_array;
 pub mod untyped_array_literal;
 pub mod unused_preload;
+pub mod use_before_assign;
 pub mod unused_signal;
 pub mod unused_variable;
 pub mod variant_inference;
@@ -209,6 +210,7 @@ pub fn all_rules(
         Box::new(null_after_await::NullAfterAwait),
         Box::new(look_at_before_tree::LookAtBeforeTree),
         Box::new(monitoring_in_signal::MonitoringInSignal),
+        Box::new(use_before_assign::UseBeforeAssign),
     ];
     all.into_iter()
         .filter(|r| {

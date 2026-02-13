@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.17] - 2026-02-13
+
+### Added
+- `use-before-assign` lint rule (opt-in) — detects method calls where the callee accesses a member variable not yet assigned at the call site
+- `untyped-array-literal` is now auto-fixable — infers `Array[String]`, `Array[int]`, `Array[float]`, `Array[bool]` from homogeneous literals
+- `gd lsp view` now outputs human-readable text by default (cat -n style); use `--format json` for structured output
+
 ## [0.1.16] - 2026-02-13
 
 ### Fixed

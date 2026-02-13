@@ -101,6 +101,9 @@ pub enum LspCommand {
         /// Number of context lines around start_line/end_line
         #[arg(long)]
         context: Option<usize>,
+        /// Output format: json for structured output (default: human-readable)
+        #[arg(long)]
+        format: Option<String>,
     },
     /// Delete a symbol from a file (top-level or within an inner class)
     DeleteSymbol {
@@ -593,10 +596,24 @@ pub fn exec(args: LspArgs) -> Result<()> {
             start_line,
             end_line,
             context,
+            format,
         } => {
             let result = crate::lsp::query::query_view(&file, start_line, end_line, context)?;
-            let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
-            println!("{json}");
+            if format.as_deref() == Some("json") {
+                let json =
+                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+                println!("{json}");
+            } else {
+                // Human-readable output (cat -n style)
+                let width = if result.end_line > 0 {
+                    result.end_line.to_string().len()
+                } else {
+                    1
+                };
+                for vl in &result.lines {
+                    println!("{:>width$}\t{}", vl.line, vl.content, width = width);
+                }
+            }
             Ok(())
         }
         LspCommand::DeleteSymbol {
