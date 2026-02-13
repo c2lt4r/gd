@@ -53,7 +53,7 @@ fn collect_multiline_entries<'a>(
     while i < children.len() {
         let child = &children[i];
         let kind = child.kind();
-        if is_bracket(kind) || kind == "," {
+        if is_bracket(kind) || kind == "," || kind == "line_continuation" {
             i += 1;
             continue;
         }
@@ -186,6 +186,7 @@ impl Printer {
             "subscript" => self.print_subscript(node, source, indent),
             "conditional_expression" => self.print_conditional_expr(node, source, indent),
             "lambda" => self.emit(node, source),
+            "line_continuation" => {} // Skip — formatter controls line breaks
             _ => {
                 // Fallback: if leaf, emit text; otherwise emit full source text
                 // (safe default - preserves content)
@@ -199,10 +200,14 @@ impl Printer {
     fn print_source(&mut self, node: &Node, source: &str, indent: usize) {
         let mut cursor = node.walk();
         let children: Vec<Node> = node.named_children(&mut cursor).collect();
+        let children: Vec<&Node> = children
+            .iter()
+            .filter(|c| c.kind() != "line_continuation")
+            .collect();
 
         for (i, child) in children.iter().enumerate() {
             if i > 0 {
-                let prev = &children[i - 1];
+                let prev = children[i - 1];
                 let blank_lines = rules::spacing_between(
                     prev,
                     child,
@@ -223,10 +228,16 @@ impl Printer {
         let inner_indent = indent + 1;
         let mut cursor = node.walk();
         let children: Vec<Node> = node.named_children(&mut cursor).collect();
+        // Filter out line_continuation nodes — they have no output and
+        // would otherwise produce blank lines in the body
+        let children: Vec<&Node> = children
+            .iter()
+            .filter(|c| c.kind() != "line_continuation")
+            .collect();
 
         for (i, child) in children.iter().enumerate() {
             if i > 0 && is_class_body {
-                let prev = &children[i - 1];
+                let prev = children[i - 1];
                 let blank_lines = rules::spacing_between(
                     prev,
                     child,
@@ -544,9 +555,13 @@ impl Printer {
         let mut cursor = node.walk();
         let children: Vec<Node> = node.children(&mut cursor).collect();
 
-        for (i, child) in children.iter().enumerate() {
+        let mut first = true;
+        for child in &children {
+            if child.kind() == "line_continuation" {
+                continue;
+            }
             if child.is_named() {
-                if i > 0 {
+                if !first {
                     self.push_str(" ");
                 }
                 self.print_node(child, source, indent);
@@ -555,6 +570,7 @@ impl Printer {
                 self.push_str(" ");
                 self.emit(child, source);
             }
+            first = false;
         }
     }
 
@@ -564,10 +580,15 @@ impl Printer {
         let mut cursor = node.walk();
         let children: Vec<Node> = node.children(&mut cursor).collect();
 
-        for (i, child) in children.iter().enumerate() {
-            if i > 0 {
+        let mut first = true;
+        for child in &children {
+            if child.kind() == "line_continuation" {
+                continue;
+            }
+            if !first {
                 self.push_str(" ");
             }
+            first = false;
             if child.is_named() {
                 self.print_node(child, source, indent);
             } else {
@@ -608,12 +629,19 @@ impl Printer {
     // ── Parenthesized expression ───────────────────────────────────────
 
     fn print_parenthesized(&mut self, node: &Node, source: &str, indent: usize) {
-        self.push_str("(");
-        let mut cursor = node.walk();
-        for child in node.named_children(&mut cursor) {
-            self.print_node(&child, source, indent);
+        let is_multiline = node.start_position().row != node.end_position().row;
+        if is_multiline {
+            // Preserve multiline parenthesized expressions to avoid collapsing
+            // line comments into subsequent code (e.g. `# comment + c`)
+            self.emit(node, source);
+        } else {
+            self.push_str("(");
+            let mut cursor = node.walk();
+            for child in node.named_children(&mut cursor) {
+                self.print_node(&child, source, indent);
+            }
+            self.push_str(")");
         }
-        self.push_str(")");
     }
 
     // ── Subscript ──────────────────────────────────────────────────────
@@ -754,8 +782,11 @@ impl Printer {
 
         let is_multiline = node.start_position().row != node.end_position().row;
         let has_comment = children.iter().any(|c| c.kind() == "comment");
+        let has_line_continuation = children.iter().any(|c| c.kind() == "line_continuation");
 
-        if is_multiline || has_comment {
+        if has_line_continuation {
+            self.print_dict_inline(&children, source, indent);
+        } else if is_multiline || has_comment {
             self.print_dict_multiline(&children, source, indent);
         } else {
             self.print_dict_inline(&children, source, indent);
@@ -780,29 +811,23 @@ impl Printer {
     fn print_dict_multiline(&mut self, children: &[Node], source: &str, indent: usize) {
         let inner = indent + 1;
         self.push_str("{");
-        // Collect items with their optional trailing comments
         let entries = collect_multiline_entries(children, |k| matches!(k, "{" | "}"));
-        for (i, entry) in entries.iter().enumerate() {
-            if i > 0 {
-                self.push_str(",");
-            }
-            // Standalone comment before any items (e.g. "# section header")
+        for entry in &entries {
+            self.push_str("\n");
+            self.write_indent(inner);
             if entry.node.kind() == "comment" {
-                self.push_str("\n");
-                self.write_indent(inner);
                 self.emit(&entry.node, source);
                 continue;
             }
-            self.push_str("\n");
-            self.write_indent(inner);
             self.print_node(&entry.node, source, inner);
+            self.push_str(",");
             if let Some(ref c) = entry.trailing_comment {
                 self.push_str("  ");
                 self.emit(c, source);
             }
         }
         if !entries.is_empty() {
-            self.push_str(",\n");
+            self.push_str("\n");
             self.write_indent(indent);
         }
         self.push_str("}");
@@ -828,8 +853,13 @@ impl Printer {
 
         let is_multiline = node.start_position().row != node.end_position().row;
         let has_comment = children.iter().any(|c| c.kind() == "comment");
+        let has_line_continuation = children.iter().any(|c| c.kind() == "line_continuation");
 
-        if is_multiline || has_comment {
+        if has_line_continuation {
+            // Line continuation (\) makes the array span multiple rows but
+            // it's logically a single line — format as inline
+            self.print_array_inline(&children, source, indent);
+        } else if is_multiline || has_comment {
             self.print_array_multiline(&children, source, indent);
         } else {
             self.print_array_inline(&children, source, indent);
@@ -840,7 +870,7 @@ impl Printer {
         self.push_str("[");
         for child in children {
             match child.kind() {
-                "[" | "]" => {}
+                "[" | "]" | "line_continuation" => {}
                 "," => self.push_str(", "),
                 _ => {
                     self.print_node(child, source, indent);
@@ -854,26 +884,22 @@ impl Printer {
         let inner = indent + 1;
         self.push_str("[");
         let entries = collect_multiline_entries(children, |k| matches!(k, "[" | "]"));
-        for (i, entry) in entries.iter().enumerate() {
-            if i > 0 {
-                self.push_str(",");
-            }
+        for entry in &entries {
+            self.push_str("\n");
+            self.write_indent(inner);
             if entry.node.kind() == "comment" {
-                self.push_str("\n");
-                self.write_indent(inner);
                 self.emit(&entry.node, source);
                 continue;
             }
-            self.push_str("\n");
-            self.write_indent(inner);
             self.print_node(&entry.node, source, inner);
+            self.push_str(",");
             if let Some(ref c) = entry.trailing_comment {
                 self.push_str("  ");
                 self.emit(c, source);
             }
         }
         if !entries.is_empty() {
-            self.push_str(",\n");
+            self.push_str("\n");
             self.write_indent(indent);
         }
         self.push_str("]");
@@ -912,10 +938,13 @@ impl Printer {
         let mut cursor = node.walk();
         let children: Vec<Node> = node.children(&mut cursor).collect();
 
-        // Check if the list was originally multiline
         let is_multiline = node.start_position().row != node.end_position().row;
+        let has_line_continuation = children.iter().any(|c| c.kind() == "line_continuation");
 
-        if is_multiline {
+        if has_line_continuation {
+            // Line continuation makes it span rows but it's logically one line
+            self.print_paren_list_inline(&children, source, indent);
+        } else if is_multiline {
             self.print_paren_list_multiline(&children, source, indent);
         } else {
             self.print_paren_list_inline(&children, source, indent);
@@ -927,7 +956,7 @@ impl Printer {
         let mut first = true;
         for child in children {
             match child.kind() {
-                "(" | ")" => {}
+                "(" | ")" | "line_continuation" => {}
                 "," => self.push_str(", "),
                 _ => {
                     if first {
@@ -946,7 +975,7 @@ impl Printer {
         let mut first = true;
         for child in children {
             match child.kind() {
-                "(" | ")" => {}
+                "(" | ")" | "line_continuation" => {}
                 "," => self.push_str(","),
                 _ => {
                     self.push_str("\n");
@@ -1517,6 +1546,84 @@ mod tests {
         assert!(
             output.contains("{\"a\": 1, \"b\": 2}"),
             "inline dict should stay inline, got:\n{output}"
+        );
+    }
+
+    #[test]
+    fn test_line_continuation_in_array() {
+        let input = "func f() -> String:\n\treturn \"%s %s\" % [a,\\\n\t\tb]\n";
+        let output = format_source(input);
+        let tree = crate::core::parser::parse(&output).unwrap();
+        assert!(
+            !tree.root_node().has_error(),
+            "formatted output has parse errors:\n{output}"
+        );
+        assert!(output.contains("[a, b]"), "got:\n{output}");
+    }
+
+    #[test]
+    fn test_typed_array_const_with_comments() {
+        let input =
+            "const X: PackedStringArray = [\n\t\"A\",  # comment\n\t\"B\",  # comment\n]\n";
+        let output = format_source(input);
+        let tree = crate::core::parser::parse(&output).unwrap();
+        assert!(
+            !tree.root_node().has_error(),
+            "formatted output has parse errors:\n{output}"
+        );
+        assert!(
+            output.contains("\"A\",  # comment"),
+            "got:\n{output}"
+        );
+    }
+
+    #[test]
+    fn test_line_continuation_binary_op_idempotent() {
+        let input = "func f():\n\tvar x = a \\\n\t\t\t+ b \\\n\t\t\t+ c\n";
+        let pass1 = format_source(input);
+        let pass2 = format_source(&pass1);
+        eprintln!("=== PASS 1 ===\n{pass1}\n=== PASS 2 ===\n{pass2}\n=== END ===");
+        assert_eq!(pass1, pass2, "not idempotent");
+    }
+
+    #[test]
+    fn test_line_continuation_chain_with_comment() {
+        let input =
+            "func f():\n\tvar x := a\\\n\t\t.b()\\\n\t\t# comment\n\t\t.c()\n";
+        let pass1 = format_source(input);
+        let pass2 = format_source(&pass1);
+        assert_eq!(pass1, pass2, "not idempotent");
+    }
+
+    #[test]
+    fn test_line_continuation_in_assignment() {
+        let input = "func f():\n\tx = \\\n\t\ta + b\n";
+        let pass1 = format_source(input);
+        let pass2 = format_source(&pass1);
+        assert_eq!(pass1, pass2, "not idempotent");
+        assert!(pass1.contains("x = a + b"), "got:\n{pass1}");
+    }
+
+    #[test]
+    fn test_line_continuation_in_params_idempotent() {
+        let input =
+            "func f(a: int, b: int, \\\n\t\tc: int) -> void:\n\tpass\n";
+        let pass1 = format_source(input);
+        let pass2 = format_source(&pass1);
+        eprintln!("=== PASS 1 ===\n{pass1}\n=== PASS 2 ===\n{pass2}\n=== END ===");
+        assert_eq!(pass1, pass2, "not idempotent");
+    }
+
+    #[test]
+    fn test_paren_expr_with_comments() {
+        let input = "func f():\n\tvar x = (\n\t\t\ta + b\n\t\t\t# comment\n\t\t\t+ c\n\t\t)\n";
+        let output = format_source(input);
+        eprintln!("=== FORMATTED OUTPUT ===\n{output}\n=== END ===");
+        // Should not introduce parse errors
+        let tree = crate::core::parser::parse(&output).unwrap();
+        assert!(
+            !tree.root_node().has_error(),
+            "formatted output has parse errors:\n{output}"
         );
     }
 }

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.20] - 2026-02-13
+
+### Fixed
+- `gd fmt` preserves multiline parenthesized expressions with comments (no longer collapses `# comment` into subsequent code)
+- `gd fmt` places commas correctly before trailing comments in multiline arrays and dictionaries
+- `gd fmt` properly handles line continuation (`\`) in arrays, dictionaries, binary operators, assignments, function parameters, and method chains
+
 ## [0.1.19] - 2026-02-13
 
 ### Fixed
