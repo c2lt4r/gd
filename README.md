@@ -63,7 +63,7 @@ gd run
 | `gd init` | Initialize gd toolchain in an existing project (detects export paths) |
 | `gd fmt` | Format GDScript files |
 | `gd lint` | Lint GDScript files |
-| `gd run` | Run the Godot project |
+| `gd run` | Run the Godot project (launches via DAP when editor is open) |
 | `gd build` | Build/export the Godot project |
 | `gd check` | Check project for errors (parse, structural, semantic, `.tscn`/`.tres` validation) (`--format json`) |
 | `gd clean` | Clean build artifacts |
@@ -230,17 +230,23 @@ gd ci github --export --godot-version 4.4
 
 ### Debugging
 
-Debug a running Godot game via the Debug Adapter Protocol. Requires the Godot editor to be open (DAP server on port 6006).
+Debug a running Godot game via the Debug Adapter Protocol. A background daemon maintains persistent connections to Godot's LSP and DAP servers, so CLI queries are instant.
 
 ```sh
-# Check if the DAP server is reachable
+# Launch game with debugging (returns immediately, game runs in Godot)
+gd run
+
+# Check DAP connection and threads
 gd debug status
 
-# Start an interactive debug session
-gd debug attach
-
-# One-shot: set breakpoint, wait for hit, dump stack + variables
+# Set breakpoint, wait for hit, dump stack + variables, then resume
 gd debug break --file scripts/player.gd --line 42
+
+# Terminate the running game
+gd debug stop
+
+# Start an interactive debug session (REPL)
+gd debug attach
 
 # JSON output for scripting
 gd debug break --file scripts/player.gd --line 42 --format json

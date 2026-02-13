@@ -273,6 +273,7 @@ fn test_lsp_hover_shows_function_signature() {
     let output = gd_bin()
         .args([
             "lsp",
+            "--no-godot-proxy",
             "hover",
             "--file",
             "player.gd",
@@ -309,6 +310,7 @@ fn test_lsp_hover_attribute_member_shows_builtin_docs() {
     let output = gd_bin()
         .args([
             "lsp",
+            "--no-godot-proxy",
             "hover",
             "--file",
             "player.gd",
@@ -345,6 +347,7 @@ fn test_lsp_hover_self_member_resolves_to_declaration() {
     let output = gd_bin()
         .args([
             "lsp",
+            "--no-godot-proxy",
             "hover",
             "--file",
             "player.gd",
@@ -377,6 +380,7 @@ fn test_lsp_hover_unresolvable_identifier_returns_no_hover() {
     let output = gd_bin()
         .args([
             "lsp",
+            "--no-godot-proxy",
             "hover",
             "--file",
             "player.gd",
@@ -406,6 +410,7 @@ fn test_lsp_hover_on_function_name_still_works() {
     let output = gd_bin()
         .args([
             "lsp",
+            "--no-godot-proxy",
             "hover",
             "--file",
             "player.gd",
@@ -472,6 +477,7 @@ fn test_lsp_definition_jumps_to_declaration() {
     let output = gd_bin()
         .args([
             "lsp",
+            "--no-godot-proxy",
             "definition",
             "--file",
             "player.gd",
@@ -631,6 +637,7 @@ fn test_lsp_completions_includes_keywords_and_symbols() {
     let output = gd_bin()
         .args([
             "lsp",
+            "--no-godot-proxy",
             "completions",
             "--file",
             "player.gd",
@@ -678,6 +685,7 @@ fn test_lsp_completions_limit_caps_results() {
     let output = gd_bin()
         .args([
             "lsp",
+            "--no-godot-proxy",
             "completions",
             "--file",
             "player.gd",
@@ -913,6 +921,7 @@ fn test_lsp_definition_local_variable() {
     let output = gd_bin()
         .args([
             "lsp",
+            "--no-godot-proxy",
             "definition",
             "--file",
             "player.gd",

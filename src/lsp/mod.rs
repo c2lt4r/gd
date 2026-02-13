@@ -1,6 +1,8 @@
 mod actions;
 mod builtins;
 mod completion;
+pub mod daemon;
+pub mod daemon_client;
 mod definition;
 mod diagnostics;
 mod formatting;
@@ -29,8 +31,8 @@ struct Backend {
     client: Client,
     documents: DashMap<Url, DocumentState>,
     workspace: std::sync::OnceLock<workspace::WorkspaceIndex>,
-    godot_proxy: std::sync::OnceLock<Option<godot_client::GodotClient>>,
-    godot_port: u16,
+    /// Whether daemon-backed Godot proxy is enabled (non-zero port).
+    use_godot_proxy: bool,
 }
 
 impl Backend {
@@ -45,20 +47,6 @@ impl Backend {
         let diags = diagnostics::lint_source(&source, &uri);
 
         self.client.publish_diagnostics(uri, diags, None).await;
-    }
-
-    /// Get the Godot proxy client (lazily connects on first use).
-    fn godot_proxy(&self) -> Option<&godot_client::GodotClient> {
-        self.godot_proxy
-            .get_or_init(|| {
-                if self.godot_port == 0 {
-                    return None;
-                }
-                let client = godot_client::GodotClient::connect("127.0.0.1", self.godot_port)?;
-                client.initialize()?;
-                Some(client)
-            })
-            .as_ref()
     }
 
     /// Lint all workspace files and publish diagnostics for the entire project.
@@ -133,6 +121,27 @@ impl LanguageServer for Backend {
         self.client
             .log_message(MessageType::INFO, "gd language server initialized")
             .await;
+
+        // Warm up the daemon (auto-spawns if not running) so first hover is fast
+        if self.use_godot_proxy {
+            let connected = tokio::task::spawn_blocking(|| {
+                daemon_client::query_daemon(
+                    "hover",
+                    serde_json::json!({"file": "__warmup__", "line": 1, "column": 1}),
+                    None,
+                )
+                .is_some()
+            })
+            .await
+            .unwrap_or(false);
+
+            if connected {
+                self.client
+                    .log_message(MessageType::INFO, "Daemon connected (Godot proxy available)")
+                    .await;
+            }
+        }
+
         self.lint_workspace().await;
     }
 
@@ -238,19 +247,42 @@ impl LanguageServer for Backend {
         let source = doc.content.clone();
         drop(doc);
 
-        let our_hover = hover::hover_at(&source, params.text_document_position_params.position);
-
-        // Try Godot proxy for additional hover info
-        if let Some(proxy) = self.godot_proxy() {
+        // Godot-first via daemon: if daemon returns hover data, use it exclusively
+        if self.use_godot_proxy
+            && let Some(path) = uri.to_file_path().ok()
+            && let Some(file_str) = path.to_str()
+        {
             let pos = params.text_document_position_params.position;
-            if let Some(godot_val) = proxy.hover(uri.as_str(), pos.line, pos.character)
-                && let Some(godot_hover) = parse_godot_hover(&godot_val)
+            let file = file_str.to_string();
+            let line = pos.line as usize + 1; // LSP 0-based → query 1-based
+            let col = pos.character as usize + 1;
+            if let Some(result) = tokio::task::spawn_blocking(move || {
+                daemon_client::query_daemon(
+                    "hover",
+                    serde_json::json!({"file": file, "line": line, "column": col}),
+                    None,
+                )
+            })
+            .await
+            .ok()
+            .flatten()
+                && let Some(content) = result.get("content").and_then(|c| c.as_str())
             {
-                return Ok(Some(merge_hovers(our_hover, godot_hover)));
+                return Ok(Some(Hover {
+                    contents: HoverContents::Markup(MarkupContent {
+                        kind: MarkupKind::Markdown,
+                        value: content.to_string(),
+                    }),
+                    range: None,
+                }));
             }
         }
 
-        Ok(our_hover)
+        // Fallback: static tree-sitter analysis
+        Ok(hover::hover_at(
+            &source,
+            params.text_document_position_params.position,
+        ))
     }
 
     async fn goto_definition(
@@ -264,7 +296,65 @@ impl LanguageServer for Backend {
         let source = doc.content.clone();
         drop(doc);
 
-        let our_result = if let Some(ws) = self.workspace.get() {
+        // Godot-first via daemon
+        if self.use_godot_proxy
+            && let Some(path) = uri.to_file_path().ok()
+            && let Some(file_str) = path.to_str()
+        {
+            let pos = params.text_document_position_params.position;
+            let file = file_str.to_string();
+            let line = pos.line as usize + 1;
+            let col = pos.character as usize + 1;
+            if let Some(result) = tokio::task::spawn_blocking(move || {
+                daemon_client::query_daemon(
+                    "definition",
+                    serde_json::json!({"file": file, "line": line, "column": col}),
+                    None,
+                )
+            })
+            .await
+            .ok()
+            .flatten()
+                && let Some(def_file) = result.get("file").and_then(|f| f.as_str())
+                && let Some(def_line) = result.get("line").and_then(|l| l.as_u64())
+                && let Some(def_col) = result.get("column").and_then(|c| c.as_u64())
+            {
+                // Convert back to LSP 0-based positions
+                let def_line = def_line.saturating_sub(1) as u32;
+                let def_col = def_col.saturating_sub(1) as u32;
+                // Resolve the file path to a URI
+                let def_path = if std::path::Path::new(def_file).is_absolute() {
+                    std::path::PathBuf::from(def_file)
+                } else if let Some(ws) = self.workspace.get() {
+                    ws.project_root().join(def_file)
+                } else {
+                    std::path::PathBuf::from(def_file)
+                };
+                if let Ok(def_uri) = Url::from_file_path(&def_path) {
+                    let end_col = result
+                        .get("end_column")
+                        .and_then(|c| c.as_u64())
+                        .map(|c| c.saturating_sub(1) as u32)
+                        .unwrap_or(def_col);
+                    return Ok(Some(GotoDefinitionResponse::Scalar(Location {
+                        uri: def_uri,
+                        range: Range {
+                            start: Position {
+                                line: def_line,
+                                character: def_col,
+                            },
+                            end: Position {
+                                line: def_line,
+                                character: end_col,
+                            },
+                        },
+                    })));
+                }
+            }
+        }
+
+        // Fallback: static tree-sitter analysis
+        let result = if let Some(ws) = self.workspace.get() {
             definition::goto_definition_cross_file(
                 &source,
                 uri,
@@ -275,19 +365,7 @@ impl LanguageServer for Backend {
             definition::goto_definition(&source, uri, params.text_document_position_params.position)
         };
 
-        // If we didn't find a definition, try Godot proxy
-        if our_result.is_none()
-            && let Some(proxy) = self.godot_proxy()
-        {
-            let pos = params.text_document_position_params.position;
-            if let Some(godot_val) = proxy.definition(uri.as_str(), pos.line, pos.character)
-                && let Some(def) = parse_godot_definition(&godot_val)
-            {
-                return Ok(Some(def));
-            }
-        }
-
-        Ok(our_result)
+        Ok(result)
     }
 
     async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
@@ -364,21 +442,68 @@ impl LanguageServer for Backend {
         let source = doc.content.clone();
         drop(doc);
 
-        let mut items = completion::provide_completions(
+        // Godot-first via daemon
+        if self.use_godot_proxy
+            && let Some(path) = uri.to_file_path().ok()
+            && let Some(file_str) = path.to_str()
+        {
+            let pos = params.text_document_position.position;
+            let file = file_str.to_string();
+            let line = pos.line as usize + 1;
+            let col = pos.character as usize + 1;
+            if let Some(result) = tokio::task::spawn_blocking(move || {
+                daemon_client::query_daemon(
+                    "completion",
+                    serde_json::json!({"file": file, "line": line, "column": col}),
+                    None,
+                )
+            })
+            .await
+            .ok()
+            .flatten()
+                && let Some(items) = result.as_array()
+                && !items.is_empty()
+            {
+                let completion_items: Vec<CompletionItem> = items
+                    .iter()
+                    .filter_map(|item| {
+                        let label = item.get("label")?.as_str()?.to_string();
+                        let kind_str = item.get("kind").and_then(|k| k.as_str());
+                        let kind = kind_str.map(|s| match s {
+                            "keyword" => CompletionItemKind::KEYWORD,
+                            "function" | "method" => CompletionItemKind::FUNCTION,
+                            "variable" => CompletionItemKind::VARIABLE,
+                            "property" => CompletionItemKind::PROPERTY,
+                            "class" => CompletionItemKind::CLASS,
+                            "constant" => CompletionItemKind::CONSTANT,
+                            "signal" => CompletionItemKind::EVENT,
+                            "enum" => CompletionItemKind::ENUM,
+                            _ => CompletionItemKind::TEXT,
+                        });
+                        let detail = item
+                            .get("detail")
+                            .and_then(|d| d.as_str())
+                            .map(|s| s.to_string());
+                        Some(CompletionItem {
+                            label,
+                            kind,
+                            detail,
+                            ..Default::default()
+                        })
+                    })
+                    .collect();
+                if !completion_items.is_empty() {
+                    return Ok(Some(CompletionResponse::Array(completion_items)));
+                }
+            }
+        }
+
+        // Fallback: static tree-sitter analysis
+        let items = completion::provide_completions(
             &source,
             params.text_document_position.position,
             self.workspace.get(),
         );
-
-        // Try Godot proxy for additional completions
-        if let Some(proxy) = self.godot_proxy() {
-            let pos = params.text_document_position.position;
-            if let Some(godot_val) = proxy.completion(uri.as_str(), pos.line, pos.character)
-                && let Some(godot_items) = parse_godot_completions(&godot_val)
-            {
-                items.extend(godot_items);
-            }
-        }
 
         if items.is_empty() {
             Ok(None)
@@ -403,143 +528,10 @@ pub fn run_server_with_options(godot_port: u16) {
                 client,
                 documents: DashMap::new(),
                 workspace: std::sync::OnceLock::new(),
-                godot_proxy: std::sync::OnceLock::new(),
-                godot_port,
+                use_godot_proxy: godot_port != 0,
             });
 
             Server::new(stdin, stdout, socket).serve(service).await;
         });
 }
 
-// ---------------------------------------------------------------------------
-// Godot proxy response helpers
-// ---------------------------------------------------------------------------
-
-/// Parse Godot's hover response into an LSP Hover.
-fn parse_godot_hover(val: &serde_json::Value) -> Option<Hover> {
-    let contents = val.get("contents")?;
-    let text = if let Some(s) = contents.as_str() {
-        s.to_string()
-    } else if let Some(obj) = contents.as_object() {
-        obj.get("value")?.as_str()?.to_string()
-    } else {
-        return None;
-    };
-
-    Some(Hover {
-        contents: HoverContents::Markup(MarkupContent {
-            kind: MarkupKind::Markdown,
-            value: text,
-        }),
-        range: None,
-    })
-}
-
-/// Merge our hover with Godot's hover.
-fn merge_hovers(ours: Option<Hover>, godot: Hover) -> Hover {
-    let Some(our_hover) = ours else {
-        return godot;
-    };
-
-    let our_text = match &our_hover.contents {
-        HoverContents::Markup(m) => m.value.clone(),
-        _ => String::new(),
-    };
-
-    let godot_text = match &godot.contents {
-        HoverContents::Markup(m) => m.value.clone(),
-        _ => String::new(),
-    };
-
-    if our_text.is_empty() {
-        return godot;
-    }
-    if godot_text.is_empty() {
-        return our_hover;
-    }
-
-    Hover {
-        contents: HoverContents::Markup(MarkupContent {
-            kind: MarkupKind::Markdown,
-            value: format!("{our_text}\n\n---\n\n{godot_text}"),
-        }),
-        range: our_hover.range.or(godot.range),
-    }
-}
-
-/// Parse Godot's completion response into CompletionItems.
-fn parse_godot_completions(val: &serde_json::Value) -> Option<Vec<CompletionItem>> {
-    let items = val
-        .as_array()
-        .or_else(|| val.get("items").and_then(|i| i.as_array()))?;
-
-    let mut result = Vec::new();
-    for item in items {
-        let label = item.get("label")?.as_str()?.to_string();
-        let kind = item
-            .get("kind")
-            .and_then(|k| k.as_u64())
-            .and_then(|k| serde_json::from_value(serde_json::Value::Number(k.into())).ok());
-        let detail = item
-            .get("detail")
-            .and_then(|d| d.as_str())
-            .map(|s| s.to_string());
-
-        result.push(CompletionItem {
-            label,
-            kind,
-            detail,
-            // Mark as coming from Godot engine
-            label_details: Some(CompletionItemLabelDetails {
-                detail: Some(" (Godot)".to_string()),
-                description: None,
-            }),
-            ..Default::default()
-        });
-    }
-
-    if result.is_empty() {
-        None
-    } else {
-        Some(result)
-    }
-}
-
-/// Parse Godot's definition response into a GotoDefinitionResponse.
-fn parse_godot_definition(val: &serde_json::Value) -> Option<GotoDefinitionResponse> {
-    // Godot may return a single Location or an array
-    if let Some(uri_str) = val.get("uri").and_then(|u| u.as_str()) {
-        let uri = Url::parse(uri_str).ok()?;
-        let range = parse_godot_range(val.get("range")?)?;
-        return Some(GotoDefinitionResponse::Scalar(Location { uri, range }));
-    }
-
-    if let Some(arr) = val.as_array() {
-        let mut locations = Vec::new();
-        for item in arr {
-            let uri = Url::parse(item.get("uri")?.as_str()?).ok()?;
-            let range = parse_godot_range(item.get("range")?)?;
-            locations.push(Location { uri, range });
-        }
-        if !locations.is_empty() {
-            return Some(GotoDefinitionResponse::Array(locations));
-        }
-    }
-
-    None
-}
-
-fn parse_godot_range(val: &serde_json::Value) -> Option<Range> {
-    let start = val.get("start")?;
-    let end = val.get("end")?;
-    Some(Range {
-        start: Position {
-            line: start.get("line")?.as_u64()? as u32,
-            character: start.get("character")?.as_u64()? as u32,
-        },
-        end: Position {
-            line: end.get("line")?.as_u64()? as u32,
-            character: end.get("character")?.as_u64()? as u32,
-        },
-    })
-}

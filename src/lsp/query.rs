@@ -434,7 +434,12 @@ pub fn query_references_by_name(
     })
 }
 
-pub fn query_definition(file: &str, line: usize, column: usize) -> Result<DefinitionOutput> {
+pub fn query_definition(
+    file: &str,
+    line: usize,
+    column: usize,
+    godot: Option<&super::godot_client::GodotClient>,
+) -> Result<DefinitionOutput> {
     let path = resolve_file(file)?;
     let uri = make_uri(&path)?;
     let source =
@@ -443,8 +448,46 @@ pub fn query_definition(file: &str, line: usize, column: usize) -> Result<Defini
     let symbol = get_symbol_name(&source, position)?;
 
     let project_root = find_root(&path)?;
-    let workspace = super::workspace::WorkspaceIndex::new(project_root.clone());
 
+    // Godot-first: if Godot returns a definition, use it exclusively
+    if let Some(proxy) = godot {
+        let godot_uri = proxy.to_godot_uri(uri.as_str());
+        if let Some(godot_val) = proxy.definition(&godot_uri, position.line, position.character)
+            && let Some(response) = extract_godot_definition(&godot_val)
+        {
+            let location = match response {
+                GotoDefinitionResponse::Scalar(loc) => loc,
+                GotoDefinitionResponse::Array(locs) => {
+                    if let Some(loc) = locs.into_iter().next() {
+                        loc
+                    } else {
+                        return Err(miette::miette!("no definition found for '{symbol}'"));
+                    }
+                }
+                GotoDefinitionResponse::Link(links) => {
+                    if let Some(link) = links.into_iter().next() {
+                        Location {
+                            uri: link.target_uri,
+                            range: link.target_selection_range,
+                        }
+                    } else {
+                        return Err(miette::miette!("no definition found for '{symbol}'"));
+                    }
+                }
+            };
+            return Ok(DefinitionOutput {
+                symbol,
+                file: url_to_relative(&location.uri, &project_root),
+                line: location.range.start.line + 1,
+                column: location.range.start.character + 1,
+                end_line: location.range.end.line + 1,
+                end_column: location.range.end.character + 1,
+            });
+        }
+    }
+
+    // Fallback: static analysis
+    let workspace = super::workspace::WorkspaceIndex::new(project_root.clone());
     let response =
         super::definition::goto_definition_cross_file(&source, &uri, position, &workspace)
             .ok_or_else(|| miette::miette!("no definition found for '{symbol}'"))?;
@@ -477,28 +520,83 @@ pub fn query_definition(file: &str, line: usize, column: usize) -> Result<Defini
     })
 }
 
-pub fn query_hover(file: &str, line: usize, column: usize) -> Result<HoverOutput> {
+fn extract_godot_definition(val: &serde_json::Value) -> Option<GotoDefinitionResponse> {
+    // Godot returns either a single location or an array
+    let parse_loc = |obj: &serde_json::Value| -> Option<Location> {
+        let uri_str = obj.get("uri")?.as_str()?;
+        let uri = Url::parse(uri_str).ok()?;
+        let range = obj.get("range")?;
+        let start = range.get("start")?;
+        let end = range.get("end")?;
+        Some(Location {
+            uri,
+            range: Range {
+                start: Position::new(
+                    start.get("line")?.as_u64()? as u32,
+                    start.get("character")?.as_u64()? as u32,
+                ),
+                end: Position::new(
+                    end.get("line")?.as_u64()? as u32,
+                    end.get("character")?.as_u64()? as u32,
+                ),
+            },
+        })
+    };
+
+    if let Some(arr) = val.as_array() {
+        let locs: Vec<Location> = arr.iter().filter_map(parse_loc).collect();
+        if locs.is_empty() {
+            return None;
+        }
+        Some(GotoDefinitionResponse::Array(locs))
+    } else {
+        Some(GotoDefinitionResponse::Scalar(parse_loc(val)?))
+    }
+}
+
+pub fn query_hover(
+    file: &str,
+    line: usize,
+    column: usize,
+    godot: Option<&super::godot_client::GodotClient>,
+) -> Result<HoverOutput> {
     let path = resolve_file(file)?;
     let source =
         std::fs::read_to_string(&path).map_err(|e| miette::miette!("cannot read file: {e}"))?;
     let position = to_position(line, column);
 
-    let hover = super::hover::hover_at(&source, position)
-        .ok_or_else(|| miette::miette!("no hover information at {file}:{line}:{column}"))?;
+    // Godot-first: if Godot proxy returns data, use it exclusively
+    if let Some(proxy) = godot
+        && let Some(text) = (|| {
+            let uri = make_uri(&path).ok()?;
+            let godot_uri = proxy.to_godot_uri(uri.as_str());
+            let val = proxy.hover(&godot_uri, position.line, position.character)?;
+            extract_godot_hover_text(&val)
+        })()
+    {
+        return Ok(HoverOutput {
+            content: text,
+            line: line as u32,
+            column: column as u32,
+        });
+    }
 
-    let content = match hover.contents {
-        HoverContents::Markup(markup) => markup.value,
-        HoverContents::Scalar(MarkedString::String(s)) => s,
-        HoverContents::Scalar(MarkedString::LanguageString(ls)) => ls.value,
-        HoverContents::Array(arr) => arr
-            .into_iter()
-            .map(|ms| match ms {
-                MarkedString::String(s) => s,
-                MarkedString::LanguageString(ls) => ls.value,
-            })
-            .collect::<Vec<_>>()
-            .join("\n"),
-    };
+    // Fallback: static analysis
+    let content = super::hover::hover_at(&source, position)
+        .map(|h| match h.contents {
+            HoverContents::Markup(markup) => markup.value,
+            HoverContents::Scalar(MarkedString::String(s)) => s,
+            HoverContents::Scalar(MarkedString::LanguageString(ls)) => ls.value,
+            HoverContents::Array(arr) => arr
+                .into_iter()
+                .map(|ms| match ms {
+                    MarkedString::String(s) => s,
+                    MarkedString::LanguageString(ls) => ls.value,
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+        })
+        .ok_or_else(|| miette::miette!("no hover information at {file}:{line}:{column}"))?;
 
     Ok(HoverOutput {
         content,
@@ -507,12 +605,50 @@ pub fn query_hover(file: &str, line: usize, column: usize) -> Result<HoverOutput
     })
 }
 
-pub fn query_completions(file: &str, line: usize, column: usize) -> Result<Vec<CompletionOutput>> {
+fn extract_godot_hover_text(val: &serde_json::Value) -> Option<String> {
+    let contents = val.get("contents")?;
+    let text = if let Some(s) = contents.as_str() {
+        s.to_string()
+    } else if let Some(obj) = contents.as_object() {
+        obj.get("value")?.as_str()?.to_string()
+    } else {
+        return None;
+    };
+    if text.is_empty() { None } else { Some(text) }
+}
+
+pub fn query_completions(
+    file: &str,
+    line: usize,
+    column: usize,
+    godot: Option<&super::godot_client::GodotClient>,
+) -> Result<Vec<CompletionOutput>> {
     let path = resolve_file(file)?;
     let source =
         std::fs::read_to_string(&path).map_err(|e| miette::miette!("cannot read file: {e}"))?;
     let position = to_position(line, column);
 
+    // Godot-first: if Godot returns completions, use them exclusively
+    if let Some(proxy) = godot
+        && let Ok(uri) = make_uri(&path)
+    {
+        let godot_uri = proxy.to_godot_uri(uri.as_str());
+        if let Some(val) = proxy.completion(&godot_uri, position.line, position.character)
+            && let Some(godot_items) = extract_godot_completions(&val)
+            && !godot_items.is_empty()
+        {
+            return Ok(godot_items
+                .into_iter()
+                .map(|item| CompletionOutput {
+                    label: item.label,
+                    kind: completion_kind_str(item.kind),
+                    detail: item.detail,
+                })
+                .collect());
+        }
+    }
+
+    // Fallback: static analysis
     let workspace =
         crate::core::config::find_project_root(&path).map(super::workspace::WorkspaceIndex::new);
 
@@ -526,6 +662,31 @@ pub fn query_completions(file: &str, line: usize, column: usize) -> Result<Vec<C
             detail: item.detail,
         })
         .collect())
+}
+
+fn extract_godot_completions(val: &serde_json::Value) -> Option<Vec<CompletionItem>> {
+    let items = val
+        .as_array()
+        .or_else(|| val.get("items").and_then(|i| i.as_array()))?;
+    let mut result = Vec::new();
+    for item in items {
+        let label = item.get("label")?.as_str()?.to_string();
+        let kind = item
+            .get("kind")
+            .and_then(|k| k.as_u64())
+            .and_then(|k| serde_json::from_value(serde_json::Value::Number(k.into())).ok());
+        let detail = item
+            .get("detail")
+            .and_then(|d| d.as_str())
+            .map(|s| s.to_string());
+        result.push(CompletionItem {
+            label,
+            kind,
+            detail,
+            ..Default::default()
+        });
+    }
+    Some(result)
 }
 
 pub fn query_code_actions(file: &str, line: usize, column: usize) -> Result<Vec<CodeActionOutput>> {

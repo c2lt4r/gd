@@ -3,15 +3,24 @@
 ## [0.1.23] - 2026-02-13
 
 ### Added
+- **Background daemon** — persistent process maintains Godot LSP and DAP connections, auto-starts on first CLI query, auto-exits after 5 min idle
+  - `gd lsp daemon-status` — show daemon connectivity (Godot LSP, DAP, game state)
+  - All hover, completion, and definition queries now route through the daemon for instant results
+- `gd run` now launches the game via DAP when the Godot editor is open (returns immediately, falls back to direct spawn)
 - `gd debug` — runtime debugging via Godot's Debug Adapter Protocol (DAP)
-  - `gd debug attach` — interactive REPL session with persistent DAP connection
+  - `gd debug attach` — interactive REPL session
     - `break`, `clear`, `wait` — set/clear breakpoints and wait for hits
     - `continue`, `pause`, `next`, `step` — execution control
     - `stack`, `vars`, `expand` — inspect call stack and variables
     - `eval` — evaluate expressions at breakpoints (member-access only)
   - `gd debug break --file <path> --line <N>` — one-shot: set breakpoint, wait for hit, dump stack + variables (`--format json`)
-  - `gd debug status` — show DAP server capabilities and threads (`--format json`)
-  - Cross-platform path resolution via editor path discovery (works from WSL, Linux, macOS, Windows)
+  - `gd debug status` — show DAP connection and threads (`--format json`)
+  - `gd debug stop` — terminate the running game
+  - Cross-platform path resolution (WSL `/mnt/c/` to `C:/` conversion)
+
+### Fixed
+- Godot Dictionary errors from missing `name`/`checksums` fields in DAP source objects
+- Godot Dictionary errors from missing `context.triggerKind` in LSP completion requests
 
 ## [0.1.22] - 2026-02-13
 

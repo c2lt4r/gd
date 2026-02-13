@@ -119,10 +119,11 @@ impl DapClient {
             .iter()
             .map(|&l| serde_json::json!({"line": l}))
             .collect();
+        let name = path.rsplit('/').next().unwrap_or(path);
         self.send_request(
             "setBreakpoints",
             serde_json::json!({
-                "source": {"path": path},
+                "source": {"path": path, "name": name, "checksums": []},
                 "breakpoints": breakpoints,
             }),
         )
@@ -130,12 +131,13 @@ impl DapClient {
 
     /// Evaluate an expression. Only member-access expressions are reliable in Godot
     /// (e.g. `self.speed`). Arbitrary expressions like `2+2` may timeout.
-    pub fn evaluate(&self, expression: &str, context: &str) -> Option<Value> {
+    pub fn evaluate(&self, expression: &str, context: &str, frame_id: i64) -> Option<Value> {
         self.send_request(
             "evaluate",
             serde_json::json!({
                 "expression": expression,
                 "context": context,
+                "frameId": frame_id,
             }),
         )
     }
@@ -160,6 +162,131 @@ impl DapClient {
         self.send_request("stepIn", serde_json::json!({"threadId": thread_id}))
     }
 
+    /// Launch the project via DAP (starts the game through the editor).
+    /// Returns the `process` event body on success (contains the Godot binary path).
+    /// Flow: initialize → launch → configurationDone → read process event.
+    pub fn launch(&self, project_path: &str) -> Option<Value> {
+        self.initialize()?;
+        // Send launch (response may arrive after configurationDone)
+        let launch_seq = self.next_seq();
+        let launch_msg = serde_json::json!({
+            "seq": launch_seq,
+            "type": "request",
+            "command": "launch",
+            "arguments": {
+                "project": project_path,
+            },
+        });
+        self.send_raw(&launch_msg).ok()?;
+
+        // Send configurationDone — Godot needs this before responding to launch
+        self.configuration_done()?;
+
+        // Read events/responses until we get the launch response.
+        // Capture the process event along the way (contains binary path).
+        let mut process_body = None;
+        let mut stream = self.stream.lock().unwrap();
+        stream
+            .get_mut()
+            .set_read_timeout(Some(Duration::from_secs(15)))
+            .ok()?;
+
+        for _ in 0..20 {
+            let Some(cl) = read_content_length(&mut *stream) else {
+                break;
+            };
+            let mut body = vec![0u8; cl];
+            if stream.read_exact(&mut body).is_err() {
+                break;
+            }
+            let Ok(msg) = serde_json::from_slice::<Value>(&body) else {
+                continue;
+            };
+
+            // Capture process event (has the Godot binary path)
+            if msg.get("type").and_then(|t| t.as_str()) == Some("event")
+                && msg.get("event").and_then(|e| e.as_str()) == Some("process")
+            {
+                process_body = msg.get("body").cloned();
+            }
+
+            // launch response means the game is running
+            if msg.get("type").and_then(|t| t.as_str()) == Some("response")
+                && msg.get("request_seq").and_then(|s| s.as_i64()) == Some(launch_seq)
+            {
+                if msg.get("success").and_then(|s| s.as_bool()) != Some(true) {
+                    return None;
+                }
+                break;
+            }
+        }
+
+        // Restore default timeout
+        stream
+            .get_mut()
+            .set_read_timeout(Some(Duration::from_secs(8)))
+            .ok();
+        drop(stream);
+
+        process_body
+    }
+
+    /// Wait for the game to exit. Returns the exit code from the `exited` event.
+    /// Uses polling with short locks so other operations can interleave.
+    pub fn wait_for_exited(&self, timeout_secs: u64) -> Option<Value> {
+        let deadline = std::time::Instant::now() + Duration::from_secs(timeout_secs);
+        let mut result = None;
+
+        while std::time::Instant::now() < deadline {
+            // Short lock: try to read with brief timeout, then release
+            {
+                let mut stream = self.stream.lock().unwrap();
+                stream
+                    .get_mut()
+                    .set_read_timeout(Some(Duration::from_millis(200)))
+                    .ok()?;
+
+                // Try to read messages (non-blocking-ish)
+                for _ in 0..5 {
+                    let Some(cl) = read_content_length(&mut *stream) else {
+                        break;
+                    };
+                    let mut body = vec![0u8; cl];
+                    if stream.read_exact(&mut body).is_err() {
+                        break;
+                    }
+                    if let Ok(msg) = serde_json::from_slice::<Value>(&body)
+                        && msg.get("type").and_then(|t| t.as_str()) == Some("event")
+                    {
+                        let event = msg.get("event").and_then(|e| e.as_str());
+                        if event == Some("exited") {
+                            result = msg.get("body").cloned();
+                        }
+                        if event == Some("terminated") {
+                            let _ = stream
+                                .get_mut()
+                                .set_read_timeout(Some(Duration::from_secs(8)));
+                            return result;
+                        }
+                    }
+                }
+
+                let _ = stream
+                    .get_mut()
+                    .set_read_timeout(Some(Duration::from_secs(8)));
+            }
+            // Release lock, sleep briefly to allow other operations
+            std::thread::sleep(Duration::from_millis(100));
+        }
+
+        result
+    }
+
+    /// Terminate the running game (DAP terminate request).
+    pub fn terminate(&self) -> Option<Value> {
+        self.send_request("terminate", serde_json::json!({}))
+    }
+
     /// Clean disconnect from the DAP server.
     pub fn disconnect(&self) {
         let _ = self.send_request("disconnect", serde_json::json!({}));
@@ -167,37 +294,45 @@ impl DapClient {
 
     /// Wait for a `stopped` event (e.g. after setting a breakpoint and continuing).
     /// Returns the stopped event body, or None on timeout.
-    #[allow(dead_code)]
+    /// Uses polling with short locks so other operations can interleave.
     pub fn wait_for_stopped(&self, timeout_secs: u64) -> Option<Value> {
-        let mut stream = self.stream.lock().unwrap();
-        stream
-            .get_mut()
-            .set_read_timeout(Some(Duration::from_secs(timeout_secs)))
-            .ok()?;
+        let deadline = std::time::Instant::now() + Duration::from_secs(timeout_secs);
 
-        let mut result = None;
-        for _ in 0..50 {
-            let Some(content_length) = read_content_length(&mut *stream) else {
-                break;
-            };
-            let mut body = vec![0u8; content_length];
-            if stream.read_exact(&mut body).is_err() {
-                break;
-            }
-            if let Ok(msg) = serde_json::from_slice::<Value>(&body)
-                && msg.get("type").and_then(|t| t.as_str()) == Some("event")
-                && msg.get("event").and_then(|e| e.as_str()) == Some("stopped")
+        while std::time::Instant::now() < deadline {
             {
-                result = msg.get("body").cloned();
-                break;
+                let mut stream = self.stream.lock().unwrap();
+                stream
+                    .get_mut()
+                    .set_read_timeout(Some(Duration::from_millis(200)))
+                    .ok()?;
+
+                for _ in 0..5 {
+                    let Some(content_length) = read_content_length(&mut *stream) else {
+                        break;
+                    };
+                    let mut body = vec![0u8; content_length];
+                    if stream.read_exact(&mut body).is_err() {
+                        break;
+                    }
+                    if let Ok(msg) = serde_json::from_slice::<Value>(&body)
+                        && msg.get("type").and_then(|t| t.as_str()) == Some("event")
+                        && msg.get("event").and_then(|e| e.as_str()) == Some("stopped")
+                    {
+                        let _ = stream
+                            .get_mut()
+                            .set_read_timeout(Some(Duration::from_secs(8)));
+                        return msg.get("body").cloned();
+                    }
+                }
+
+                let _ = stream
+                    .get_mut()
+                    .set_read_timeout(Some(Duration::from_secs(8)));
             }
+            std::thread::sleep(Duration::from_millis(100));
         }
 
-        // Restore default timeout
-        let _ = stream
-            .get_mut()
-            .set_read_timeout(Some(Duration::from_secs(8)));
-        result
+        None
     }
 
     /// Drain any pending events from the stream (non-blocking-ish with short timeout).
@@ -232,7 +367,7 @@ impl DapClient {
             "type": "request",
             "command": "setBreakpoints",
             "arguments": {
-                "source": {"path": "/__gd_probe__/nonexistent.gd"},
+                "source": {"path": "/__gd_probe__/nonexistent.gd", "name": "nonexistent.gd", "checksums": []},
                 "breakpoints": [],
             },
         });

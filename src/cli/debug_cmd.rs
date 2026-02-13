@@ -2,19 +2,10 @@ use clap::{Args, Subcommand};
 use miette::{Result, miette};
 use owo_colors::OwoColorize;
 
-use crate::debug::dap_client::DapClient;
 use crate::debug::{BreakpointResult, Scope, StackFrame, Variable};
 
 #[derive(Args)]
 pub struct DebugArgs {
-    /// DAP server port (Godot default: 6006)
-    #[arg(long, default_value = "6006")]
-    pub port: u16,
-
-    /// DAP server host
-    #[arg(long, default_value = "localhost")]
-    pub host: String,
-
     #[command(subcommand)]
     pub command: DebugCommand,
 }
@@ -28,6 +19,8 @@ pub enum DebugCommand {
     Break(BreakArgs),
     /// Show DAP server status and capabilities (one-shot)
     Status(StatusArgs),
+    /// Terminate the running game
+    Stop,
 }
 
 #[derive(Args)]
@@ -81,60 +74,61 @@ impl std::fmt::Display for OutputFormat {
 
 pub fn exec(args: DebugArgs) -> Result<()> {
     match args.command {
-        DebugCommand::Attach => cmd_attach(&args.host, args.port),
-        DebugCommand::Break(a) => cmd_break(&args.host, args.port, a),
-        DebugCommand::Status(a) => cmd_status(&args.host, args.port, a),
+        DebugCommand::Attach => cmd_attach(),
+        DebugCommand::Break(a) => cmd_break(a),
+        DebugCommand::Status(a) => cmd_status(a),
+        DebugCommand::Stop => cmd_stop(),
     }
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────
+// ── Daemon helpers ───────────────────────────────────────────────────
 
-fn connect_and_handshake(host: &str, port: u16) -> Result<DapClient> {
-    let client = DapClient::connect(host, port).ok_or_else(|| {
-        miette!(
-            "Could not connect to Godot DAP server on {host}:{port}\n  Is the Godot editor running?"
-        )
-    })?;
-    client
-        .handshake()
-        .ok_or_else(|| miette!("DAP handshake failed — Godot may not be in a debug session"))?;
-    Ok(client)
+/// Send a DAP method through the daemon, returning the result.
+fn daemon_dap(method: &str, params: serde_json::Value) -> Option<serde_json::Value> {
+    crate::lsp::daemon_client::query_daemon(method, params, None)
 }
 
-/// Resolve a relative script path using the editor's project path from DAP.
-/// Godot's DAP requires the exact path prefix the editor is using.
-fn resolve_script_path(relative: &str, client: &DapClient) -> Result<String> {
-    // Verify the file exists locally
-    let cwd =
-        std::env::current_dir().map_err(|e| miette!("Failed to get current directory: {e}"))?;
-    let project = crate::core::project::GodotProject::discover(&cwd)?;
+/// Send a DAP method through the daemon with a custom timeout.
+fn daemon_dap_timeout(
+    method: &str,
+    params: serde_json::Value,
+    timeout_secs: u64,
+) -> Option<serde_json::Value> {
+    crate::lsp::daemon_client::query_daemon(
+        method,
+        params,
+        Some(std::time::Duration::from_secs(timeout_secs + 5)),
+    )
+}
+
+/// Resolve a relative script path using the daemon's project path.
+fn resolve_script_path(relative: &str) -> Option<String> {
+    // Verify file exists locally
+    let cwd = std::env::current_dir().ok()?;
+    let project = crate::core::project::GodotProject::discover(&cwd).ok()?;
     let full = project.root.join(relative);
-
     if !full.exists() {
-        return Err(miette!("Script not found: {relative}"));
+        return None;
     }
 
-    // Use the editor's project path discovered during DAP handshake.
-    // This ensures the path prefix matches exactly what Godot expects,
-    // regardless of platform differences (WSL casing, Windows \\?\, etc.)
-    let editor_root = client.project_path().ok_or_else(|| {
-        miette!("Could not determine the editor's project path — breakpoints may not work")
-    })?;
-
-    // Normalize relative to forward slashes and join with editor root
+    let result = daemon_dap("dap_project_path", serde_json::json!({}))?;
+    let editor_root = result.get("project_path")?.as_str()?;
     let relative_fwd = relative.replace('\\', "/");
-    Ok(format!("{editor_root}/{relative_fwd}"))
+    Some(format!("{editor_root}/{relative_fwd}"))
 }
 
 // ── Interactive session ──────────────────────────────────────────────
 
-fn cmd_attach(host: &str, port: u16) -> Result<()> {
-    let client = connect_and_handshake(host, port)?;
+fn cmd_attach() -> Result<()> {
+    // Verify daemon is available
+    daemon_dap("dap_status", serde_json::json!({})).ok_or_else(|| {
+        miette!("Could not connect to Godot DAP via daemon\n  Is the Godot editor running?")
+    })?;
+
     println!(
-        "{} {}:{}",
+        "{} {}",
         "Attached to Godot DAP".green().bold(),
-        host,
-        port
+        "(via daemon)".dimmed(),
     );
     println!(
         "Type {} for commands, {} to exit.\n",
@@ -165,39 +159,39 @@ fn cmd_attach(host: &str, port: u16) -> Result<()> {
             "help" | "h" => print_help(),
             "quit" | "q" | "exit" => break,
             "continue" | "c" => {
-                if client.continue_execution(1).is_some() {
+                if daemon_dap("dap_continue", serde_json::json!({})).is_some() {
                     println!("{}", "Continued".green());
                 } else {
                     println!("{}", "Failed to continue".red());
                 }
             }
             "pause" | "p" => {
-                if client.pause(1).is_some() {
+                if daemon_dap("dap_pause", serde_json::json!({})).is_some() {
                     println!("{}", "Paused".green());
                 } else {
                     println!("{}", "Failed to pause".red());
                 }
             }
             "next" | "n" => {
-                if client.next(1).is_some() {
+                if daemon_dap("dap_next", serde_json::json!({})).is_some() {
                     println!("{}", "Stepped over".green());
                 } else {
                     println!("{}", "Failed to step over".red());
                 }
             }
             "step" | "s" => {
-                if client.step_in(1).is_some() {
+                if daemon_dap("dap_step_in", serde_json::json!({})).is_some() {
                     println!("{}", "Stepped in".green());
                 } else {
                     println!("{}", "Failed to step in".red());
                 }
             }
-            "stack" | "bt" => repl_stack(&client),
-            "vars" => repl_vars(&client, args.first().copied()),
+            "stack" | "bt" => repl_stack(),
+            "vars" => repl_vars(args.first().copied()),
             "expand" => {
                 if let Some(ref_str) = args.first() {
                     if let Ok(vref) = ref_str.parse::<i64>() {
-                        repl_expand(&client, vref);
+                        repl_expand(vref);
                     } else {
                         println!("Usage: expand <ref_id>");
                     }
@@ -210,21 +204,21 @@ fn cmd_attach(host: &str, port: u16) -> Result<()> {
                     println!("Usage: eval <expression>");
                 } else {
                     let expr = args.join(" ");
-                    repl_eval(&client, &expr);
+                    repl_eval(&expr);
                 }
             }
             "break" | "b" => {
                 if args.len() < 2 {
                     println!("Usage: break <file> <line> [line2 ...]");
                 } else {
-                    repl_break(&client, args[0], &args[1..]);
+                    repl_break(args[0], &args[1..]);
                 }
             }
             "clear" => {
                 if args.is_empty() {
                     println!("Usage: clear <file>");
                 } else {
-                    repl_clear(&client, args[0]);
+                    repl_clear(args[0]);
                 }
             }
             "wait" => {
@@ -232,13 +226,12 @@ fn cmd_attach(host: &str, port: u16) -> Result<()> {
                     .first()
                     .and_then(|s| s.parse::<u64>().ok())
                     .unwrap_or(30);
-                repl_wait(&client, timeout);
+                repl_wait(timeout);
             }
             _ => println!("Unknown command: {}. Type 'help' for commands.", cmd.red()),
         }
     }
 
-    client.disconnect();
     println!("{}", "Disconnected.".dimmed());
     Ok(())
 }
@@ -307,191 +300,27 @@ fn print_help() {
     );
 }
 
-fn repl_stack(client: &DapClient) {
-    let frames = get_stack_frames(client);
-    if frames.is_empty() {
-        println!(
-            "{}",
-            "No stack frames — game may not be paused at a breakpoint.".yellow()
-        );
-    } else {
-        println!("{}", "Call stack:".bold());
-        for (i, f) in frames.iter().enumerate() {
-            println!(
-                "  {} {} ({}:{})",
-                format!("#{i}").dimmed(),
-                f.name.green().bold(),
-                f.file.cyan(),
-                f.line
-            );
-        }
-    }
-}
+// ── One-shot: break ──────────────────────────────────────────────────
 
-fn repl_vars(client: &DapClient, scope_filter: Option<&str>) {
-    let frames = get_stack_frames(client);
-    let Some(frame) = frames.first() else {
-        println!(
-            "{}",
-            "No stack frames — game may not be paused at a breakpoint.".yellow()
-        );
-        return;
-    };
-
-    let Some(scopes_body) = client.scopes(frame.id) else {
-        println!("{}", "Failed to get scopes.".red());
-        return;
-    };
-
-    let scopes: Vec<Scope> = scopes_body["scopes"]
-        .as_array()
-        .map(|arr| {
-            arr.iter()
-                .map(|s| Scope {
-                    name: s["name"].as_str().unwrap_or("?").to_string(),
-                    variables_reference: s["variablesReference"].as_i64().unwrap_or(0),
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-
-    let filter = scope_filter.map(|s| s.to_lowercase());
-    for scope in &scopes {
-        if let Some(ref f) = filter
-            && !scope.name.to_lowercase().contains(f)
-        {
-            continue;
-        }
-        if scope.variables_reference > 0
-            && let Some(body) = client.variables(scope.variables_reference)
-        {
-            let vars = parse_variables(&body);
-            let _ = print_variables(&vars, &OutputFormat::Human, Some(&scope.name));
-        }
-    }
-}
-
-fn repl_expand(client: &DapClient, vref: i64) {
-    if let Some(body) = client.variables(vref) {
-        let vars = parse_variables(&body);
-        let _ = print_variables(&vars, &OutputFormat::Human, None);
-    } else {
-        println!("{}", "Failed to expand variable.".red());
-    }
-}
-
-fn repl_eval(client: &DapClient, expr: &str) {
-    if let Some(body) = client.evaluate(expr, "repl") {
-        let result = body["result"].as_str().unwrap_or("?");
-        let type_name = body["type"].as_str().unwrap_or("");
-        if type_name.is_empty() {
-            println!("{} = {}", expr.cyan(), result.green());
-        } else {
-            println!(
-                "{} {} = {}",
-                type_name.dimmed(),
-                expr.cyan(),
-                result.green()
-            );
-        }
-    } else {
-        println!(
-            "{}",
-            "Evaluate failed or timed out. Godot only supports member-access expressions (e.g. self.speed) while paused at a breakpoint."
-                .yellow()
-        );
-    }
-}
-
-fn repl_break(client: &DapClient, file: &str, line_strs: &[&str]) {
-    let lines: Vec<u32> = line_strs
-        .iter()
-        .filter_map(|s| s.parse::<u32>().ok())
-        .collect();
-    if lines.is_empty() {
-        println!("No valid line numbers provided.");
-        return;
-    }
-
-    let path = match resolve_script_path(file, client) {
-        Ok(p) => p,
-        Err(e) => {
-            println!("{}", e);
-            return;
-        }
-    };
-
-    if let Some(body) = client.set_breakpoints(&path, &lines) {
-        let results = parse_breakpoint_results(&body);
-        for bp in &results {
-            let status = if bp.verified {
-                "verified".green().to_string()
-            } else {
-                "unverified".yellow().to_string()
-            };
-            println!(
-                "  {} {}:{} [{}]",
-                "Breakpoint".bold(),
-                file.cyan(),
-                bp.line,
-                status
-            );
-        }
-    } else {
-        println!("{}", "Failed to set breakpoints.".red());
-    }
-}
-
-fn repl_clear(client: &DapClient, file: &str) {
-    let path = match resolve_script_path(file, client) {
-        Ok(p) => p,
-        Err(e) => {
-            println!("{}", e);
-            return;
-        }
-    };
-
-    if client.set_breakpoints(&path, &[]).is_some() {
-        println!("{} {}", "Cleared breakpoints in".green(), file.cyan());
-    } else {
-        println!("{}", "Failed to clear breakpoints.".red());
-    }
-}
-
-fn repl_wait(client: &DapClient, timeout: u64) {
-    println!(
-        "{} (timeout: {}s)...",
-        "Waiting for breakpoint hit".dimmed(),
-        timeout
-    );
-
-    if client.wait_for_stopped(timeout).is_some() {
-        println!("{}", "Breakpoint hit!".green().bold());
-        repl_stack(client);
-        repl_vars(client, None);
-    } else {
-        println!(
-            "{}",
-            format!("Timeout — no breakpoint hit within {timeout}s.").yellow()
-        );
-    }
-}
-
-// ── One-shot: break --wait ──────────────────────────────────────────
-
-fn cmd_break(host: &str, port: u16, args: BreakArgs) -> Result<()> {
+fn cmd_break(args: BreakArgs) -> Result<()> {
     if args.line.is_empty() {
         return Err(miette!("At least one --line is required"));
     }
 
-    let client = connect_and_handshake(host, port)?;
-    let path = resolve_script_path(&args.file, &client)?;
+    // Resolve path using daemon's project path
+    let path = resolve_script_path(&args.file)
+        .ok_or_else(|| miette!("Cannot resolve script path — is the daemon connected to Godot?"))?;
 
-    let body = client.set_breakpoints(&path, &args.line).ok_or_else(|| {
-        miette!("Failed to set breakpoints — check that the file path is correct")
-    })?;
+    let lines: Vec<serde_json::Value> = args.line.iter().map(|&l| serde_json::json!(l)).collect();
 
-    let results = parse_breakpoint_results(&body);
+    // Set breakpoints
+    let bp_body = daemon_dap(
+        "dap_set_breakpoints",
+        serde_json::json!({"path": path, "lines": lines}),
+    )
+    .ok_or_else(|| miette!("Failed to set breakpoints — is Godot editor running?"))?;
+
+    let results = parse_breakpoint_results(&bp_body);
 
     for bp in &results {
         let status = if bp.verified {
@@ -508,17 +337,23 @@ fn cmd_break(host: &str, port: u16, args: BreakArgs) -> Result<()> {
         );
     }
 
-    // Continue and wait for hit
+    // Continue execution
+    daemon_dap("dap_continue", serde_json::json!({}));
+
     println!(
         "\n{} (timeout: {}s)...",
         "Waiting for breakpoint hit".dimmed(),
         args.timeout,
     );
 
-    let _ = client.continue_execution(1);
+    // Wait for stopped event
+    let stopped = daemon_dap_timeout(
+        "dap_wait_stopped",
+        serde_json::json!({"timeout": args.timeout}),
+        args.timeout,
+    );
 
-    if client.wait_for_stopped(args.timeout).is_none() {
-        client.disconnect();
+    if stopped.is_none() {
         return Err(miette!(
             "Timeout — breakpoint was not hit within {}s",
             args.timeout
@@ -527,24 +362,34 @@ fn cmd_break(host: &str, port: u16, args: BreakArgs) -> Result<()> {
 
     println!("{}", "Breakpoint hit!".green().bold());
 
-    let frames = get_stack_frames(&client);
+    // Brief pause to let Godot's debugger fully populate scope data
+    std::thread::sleep(std::time::Duration::from_millis(50));
+
+    // Get stack frames
+    let frames = get_stack_frames();
+
+    // Get variables
     let mut all_vars: Vec<(String, Vec<Variable>)> = Vec::new();
     if let Some(frame_id) = frames.first().map(|f| f.id)
-        && let Some(scopes_body) = client.scopes(frame_id)
+        && let Some(scopes_body) = daemon_dap(
+            "dap_scopes",
+            serde_json::json!({"frame_id": frame_id}),
+        )
         && let Some(scopes) = scopes_body["scopes"].as_array()
     {
         for scope in scopes {
             let name = scope["name"].as_str().unwrap_or("?").to_string();
             let vref = scope["variablesReference"].as_i64().unwrap_or(0);
             if vref > 0
-                && let Some(vbody) = client.variables(vref)
+                && let Some(vbody) = daemon_dap(
+                    "dap_variables",
+                    serde_json::json!({"variables_reference": vref}),
+                )
             {
                 all_vars.push((name, parse_variables(&vbody)));
             }
         }
     }
-
-    client.disconnect();
 
     match args.format {
         OutputFormat::Json => {
@@ -571,60 +416,49 @@ fn cmd_break(host: &str, port: u16, args: BreakArgs) -> Result<()> {
                 }
             }
             for (scope_name, vars) in &all_vars {
-                print_variables(vars, &OutputFormat::Human, Some(scope_name))?;
+                let _ = print_variables(vars, &OutputFormat::Human, Some(scope_name));
             }
         }
     }
+
+    // Resume execution after inspecting the breakpoint
+    daemon_dap("dap_continue", serde_json::json!({}));
 
     Ok(())
 }
 
 // ── One-shot: status ────────────────────────────────────────────────
 
-fn cmd_status(host: &str, port: u16, args: StatusArgs) -> Result<()> {
-    let client = DapClient::connect(host, port).ok_or_else(|| {
-        miette!(
-            "Could not connect to Godot DAP server on {host}:{port}\n  Is the Godot editor running?"
-        )
+fn cmd_status(args: StatusArgs) -> Result<()> {
+    let result = daemon_dap("dap_status", serde_json::json!({})).ok_or_else(|| {
+        miette!("Could not connect to Godot DAP via daemon\n  Is the Godot editor running?")
     })?;
-
-    let caps = client
-        .handshake()
-        .ok_or_else(|| miette!("DAP handshake failed"))?;
-
-    let threads_body = client.threads();
-    client.disconnect();
 
     match args.format {
         OutputFormat::Json => {
             let status = serde_json::json!({
                 "connected": true,
-                "host": host,
-                "port": port,
-                "capabilities": caps,
-                "threads": threads_body.map(|t| t["threads"].clone()),
+                "capabilities": result.get("capabilities"),
+                "threads": result.get("threads"),
             });
             println!("{}", serde_json::to_string_pretty(&status).unwrap());
         }
         OutputFormat::Human => {
             println!(
-                "{} {}:{}",
+                "{} {}",
                 "Connected to Godot DAP".green().bold(),
-                host,
-                port
+                "(via daemon)".dimmed(),
             );
             println!();
-            println!("{}", "Capabilities:".bold());
-            if let Some(obj) = caps.as_object() {
-                for (k, v) in obj {
+            if let Some(caps) = result.get("capabilities").and_then(|c| c.as_object()) {
+                println!("{}", "Capabilities:".bold());
+                for (k, v) in caps {
                     if v.as_bool() == Some(true) {
                         println!("  {} {}", "+".green(), k);
                     }
                 }
             }
-            if let Some(body) = threads_body
-                && let Some(threads) = body["threads"].as_array()
-            {
+            if let Some(threads) = result.get("threads").and_then(|t| t.as_array()) {
                 println!();
                 println!("{}", "Threads:".bold());
                 for t in threads {
@@ -642,31 +476,44 @@ fn cmd_status(host: &str, port: u16, args: StatusArgs) -> Result<()> {
     Ok(())
 }
 
+// ── One-shot: stop ──────────────────────────────────────────────────
+
+fn cmd_stop() -> Result<()> {
+    // Continue execution first in case paused at a breakpoint
+    daemon_dap("dap_continue", serde_json::json!({}));
+    daemon_dap("dap_terminate", serde_json::json!({})).ok_or_else(|| {
+        miette!("Could not terminate game — is a game running?")
+    })?;
+    println!("{} Game terminated", "■".red());
+    Ok(())
+}
+
 // ── Shared helpers ──────────────────────────────────────────────────
 
-fn get_stack_frames(client: &DapClient) -> Vec<StackFrame> {
-    let thread_id = client
-        .threads()
+fn get_stack_frames() -> Vec<StackFrame> {
+    let thread_id = daemon_dap("dap_threads", serde_json::json!({}))
         .and_then(|b| b["threads"].as_array()?.first()?.get("id")?.as_i64())
         .unwrap_or(1);
 
-    client
-        .stack_trace(thread_id)
-        .and_then(|b| {
-            Some(
-                b["stackFrames"]
-                    .as_array()?
-                    .iter()
-                    .map(|f| StackFrame {
-                        id: f["id"].as_i64().unwrap_or(0),
-                        name: f["name"].as_str().unwrap_or("?").to_string(),
-                        file: f["source"]["name"].as_str().unwrap_or("?").to_string(),
-                        line: f["line"].as_u64().unwrap_or(0) as u32,
-                    })
-                    .collect(),
-            )
-        })
-        .unwrap_or_default()
+    daemon_dap(
+        "dap_stack_trace",
+        serde_json::json!({"thread_id": thread_id}),
+    )
+    .and_then(|b| {
+        Some(
+            b["stackFrames"]
+                .as_array()?
+                .iter()
+                .map(|f| StackFrame {
+                    id: f["id"].as_i64().unwrap_or(0),
+                    name: f["name"].as_str().unwrap_or("?").to_string(),
+                    file: f["source"]["name"].as_str().unwrap_or("?").to_string(),
+                    line: f["line"].as_u64().unwrap_or(0) as u32,
+                })
+                .collect(),
+        )
+    })
+    .unwrap_or_default()
 }
 
 fn parse_breakpoint_results(body: &serde_json::Value) -> Vec<BreakpointResult> {
@@ -698,6 +545,202 @@ fn parse_variables(body: &serde_json::Value) -> Vec<Variable> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+// ── REPL helpers (all daemon-backed) ─────────────────────────────────
+
+fn repl_stack() {
+    let frames = get_stack_frames();
+    if frames.is_empty() {
+        println!(
+            "{}",
+            "No stack frames — game may not be paused at a breakpoint.".yellow()
+        );
+    } else {
+        println!("{}", "Call stack:".bold());
+        for (i, f) in frames.iter().enumerate() {
+            println!(
+                "  {} {} ({}:{})",
+                format!("#{i}").dimmed(),
+                f.name.green().bold(),
+                f.file.cyan(),
+                f.line
+            );
+        }
+    }
+}
+
+fn repl_vars(scope_filter: Option<&str>) {
+    let frames = get_stack_frames();
+    let Some(frame) = frames.first() else {
+        println!(
+            "{}",
+            "No stack frames — game may not be paused at a breakpoint.".yellow()
+        );
+        return;
+    };
+
+    let Some(scopes_body) = daemon_dap(
+        "dap_scopes",
+        serde_json::json!({"frame_id": frame.id}),
+    ) else {
+        println!("{}", "Failed to get scopes.".red());
+        return;
+    };
+
+    let scopes: Vec<Scope> = scopes_body["scopes"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .map(|s| Scope {
+                    name: s["name"].as_str().unwrap_or("?").to_string(),
+                    variables_reference: s["variablesReference"].as_i64().unwrap_or(0),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let filter = scope_filter.map(|s| s.to_lowercase());
+    for scope in &scopes {
+        if let Some(ref f) = filter
+            && !scope.name.to_lowercase().contains(f)
+        {
+            continue;
+        }
+        if scope.variables_reference > 0
+            && let Some(body) = daemon_dap(
+                "dap_variables",
+                serde_json::json!({"variables_reference": scope.variables_reference}),
+            )
+        {
+            let vars = parse_variables(&body);
+            let _ = print_variables(&vars, &OutputFormat::Human, Some(&scope.name));
+        }
+    }
+}
+
+fn repl_expand(vref: i64) {
+    if let Some(body) = daemon_dap(
+        "dap_variables",
+        serde_json::json!({"variables_reference": vref}),
+    ) {
+        let vars = parse_variables(&body);
+        let _ = print_variables(&vars, &OutputFormat::Human, None);
+    } else {
+        println!("{}", "Failed to expand variable.".red());
+    }
+}
+
+fn repl_eval(expr: &str) {
+    // Get the top frame ID for evaluation context
+    let frame_id = get_stack_frames().first().map(|f| f.id).unwrap_or(0);
+    if let Some(body) = daemon_dap(
+        "dap_evaluate",
+        serde_json::json!({"expression": expr, "context": "repl", "frame_id": frame_id}),
+    ) {
+        let result = body["result"].as_str().unwrap_or("?");
+        let type_name = body["type"].as_str().unwrap_or("");
+        if type_name.is_empty() {
+            println!("{} = {}", expr.cyan(), result.green());
+        } else {
+            println!(
+                "{} {} = {}",
+                type_name.dimmed(),
+                expr.cyan(),
+                result.green()
+            );
+        }
+    } else {
+        println!(
+            "{}",
+            "Evaluate failed or timed out. Godot only supports member-access expressions (e.g. self.speed) while paused at a breakpoint."
+                .yellow()
+        );
+    }
+}
+
+fn repl_break(file: &str, line_strs: &[&str]) {
+    let lines: Vec<u32> = line_strs
+        .iter()
+        .filter_map(|s| s.parse::<u32>().ok())
+        .collect();
+    if lines.is_empty() {
+        println!("No valid line numbers provided.");
+        return;
+    }
+
+    let Some(path) = resolve_script_path(file) else {
+        println!("{}", "Failed to resolve script path via daemon.".red());
+        return;
+    };
+
+    let lines_json: Vec<serde_json::Value> = lines.iter().map(|&l| serde_json::json!(l)).collect();
+    if let Some(body) = daemon_dap(
+        "dap_set_breakpoints",
+        serde_json::json!({"path": path, "lines": lines_json}),
+    ) {
+        let results = parse_breakpoint_results(&body);
+        for bp in &results {
+            let status = if bp.verified {
+                "verified".green().to_string()
+            } else {
+                "unverified".yellow().to_string()
+            };
+            println!(
+                "  {} {}:{} [{}]",
+                "Breakpoint".bold(),
+                file.cyan(),
+                bp.line,
+                status
+            );
+        }
+    } else {
+        println!("{}", "Failed to set breakpoints.".red());
+    }
+}
+
+fn repl_clear(file: &str) {
+    let Some(path) = resolve_script_path(file) else {
+        println!("{}", "Failed to resolve script path via daemon.".red());
+        return;
+    };
+
+    let empty: Vec<serde_json::Value> = vec![];
+    if daemon_dap(
+        "dap_set_breakpoints",
+        serde_json::json!({"path": path, "lines": empty}),
+    )
+    .is_some()
+    {
+        println!("{} {}", "Cleared breakpoints in".green(), file.cyan());
+    } else {
+        println!("{}", "Failed to clear breakpoints.".red());
+    }
+}
+
+fn repl_wait(timeout: u64) {
+    println!(
+        "{} (timeout: {}s)...",
+        "Waiting for breakpoint hit".dimmed(),
+        timeout
+    );
+
+    if daemon_dap_timeout(
+        "dap_wait_stopped",
+        serde_json::json!({"timeout": timeout}),
+        timeout,
+    )
+    .is_some()
+    {
+        println!("{}", "Breakpoint hit!".green().bold());
+        repl_stack();
+        repl_vars(None);
+    } else {
+        println!(
+            "{}",
+            format!("Timeout — no breakpoint hit within {timeout}s.").yellow()
+        );
+    }
 }
 
 fn print_variables(

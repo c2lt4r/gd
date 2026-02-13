@@ -13,6 +13,7 @@ fn test_debug_help() {
     assert!(stdout.contains("attach"));
     assert!(stdout.contains("break"));
     assert!(stdout.contains("status"));
+    assert!(stdout.contains("stop"));
 }
 
 #[test]
@@ -42,9 +43,11 @@ fn test_debug_status_help() {
 
 #[test]
 fn test_debug_no_connection() {
-    // Use an unlikely port so DAP server won't be listening
+    // Run in a temp dir with no project.godot — daemon can't start
+    let tmp = tempfile::tempdir().expect("failed to create temp dir");
     let output = gd_bin()
-        .args(["debug", "--port", "19999", "status"])
+        .args(["debug", "status"])
+        .current_dir(tmp.path())
         .output()
         .expect("failed to run gd debug status");
     assert!(!output.status.success());

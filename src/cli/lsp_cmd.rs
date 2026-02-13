@@ -435,6 +435,23 @@ pub enum LspCommand {
         #[arg(long)]
         nodes_only: bool,
     },
+    /// Run the persistent background daemon (auto-started, not normally called directly)
+    Daemon {
+        /// Project root directory
+        #[arg(long)]
+        project_root: String,
+        /// Port for Godot's built-in LSP server (default: 6005)
+        #[arg(long, default_value = "6005")]
+        godot_port: u16,
+        /// DAP server host (default: localhost)
+        #[arg(long, default_value = "localhost")]
+        dap_host: String,
+        /// DAP server port (default: 6006)
+        #[arg(long, default_value = "6006")]
+        dap_port: u16,
+    },
+    /// Show daemon connection status (Godot LSP/DAP connectivity)
+    DaemonStatus,
     /// Change a function's signature and update all call sites
     ChangeSignature {
         /// Path to the GDScript file
@@ -600,19 +617,78 @@ pub fn exec(args: LspArgs) -> Result<()> {
             Ok(())
         }
         LspCommand::Definition { pos } => {
-            let result = crate::lsp::query::query_definition(&pos.file, pos.line, pos.column)?;
+            // Try daemon for rich Godot results
+            if !args.no_godot_proxy
+                && let Some(result) = crate::lsp::daemon_client::query_daemon(
+                    "definition",
+                    serde_json::json!({"file": pos.file, "line": pos.line, "column": pos.column}),
+                    None,
+                )
+            {
+                println!("{}", serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?);
+                return Ok(());
+            }
+            // Fallback: static analysis only
+            let result = crate::lsp::query::query_definition(
+                &pos.file,
+                pos.line,
+                pos.column,
+                None,
+            )?;
             let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
             println!("{json}");
             Ok(())
         }
         LspCommand::Hover { pos } => {
-            let result = crate::lsp::query::query_hover(&pos.file, pos.line, pos.column)?;
+            // Try daemon for rich Godot results
+            if !args.no_godot_proxy
+                && let Some(result) = crate::lsp::daemon_client::query_daemon(
+                    "hover",
+                    serde_json::json!({"file": pos.file, "line": pos.line, "column": pos.column}),
+                    None,
+                )
+            {
+                println!("{}", serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?);
+                return Ok(());
+            }
+            // Fallback: static analysis only
+            let result = crate::lsp::query::query_hover(
+                &pos.file,
+                pos.line,
+                pos.column,
+                None,
+            )?;
             let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
             println!("{json}");
             Ok(())
         }
         LspCommand::Completions { pos, limit } => {
-            let mut result = crate::lsp::query::query_completions(&pos.file, pos.line, pos.column)?;
+            // Try daemon for rich Godot results
+            if !args.no_godot_proxy
+                && let Some(result) = crate::lsp::daemon_client::query_daemon(
+                    "completion",
+                    serde_json::json!({"file": pos.file, "line": pos.line, "column": pos.column}),
+                    None,
+                )
+            {
+                let mut items: Vec<serde_json::Value> = if let Some(arr) = result.as_array() {
+                    arr.clone()
+                } else {
+                    vec![result]
+                };
+                if let Some(n) = limit {
+                    items.truncate(n);
+                }
+                println!("{}", serde_json::to_string_pretty(&items).map_err(|e| miette::miette!("{e}"))?);
+                return Ok(());
+            }
+            // Fallback: static analysis only
+            let mut result = crate::lsp::query::query_completions(
+                &pos.file,
+                pos.line,
+                pos.column,
+                None,
+            )?;
             if let Some(n) = limit {
                 result.truncate(n);
             }
@@ -1016,6 +1092,32 @@ pub fn exec(args: LspArgs) -> Result<()> {
             let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
             println!("{json}");
             Ok(())
+        }
+        LspCommand::DaemonStatus => {
+            if let Some(result) = crate::lsp::daemon_client::query_daemon(
+                "status",
+                serde_json::json!({}),
+                None,
+            ) {
+                println!("{}", serde_json::to_string_pretty(&result).unwrap());
+            } else {
+                println!("Daemon not running");
+            }
+            Ok(())
+        }
+        LspCommand::Daemon {
+            project_root,
+            godot_port,
+            dap_host,
+            dap_port,
+        } => {
+            let root = std::path::PathBuf::from(&project_root);
+            if !root.join("project.godot").exists() {
+                return Err(miette::miette!(
+                    "no project.godot found in {project_root}"
+                ));
+            }
+            crate::lsp::daemon::run(root, godot_port, dap_host, dap_port)
         }
         LspCommand::SceneInfo { file, nodes_only } => {
             let result = crate::lsp::query::query_scene_info(&file, nodes_only)?;
