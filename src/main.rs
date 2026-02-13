@@ -5,6 +5,7 @@ mod build;
 mod class_db;
 mod cli;
 mod core;
+mod debug;
 mod doc;
 mod fmt;
 mod lint;

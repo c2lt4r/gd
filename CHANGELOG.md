@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.23] - 2026-02-13
+
+### Added
+- `gd debug` — runtime debugging via Godot's Debug Adapter Protocol (DAP)
+  - `gd debug attach` — interactive REPL session with persistent DAP connection
+    - `break`, `clear`, `wait` — set/clear breakpoints and wait for hits
+    - `continue`, `pause`, `next`, `step` — execution control
+    - `stack`, `vars`, `expand` — inspect call stack and variables
+    - `eval` — evaluate expressions at breakpoints (member-access only)
+  - `gd debug break --file <path> --line <N>` — one-shot: set breakpoint, wait for hit, dump stack + variables (`--format json`)
+  - `gd debug status` — show DAP server capabilities and threads (`--format json`)
+  - Cross-platform path resolution via editor path discovery (works from WSL, Linux, macOS, Windows)
+
 ## [0.1.22] - 2026-02-13
 
 ### Added

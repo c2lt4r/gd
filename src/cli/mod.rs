@@ -4,6 +4,7 @@ pub mod check_cmd;
 pub mod ci_cmd;
 pub mod clean_cmd;
 pub mod completions_cmd;
+pub mod debug_cmd;
 pub mod deps_cmd;
 pub mod doc_cmd;
 pub mod fmt_cmd;
@@ -59,6 +60,8 @@ pub enum Command {
     Watch(watch_cmd::WatchArgs),
     /// Manage project addons
     Addons(addons_cmd::AddonsArgs),
+    /// Debug a running Godot game via DAP
+    Debug(debug_cmd::DebugArgs),
     /// Show project statistics
     Stats(stats_cmd::StatsArgs),
     /// Generate CI/CD pipeline configuration
@@ -89,6 +92,7 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Doc(args) => doc_cmd::exec(args),
         Command::Watch(args) => watch_cmd::exec(args),
         Command::Addons(args) => addons_cmd::exec(args),
+        Command::Debug(args) => debug_cmd::exec(args),
         Command::Stats(args) => stats_cmd::exec(args),
         Command::Ci(args) => ci_cmd::exec(args),
         Command::Lsp(args) => lsp_cmd::exec(args),

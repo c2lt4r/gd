@@ -14,6 +14,7 @@ Built with [tree-sitter](https://tree-sitter.github.io/) for accurate parsing an
 - **Generate CI/CD** configurations for GitHub Actions and GitLab CI
 - **LSP server** with formatting, diagnostics, hover, go-to-definition, references, rename, completion, and 16 refactoring commands
 - **Scene analysis** &mdash; validate `.tscn`/`.tres` files, visualize scene node hierarchies, and track resource dependencies
+- **Debug** a running Godot game via DAP &mdash; breakpoints, stepping, variable inspection, and expression evaluation
 - **Godot LSP proxy** &mdash; forward hover, completion, and go-to-definition to Godot's built-in LSP when the editor is running
 - **Analyze** your project with dependency graphs, class trees, and code statistics
 
@@ -74,6 +75,7 @@ gd run
 | `gd addons` | Manage project addons (install, remove, search, update, lock) |
 | `gd stats` | Show project statistics (`--diff <branch>`, `--by-dir`, `--top N`) |
 | `gd ci` | Generate CI/CD pipeline configuration |
+| `gd debug` | Debug a running Godot game via DAP (attach, breakpoints, stepping, eval) |
 | `gd lsp` | Start the LSP server, or run one-shot queries (see below) |
 | `gd deps` | Show script dependency graph (`--include-resources` for `.tscn`/`.tres`) |
 | `gd man` | Generate man page |
@@ -225,6 +227,42 @@ gd ci gitlab
 # Include export stage
 gd ci github --export --godot-version 4.4
 ```
+
+### Debugging
+
+Debug a running Godot game via the Debug Adapter Protocol. Requires the Godot editor to be open (DAP server on port 6006).
+
+```sh
+# Check if the DAP server is reachable
+gd debug status
+
+# Start an interactive debug session
+gd debug attach
+
+# One-shot: set breakpoint, wait for hit, dump stack + variables
+gd debug break --file scripts/player.gd --line 42
+
+# JSON output for scripting
+gd debug break --file scripts/player.gd --line 42 --format json
+gd debug status --format json
+```
+
+Interactive session commands (`gd debug attach`):
+
+| Command | Description |
+|---------|-------------|
+| `break <file> <line>` | Set breakpoint(s) |
+| `clear <file>` | Clear breakpoints in a file |
+| `wait [timeout]` | Wait for breakpoint hit |
+| `continue` / `c` | Continue execution |
+| `pause` / `p` | Pause execution |
+| `next` / `n` | Step over |
+| `step` / `s` | Step into |
+| `stack` / `bt` | Show call stack |
+| `vars [scope]` | Show variables (locals/members/globals) |
+| `expand <ref>` | Expand nested variable |
+| `eval <expr>` | Evaluate expression |
+| `quit` / `q` | Disconnect and exit |
 
 ### GitHub Templates
 
