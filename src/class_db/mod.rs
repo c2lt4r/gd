@@ -72,6 +72,24 @@ pub fn enum_member_exists(class: &str, name: &str) -> bool {
     }
 }
 
+/// Check if a name is an enum type on a class (e.g. `Viewport.MSAA` is the enum type
+/// for `MSAA_DISABLED`, `MSAA_2X`, etc.). Walks the inheritance chain.
+pub fn enum_type_exists(class: &str, name: &str) -> bool {
+    let mut current = class;
+    loop {
+        let prefix = format!("{current}.");
+        for &(key, enum_type) in generated::ENUM_MEMBERS {
+            if key.starts_with(&*prefix) && enum_type == name {
+                return true;
+            }
+        }
+        match parent_class(current) {
+            Some(parent) => current = parent,
+            None => return false,
+        }
+    }
+}
+
 /// Check if a method exists on a class (including inherited methods).
 #[allow(dead_code)]
 pub fn method_exists(class: &str, method: &str) -> bool {
@@ -217,6 +235,13 @@ mod tests {
         assert!(constant_exists("BaseMaterial3D", "SHADING_MODE_UNSHADED"));
         assert!(constant_exists("BoxContainer", "ALIGNMENT_CENTER"));
         assert!(constant_exists("SubViewport", "UPDATE_ALWAYS"));
+    }
+
+    #[test]
+    fn test_enum_type_exists() {
+        assert!(enum_type_exists("Viewport", "MSAA"));
+        assert!(enum_type_exists("Viewport", "Scaling3DMode"));
+        assert!(!enum_type_exists("Viewport", "NONEXISTENT_ENUM"));
     }
 
     #[test]

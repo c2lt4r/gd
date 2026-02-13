@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.19] - 2026-02-13
+
+### Fixed
+- `gd check` no longer rejects `#region`/`#endregion` fold markers at the top level
+- `gd check` no longer flags Godot enum type names (e.g. `Viewport.MSAA`) as unknown constants
+- `gd fmt` preserves multiline arrays and dictionaries instead of collapsing them into single lines
+- `gd fmt` correctly handles inline comments in multiline collections (trailing `# comment` no longer breaks formatting)
+
 ## [0.1.18] - 2026-02-13
 
 ### Fixed

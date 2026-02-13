@@ -35,6 +35,57 @@ fn is_opaque(kind: &str) -> bool {
     )
 }
 
+/// An entry in a multiline collection: either an item (with optional trailing
+/// comment on the same line) or a standalone comment.
+struct MultilineEntry<'a> {
+    node: Node<'a>,
+    trailing_comment: Option<Node<'a>>,
+}
+
+/// Collect children of a multiline collection into entries, pairing items with
+/// their trailing comments. Brackets and commas are stripped.
+fn collect_multiline_entries<'a>(
+    children: &[Node<'a>],
+    is_bracket: impl Fn(&str) -> bool,
+) -> Vec<MultilineEntry<'a>> {
+    let mut entries = Vec::new();
+    let mut i = 0;
+    while i < children.len() {
+        let child = &children[i];
+        let kind = child.kind();
+        if is_bracket(kind) || kind == "," {
+            i += 1;
+            continue;
+        }
+        if kind == "comment" {
+            // Check if this comment is on the same line as the previous item
+            if let Some(last) = entries.last_mut() {
+                let last_entry: &mut MultilineEntry = last;
+                if last_entry.trailing_comment.is_none()
+                    && last_entry.node.end_position().row == child.start_position().row
+                {
+                    last_entry.trailing_comment = Some(*child);
+                    i += 1;
+                    continue;
+                }
+            }
+            // Standalone comment (e.g. section header)
+            entries.push(MultilineEntry {
+                node: *child,
+                trailing_comment: None,
+            });
+            i += 1;
+            continue;
+        }
+        entries.push(MultilineEntry {
+            node: *child,
+            trailing_comment: None,
+        });
+        i += 1;
+    }
+    entries
+}
+
 pub struct Printer {
     output: String,
     use_tabs: bool,
@@ -698,24 +749,61 @@ impl Printer {
     // ── Dictionary ─────────────────────────────────────────────────────
 
     fn print_dictionary(&mut self, node: &Node, source: &str, indent: usize) {
-        self.push_str("{");
         let mut cursor = node.walk();
         let children: Vec<Node> = node.children(&mut cursor).collect();
 
-        let mut first = true;
-        for child in &children {
+        let is_multiline = node.start_position().row != node.end_position().row;
+        let has_comment = children.iter().any(|c| c.kind() == "comment");
+
+        if is_multiline || has_comment {
+            self.print_dict_multiline(&children, source, indent);
+        } else {
+            self.print_dict_inline(&children, source, indent);
+        }
+    }
+
+    fn print_dict_inline(&mut self, children: &[Node], source: &str, indent: usize) {
+        self.push_str("{");
+        for child in children {
             match child.kind() {
                 "{" | "}" => {}
                 "," => self.push_str(", "),
                 _ if child.is_named() => {
-                    if !first {
-                        // comma already handled
-                    }
-                    first = false;
                     self.print_node(child, source, indent);
                 }
                 _ => {}
             }
+        }
+        self.push_str("}");
+    }
+
+    fn print_dict_multiline(&mut self, children: &[Node], source: &str, indent: usize) {
+        let inner = indent + 1;
+        self.push_str("{");
+        // Collect items with their optional trailing comments
+        let entries = collect_multiline_entries(children, |k| matches!(k, "{" | "}"));
+        for (i, entry) in entries.iter().enumerate() {
+            if i > 0 {
+                self.push_str(",");
+            }
+            // Standalone comment before any items (e.g. "# section header")
+            if entry.node.kind() == "comment" {
+                self.push_str("\n");
+                self.write_indent(inner);
+                self.emit(&entry.node, source);
+                continue;
+            }
+            self.push_str("\n");
+            self.write_indent(inner);
+            self.print_node(&entry.node, source, inner);
+            if let Some(ref c) = entry.trailing_comment {
+                self.push_str("  ");
+                self.emit(c, source);
+            }
+        }
+        if !entries.is_empty() {
+            self.push_str(",\n");
+            self.write_indent(indent);
         }
         self.push_str("}");
     }
@@ -735,23 +823,58 @@ impl Printer {
     // ── Array ──────────────────────────────────────────────────────────
 
     fn print_array(&mut self, node: &Node, source: &str, indent: usize) {
-        self.push_str("[");
         let mut cursor = node.walk();
         let children: Vec<Node> = node.children(&mut cursor).collect();
 
-        let mut first = true;
-        for child in &children {
+        let is_multiline = node.start_position().row != node.end_position().row;
+        let has_comment = children.iter().any(|c| c.kind() == "comment");
+
+        if is_multiline || has_comment {
+            self.print_array_multiline(&children, source, indent);
+        } else {
+            self.print_array_inline(&children, source, indent);
+        }
+    }
+
+    fn print_array_inline(&mut self, children: &[Node], source: &str, indent: usize) {
+        self.push_str("[");
+        for child in children {
             match child.kind() {
                 "[" | "]" => {}
                 "," => self.push_str(", "),
                 _ => {
-                    if !first {
-                        // comma already handled
-                    }
-                    first = false;
                     self.print_node(child, source, indent);
                 }
             }
+        }
+        self.push_str("]");
+    }
+
+    fn print_array_multiline(&mut self, children: &[Node], source: &str, indent: usize) {
+        let inner = indent + 1;
+        self.push_str("[");
+        let entries = collect_multiline_entries(children, |k| matches!(k, "[" | "]"));
+        for (i, entry) in entries.iter().enumerate() {
+            if i > 0 {
+                self.push_str(",");
+            }
+            if entry.node.kind() == "comment" {
+                self.push_str("\n");
+                self.write_indent(inner);
+                self.emit(&entry.node, source);
+                continue;
+            }
+            self.push_str("\n");
+            self.write_indent(inner);
+            self.print_node(&entry.node, source, inner);
+            if let Some(ref c) = entry.trailing_comment {
+                self.push_str("  ");
+                self.emit(c, source);
+            }
+        }
+        if !entries.is_empty() {
+            self.push_str(",\n");
+            self.write_indent(indent);
         }
         self.push_str("]");
     }
@@ -1347,5 +1470,53 @@ mod tests {
         let output_new = format_source(input);
         let output_config = format_with_config(input, &config);
         assert_eq!(output_new, output_config);
+    }
+
+    #[test]
+    fn test_multiline_dict_preserved() {
+        let input = "const D = {\n\t\"a\": 1,\n\t\"b\": 2,\n}\n";
+        let output = format_source(input);
+        assert!(
+            output.contains("{\n\t\"a\": 1,\n\t\"b\": 2,\n}"),
+            "multiline dict should stay multiline, got:\n{output}"
+        );
+        let second = format_source(&output);
+        assert_eq!(output, second, "not idempotent!\nFirst:\n{output}\nSecond:\n{second}");
+    }
+
+    #[test]
+    fn test_multiline_array_preserved() {
+        let input = "var a = [\n\t1,\n\t2,\n\t3,\n]\n";
+        let output = format_source(input);
+        assert!(
+            output.contains("[\n\t1,\n\t2,\n\t3,\n]"),
+            "multiline array should stay multiline, got:\n{output}"
+        );
+        let second = format_source(&output);
+        assert_eq!(output, second, "not idempotent!\nFirst:\n{output}\nSecond:\n{second}");
+    }
+
+    #[test]
+    fn test_array_with_comments_preserved() {
+        let input = "var a = [\n\t\"foo\",  # comment\n\t\"bar\",\n]\n";
+        let output = format_source(input);
+        assert!(
+            output.contains("# comment"),
+            "comment should be preserved, got:\n{output}"
+        );
+        assert!(
+            output.contains('\n'),
+            "should stay multiline with comments, got:\n{output}"
+        );
+    }
+
+    #[test]
+    fn test_inline_dict_stays_inline() {
+        let input = "func f():\n\tvar d = {\"a\": 1, \"b\": 2}\n";
+        let output = format_source(input);
+        assert!(
+            output.contains("{\"a\": 1, \"b\": 2}"),
+            "inline dict should stay inline, got:\n{output}"
+        );
     }
 }

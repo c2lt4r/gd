@@ -187,6 +187,8 @@ fn is_valid_top_level(kind: &str) -> bool {
             | "class_definition"
             | "annotation"
             | "decorated_definition"
+            | "region_start"
+            | "region_end"
     )
 }
 
@@ -280,6 +282,7 @@ fn check_constants_in_node(node: Node, source: &str, errors: &mut Vec<Structural
             && is_upper_snake_case(const_name)
             && !crate::class_db::constant_exists(class_name, const_name)
             && !crate::class_db::enum_member_exists(class_name, const_name)
+            && !crate::class_db::enum_type_exists(class_name, const_name)
         {
             let suggestions = crate::class_db::suggest_constant(class_name, const_name, 3);
             let hint = if suggestions.is_empty() {
@@ -609,6 +612,24 @@ mod tests {
     #[test]
     fn no_variant_warning_simple_infer() {
         let source = "func f():\n\tvar x := 42\n";
+        assert!(structural_errors(source).is_empty());
+    }
+
+    #[test]
+    fn enum_type_as_cast_not_flagged() {
+        let source = "func f(index: int):\n\tvar msaa := index as Viewport.MSAA\n";
+        let errs = structural_errors(source);
+        assert!(
+            errs.iter().all(|e| !e.message.contains("unknown constant")),
+            "enum type name used for casting should not be flagged: {:?}",
+            errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn region_markers_valid_at_top_level() {
+        let source =
+            "extends Node\n\n#region Signals\nsignal foo\n#endregion\n\nfunc _ready():\n\tpass\n";
         assert!(structural_errors(source).is_empty());
     }
 }
