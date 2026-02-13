@@ -19,6 +19,20 @@ fn test_debug_help() {
     assert!(stdout.contains("step"));
     assert!(stdout.contains("pause"));
     assert!(stdout.contains("eval"));
+    assert!(stdout.contains("set-var"));
+}
+
+#[test]
+fn test_debug_set_var_help() {
+    let output = gd_bin()
+        .args(["debug", "set-var", "--help"])
+        .output()
+        .expect("failed to run gd debug set-var --help");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success());
+    assert!(stdout.contains("--name"));
+    assert!(stdout.contains("--value"));
+    assert!(stdout.contains("--scope"));
 }
 
 #[test]

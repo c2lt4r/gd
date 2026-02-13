@@ -31,6 +31,9 @@ pub enum DebugCommand {
     Pause,
     /// Evaluate an expression in the current scope
     Eval(EvalArgs),
+    /// Set a variable's value while paused at a breakpoint
+    #[command(name = "set-var")]
+    SetVar(SetVarArgs),
 }
 
 #[derive(Args)]
@@ -63,6 +66,19 @@ pub struct EvalArgs {
     /// Output format
     #[arg(long, default_value = "human")]
     pub format: OutputFormat,
+}
+
+#[derive(Args)]
+pub struct SetVarArgs {
+    /// Variable name to set
+    #[arg(long)]
+    pub name: String,
+    /// New value (as string, e.g. "3.0", "true", "Vector3(1,2,3)")
+    #[arg(long)]
+    pub value: String,
+    /// Scope to search: locals, members, or globals (default: searches all)
+    #[arg(long)]
+    pub scope: Option<String>,
 }
 
 #[derive(Args)]
@@ -109,6 +125,7 @@ pub fn exec(args: DebugArgs) -> Result<()> {
         DebugCommand::Step => cmd_step(),
         DebugCommand::Pause => cmd_pause(),
         DebugCommand::Eval(a) => cmd_eval(a),
+        DebugCommand::SetVar(a) => cmd_set_var(a),
     }
 }
 
@@ -605,6 +622,95 @@ fn cmd_eval(args: EvalArgs) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn cmd_set_var(args: SetVarArgs) -> Result<()> {
+    let frames = get_stack_frames();
+    let frame = frames
+        .first()
+        .ok_or_else(|| miette!("No stack frames — game must be paused at a breakpoint"))?;
+
+    let scopes_body = daemon_dap(
+        "dap_scopes",
+        serde_json::json!({"frame_id": frame.id}),
+    )
+    .ok_or_else(|| miette!("Failed to get scopes"))?;
+
+    let scopes: Vec<Scope> = scopes_body["scopes"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .map(|s| Scope {
+                    name: s["name"].as_str().unwrap_or("?").to_string(),
+                    variables_reference: s["variablesReference"].as_i64().unwrap_or(0),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let scope_filter = args.scope.as_deref().map(|s| s.to_lowercase());
+
+    // Search scopes for the variable
+    for scope in &scopes {
+        if let Some(ref f) = scope_filter
+            && !scope.name.to_lowercase().contains(f)
+        {
+            continue;
+        }
+        if scope.variables_reference <= 0 {
+            continue;
+        }
+
+        let Some(vbody) = daemon_dap(
+            "dap_variables",
+            serde_json::json!({"variables_reference": scope.variables_reference}),
+        ) else {
+            continue;
+        };
+
+        let vars = parse_variables(&vbody);
+        if vars.iter().any(|v| v.name == args.name) {
+            let result = daemon_dap(
+                "dap_set_variable",
+                serde_json::json!({
+                    "variables_reference": scope.variables_reference,
+                    "name": args.name,
+                    "value": args.value,
+                }),
+            )
+            .ok_or_else(|| miette!("setVariable failed — Godot may not support setting this variable type"))?;
+
+            let new_value = result["value"].as_str().unwrap_or(&args.value);
+            let type_name = result["type"].as_str().unwrap_or("");
+            if type_name.is_empty() {
+                println!(
+                    "{} {} = {}",
+                    "Set".green(),
+                    args.name.cyan(),
+                    new_value.green()
+                );
+            } else {
+                println!(
+                    "{} {} {} = {}",
+                    "Set".green(),
+                    type_name.dimmed(),
+                    args.name.cyan(),
+                    new_value.green()
+                );
+            }
+            return Ok(());
+        }
+    }
+
+    Err(miette!(
+        "Variable '{}' not found in current scope{}",
+        args.name,
+        if scope_filter.is_some() {
+            " (try without --scope)"
+        } else {
+            ""
+        }
+    ))
 }
 
 // ── Helper: resolve function name to file:line ──────────────────────

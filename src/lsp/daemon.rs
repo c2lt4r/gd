@@ -244,6 +244,7 @@ fn dispatch(server: &DaemonServer, request: &DaemonRequest) -> DaemonResponse {
         "dap_scopes" => dispatch_dap_scopes(server, &request.params),
         "dap_variables" => dispatch_dap_variables(server, &request.params),
         "dap_evaluate" => dispatch_dap_evaluate(server, &request.params),
+        "dap_set_variable" => dispatch_dap_set_variable(server, &request.params),
         "dap_wait_stopped" => dispatch_dap_wait_stopped(server, &request.params),
         "dap_launch" => dispatch_dap_launch(server, &request.params),
         "dap_wait_exited" => dispatch_dap_wait_exited(server, &request.params),
@@ -552,6 +553,34 @@ fn dispatch_dap_evaluate(server: &DaemonServer, params: &serde_json::Value) -> D
     match dap.as_ref().unwrap().evaluate(expression, context, frame_id) {
         Some(body) => ok_response(body),
         None => error_response("evaluate failed"),
+    }
+}
+
+fn dispatch_dap_set_variable(
+    server: &DaemonServer,
+    params: &serde_json::Value,
+) -> DaemonResponse {
+    if !ensure_dap(server) {
+        return error_response("DAP not connected");
+    }
+    let Some(variables_reference) = params.get("variables_reference").and_then(|v| v.as_i64())
+    else {
+        return error_response("missing 'variables_reference' parameter");
+    };
+    let Some(name) = params.get("name").and_then(|n| n.as_str()) else {
+        return error_response("missing 'name' parameter");
+    };
+    let Some(value) = params.get("value").and_then(|v| v.as_str()) else {
+        return error_response("missing 'value' parameter");
+    };
+    let dap = server.dap.lock().unwrap();
+    match dap
+        .as_ref()
+        .unwrap()
+        .set_variable(variables_reference, name, value)
+    {
+        Some(body) => ok_response(body),
+        None => error_response("setVariable failed"),
     }
 }
 

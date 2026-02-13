@@ -75,7 +75,7 @@ gd run
 | `gd addons` | Manage project addons (install, remove, search, update, lock) |
 | `gd stats` | Show project statistics (`--diff <branch>`, `--by-dir`, `--top N`) |
 | `gd ci` | Generate CI/CD pipeline configuration |
-| `gd debug` | Debug a running Godot game via DAP (breakpoints, stepping, eval, conditional breaks) |
+| `gd debug` | Debug a running Godot game via DAP (breakpoints, stepping, eval, set-var, conditional breaks) |
 | `gd lsp` | Start the LSP server, or run one-shot queries (see below) |
 | `gd deps` | Show script dependency graph (`--include-resources` for `.tscn`/`.tres`) |
 | `gd man` | Generate man page |
@@ -250,6 +250,10 @@ gd debug break --file scripts/player.gd --line 42 --condition "speed > 20.0"
 
 # Evaluate expression while paused at breakpoint
 gd debug eval --expr "self.speed"
+
+# Modify a variable while paused
+gd debug set-var --name speed --value 100.0
+gd debug set-var --name is_boosting --value true --scope locals
 
 # Execution control (non-interactive)
 gd debug continue

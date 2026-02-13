@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.1.24] - 2026-02-13
+
+### Added
+- `gd debug set-var --name <var> --value <val>` — modify variable values while paused at a breakpoint (searches all scopes, `--scope` to narrow)
+
 ## [0.1.23] - 2026-02-13
 
 ### Added

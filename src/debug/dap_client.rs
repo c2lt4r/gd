@@ -141,6 +141,24 @@ impl DapClient {
         )
     }
 
+    /// Set a variable's value. `variables_reference` is the scope/container reference,
+    /// `name` is the variable name, `value` is the new value as a string.
+    pub fn set_variable(
+        &self,
+        variables_reference: i64,
+        name: &str,
+        value: &str,
+    ) -> Option<Value> {
+        self.send_request(
+            "setVariable",
+            serde_json::json!({
+                "variablesReference": variables_reference,
+                "name": name,
+                "value": value,
+            }),
+        )
+    }
+
     /// Evaluate an expression. Only member-access expressions are reliable in Godot
     /// (e.g. `self.speed`). Arbitrary expressions like `2+2` may timeout.
     pub fn evaluate(&self, expression: &str, context: &str, frame_id: i64) -> Option<Value> {
