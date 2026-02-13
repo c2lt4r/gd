@@ -70,29 +70,53 @@ fn compute_complexity(func: Node, source: &str) -> usize {
         return 1;
     };
     let mut complexity = 1;
-    count_branches(body, source, &mut complexity);
+    count_branches(body, source, &mut complexity, false);
     complexity
 }
 
-fn count_branches(node: Node, source: &str, complexity: &mut usize) {
+fn count_branches(node: Node, source: &str, complexity: &mut usize, in_guard: bool) {
     match node.kind() {
-        "if_statement" | "elif_clause" | "for_statement" | "while_statement" => {
+        "if_statement" => {
+            *complexity += 1;
+            // If this is a guard clause (body is just `return`/`continue`/`break`),
+            // don't count and/or in its condition — the guard is one decision point.
+            if is_guard_clause(&node) {
+                // Skip condition (don't count and/or), only recurse into non-condition children
+                let mut cursor = node.walk();
+                if cursor.goto_first_child() {
+                    loop {
+                        let child = cursor.node();
+                        // The condition is typically the first named child before "body"
+                        if child.kind() == "body"
+                            || child.kind() == "elif_branch"
+                            || child.kind() == "else_branch"
+                        {
+                            count_branches(child, source, complexity, false);
+                        }
+                        if !cursor.goto_next_sibling() {
+                            break;
+                        }
+                    }
+                }
+                return;
+            }
+        }
+        "elif_clause" | "for_statement" | "while_statement" => {
             *complexity += 1;
         }
         "pattern_section" => {
-            // Each match arm adds a path
             *complexity += 1;
         }
         "binary_operator" => {
-            // Check for `and` / `or` boolean operators
-            if let Some(op_node) = node.child_by_field_name("op") {
+            if !in_guard
+                && let Some(op_node) = node.child_by_field_name("op")
+            {
                 let op_text = &source[op_node.byte_range()];
                 if op_text == "and" || op_text == "or" {
                     *complexity += 1;
                 }
             }
         }
-        // Don't recurse into nested function definitions
         "function_definition" => return,
         _ => {}
     }
@@ -100,12 +124,43 @@ fn count_branches(node: Node, source: &str, complexity: &mut usize) {
     let mut cursor = node.walk();
     if cursor.goto_first_child() {
         loop {
-            count_branches(cursor.node(), source, complexity);
+            count_branches(cursor.node(), source, complexity, in_guard);
             if !cursor.goto_next_sibling() {
                 break;
             }
         }
     }
+}
+
+/// Check if an if_statement is a guard clause: body contains only `return`, `continue`, or `break`.
+fn is_guard_clause(if_node: &Node) -> bool {
+    // Must have no elif/else branches
+    let mut cursor = if_node.walk();
+    for child in if_node.children(&mut cursor) {
+        if child.kind() == "elif_branch" || child.kind() == "else_branch" {
+            return false;
+        }
+    }
+
+    let Some(body) = if_node.child_by_field_name("body") else {
+        return false;
+    };
+
+    // Body must contain exactly one statement that is return/continue/break
+    let mut stmt_count = 0;
+    let mut is_early_exit = false;
+    let mut c = body.walk();
+    for child in body.children(&mut c) {
+        if !child.is_named() || child.kind() == "comment" {
+            continue;
+        }
+        stmt_count += 1;
+        if stmt_count > 1 {
+            return false;
+        }
+        is_early_exit = matches!(child.kind(), "return_statement" | "continue_statement" | "break_statement");
+    }
+    stmt_count == 1 && is_early_exit
 }
 
 #[cfg(test)]
@@ -318,6 +373,50 @@ class Inner:
         let diags = check(source);
         assert_eq!(diags.len(), 1);
         assert!(diags[0].message.contains("complex"));
+    }
+
+    #[test]
+    fn guard_clause_not_penalized() {
+        // Guard clause with and/or should not count the boolean ops
+        let guard = "\
+func guard(event):
+\tif not (event is InputEventKey and event.pressed and not event.echo):
+\t\treturn
+\thandle()
+";
+        // 1 base + 1 if (guard) = 2 — and/or in guard not counted
+        assert_eq!(complexity_of(guard), 2);
+    }
+
+    #[test]
+    fn guard_clause_same_as_nested() {
+        let nested = "\
+func nested(event):
+\tif event is InputEventKey:
+\t\tif event.pressed:
+\t\t\tif not event.echo:
+\t\t\t\thandle()
+";
+        let guard = "\
+func guard(event):
+\tif not (event is InputEventKey and event.pressed and not event.echo):
+\t\treturn
+\thandle()
+";
+        // Guard should be <= nested, not more
+        assert!(complexity_of(guard) <= complexity_of(nested));
+    }
+
+    #[test]
+    fn non_guard_if_still_counts_and_or() {
+        // Not a guard clause — body has more than just return
+        let source = "\
+func f(a, b, c):
+\tif a and b and c:
+\t\tprint(\"yes\")
+";
+        // 1 base + 1 if + 2 and = 4
+        assert_eq!(complexity_of(source), 4);
     }
 
     #[test]

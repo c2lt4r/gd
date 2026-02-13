@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.18] - 2026-02-13
+
+### Fixed
+- `untyped-array-literal` auto-fix now infers `Array[Color]`, `Array[Vector2]`, etc. from homogeneous class member/constructor expressions (not just String/int/float/bool)
+- `cyclomatic-complexity` no longer penalizes guard clause patterns — `if not (A and B and C): return` no longer counts `and`/`or` in the condition
+
 ## [0.1.17] - 2026-02-13
 
 ### Added

@@ -71,7 +71,7 @@ fn check_variable(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
 
     // Build auto-fix when type is inferable: replace ` :=` with `: Array[T] =`
     // The inferred_type node covers `:=`. There may be a space before it in source.
-    let fix = suggested_type.and_then(|elem_type| {
+    let fix = suggested_type.as_deref().and_then(|elem_type| {
         let inferred = type_node?;
         let mut start = inferred.start_byte();
         // Consume preceding whitespace so we get `var x: Array[T]` not `var x : Array[T]`
@@ -85,7 +85,7 @@ fn check_variable(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
         })
     });
 
-    let message = if let Some(elem_type) = suggested_type {
+    let message = if let Some(ref elem_type) = suggested_type {
         format!(
             "array literal infers `Variant` with `:=`; consider `var {var_name}: Array[{elem_type}] = [...]`"
         )
@@ -106,7 +106,7 @@ fn check_variable(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
     });
 }
 
-fn infer_array_element_type(array_node: Node, _source: &str) -> Option<&'static str> {
+fn infer_array_element_type(array_node: Node, source: &str) -> Option<String> {
     let count = array_node.named_child_count();
     if count == 0 {
         return None;
@@ -116,6 +116,9 @@ fn infer_array_element_type(array_node: Node, _source: &str) -> Option<&'static 
     let mut all_int = true;
     let mut all_float = true;
     let mut all_bool = true;
+    // Track homogeneous ClassName.MEMBER pattern (e.g., Color.RED, Color.BLUE)
+    let mut class_name: Option<String> = None;
+    let mut all_same_class = true;
 
     for i in 0..count {
         let child = array_node.named_child(i)?;
@@ -124,34 +127,96 @@ fn infer_array_element_type(array_node: Node, _source: &str) -> Option<&'static 
                 all_int = false;
                 all_float = false;
                 all_bool = false;
+                all_same_class = false;
             }
             "integer" => {
                 all_string = false;
                 all_float = false;
                 all_bool = false;
+                all_same_class = false;
             }
             "float" => {
                 all_string = false;
                 all_int = false;
                 all_bool = false;
+                all_same_class = false;
             }
             "true" | "false" => {
                 all_string = false;
                 all_int = false;
                 all_float = false;
+                all_same_class = false;
+            }
+            "attribute" => {
+                all_string = false;
+                all_int = false;
+                all_float = false;
+                all_bool = false;
+                // Check for ClassName.MEMBER pattern
+                if all_same_class {
+                    if let Some(cls) = extract_class_prefix(&child, source) {
+                        match &class_name {
+                            None => class_name = Some(cls),
+                            Some(prev) if *prev == cls => {}
+                            _ => all_same_class = false,
+                        }
+                    } else {
+                        all_same_class = false;
+                    }
+                }
+            }
+            // Constructor calls like Vector2(...), Color(...)
+            "call" => {
+                all_string = false;
+                all_int = false;
+                all_float = false;
+                all_bool = false;
+                if all_same_class {
+                    if let Some(func) = child.named_child(0)
+                        && func.kind() == "identifier"
+                        && let Ok(name) = func.utf8_text(source.as_bytes())
+                        && name.starts_with(|c: char| c.is_ascii_uppercase())
+                    {
+                        match &class_name {
+                            None => class_name = Some(name.to_string()),
+                            Some(prev) if prev == name => {}
+                            _ => all_same_class = false,
+                        }
+                    } else {
+                        all_same_class = false;
+                    }
+                }
             }
             _ => return None,
         }
     }
 
     if all_string {
-        Some("String")
+        Some("String".to_string())
     } else if all_int {
-        Some("int")
+        Some("int".to_string())
     } else if all_float {
-        Some("float")
+        Some("float".to_string())
     } else if all_bool {
-        Some("bool")
+        Some("bool".to_string())
+    } else if all_same_class {
+        class_name
+    } else {
+        None
+    }
+}
+
+/// Extract the class name from a `ClassName.MEMBER` attribute node.
+/// Returns Some("Color") for `Color.RED`.
+fn extract_class_prefix(node: &Node, source: &str) -> Option<String> {
+    let first = node.named_child(0)?;
+    if first.kind() != "identifier" {
+        return None;
+    }
+    let name = first.utf8_text(source.as_bytes()).ok()?;
+    // Must start with uppercase (PascalCase class name)
+    if name.starts_with(|c: char| c.is_ascii_uppercase()) {
+        Some(name.to_string())
     } else {
         None
     }
@@ -270,6 +335,41 @@ mod tests {
         let diags = check(source);
         assert_eq!(diags.len(), 1);
         assert!(diags[0].fix.is_none());
+    }
+
+    #[test]
+    fn detects_class_member_array() {
+        let source = "func f():\n\tvar colors := [Color.RED, Color.BLUE, Color.GREEN]\n";
+        let diags = check(source);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("Array[Color]"));
+        assert!(diags[0].fix.is_some());
+    }
+
+    #[test]
+    fn autofix_class_member_array() {
+        let source = "func f():\n\tvar colors := [Color.RED, Color.BLUE]\n";
+        let diags = check(source);
+        assert_eq!(diags.len(), 1);
+        let fix = diags[0].fix.as_ref().expect("should have auto-fix");
+        assert_eq!(fix.replacement, ": Array[Color] =");
+    }
+
+    #[test]
+    fn no_fix_mixed_class_members() {
+        let source = "func f():\n\tvar x := [Color.RED, Vector2.UP]\n";
+        let diags = check(source);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].fix.is_none());
+    }
+
+    #[test]
+    fn detects_constructor_array() {
+        let source = "func f():\n\tvar pts := [Vector2(0, 0), Vector2(1, 1)]\n";
+        let diags = check(source);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("Array[Vector2]"));
+        assert!(diags[0].fix.is_some());
     }
 
     #[test]
