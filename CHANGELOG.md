@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.1.13] - 2026-02-13
+
+### Added
+- gdUnit4 test framework support in `gd test` — auto-detects `addons/gdUnit4/`, invokes GdUnitCmdTool, parses JUnit XML results
+  - Three-way detection priority: GUT → gdUnit4 → raw script
+  - Per-test results with pass/fail status, failure messages, and timing
+  - Auto-passes `--ignoreHeadlessMode` for gdUnit4 v6+ compatibility
+  - Cleans up temp report directory after parsing
+  - `--format json` outputs `"mode": "gdunit4"` with structured results
+  - `skipped` field in test summary (only present when non-zero)
+
 ## [0.1.12] - 2026-02-12
 
 ### Added

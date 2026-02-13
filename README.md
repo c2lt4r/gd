@@ -64,7 +64,7 @@ gd run
 | `gd build` | Build/export the Godot project |
 | `gd check` | Check project for errors without building (`--format json`) |
 | `gd clean` | Clean build artifacts |
-| `gd test` | Run GDScript tests (`--format json` for structured output) |
+| `gd test` | Run GDScript tests with GUT, gdUnit4, or raw scripts (`--format json`) |
 | `gd completions` | Generate shell completions (bash, zsh, fish, etc.) |
 | `gd tree` | Show project class hierarchy |
 | `gd doc` | Generate documentation from doc comments (`--format json`, `--check`) |
