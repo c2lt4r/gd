@@ -143,6 +143,9 @@ impl DapClient {
 
     /// Set a variable's value. `variables_reference` is the scope/container reference,
     /// `name` is the variable name, `value` is the new value as a string.
+    /// Note: Godot 4.x advertises supportsSetVariable but the implementation is broken.
+    /// Kept for future use if Godot fixes it. Currently unused — we use eval+set() instead.
+    #[allow(dead_code)]
     pub fn set_variable(
         &self,
         variables_reference: i64,
@@ -190,6 +193,15 @@ impl DapClient {
     /// Step into a function call.
     pub fn step_in(&self, thread_id: i64) -> Option<Value> {
         self.send_request("stepIn", serde_json::json!({"threadId": thread_id}))
+    }
+
+    /// Step out of the current function.
+    /// Note: Godot's DAP doesn't support stepOut. The CLI implements synthetic
+    /// step-out by repeating `next` until stack depth decreases. Kept for
+    /// future use if Godot adds native support.
+    #[allow(dead_code)]
+    pub fn step_out(&self, thread_id: i64) -> Option<Value> {
+        self.send_request("stepOut", serde_json::json!({"threadId": thread_id}))
     }
 
     /// Launch the project via DAP (starts the game through the editor).
@@ -319,7 +331,17 @@ impl DapClient {
 
     /// Clean disconnect from the DAP server.
     pub fn disconnect(&self) {
+        // Set a short timeout so we don't block on a corrupted stream
+        if let Ok(stream) = self.stream.lock() {
+            let _ = stream
+                .get_ref()
+                .set_read_timeout(Some(Duration::from_secs(1)));
+        }
         let _ = self.send_request("disconnect", serde_json::json!({}));
+        // Force-close the TCP connection regardless of protocol state
+        if let Ok(stream) = self.stream.lock() {
+            let _ = stream.get_ref().shutdown(std::net::Shutdown::Both);
+        }
     }
 
     /// Wait for a `stopped` event (e.g. after setting a breakpoint and continuing).

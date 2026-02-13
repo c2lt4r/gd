@@ -16,7 +16,8 @@ fn test_debug_help() {
     assert!(stdout.contains("stop"));
     assert!(stdout.contains("continue"));
     assert!(stdout.contains("next"));
-    assert!(stdout.contains("step"));
+    assert!(stdout.contains("Step into"));
+    assert!(stdout.contains("step-out"));
     assert!(stdout.contains("pause"));
     assert!(stdout.contains("eval"));
     assert!(stdout.contains("set-var"));
@@ -32,7 +33,6 @@ fn test_debug_set_var_help() {
     assert!(output.status.success());
     assert!(stdout.contains("--name"));
     assert!(stdout.contains("--value"));
-    assert!(stdout.contains("--scope"));
 }
 
 #[test]
@@ -60,6 +60,23 @@ fn test_debug_status_help() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(output.status.success());
     assert!(stdout.contains("--format"));
+}
+
+#[test]
+fn test_debug_stepping_format_flag() {
+    // Verify continue/next/step/pause all accept --format
+    for cmd in ["continue", "next", "step", "step-out", "pause"] {
+        let output = gd_bin()
+            .args(["debug", cmd, "--help"])
+            .output()
+            .unwrap_or_else(|_| panic!("failed to run gd debug {cmd} --help"));
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(output.status.success(), "gd debug {cmd} --help failed");
+        assert!(
+            stdout.contains("--format"),
+            "gd debug {cmd} missing --format flag"
+        );
+    }
 }
 
 #[test]

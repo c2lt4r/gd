@@ -22,13 +22,16 @@ pub enum DebugCommand {
     /// Terminate the running game
     Stop,
     /// Continue execution (resume from breakpoint)
-    Continue,
+    Continue(StepArgs),
     /// Step over (next line)
-    Next,
+    Next(StepArgs),
     /// Step into function call
-    Step,
+    Step(StepArgs),
+    /// Step out of current function
+    #[command(name = "step-out")]
+    StepOut(StepArgs),
     /// Pause execution
-    Pause,
+    Pause(StepArgs),
     /// Evaluate an expression in the current scope
     Eval(EvalArgs),
     /// Set a variable's value while paused at a breakpoint
@@ -70,15 +73,22 @@ pub struct EvalArgs {
 
 #[derive(Args)]
 pub struct SetVarArgs {
-    /// Variable name to set
+    /// Variable name to set (member variable, e.g. "speed", "max_health")
     #[arg(long)]
     pub name: String,
     /// New value (as string, e.g. "3.0", "true", "Vector3(1,2,3)")
     #[arg(long)]
     pub value: String,
-    /// Scope to search: locals, members, or globals (default: searches all)
-    #[arg(long)]
-    pub scope: Option<String>,
+    /// Output format
+    #[arg(long, default_value = "human")]
+    pub format: OutputFormat,
+}
+
+#[derive(Args)]
+pub struct StepArgs {
+    /// Output format
+    #[arg(long, default_value = "human")]
+    pub format: OutputFormat,
 }
 
 #[derive(Args)]
@@ -120,10 +130,11 @@ pub fn exec(args: DebugArgs) -> Result<()> {
         DebugCommand::Break(a) => cmd_break(a),
         DebugCommand::Status(a) => cmd_status(a),
         DebugCommand::Stop => cmd_stop(),
-        DebugCommand::Continue => cmd_continue(),
-        DebugCommand::Next => cmd_next(),
-        DebugCommand::Step => cmd_step(),
-        DebugCommand::Pause => cmd_pause(),
+        DebugCommand::Continue(a) => cmd_continue(a),
+        DebugCommand::Next(a) => cmd_next(a),
+        DebugCommand::Step(a) => cmd_step(a),
+        DebugCommand::StepOut(a) => cmd_step_out(a),
+        DebugCommand::Pause(a) => cmd_pause(a),
         DebugCommand::Eval(a) => cmd_eval(a),
         DebugCommand::SetVar(a) => cmd_set_var(a),
     }
@@ -234,6 +245,7 @@ fn cmd_attach() -> Result<()> {
                     println!("{}", "Failed to step in".red());
                 }
             }
+            "out" | "o" => repl_step_out(),
             "stack" | "bt" => repl_stack(),
             "vars" => repl_vars(args.first().copied()),
             "expand" => {
@@ -322,6 +334,11 @@ fn print_help() {
         "s".dimmed()
     );
     println!(
+        "  {} / {}                   Step out of function",
+        "out".cyan(),
+        "o".dimmed()
+    );
+    println!(
         "  {} / {}              Show call stack",
         "stack".cyan(),
         "bt".dimmed()
@@ -353,7 +370,8 @@ fn print_help() {
 fn cmd_break(args: BreakArgs) -> Result<()> {
     // Resolve --name to file:line if provided
     let (file, lines) = if let Some(ref func_name) = args.name {
-        let (resolved_file, resolved_line) = resolve_function_name(func_name)?;
+        let (resolved_file, resolved_line) =
+            resolve_function_name(func_name, args.file.as_deref())?;
         let lines = if args.line.is_empty() {
             vec![resolved_line]
         } else {
@@ -380,16 +398,12 @@ fn cmd_break(args: BreakArgs) -> Result<()> {
 
     let lines_json: Vec<serde_json::Value> = lines.iter().map(|&l| serde_json::json!(l)).collect();
 
-    // Build breakpoint params (with optional condition)
-    let bp_params = if let Some(ref cond) = args.condition {
-        serde_json::json!({"path": path, "lines": lines_json, "condition": cond})
-    } else {
-        serde_json::json!({"path": path, "lines": lines_json})
-    };
-
-    // Set breakpoints
-    let bp_body = daemon_dap("dap_set_breakpoints", bp_params)
-        .ok_or_else(|| miette!("Failed to set breakpoints — is Godot editor running?"))?;
+    // Set breakpoints (don't send condition to Godot — it ignores it)
+    let bp_body = daemon_dap(
+        "dap_set_breakpoints",
+        serde_json::json!({"path": path, "lines": lines_json}),
+    )
+    .ok_or_else(|| miette!("Failed to set breakpoints — is Godot editor running?"))?;
 
     let results = parse_breakpoint_results(&bp_body);
 
@@ -407,6 +421,13 @@ fn cmd_break(args: BreakArgs) -> Result<()> {
             status,
         );
     }
+    if let Some(ref cond) = args.condition {
+        println!(
+            "  {} {}",
+            "Condition:".dimmed(),
+            cond.cyan(),
+        );
+    }
 
     // Continue execution
     daemon_dap("dap_continue", serde_json::json!({}));
@@ -417,24 +438,76 @@ fn cmd_break(args: BreakArgs) -> Result<()> {
         args.timeout,
     );
 
-    // Wait for stopped event
-    let stopped = daemon_dap_timeout(
-        "dap_wait_stopped",
-        serde_json::json!({"timeout": args.timeout}),
-        args.timeout,
-    );
+    // Wait for stopped event — with client-side condition evaluation
+    let deadline = std::time::Instant::now()
+        + std::time::Duration::from_secs(args.timeout);
 
-    if stopped.is_none() {
-        return Err(miette!(
-            "Timeout — breakpoint was not hit within {}s",
-            args.timeout
-        ));
+    loop {
+        let remaining = deadline
+            .saturating_duration_since(std::time::Instant::now())
+            .as_secs()
+            .max(1);
+
+        let stopped = daemon_dap_timeout(
+            "dap_wait_stopped",
+            serde_json::json!({"timeout": remaining}),
+            remaining,
+        );
+
+        if stopped.is_none() {
+            return Err(miette!(
+                "Timeout — breakpoint was not hit within {}s",
+                args.timeout
+            ));
+        }
+
+        // Client-side condition check
+        if let Some(ref cond) = args.condition {
+            // Brief pause for scope data
+            std::thread::sleep(std::time::Duration::from_millis(200));
+
+            let frame_id = get_stack_frames().first().map(|f| f.id).unwrap_or(0);
+            let eval_result = daemon_dap(
+                "dap_evaluate",
+                serde_json::json!({
+                    "expression": cond,
+                    "context": "repl",
+                    "frame_id": frame_id,
+                }),
+            );
+
+            let is_falsy = eval_result
+                .as_ref()
+                .and_then(|v| v["result"].as_str())
+                .is_none_or(|r| {
+                    matches!(
+                        r,
+                        "false" | "False" | "0" | "0.0" | "" | "null"
+                            | "Null" | "<null>"
+                    )
+                });
+
+            if is_falsy {
+                // Condition not met — resume and wait again
+                daemon_dap("dap_continue", serde_json::json!({}));
+                if std::time::Instant::now() >= deadline {
+                    return Err(miette!(
+                        "Timeout — breakpoint hit but condition `{}` was never true within {}s",
+                        cond,
+                        args.timeout,
+                    ));
+                }
+                continue;
+            }
+        }
+
+        break; // Breakpoint hit (and condition met if any)
     }
 
     println!("{}", "Breakpoint hit!".green().bold());
 
-    // Brief pause to let Godot's debugger fully populate scope data
-    std::thread::sleep(std::time::Duration::from_millis(50));
+    // Wait for Godot's debugger to populate scope data (too fast → scope_list errors)
+    std::thread::sleep(std::time::Duration::from_millis(500));
 
     // Get stack frames
     let frames = get_stack_frames();
@@ -561,43 +634,197 @@ fn cmd_stop() -> Result<()> {
 
 // ── One-shot: continue/next/step/pause/eval ─────────────────────────
 
-fn cmd_continue() -> Result<()> {
+fn cmd_continue(args: StepArgs) -> Result<()> {
     daemon_dap("dap_continue", serde_json::json!({}))
         .ok_or_else(|| miette!("Failed to continue — is a game running and paused?"))?;
-    println!("{}", "Continued".green());
+    match args.format {
+        OutputFormat::Human => println!("{}", "Continued".green()),
+        OutputFormat::Json => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({"action": "continue"})).unwrap()
+            );
+        }
+    }
     Ok(())
 }
 
-fn cmd_next() -> Result<()> {
+fn cmd_next(args: StepArgs) -> Result<()> {
     daemon_dap("dap_next", serde_json::json!({}))
         .ok_or_else(|| miette!("Failed to step — is a game running and paused?"))?;
-    println!("{}", "Stepped over".green());
+    match args.format {
+        OutputFormat::Human => println!("{}", "Stepped over".green()),
+        OutputFormat::Json => print_step_json("next"),
+    }
     Ok(())
 }
 
-fn cmd_step() -> Result<()> {
+fn cmd_step(args: StepArgs) -> Result<()> {
     daemon_dap("dap_step_in", serde_json::json!({}))
         .ok_or_else(|| miette!("Failed to step — is a game running and paused?"))?;
-    println!("{}", "Stepped in".green());
+    match args.format {
+        OutputFormat::Human => println!("{}", "Stepped in".green()),
+        OutputFormat::Json => print_step_json("step"),
+    }
     Ok(())
 }
 
-fn cmd_pause() -> Result<()> {
+fn cmd_step_out(args: StepArgs) -> Result<()> {
+    // Synthetic step-out: repeat `next` until stack depth decreases.
+    // Godot's DAP doesn't support stepOut natively (the VS Code plugin
+    // uses the same approach via the binary debug protocol).
+    let initial_depth = get_stack_frames().len();
+    if initial_depth <= 1 {
+        return Err(miette!(
+            "Cannot step out — already at the top-level frame."
+        ));
+    }
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+
+    loop {
+        daemon_dap("dap_next", serde_json::json!({}))
+            .ok_or_else(|| miette!("Failed to step — is a game running and paused?"))?;
+
+        // Wait for Godot to stop after the step
+        let stopped = daemon_dap_timeout(
+            "dap_wait_stopped",
+            serde_json::json!({"timeout": 5}),
+            5,
+        );
+        if stopped.is_none() {
+            return Err(miette!("Step-out timed out waiting for execution to stop."));
+        }
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        let new_depth = get_stack_frames().len();
+        if new_depth < initial_depth {
+            break; // Successfully stepped out
+        }
+
+        if std::time::Instant::now() >= deadline {
+            return Err(miette!(
+                "Step-out timed out after 15s — function may have a long-running loop.\n  \
+                 Use `gd debug continue` to resume, or set a breakpoint in the caller instead."
+            ));
+        }
+    }
+
+    match args.format {
+        OutputFormat::Human => println!("{}", "Stepped out".green()),
+        OutputFormat::Json => print_step_json("step-out"),
+    }
+    Ok(())
+}
+
+/// Wait for stopped event after a step, print JSON with stack frames + variables.
+fn print_step_json(action: &str) {
+    let stopped = daemon_dap_timeout("dap_wait_stopped", serde_json::json!({"timeout": 3}), 3);
+    if stopped.is_some() {
+        // Brief pause for Godot to populate scope data
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let frames = get_stack_frames();
+        let vars = collect_frame_variables(frames.first().map(|f| f.id));
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "action": action, "stopped": true, "stackFrames": frames, "variables": vars,
+            }))
+            .unwrap()
+        );
+    } else {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "action": action, "stopped": false,
+            }))
+            .unwrap()
+        );
+    }
+}
+
+/// Collect variables from all scopes for a given frame.
+fn collect_frame_variables(frame_id: Option<i64>) -> Vec<serde_json::Value> {
+    let Some(fid) = frame_id else {
+        return vec![];
+    };
+    let Some(scopes_body) = daemon_dap(
+        "dap_scopes",
+        serde_json::json!({"frame_id": fid}),
+    ) else {
+        return vec![];
+    };
+    let Some(scopes) = scopes_body["scopes"].as_array() else {
+        return vec![];
+    };
+    let mut result = Vec::new();
+    for scope in scopes {
+        let name = scope["name"].as_str().unwrap_or("?");
+        let vref = scope["variablesReference"].as_i64().unwrap_or(0);
+        if vref > 0
+            && let Some(vbody) = daemon_dap(
+                "dap_variables",
+                serde_json::json!({"variables_reference": vref}),
+            )
+        {
+            result.push(serde_json::json!({
+                "scope": name,
+                "variables": parse_variables(&vbody),
+            }));
+        }
+    }
+    result
+}
+
+fn cmd_pause(args: StepArgs) -> Result<()> {
     daemon_dap("dap_pause", serde_json::json!({}))
         .ok_or_else(|| miette!("Failed to pause — is a game running?"))?;
-    println!("{}", "Paused".green());
+    match args.format {
+        OutputFormat::Human => println!("{}", "Paused".green()),
+        OutputFormat::Json => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({"action": "pause"})).unwrap()
+            );
+        }
+    }
     Ok(())
 }
 
 fn cmd_eval(args: EvalArgs) -> Result<()> {
+    let expr = args.expr.trim();
+    if expr.is_empty() {
+        return Err(eval_error(&args, "--expr cannot be empty"));
+    }
+
+    // Warn on assignment syntax — Godot's eval doesn't persist direct assignments
+    if is_likely_assignment(expr) {
+        if matches!(args.format, OutputFormat::Json) {
+            // In JSON mode, include warning in the output later
+        } else {
+            eprintln!(
+                "{} Direct assignment via eval may return <null> and not persist.",
+                "Warning:".yellow().bold(),
+            );
+            if let Some(lhs) = extract_assignment_lhs(expr) {
+                eprintln!(
+                    "  Use: gd debug eval --expr \"self.set('{}', ...)\"",
+                    lhs
+                );
+            }
+        }
+    }
+
     let frame_id = get_stack_frames().first().map(|f| f.id).unwrap_or(0);
     let result = daemon_dap(
         "dap_evaluate",
-        serde_json::json!({"expression": args.expr, "context": "repl", "frame_id": frame_id}),
+        serde_json::json!({"expression": expr, "context": "repl", "frame_id": frame_id}),
     )
     .ok_or_else(|| {
-        miette!(
-            "Evaluate failed — game must be paused at a breakpoint.\n  Godot only supports member-access expressions (e.g. self.speed)."
+        eval_error(
+            &args,
+            "Evaluate failed — game must be paused at a breakpoint.\n  Use `gd debug break` to pause (not `gd debug pause`, which lacks stack frame context).",
         )
     })?;
 
@@ -610,13 +837,21 @@ fn cmd_eval(args: EvalArgs) -> Result<()> {
         }
         OutputFormat::Human => {
             if type_name.is_empty() {
-                println!("{} = {}", args.expr.cyan(), value.green());
+                println!("{} = {}", expr.cyan(), value.green());
             } else {
                 println!(
                     "{} {} = {}",
                     type_name.dimmed(),
-                    args.expr.cyan(),
+                    expr.cyan(),
                     value.green()
+                );
+            }
+            // Hint on <null> results — but not for method calls (void return is expected)
+            if (value == "<null>" || value == "Null") && !expr.contains('(') {
+                eprintln!(
+                    "  {}",
+                    "Hint: <null> may indicate an undefined variable or unsupported expression"
+                        .dimmed()
                 );
             }
         }
@@ -624,99 +859,272 @@ fn cmd_eval(args: EvalArgs) -> Result<()> {
     Ok(())
 }
 
+/// Detect direct assignment syntax (= but not ==, !=, <=, >=, :=, +=, etc.)
+fn is_likely_assignment(expr: &str) -> bool {
+    // Skip set() calls — those are intentional
+    if expr.contains(".set(") || expr.contains(".set_") {
+        return false;
+    }
+    let bytes = expr.as_bytes();
+    for (i, &b) in bytes.iter().enumerate() {
+        if b != b'=' {
+            continue;
+        }
+        let prev = if i > 0 { bytes[i - 1] } else { 0 };
+        let next = bytes.get(i + 1).copied().unwrap_or(0);
+        // Skip ==
+        if next == b'=' {
+            continue;
+        }
+        // Skip !=, <=, >=, :=, +=, -=, *=, /=, == (second =)
+        if matches!(
+            prev,
+            b'!' | b'<' | b'>' | b':' | b'+' | b'-' | b'*' | b'/' | b'='
+        ) {
+            continue;
+        }
+        return true;
+    }
+    false
+}
+
+/// Extract the left-hand side of an assignment (e.g. "self.speed" from "self.speed = 5")
+fn extract_assignment_lhs(expr: &str) -> Option<&str> {
+    let eq_pos = expr.find('=')?;
+    let lhs = expr[..eq_pos].trim();
+    let prop = lhs.strip_prefix("self.").unwrap_or(lhs);
+    if prop.is_empty() {
+        return None;
+    }
+    Some(prop)
+}
+
 fn cmd_set_var(args: SetVarArgs) -> Result<()> {
     let frames = get_stack_frames();
     let frame = frames
         .first()
-        .ok_or_else(|| miette!("No stack frames — game must be paused at a breakpoint"))?;
+        .ok_or_else(|| set_var_error(&args, "No stack frames — game must be paused at a breakpoint.\n  Use `gd debug break` to pause at a breakpoint first."))?;
 
-    let scopes_body = daemon_dap(
-        "dap_scopes",
-        serde_json::json!({"frame_id": frame.id}),
+    // Use eval with self.set() — fast path (Godot's DAP setVariable is broken)
+    let val_literal = gdscript_value_literal(&args.value);
+    let set_expr = format!("self.set(\"{}\", {val_literal})", args.name);
+    daemon_dap(
+        "dap_evaluate",
+        serde_json::json!({"expression": set_expr, "context": "repl", "frame_id": frame.id}),
     )
-    .ok_or_else(|| miette!("Failed to get scopes"))?;
+    .ok_or_else(|| set_var_error(&args, &format!("Failed to set '{}' — game must be paused at a breakpoint.", args.name)))?;
 
-    let scopes: Vec<Scope> = scopes_body["scopes"]
-        .as_array()
-        .map(|arr| {
-            arr.iter()
-                .map(|s| Scope {
-                    name: s["name"].as_str().unwrap_or("?").to_string(),
-                    variables_reference: s["variablesReference"].as_i64().unwrap_or(0),
-                })
-                .collect()
-        })
-        .unwrap_or_default();
+    // Verify by reading back
+    let verify_expr = format!("self.{}", args.name);
+    let verify_result = daemon_dap(
+        "dap_evaluate",
+        serde_json::json!({"expression": verify_expr, "context": "repl", "frame_id": frame.id}),
+    );
+    let new_val = verify_result
+        .as_ref()
+        .and_then(|v| v["result"].as_str())
+        .unwrap_or("<null>");
 
-    let scope_filter = args.scope.as_deref().map(|s| s.to_lowercase());
-
-    // Search scopes for the variable
-    for scope in &scopes {
-        if let Some(ref f) = scope_filter
-            && !scope.name.to_lowercase().contains(f)
-        {
-            continue;
+    // If verification shows <null>, the property might not exist or it's a local
+    if new_val == "<null>" || new_val == "Null" {
+        // Check if it's a local variable (more specific error)
+        if is_local_variable(frame.id, &args.name) {
+            return Err(set_var_error(
+                &args,
+                &format!(
+                    "Cannot modify local variable '{}' — Godot's DAP does not support setting locals.\n  \
+                     Only member variables can be modified via `set-var` or `eval --expr \"self.set('name', value)\"`.",
+                    args.name,
+                ),
+            ));
         }
-        if scope.variables_reference <= 0 {
-            continue;
-        }
-
-        let Some(vbody) = daemon_dap(
-            "dap_variables",
-            serde_json::json!({"variables_reference": scope.variables_reference}),
-        ) else {
-            continue;
-        };
-
-        let vars = parse_variables(&vbody);
-        if vars.iter().any(|v| v.name == args.name) {
-            let result = daemon_dap(
-                "dap_set_variable",
-                serde_json::json!({
-                    "variables_reference": scope.variables_reference,
-                    "name": args.name,
-                    "value": args.value,
-                }),
-            )
-            .ok_or_else(|| miette!("setVariable failed — Godot may not support setting this variable type"))?;
-
-            let new_value = result["value"].as_str().unwrap_or(&args.value);
-            let type_name = result["type"].as_str().unwrap_or("");
-            if type_name.is_empty() {
-                println!(
-                    "{} {} = {}",
-                    "Set".green(),
-                    args.name.cyan(),
-                    new_value.green()
-                );
-            } else {
-                println!(
-                    "{} {} {} = {}",
-                    "Set".green(),
-                    type_name.dimmed(),
-                    args.name.cyan(),
-                    new_value.green()
-                );
-            }
-            return Ok(());
-        }
+        return Err(set_var_error(
+            &args,
+            &format!(
+                "Failed to set '{}' — variable not found as a member property on self.\n  \
+                 Only member variables (declared with `var` at class level) can be set.",
+                args.name,
+            ),
+        ));
     }
 
-    Err(miette!(
-        "Variable '{}' not found in current scope{}",
-        args.name,
-        if scope_filter.is_some() {
-            " (try without --scope)"
-        } else {
-            ""
+    // Get type from verify result; fall back to inferring from value.
+    // If we auto-quoted the input, we know it's a String (Godot's eval returns
+    // string values without quotes, so infer_gdscript_type can't detect them).
+    let was_auto_quoted = val_literal != args.value && val_literal.starts_with('"');
+    let type_name = verify_result
+        .as_ref()
+        .and_then(|v| v["type"].as_str())
+        .filter(|t| !t.is_empty())
+        .unwrap_or_else(|| {
+            if was_auto_quoted {
+                "String"
+            } else {
+                infer_gdscript_type(new_val)
+            }
+        });
+
+    match args.format {
+        OutputFormat::Json => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "name": args.name,
+                    "value": new_val,
+                    "type": type_name,
+                    "input": args.value,
+                }))
+                .unwrap()
+            );
         }
-    ))
+        OutputFormat::Human => {
+            print_set_result(type_name, &args.name, new_val);
+        }
+    }
+    Ok(())
+}
+
+/// Build a set-var error that outputs JSON when --format json is active.
+fn set_var_error(args: &SetVarArgs, message: &str) -> miette::Report {
+    if matches!(args.format, OutputFormat::Json) {
+        // Print JSON error and exit with non-zero (miette will set exit code)
+        eprintln!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "error": message,
+                "name": args.name,
+                "input": args.value,
+            }))
+            .unwrap()
+        );
+    }
+    miette!("{}", message)
+}
+
+/// Infer a GDScript type name from a value string.
+fn infer_gdscript_type(value: &str) -> &str {
+    if value == "true" || value == "false" || value == "True" || value == "False" {
+        return "bool";
+    }
+    if value.parse::<i64>().is_ok() {
+        return "int";
+    }
+    if value.parse::<f64>().is_ok() {
+        return "float";
+    }
+    if (value.starts_with('"') && value.ends_with('"'))
+        || (value.starts_with('\'') && value.ends_with('\''))
+    {
+        return "String";
+    }
+    // Constructor types: Vector2(...), Color(...), etc.
+    if let Some(paren) = value.find('(') {
+        return &value[..paren];
+    }
+    ""
+}
+
+/// Build an eval error that outputs JSON when --format json is active.
+fn eval_error(args: &EvalArgs, message: &str) -> miette::Report {
+    if matches!(args.format, OutputFormat::Json) {
+        eprintln!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "error": message,
+                "expression": args.expr,
+            }))
+            .unwrap()
+        );
+    }
+    miette!("{}", message)
+}
+
+/// Check if a variable name exists in the Locals scope.
+fn is_local_variable(frame_id: i64, name: &str) -> bool {
+    let Some(scopes_body) = daemon_dap(
+        "dap_scopes",
+        serde_json::json!({"frame_id": frame_id}),
+    ) else {
+        return false;
+    };
+    let Some(scopes) = scopes_body["scopes"].as_array() else {
+        return false;
+    };
+    for scope in scopes {
+        let scope_name = scope["name"].as_str().unwrap_or("");
+        if !scope_name.to_lowercase().contains("local") {
+            continue;
+        }
+        let vref = scope["variablesReference"].as_i64().unwrap_or(0);
+        if vref <= 0 {
+            continue;
+        }
+        if let Some(vbody) = daemon_dap(
+            "dap_variables",
+            serde_json::json!({"variables_reference": vref}),
+        ) {
+            return vbody["variables"]
+                .as_array()
+                .is_some_and(|vars| vars.iter().any(|v| v["name"].as_str() == Some(name)));
+        }
+    }
+    false
+}
+
+/// Convert a CLI value string to a GDScript literal expression.
+/// Bare words like `bike` become `"bike"` (quoted strings).
+/// Numbers, bools, constructors, and already-quoted strings pass through.
+fn gdscript_value_literal(value: &str) -> String {
+    // Already quoted
+    if (value.starts_with('"') && value.ends_with('"'))
+        || (value.starts_with('\'') && value.ends_with('\''))
+    {
+        return value.to_string();
+    }
+    // Number (int or float, including negatives)
+    if value.parse::<f64>().is_ok() {
+        return value.to_string();
+    }
+    // Boolean, null
+    if matches!(value, "true" | "false" | "null") {
+        return value.to_string();
+    }
+    // Constructor or expression: Vector3(1,2,3), Color.RED, Array(), etc.
+    if value.contains('(') || value.contains('.') {
+        return value.to_string();
+    }
+    // Bare word — treat as string literal
+    format!("\"{value}\"")
+}
+
+fn print_set_result(type_name: &str, name: &str, value: &str) {
+    if type_name.is_empty() {
+        println!(
+            "{} {} = {}",
+            "Set".green(),
+            name.cyan(),
+            value.green()
+        );
+    } else {
+        println!(
+            "{} {} {} = {}",
+            "Set".green(),
+            type_name.dimmed(),
+            name.cyan(),
+            value.green()
+        );
+    }
 }
 
 // ── Helper: resolve function name to file:line ──────────────────────
 
-/// Resolve a function name to (file, line) by searching project symbols.
-fn resolve_function_name(name: &str) -> Result<(String, u32)> {
+/// Resolve a function name to (file, first_statement_line) by searching project symbols.
+///
+/// If `file_filter` is provided, only search that file. Otherwise search all
+/// project files and error with a candidate list when the name is ambiguous.
+/// Returns the first executable statement line inside the function body
+/// (not the `func` declaration line, which Godot won't break on).
+fn resolve_function_name(name: &str, file_filter: Option<&str>) -> Result<(String, u32)> {
     let cwd =
         std::env::current_dir().map_err(|e| miette!("cannot get current directory: {e}"))?;
     let project_root = crate::core::config::find_project_root(&cwd)
@@ -724,17 +1132,106 @@ fn resolve_function_name(name: &str) -> Result<(String, u32)> {
 
     let files = crate::core::fs::collect_gdscript_files(&project_root)
         .map_err(|e| miette!("failed to collect GDScript files: {e}"))?;
+
+    let mut candidates: Vec<(String, u32)> = Vec::new();
+
     for file_path in &files {
         let rel = crate::core::fs::relative_slash(file_path, &project_root);
+        if let Some(filter) = file_filter
+            && rel != filter
+        {
+            continue;
+        }
         if let Ok(symbols) = crate::lsp::query::query_symbols(&rel) {
             for sym in &symbols {
                 if sym.name == name && sym.kind == "function" {
-                    return Ok((rel, sym.line));
+                    // Find the first statement line inside the function body
+                    let body_line = find_first_body_line(file_path, sym.line)
+                        .unwrap_or(sym.line);
+                    candidates.push((rel.clone(), body_line));
                 }
             }
         }
     }
-    Err(miette!("function '{}' not found in project", name))
+
+    match candidates.len() {
+        0 => {
+            if let Some(filter) = file_filter {
+                Err(miette!(
+                    "function '{}' not found in '{}'",
+                    name,
+                    filter,
+                ))
+            } else {
+                Err(miette!("function '{}' not found in project", name))
+            }
+        }
+        1 => Ok(candidates.into_iter().next().unwrap()),
+        _ => {
+            if file_filter.is_some() {
+                // Multiple overloads in same file — just use the first
+                Ok(candidates.into_iter().next().unwrap())
+            } else {
+                let list = candidates
+                    .iter()
+                    .map(|(f, l)| format!("  {}:{}", f, l))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                Err(miette!(
+                    "function '{}' is ambiguous — found in {} files:\n{}\n\n\
+                     Use --file to disambiguate, e.g.:\n  \
+                     gd debug break --name {} --file {}",
+                    name,
+                    candidates.len(),
+                    list,
+                    name,
+                    candidates[0].0,
+                ))
+            }
+        }
+    }
+}
+
+/// Find the line number of the first executable statement inside a function body.
+/// `func_line` is 1-based (the `func` declaration line from symbols).
+/// Returns the 1-based line of the first non-comment, non-empty statement in the body.
+fn find_first_body_line(file_path: &std::path::Path, func_line: u32) -> Option<u32> {
+    let source = std::fs::read_to_string(file_path).ok()?;
+    let tree = crate::core::parser::parse(&source).ok()?;
+    let root = tree.root_node();
+
+    // Find the function_definition or constructor_definition at this line
+    let target_row = func_line - 1; // tree-sitter is 0-based
+    let func_node = find_function_at_line(root, target_row)?;
+
+    // Get the body node
+    let body = func_node.child_by_field_name("body")?;
+
+    // Find the first non-comment child of the body
+    let mut cursor = body.walk();
+    for child in body.children(&mut cursor) {
+        if child.is_named() && child.kind() != "comment" {
+            return Some(child.start_position().row as u32 + 1); // 1-based
+        }
+    }
+    None
+}
+
+/// Recursively find a function_definition or constructor_definition node at the given row.
+fn find_function_at_line(node: tree_sitter::Node, target_row: u32) -> Option<tree_sitter::Node> {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if matches!(child.kind(), "function_definition" | "constructor_definition")
+            && child.start_position().row as u32 == target_row
+        {
+            return Some(child);
+        }
+        // Recurse into class bodies
+        if let Some(found) = find_function_at_line(child, target_row) {
+            return Some(found);
+        }
+    }
+    None
 }
 
 // ── Shared helpers ──────────────────────────────────────────────────
@@ -964,6 +1461,46 @@ fn repl_clear(file: &str) {
         println!("{} {}", "Cleared breakpoints in".green(), file.cyan());
     } else {
         println!("{}", "Failed to clear breakpoints.".red());
+    }
+}
+
+fn repl_step_out() {
+    let initial_depth = get_stack_frames().len();
+    if initial_depth <= 1 {
+        println!(
+            "{}",
+            "Cannot step out — already at the top-level frame.".yellow()
+        );
+        return;
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    loop {
+        if daemon_dap("dap_next", serde_json::json!({})).is_none() {
+            println!("{}", "Failed to step.".red());
+            return;
+        }
+        if daemon_dap_timeout(
+            "dap_wait_stopped",
+            serde_json::json!({"timeout": 5}),
+            5,
+        )
+        .is_none()
+        {
+            println!("{}", "Step-out timed out waiting for stop.".yellow());
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        if get_stack_frames().len() < initial_depth {
+            println!("{}", "Stepped out".green());
+            return;
+        }
+        if std::time::Instant::now() >= deadline {
+            println!(
+                "{}",
+                "Step-out timed out after 15s — function may have a long-running loop.".yellow()
+            );
+            return;
+        }
     }
 }
 

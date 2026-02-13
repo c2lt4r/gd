@@ -251,14 +251,18 @@ gd debug break --file scripts/player.gd --line 42 --condition "speed > 20.0"
 # Evaluate expression while paused at breakpoint
 gd debug eval --expr "self.speed"
 
-# Modify a variable while paused
+# Modify variables while paused (uses self.set() under the hood)
 gd debug set-var --name speed --value 100.0
-gd debug set-var --name is_boosting --value true --scope locals
+
+# For complex mutations, use eval with method calls directly:
+gd debug eval --expr "self.set('max_speed', 100.0)"
+gd debug eval --expr "body_mesh.set_scale(Vector3(3, 3, 3))"
 
 # Execution control (non-interactive)
 gd debug continue
 gd debug next      # step over
 gd debug step      # step into
+gd debug step-out  # step out of current function
 gd debug pause
 
 # Terminate the running game
@@ -269,6 +273,7 @@ gd debug attach
 
 # JSON output for scripting
 gd debug break --file scripts/player.gd --line 42 --format json
+gd debug next --format json   # returns stack frames + variables after step
 gd debug status --format json
 gd debug eval --expr "self.position" --format json
 ```
@@ -284,6 +289,7 @@ Interactive session commands (`gd debug attach`):
 | `pause` / `p` | Pause execution |
 | `next` / `n` | Step over |
 | `step` / `s` | Step into |
+| `out` / `o` | Step out of function |
 | `stack` / `bt` | Show call stack |
 | `vars [scope]` | Show variables (locals/members/globals) |
 | `expand <ref>` | Expand nested variable |

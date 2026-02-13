@@ -1,9 +1,29 @@
 # Changelog
 
+## [0.1.25] - 2026-02-13
+
+### Added
+- `gd debug step-out` — step out of the current function (synthetic: repeats `next` until stack depth decreases, same technique as the official VS Code plugin)
+- `gd debug --format json` on all stepping commands (`continue`, `next`, `step`, `step-out`, `pause`) — JSON output includes stack frames and full variable scopes
+- `gd debug set-var --format json` — returns `{name, value, type, input}` for automation
+- Client-side conditional breakpoints — `gd debug break --condition <expr>` now evaluates the expression on each hit and auto-continues when false (Godot's DAP ignores conditions natively)
+- `--name` with `--file` scoping for ambiguous function names — errors with candidate list when multiple files define the same function
+- Type inference for `set-var` — populates type field from value when Godot returns empty type (int, float, bool, String, constructors)
+
+### Fixed
+- `--name` now resolves to the first executable statement inside the function body (not the `func` declaration line, which Godot won't break on)
+- Condition evaluator correctly parses boolean results (`"false"`, `"0"`, `"null"` → falsy; everything else → truthy)
+- `==`, `!=`, `>=`, `<=` in eval expressions no longer trigger false assignment warnings
+- `set-var` on local variables gives clear error: "Godot's DAP does not support setting locals"
+- `set-var` and `eval` output JSON errors to stderr when `--format json` is active
+- Daemon DAP recovery: failed operations set `dap_needs_reconnect` flag, next query auto-reconnects
+- Daemon disconnect uses TCP shutdown to prevent stream corruption after failed operations
+- String values in `set-var` correctly auto-quoted (bare words like `bike` become `"bike"`)
+
 ## [0.1.24] - 2026-02-13
 
 ### Added
-- `gd debug set-var --name <var> --value <val>` — modify variable values while paused at a breakpoint (searches all scopes, `--scope` to narrow)
+- `gd debug set-var --name <var> --value <val>` — modify variable values while paused at a breakpoint
 
 ## [0.1.23] - 2026-02-13
 
