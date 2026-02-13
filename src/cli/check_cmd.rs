@@ -61,7 +61,7 @@ pub fn exec(args: CheckArgs) -> Result<()> {
                 Ok((source, tree)) => {
                     let root_node = tree.root_node();
                     let has_parse_errors = root_node.has_error();
-                    let structural = validate_structure(&root_node);
+                    let structural = validate_structure(&root_node, &source);
 
                     if has_parse_errors || !structural.is_empty() {
                         error_count += 1;
@@ -142,10 +142,12 @@ struct StructuralError {
 }
 
 /// Run structural checks that go beyond tree-sitter error nodes.
-fn validate_structure(root: &Node) -> Vec<StructuralError> {
+fn validate_structure(root: &Node, source: &str) -> Vec<StructuralError> {
     let mut errors = Vec::new();
     check_top_level_statements(root, &mut errors);
     check_indentation_consistency(root, &mut errors);
+    check_class_constants(root, source, &mut errors);
+    check_variant_inference(root, source, &mut errors);
     errors
 }
 
@@ -259,6 +261,122 @@ fn friendly_kind(kind: &str) -> &str {
     }
 }
 
+/// Check 3: Validate `ClassName.CONSTANT` references against the Godot class DB.
+/// Catches typos like `Environment.TONE_MAP_ACES` (should be `TONE_MAPPER_ACES`).
+fn check_class_constants(root: &Node, source: &str, errors: &mut Vec<StructuralError>) {
+    check_constants_in_node(*root, source, errors);
+}
+
+fn check_constants_in_node(node: Node, source: &str, errors: &mut Vec<StructuralError>) {
+    // Look for `attribute` nodes like `Environment.TONE_MAPPER_LINEAR`
+    if node.kind() == "attribute"
+        && let Some(lhs) = node.named_child(0)
+        && let Some(rhs) = node.named_child(1)
+        && let Ok(class_name) = lhs.utf8_text(source.as_bytes())
+        && let Ok(const_name) = rhs.utf8_text(source.as_bytes())
+    {
+        // Only check if LHS looks like a Godot class and RHS is UPPER_CASE
+        if crate::class_db::class_exists(class_name)
+            && is_upper_snake_case(const_name)
+            && !crate::class_db::constant_exists(class_name, const_name)
+            && !crate::class_db::enum_member_exists(class_name, const_name)
+        {
+            let suggestions = crate::class_db::suggest_constant(class_name, const_name, 3);
+            let hint = if suggestions.is_empty() {
+                String::new()
+            } else {
+                format!(" — did you mean `{}`?", suggestions[0])
+            };
+            let pos = rhs.start_position();
+            errors.push(StructuralError {
+                line: pos.row as u32 + 1,
+                column: pos.column as u32 + 1,
+                message: format!("unknown constant `{class_name}.{const_name}`{hint}",),
+            });
+        }
+    }
+
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            check_constants_in_node(cursor.node(), source, errors);
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+    }
+}
+
+fn is_upper_snake_case(s: &str) -> bool {
+    !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+}
+
+/// Check 4: Detect `:=` that resolves to Variant (common source of runtime errors).
+fn check_variant_inference(root: &Node, source: &str, errors: &mut Vec<StructuralError>) {
+    check_variant_node(*root, source, errors);
+}
+
+fn check_variant_node(node: Node, source: &str, errors: &mut Vec<StructuralError>) {
+    if node.kind() == "variable_statement" {
+        // Check for := (tree-sitter stores this as type field with "inferred_type" kind)
+        let is_inferred = node
+            .child_by_field_name("type")
+            .is_some_and(|t| t.kind() == "inferred_type");
+        if is_inferred
+            && let Some(value) = node.child_by_field_name("value")
+            && is_variant_producing_expr(&value, source)
+        {
+            let var_name = node
+                .child_by_field_name("name")
+                .and_then(|n| n.utf8_text(source.as_bytes()).ok())
+                .unwrap_or("?");
+            let pos = node.start_position();
+            errors.push(StructuralError {
+                line: pos.row as u32 + 1,
+                column: pos.column as u32 + 1,
+                message: format!(
+                    "`:=` infers Variant for `{var_name}` — use an explicit type annotation",
+                ),
+            });
+        }
+    }
+
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            check_variant_node(cursor.node(), source, errors);
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+    }
+}
+
+/// Check if an expression is known to produce Variant (losing type information).
+fn is_variant_producing_expr(node: &Node, source: &str) -> bool {
+    match node.kind() {
+        // dict["key"], arr[idx]
+        "subscript" => true,
+        // method calls: attribute > attribute_call (tree-sitter pattern)
+        // e.g. dict.get("key"), dict.values(), dict.keys()
+        "attribute" => {
+            let mut cursor = node.walk();
+            for child in node.children(&mut cursor) {
+                if child.kind() == "attribute_call"
+                    && let Some(name_node) = child.named_child(0)
+                    && let Ok(method_name) = name_node.utf8_text(source.as_bytes())
+                {
+                    return matches!(method_name, "get" | "get_or_add" | "values" | "keys");
+                }
+            }
+            false
+        }
+        _ => false,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tree-sitter error reporting (existing)
 // ---------------------------------------------------------------------------
@@ -341,7 +459,7 @@ mod tests {
 
     fn structural_errors(source: &str) -> Vec<StructuralError> {
         let tree = parser::parse(source).unwrap();
-        validate_structure(&tree.root_node())
+        validate_structure(&tree.root_node(), source)
     }
 
     // -- Top-level statement checks --
@@ -432,6 +550,65 @@ mod tests {
     #[test]
     fn multiline_dict_not_false_positive() {
         let source = "func f() -> Dictionary:\n\tvar d := {\n\t\t\"a\": 1,\n\t\t\"b\": 2,\n\t}\n\treturn d\n";
+        assert!(structural_errors(source).is_empty());
+    }
+
+    // -- Class constant validation checks --
+
+    #[test]
+    fn valid_class_constant_no_error() {
+        let source = "func f():\n\tvar mode := Environment.TONE_MAPPER_LINEAR\n";
+        let errs = structural_errors(source);
+        assert!(
+            errs.is_empty(),
+            "valid constant should not produce errors, got: {:?}",
+            errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn invalid_class_constant_detected() {
+        let source = "func f():\n\tvar mode := Environment.TONE_MAP_ACES\n";
+        let errs = structural_errors(source);
+        assert_eq!(errs.len(), 1);
+        assert!(errs[0].message.contains("unknown constant"));
+    }
+
+    #[test]
+    fn user_class_not_validated() {
+        // Only Godot built-in classes should be validated
+        let source = "func f():\n\tvar x := MyClass.SOME_CONST\n";
+        let errs = structural_errors(source);
+        assert!(errs.is_empty());
+    }
+
+    // -- Variant inference checks --
+
+    #[test]
+    fn variant_infer_from_subscript() {
+        let source = "var dict := {}\nfunc f():\n\tvar x := dict[\"key\"]\n";
+        let errs = structural_errors(source);
+        assert_eq!(errs.len(), 1);
+        assert!(errs[0].message.contains("Variant"));
+    }
+
+    #[test]
+    fn variant_infer_from_dict_get() {
+        let source = "var dict := {}\nfunc f():\n\tvar x := dict.get(\"key\")\n";
+        let errs = structural_errors(source);
+        assert_eq!(errs.len(), 1);
+        assert!(errs[0].message.contains("Variant"));
+    }
+
+    #[test]
+    fn no_variant_warning_with_explicit_type() {
+        let source = "var dict := {}\nfunc f():\n\tvar x: String = dict[\"key\"]\n";
+        assert!(structural_errors(source).is_empty());
+    }
+
+    #[test]
+    fn no_variant_warning_simple_infer() {
+        let source = "func f():\n\tvar x := 42\n";
         assert!(structural_errors(source).is_empty());
     }
 }

@@ -2,6 +2,7 @@ use clap::Parser;
 use miette::Result;
 
 mod build;
+mod class_db;
 mod cli;
 mod core;
 mod doc;

@@ -17,6 +17,7 @@ pub mod missing_return;
 pub mod missing_type_hint;
 pub mod naming_convention;
 pub mod node_ready_order;
+pub mod null_after_await;
 pub mod preload_type_hint;
 pub mod private_method_access;
 pub mod return_type_mismatch;
@@ -28,9 +29,11 @@ pub mod static_type_inference;
 pub mod unnecessary_pass;
 pub mod unreachable_code;
 pub mod untyped_array;
+pub mod untyped_array_literal;
 pub mod unused_preload;
 pub mod unused_signal;
 pub mod unused_variable;
+pub mod variant_inference;
 
 pub mod callable_null_check;
 pub mod class_definitions_order;
@@ -40,6 +43,7 @@ pub mod duplicate_delegate;
 pub mod enum_naming;
 pub mod get_node_in_process;
 pub mod god_object;
+pub mod look_at_before_tree;
 pub mod loop_variable_name;
 pub mod max_file_lines;
 pub mod max_line_length;
@@ -199,6 +203,10 @@ pub fn all_rules(
         Box::new(signal_not_connected::SignalNotConnected),
         Box::new(callable_null_check::CallableNullCheck),
         Box::new(breakpoint_statement::BreakpointStatement),
+        Box::new(variant_inference::VariantInference),
+        Box::new(untyped_array_literal::UntypedArrayLiteral),
+        Box::new(null_after_await::NullAfterAwait),
+        Box::new(look_at_before_tree::LookAtBeforeTree),
     ];
     all.into_iter()
         .filter(|r| {

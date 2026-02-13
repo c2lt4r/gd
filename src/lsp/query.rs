@@ -127,6 +127,16 @@ pub struct ImplementationEntry {
     pub class_name: Option<String>,
 }
 
+#[derive(Serialize)]
+pub struct CreateFileOutput {
+    pub file: String,
+    pub extends: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub class_name: Option<String>,
+    pub applied: bool,
+    pub lines: u32,
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 pub(super) fn resolve_file(file: &str) -> Result<PathBuf> {
@@ -282,6 +292,55 @@ pub fn query_rename(
         symbol,
         new_name: new_name.to_string(),
         changes,
+        summary: None,
+    })
+}
+
+pub fn query_rename_by_name(
+    name: &str,
+    new_name: &str,
+    file: Option<&str>,
+) -> Result<RenameOutput> {
+    let (project_root, file_path) = if let Some(f) = file {
+        let path = resolve_file(f)?;
+        let root = find_root(&path)?;
+        (root, Some(path))
+    } else {
+        let cwd = std::env::current_dir()
+            .map_err(|e| miette::miette!("cannot get current directory: {e}"))?;
+        let root = find_root(&cwd)?;
+        (root, None)
+    };
+
+    let workspace = super::workspace::WorkspaceIndex::new(project_root.clone());
+    let locations =
+        super::references::find_references_by_name(name, &workspace, file_path.as_deref(), None);
+
+    if locations.is_empty() {
+        return Err(miette::miette!("no references found for '{name}'"));
+    }
+
+    // Build WorkspaceEdit from locations
+    let mut changes: std::collections::HashMap<Url, Vec<TextEdit>> =
+        std::collections::HashMap::new();
+    for loc in &locations {
+        changes.entry(loc.uri.clone()).or_default().push(TextEdit {
+            range: loc.range,
+            new_text: new_name.to_string(),
+        });
+    }
+
+    let edit = WorkspaceEdit {
+        changes: Some(changes),
+        document_changes: None,
+        change_annotations: None,
+    };
+
+    let file_edits = convert_workspace_edit(&edit, &project_root);
+    Ok(RenameOutput {
+        symbol: name.to_string(),
+        new_name: new_name.to_string(),
+        changes: file_edits,
         summary: None,
     })
 }
@@ -994,6 +1053,57 @@ pub fn query_edit_range(
         dry_run,
         &project_root,
     )
+}
+
+// ── Create file ─────────────────────────────────────────────────────────────
+
+pub fn query_create_file(
+    file: &str,
+    extends: &str,
+    class_name: Option<&str>,
+    dry_run: bool,
+) -> Result<CreateFileOutput> {
+    let path = std::path::Path::new(file);
+
+    let full_path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map_err(|e| miette::miette!("cannot get current directory: {e}"))?
+            .join(path)
+    };
+
+    if full_path.exists() {
+        return Err(miette::miette!("file already exists: {file}"));
+    }
+
+    let mut content = String::new();
+    content.push_str(&format!("extends {extends}\n"));
+    if let Some(cn) = class_name {
+        content.push_str(&format!("class_name {cn}\n"));
+    }
+    content.push_str("\n\n");
+    content.push_str("func _ready() -> void:\n\tpass\n\n\n");
+    content.push_str("func _process(delta: float) -> void:\n\tpass\n");
+
+    let lines = content.lines().count() as u32;
+
+    if !dry_run {
+        if let Some(parent) = full_path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| miette::miette!("cannot create directories: {e}"))?;
+        }
+        std::fs::write(&full_path, &content)
+            .map_err(|e| miette::miette!("cannot write file: {e}"))?;
+    }
+
+    Ok(CreateFileOutput {
+        file: file.to_string(),
+        extends: extends.to_string(),
+        class_name: class_name.map(|s| s.to_string()),
+        applied: !dry_run,
+        lines,
+    })
 }
 
 // ── Apply rename ────────────────────────────────────────────────────────────

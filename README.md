@@ -7,12 +7,12 @@ Built with [tree-sitter](https://tree-sitter.github.io/) for accurate parsing an
 ## Features
 
 - **Format** GDScript files with an AST-based formatter aligned to the [GDScript style guide](https://docs.godotengine.org/en/stable/tutorials/scripting/gdscript/gdscript_styleguide.html)
-- **Lint** with 52 built-in rules (12 auto-fixable), SARIF output for CI
+- **Lint** with 56 built-in rules (12 auto-fixable), SARIF output for CI
 - **Run**, **build**, **test**, and **clean** your Godot project from the terminal
 - **Watch** for file changes and auto-lint/format on save
 - **Manage addons** from Git or the Godot Asset Library (with lockfile and update support)
 - **Generate CI/CD** configurations for GitHub Actions and GitLab CI
-- **LSP server** with formatting, diagnostics, hover, go-to-definition, references, rename, completion, and 12 refactoring commands
+- **LSP server** with formatting, diagnostics, hover, go-to-definition, references, rename, completion, and 16 refactoring commands
 - **Analyze** your project with dependency graphs, class trees, and code statistics
 
 ## Installation
@@ -62,7 +62,7 @@ gd run
 | `gd lint` | Lint GDScript files |
 | `gd run` | Run the Godot project |
 | `gd build` | Build/export the Godot project |
-| `gd check` | Check project for errors without building (`--format json`) |
+| `gd check` | Check project for errors (parse, structural, semantic) without building (`--format json`) |
 | `gd clean` | Clean build artifacts |
 | `gd test` | Run GDScript tests with GUT, gdUnit4, or raw scripts (`--format json`) |
 | `gd completions` | Generate shell completions (bash, zsh, fish, etc.) |
@@ -227,7 +227,7 @@ The template system automatically finds `project.godot` within the repository to
 
 ## Lint Rules
 
-All 52 built-in rules (40 default-enabled, 12 opt-in):
+All 56 built-in rules (41 default-enabled, 15 opt-in):
 
 | Rule | Description | Severity | Fixable |
 |------|-------------|----------|---------|
@@ -268,6 +268,7 @@ All 52 built-in rules (40 default-enabled, 12 opt-in):
 | `unnecessary-pass` | Detect `pass` in non-empty function bodies | warning | yes |
 | `unreachable-code` | Detect code after return/break/continue | warning | yes |
 | `untyped-array` | Suggest typed array annotations | warning | |
+| `untyped-array-literal` | Warn on `var x := [...]` without typed Array annotation | warning | |
 | `unused-preload` | Detect unused preload variables | warning | |
 | `unused-signal` | Detect signals that are never emitted | warning | |
 | `unused-variable` | Detect unused local variables | warning | yes |
@@ -278,16 +279,19 @@ All 52 built-in rules (40 default-enabled, 12 opt-in):
 |------|-------------|----------|---------|
 | `breakpoint-statement` | Detect leftover `breakpoint` statements | info | |
 | `class-definitions-order` | Enforce canonical member ordering | warning | |
+| `look-at-before-tree` | Detect tree-dependent calls before `add_child()` | warning | |
 | `duplicate-delegate` | Detect pure pass-through delegate functions | info | |
 | `god-object` | Warn on classes with too many functions/members/lines | warning | |
 | `magic-number` | Flag unexplained numeric literals | warning | |
 | `max-file-lines` | Enforce maximum file length | warning | |
 | `max-line-length` | Enforce maximum line length | warning | |
 | `max-public-methods` | Enforce maximum public methods per class | warning | |
+| `null-after-await` | Warn on member access after `await` without null guard | warning | |
 | `print-statement` | Detect debug print calls | info | |
 | `signal-not-connected` | Detect signals emitted but never connected | info | |
 | `todo-comment` | Detect TODO/FIXME/HACK comments | info | |
 | `unused-parameter` | Detect unused function parameters | warning | |
+| `variant-inference` | Warn on `:=` inferring Variant from dict/array access | warning | |
 
 ### Inline Suppression
 
@@ -435,6 +439,9 @@ Example GitHub Actions step:
 # Rename a symbol across the project (applies to disk by default)
 gd lsp rename --file player.gd --line 5 --column 10 --new-name move_character
 
+# Rename by name (project-wide search)
+gd lsp rename --name old_func --new-name new_func
+
 # Preview without writing
 gd lsp rename --file player.gd --line 5 --column 10 --new-name move_character --dry-run
 
@@ -464,6 +471,10 @@ gd lsp symbols --file player.gd
 
 # Filter symbols by kind
 gd lsp symbols --file player.gd --kind function,signal
+```
+
+# Create a new GDScript file with scaffolding
+gd lsp create-file --file enemies/boss.gd --extends CharacterBody2D --class-name Boss
 ```
 
 All positions are **1-based** (line 1, column 1 is the first character). Paths in output are relative to the project root with forward slashes.

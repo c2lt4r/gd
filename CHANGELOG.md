@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.1.14] - 2026-02-13
+
+### Added
+- Godot 4.6 class database — bundled static lookup for classes, methods, enums, and constants with Levenshtein suggestions
+- `gd check` semantic validation:
+  - Validate `ClassName.CONSTANT` references against the Godot class database (with typo suggestions)
+  - Detect `:=` resolving to `Variant` from dictionary/array subscript and `.get()`/`.values()`/`.keys()` calls
+- `gd lsp create-file` — scaffold new GDScript files with `--extends`, `--class-name`, and `--dry-run`
+- `gd lsp rename --name` — rename symbols by name across the project (no position needed)
+- 4 new lint rules (56 total):
+  - `untyped-array-literal` (default) — warns on `var x := [...]` without typed `Array[T]` annotation, infers element type from homogeneous literals
+  - `variant-inference` (opt-in) — warns on `:=` inferring Variant from dict/array access patterns
+  - `look-at-before-tree` (opt-in) — detects tree-dependent method calls (`look_at`, `to_global`, etc.) before `add_child()`
+  - `null-after-await` (opt-in) — warns on member variable access in `_process`/`_physics_process` without null guard after `await` assignment
+
+### Fixed
+- `gd lsp edit-range` on empty files no longer errors — correctly handles insert into empty/newline-only files
+
 ## [0.1.13] - 2026-02-13
 
 ### Added

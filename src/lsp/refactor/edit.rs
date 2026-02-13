@@ -343,6 +343,40 @@ pub fn edit_range(
         ));
     }
 
+    // Handle empty or newline-only files: build the result directly
+    let effectively_empty = source.is_empty() || source.chars().all(|c| c == '\n' || c == '\r');
+    if effectively_empty && start_line == 1 && end_line == 1 {
+        let trimmed = new_content.trim_end();
+        let mut result = String::from(trimmed);
+        if !result.ends_with('\n') {
+            result.push('\n');
+        }
+
+        validate_no_new_errors("", &result)?;
+
+        let final_source = if no_format {
+            result
+        } else {
+            format_source(&result, project_root)?
+        };
+
+        let lines_changed = diff_line_count(&source, &final_source);
+
+        if !dry_run {
+            std::fs::write(file, &final_source)
+                .map_err(|e| miette::miette!("cannot write file: {e}"))?;
+        }
+
+        return Ok(EditOutput {
+            file: rel,
+            operation: "edit-range",
+            symbol: None,
+            applied: !dry_run,
+            lines_changed,
+            warnings: vec![],
+        });
+    }
+
     let starts = line_starts(&source);
     let total_lines = starts.len();
 
@@ -783,5 +817,49 @@ mod tests {
         let file = temp.path().join("player.gd");
         let result = edit_range(&file, 0, 1, "x\n", true, false, temp.path());
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn edit_range_empty_file() {
+        let temp = setup(&[("empty.gd", "")]);
+        let file = temp.path().join("empty.gd");
+        let result = edit_range(
+            &file,
+            1,
+            1,
+            "extends Node\n",
+            true, // no_format
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        let content = fs::read_to_string(&file).unwrap();
+        assert!(content.contains("extends Node"));
+    }
+
+    #[test]
+    fn edit_range_newline_only_file() {
+        let temp = setup(&[("nl.gd", "\n")]);
+        let file = temp.path().join("nl.gd");
+        let result = edit_range(
+            &file,
+            1,
+            1,
+            "extends Node\nvar x = 1\n",
+            true,
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        let content = fs::read_to_string(&file).unwrap();
+        assert!(content.contains("extends Node"));
+        assert!(content.contains("var x = 1"));
+    }
+
+    #[test]
+    fn diff_line_count_empty_to_content() {
+        assert_eq!(diff_line_count("", "extends Node\nvar x = 1\n"), 2);
     }
 }

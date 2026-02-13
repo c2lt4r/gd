@@ -13,8 +13,18 @@ pub struct LspArgs {
 pub enum LspCommand {
     /// Rename a symbol across the project
     Rename {
-        #[command(flatten)]
-        pos: QueryPositionArgs,
+        /// Search by symbol name across the project (alternative to --file/--line/--column)
+        #[arg(long)]
+        name: Option<String>,
+        /// Path to the GDScript file
+        #[arg(long)]
+        file: Option<String>,
+        /// Line number (1-based)
+        #[arg(long)]
+        line: Option<usize>,
+        /// Column number (1-based)
+        #[arg(long)]
+        column: Option<usize>,
         /// New name for the symbol
         #[arg(long)]
         new_name: String,
@@ -281,6 +291,21 @@ pub enum LspCommand {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Create a new GDScript file with boilerplate
+    CreateFile {
+        /// Path for the new file
+        #[arg(long)]
+        file: String,
+        /// Base class to extend (default: "Node")
+        #[arg(long, default_value = "Node")]
+        extends: String,
+        /// Optional class_name declaration
+        #[arg(long)]
+        class_name: Option<String>,
+        /// Preview without writing
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Replace a function's body (AST-aware, reads new body from stdin or --input-file)
     ReplaceBody {
         /// Path to the GDScript file
@@ -433,20 +458,36 @@ pub fn exec(args: LspArgs) -> Result<()> {
 
     match command {
         LspCommand::Rename {
-            pos,
+            name,
+            file,
+            line,
+            column,
             new_name,
             dry_run,
         } => {
-            let mut result =
-                crate::lsp::query::query_rename(&pos.file, pos.line, pos.column, &new_name)?;
+            let mut result = if let Some(ref sym_name) = name {
+                crate::lsp::query::query_rename_by_name(sym_name, &new_name, file.as_deref())?
+            } else {
+                let file_str = file
+                    .as_deref()
+                    .ok_or_else(|| miette::miette!("--file is required when not using --name"))?;
+                let line = line
+                    .ok_or_else(|| miette::miette!("--line is required when not using --name"))?;
+                let column = column
+                    .ok_or_else(|| miette::miette!("--column is required when not using --name"))?;
+                crate::lsp::query::query_rename(file_str, line, column, &new_name)?
+            };
 
             if !dry_run {
-                let project_root = crate::core::config::find_project_root(
-                    &std::env::current_dir()
+                let anchor = if let Some(ref f) = file {
+                    std::env::current_dir()
                         .map_err(|e| miette::miette!("{e}"))?
-                        .join(&pos.file),
-                )
-                .ok_or_else(|| miette::miette!("no project.godot found"))?;
+                        .join(f)
+                } else {
+                    std::env::current_dir().map_err(|e| miette::miette!("{e}"))?
+                };
+                let project_root = crate::core::config::find_project_root(&anchor)
+                    .ok_or_else(|| miette::miette!("no project.godot found"))?;
 
                 let count = crate::lsp::query::apply_rename(&result, &project_root)?;
                 result.summary = Some(format!(
@@ -673,6 +714,22 @@ pub fn exec(args: LspArgs) -> Result<()> {
                 end_column,
                 &name,
                 r#type.as_deref(),
+                dry_run,
+            )?;
+            let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+            println!("{json}");
+            Ok(())
+        }
+        LspCommand::CreateFile {
+            file,
+            extends,
+            class_name,
+            dry_run,
+        } => {
+            let result = crate::lsp::query::query_create_file(
+                &file,
+                &extends,
+                class_name.as_deref(),
                 dry_run,
             )?;
             let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
