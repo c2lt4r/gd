@@ -33,23 +33,43 @@ pub fn inherits(child: &str, ancestor: &str) -> bool {
     false
 }
 
-/// Check if a constant or enum member exists on a class.
+/// Check if a constant or enum member exists on a class (including inherited).
 pub fn constant_exists(class: &str, name: &str) -> bool {
-    let key = format!("{class}.{name}");
-    generated::CONSTANTS
-        .binary_search_by_key(&key.as_str(), |&(k, _)| k)
-        .is_ok()
-        || generated::ENUM_MEMBERS
+    let mut current = class;
+    loop {
+        let key = format!("{current}.{name}");
+        if generated::CONSTANTS
             .binary_search_by_key(&key.as_str(), |&(k, _)| k)
             .is_ok()
+            || generated::ENUM_MEMBERS
+                .binary_search_by_key(&key.as_str(), |&(k, _)| k)
+                .is_ok()
+        {
+            return true;
+        }
+        match parent_class(current) {
+            Some(parent) => current = parent,
+            None => return false,
+        }
+    }
 }
 
-/// Check if an enum member exists on a class.
+/// Check if an enum member exists on a class (including inherited).
 pub fn enum_member_exists(class: &str, name: &str) -> bool {
-    let key = format!("{class}.{name}");
-    generated::ENUM_MEMBERS
-        .binary_search_by_key(&key.as_str(), |&(k, _)| k)
-        .is_ok()
+    let mut current = class;
+    loop {
+        let key = format!("{current}.{name}");
+        if generated::ENUM_MEMBERS
+            .binary_search_by_key(&key.as_str(), |&(k, _)| k)
+            .is_ok()
+        {
+            return true;
+        }
+        match parent_class(current) {
+            Some(parent) => current = parent,
+            None => return false,
+        }
+    }
 }
 
 /// Check if a method exists on a class (including inherited methods).
@@ -91,28 +111,35 @@ pub fn is_tree_dependent_method(method: &str) -> bool {
     )
 }
 
-/// Suggest similar constants for a typo using Levenshtein distance.
+/// Suggest similar constants for a typo using Levenshtein distance (walks inheritance).
 pub fn suggest_constant(class: &str, typo: &str, max_distance: usize) -> Vec<&'static str> {
-    let prefix = format!("{class}.");
     let mut suggestions: Vec<(&str, usize)> = Vec::new();
+    let mut current = class;
 
-    // Check constants
-    for &(key, _) in generated::CONSTANTS {
-        if let Some(name) = key.strip_prefix(&prefix) {
-            let dist = strsim::levenshtein(typo, name);
-            if dist <= max_distance {
-                suggestions.push((name, dist));
+    loop {
+        let prefix = format!("{current}.");
+
+        for &(key, _) in generated::CONSTANTS {
+            if let Some(name) = key.strip_prefix(&prefix) {
+                let dist = strsim::levenshtein(typo, name);
+                if dist <= max_distance {
+                    suggestions.push((name, dist));
+                }
             }
         }
-    }
 
-    // Check enum members
-    for &(key, _) in generated::ENUM_MEMBERS {
-        if let Some(name) = key.strip_prefix(&prefix) {
-            let dist = strsim::levenshtein(typo, name);
-            if dist <= max_distance {
-                suggestions.push((name, dist));
+        for &(key, _) in generated::ENUM_MEMBERS {
+            if let Some(name) = key.strip_prefix(&prefix) {
+                let dist = strsim::levenshtein(typo, name);
+                if dist <= max_distance {
+                    suggestions.push((name, dist));
+                }
             }
+        }
+
+        match parent_class(current) {
+            Some(parent) => current = parent,
+            None => break,
         }
     }
 
@@ -181,5 +208,24 @@ mod tests {
         let suggestions = suggest_constant("Environment", "TONE_MAPR_LINEAR", 3);
         assert!(!suggestions.is_empty());
         assert!(suggestions.contains(&"TONE_MAPPER_LINEAR"));
+    }
+
+    #[test]
+    fn test_reported_missing_constants() {
+        // These were previously flagged as unknown
+        assert!(constant_exists("Mesh", "PRIMITIVE_TRIANGLES"));
+        assert!(constant_exists("BaseMaterial3D", "SHADING_MODE_UNSHADED"));
+        assert!(constant_exists("BoxContainer", "ALIGNMENT_CENTER"));
+        assert!(constant_exists("SubViewport", "UPDATE_ALWAYS"));
+    }
+
+    #[test]
+    fn test_inherited_constants() {
+        // SubViewport inherits from Viewport — constants on parent should resolve
+        assert!(class_exists("SubViewport"));
+        assert!(class_exists("Viewport"));
+        // Viewport constants should be accessible via SubViewport
+        assert!(constant_exists("Viewport", "MSAA_4X"));
+        assert!(constant_exists("SubViewport", "MSAA_4X")); // inherited
     }
 }

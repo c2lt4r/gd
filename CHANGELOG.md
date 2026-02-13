@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.16] - 2026-02-13
+
+### Fixed
+- Regenerate class database from full Godot 4.6 `extension_api.json` — 213 → 1024 classes, 5380 enum members, 16346 methods
+- `gd check` no longer flags valid constants like `Mesh.PRIMITIVE_TRIANGLES`, `BaseMaterial3D.SHADING_MODE_UNSHADED`, `BoxContainer.ALIGNMENT_CENTER`, `SubViewport.UPDATE_ALWAYS`
+- `constant_exists` / `enum_member_exists` / `suggest_constant` now walk the class inheritance chain
+
 ## [0.1.14] - 2026-02-13
 
 ### Added
