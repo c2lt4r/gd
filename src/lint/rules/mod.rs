@@ -15,6 +15,7 @@ pub mod long_function;
 pub mod magic_number;
 pub mod missing_return;
 pub mod missing_type_hint;
+pub mod monitoring_in_signal;
 pub mod naming_convention;
 pub mod node_ready_order;
 pub mod null_after_await;
@@ -207,6 +208,7 @@ pub fn all_rules(
         Box::new(untyped_array_literal::UntypedArrayLiteral),
         Box::new(null_after_await::NullAfterAwait),
         Box::new(look_at_before_tree::LookAtBeforeTree),
+        Box::new(monitoring_in_signal::MonitoringInSignal),
     ];
     all.into_iter()
         .filter(|r| {

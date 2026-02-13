@@ -87,6 +87,21 @@ pub enum LspCommand {
         #[arg(long)]
         kind: Vec<String>,
     },
+    /// View lines from a GDScript file (with optional line range)
+    View {
+        /// Path to the GDScript file
+        #[arg(long)]
+        file: String,
+        /// First line to show (1-based, inclusive; default: 1)
+        #[arg(long)]
+        start_line: Option<usize>,
+        /// Last line to show (1-based, inclusive; default: end of file)
+        #[arg(long)]
+        end_line: Option<usize>,
+        /// Number of context lines around start_line/end_line
+        #[arg(long)]
+        context: Option<usize>,
+    },
     /// Delete a symbol from a file (top-level or within an inner class)
     DeleteSymbol {
         /// Path to the GDScript file
@@ -569,6 +584,17 @@ pub fn exec(args: LspArgs) -> Result<()> {
             if !kind_filter.is_empty() {
                 result.retain(|s| kind_filter.iter().any(|k| k == &s.kind));
             }
+            let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+            println!("{json}");
+            Ok(())
+        }
+        LspCommand::View {
+            file,
+            start_line,
+            end_line,
+            context,
+        } => {
+            let result = crate::lsp::query::query_view(&file, start_line, end_line, context)?;
             let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
             println!("{json}");
             Ok(())

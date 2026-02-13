@@ -137,6 +137,21 @@ pub struct CreateFileOutput {
     pub lines: u32,
 }
 
+#[derive(Serialize)]
+pub struct ViewOutput {
+    pub file: String,
+    pub start_line: u32,
+    pub end_line: u32,
+    pub total_lines: u32,
+    pub lines: Vec<ViewLine>,
+}
+
+#[derive(Serialize)]
+pub struct ViewLine {
+    pub line: u32,
+    pub content: String,
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 pub(super) fn resolve_file(file: &str) -> Result<PathBuf> {
@@ -1102,6 +1117,49 @@ pub fn query_create_file(
         extends: extends.to_string(),
         class_name: class_name.map(|s| s.to_string()),
         applied: !dry_run,
+        lines,
+    })
+}
+
+// ── View ────────────────────────────────────────────────────────────────────
+
+pub fn query_view(
+    file: &str,
+    start_line: Option<usize>,
+    end_line: Option<usize>,
+    context: Option<usize>,
+) -> Result<ViewOutput> {
+    let resolved = resolve_file(file)?;
+    let source =
+        std::fs::read_to_string(&resolved).map_err(|e| miette::miette!("cannot read file: {e}"))?;
+    let all_lines: Vec<&str> = source.lines().collect();
+    let total = all_lines.len();
+
+    let mut start = start_line.unwrap_or(1).max(1);
+    let mut end = end_line.unwrap_or(total).min(total);
+
+    if let Some(ctx) = context {
+        start = start.saturating_sub(ctx).max(1);
+        end = (end + ctx).min(total);
+    }
+
+    let lines: Vec<ViewLine> = all_lines[start - 1..end]
+        .iter()
+        .enumerate()
+        .map(|(i, content)| ViewLine {
+            line: (start + i) as u32,
+            content: content.to_string(),
+        })
+        .collect();
+
+    let project_root = find_root(&resolved)?;
+    let rel = crate::core::fs::relative_slash(&resolved, &project_root);
+
+    Ok(ViewOutput {
+        file: rel,
+        start_line: start as u32,
+        end_line: end as u32,
+        total_lines: total as u32,
         lines,
     })
 }

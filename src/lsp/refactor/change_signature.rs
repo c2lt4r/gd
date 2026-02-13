@@ -245,7 +245,7 @@ pub fn change_signature(
                     && let Some(args_node) = call.child_by_field_name("arguments")
                 {
                     let old_args = extract_call_arguments(call, &cs);
-                    let new_args = rewrite_call_arguments(
+                    let (new_args, placeholder_params) = rewrite_call_arguments(
                         &old_args,
                         &extract_function_params(func_def, &source),
                         &existing_params,
@@ -254,6 +254,11 @@ pub fn change_signature(
                         &rename_map,
                         reorder,
                     );
+                    for p in &placeholder_params {
+                        warnings.push(format!(
+                            "inserted `null` placeholder for parameter '{p}' (no default value)"
+                        ));
+                    }
                     let new_args_text = format!("({})", new_args.join(", "));
                     edits.push((args_node.start_byte(), args_node.end_byte(), new_args_text));
                     call_sites_updated += 1;
@@ -359,6 +364,7 @@ fn is_ident_char(b: u8) -> bool {
 }
 
 /// Rewrite call arguments based on parameter changes.
+/// Returns (new_args, placeholder_param_names).
 fn rewrite_call_arguments(
     old_args: &[String],
     old_params: &[ParamInfo],
@@ -367,7 +373,7 @@ fn rewrite_call_arguments(
     _add_params: &[String],
     rename_map: &HashMap<String, String>,
     reorder: Option<&str>,
-) -> Vec<String> {
+) -> (Vec<String>, Vec<String>) {
     // Build old param name -> arg value mapping
     let mut arg_map: HashMap<String, String> = HashMap::new();
     for (i, param) in old_params.iter().enumerate() {
@@ -390,6 +396,7 @@ fn rewrite_call_arguments(
 
     // Build new argument list in new param order
     let mut new_args = Vec::new();
+    let mut placeholders = Vec::new();
     let reorder_names: Option<Vec<&str>> =
         reorder.map(|r| r.split(',').map(|s| s.trim()).collect());
 
@@ -399,8 +406,9 @@ fn rewrite_call_arguments(
         } else if let Some(ref default) = param.default {
             new_args.push(default.clone());
         } else {
-            // Added param without default -- use placeholder
-            new_args.push(format!("/* {} */", param.name));
+            // Added param without default — use null as a valid GDScript placeholder
+            new_args.push("null".to_string());
+            placeholders.push(param.name.clone());
         }
     }
 
@@ -423,11 +431,11 @@ fn rewrite_call_arguments(
             }
         }
         if reordered.len() >= new_args.len() {
-            return reordered;
+            return (reordered, placeholders);
         }
     }
 
-    new_args
+    (new_args, placeholders)
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────
