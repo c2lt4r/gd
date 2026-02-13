@@ -179,9 +179,7 @@ fn extract_member_assign(node: &Node, source: &str, members: &HashSet<String>) -
         }
         "attribute" => {
             let first = lhs.named_child(0)?;
-            if first.kind() != "identifier"
-                || first.utf8_text(source.as_bytes()).ok()? != "self"
-            {
+            if first.kind() != "identifier" || first.utf8_text(source.as_bytes()).ok()? != "self" {
                 return None;
             }
             let mut c = lhs.walk();
@@ -240,7 +238,13 @@ fn collect_member_reads(
     let mut cursor = node.walk();
     if cursor.goto_first_child() {
         loop {
-            collect_member_reads(cursor.node(), source, members, assigned, reads_before_assign);
+            collect_member_reads(
+                cursor.node(),
+                source,
+                members,
+                assigned,
+                reads_before_assign,
+            );
             if !cursor.goto_next_sibling() {
                 break;
             }
@@ -326,14 +330,7 @@ fn process_statement_for_calls(
         }
     }
 
-    find_calls_in_node(
-        node,
-        source,
-        func_info,
-        caller_name,
-        assigned_so_far,
-        diags,
-    );
+    find_calls_in_node(node, source, func_info, caller_name, assigned_so_far, diags);
 
     match node.kind() {
         "if_statement" | "for_statement" | "while_statement" | "match_statement" => {
@@ -382,7 +379,14 @@ fn find_calls_in_node(
         && func_id.kind() == "identifier"
         && let Ok(callee) = func_id.utf8_text(source.as_bytes())
     {
-        check_callee(callee, &node, func_info, caller_name, assigned_so_far, diags);
+        check_callee(
+            callee,
+            &node,
+            func_info,
+            caller_name,
+            assigned_so_far,
+            diags,
+        );
     }
 
     if node.kind() == "attribute"

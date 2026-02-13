@@ -32,6 +32,25 @@ fn is_hidden_or_ignored(entry: &walkdir::DirEntry) -> bool {
     name.starts_with('.') || name == "build" || name == ".godot" || name == ".import"
 }
 
+/// Collect all .tscn and .tres files under `root`, skipping hidden/ignored dirs.
+pub fn collect_resource_files(root: &Path) -> Result<Vec<PathBuf>> {
+    let mut files = Vec::new();
+    for entry in WalkDir::new(root)
+        .into_iter()
+        .filter_entry(|e| !is_hidden_or_ignored(e))
+    {
+        let entry = entry.map_err(|e| miette!("Error walking directory: {e}"))?;
+        if entry.file_type().is_file()
+            && let Some(ext) = entry.path().extension()
+            && (ext == "tscn" || ext == "tres")
+        {
+            files.push(entry.into_path());
+        }
+    }
+    files.sort();
+    Ok(files)
+}
+
 /// Make `path` relative to `base` and return a forward-slash string.
 ///
 /// Uses `strip_prefix` (no canonicalization) to avoid Windows `\\?\` issues.

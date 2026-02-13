@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.1.22] - 2026-02-13
+
+### Added
+- `.tscn`/`.tres` scene and resource file support:
+  - `gd check` validates scene files — detects broken `res://` paths, orphaned `ext_resource` declarations, and parse errors
+  - `gd deps --include-resources` includes `.tscn`/`.tres` files in the dependency graph
+  - `gd tree --scene <file.tscn>` displays scene node hierarchy (human tree or `--format json`)
+  - `gd tree --scene <directory>` lists all scenes in a directory
+  - `gd lsp scene-info --file <scene.tscn>` returns structured JSON (nodes, ext_resources, connections)
+  - `gd lsp scene-info --nodes-only` for compact node-only output
+- Godot LSP proxy — forwards hover, completion, and go-to-definition to Godot's built-in LSP server (port 6005) when the editor is running
+  - `gd lsp --godot-port <PORT>` to configure proxy port (default: 6005)
+  - `gd lsp --no-godot-proxy` to disable proxy
+  - Results are merged with static analysis (engine docs + local symbols)
+
+### Changed
+- Integration tests split into 8 domain-specific files (check, commands, deps, fmt, lint, lsp_query, lsp_refactor, scene)
+
 ## [0.1.21] - 2026-02-13
 
 ### Changed

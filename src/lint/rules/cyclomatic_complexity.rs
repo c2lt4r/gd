@@ -108,9 +108,7 @@ fn count_branches(node: Node, source: &str, complexity: &mut usize, in_guard: bo
             *complexity += 1;
         }
         "binary_operator" => {
-            if !in_guard
-                && let Some(op_node) = node.child_by_field_name("op")
-            {
+            if !in_guard && let Some(op_node) = node.child_by_field_name("op") {
                 let op_text = &source[op_node.byte_range()];
                 if op_text == "and" || op_text == "or" {
                     *complexity += 1;
@@ -158,7 +156,10 @@ fn is_guard_clause(if_node: &Node) -> bool {
         if stmt_count > 1 {
             return false;
         }
-        is_early_exit = matches!(child.kind(), "return_statement" | "continue_statement" | "break_statement");
+        is_early_exit = matches!(
+            child.kind(),
+            "return_statement" | "continue_statement" | "break_statement"
+        );
     }
     stmt_count == 1 && is_early_exit
 }

@@ -32,9 +32,9 @@ pub mod unreachable_code;
 pub mod untyped_array;
 pub mod untyped_array_literal;
 pub mod unused_preload;
-pub mod use_before_assign;
 pub mod unused_signal;
 pub mod unused_variable;
+pub mod use_before_assign;
 pub mod variant_inference;
 
 pub mod callable_null_check;

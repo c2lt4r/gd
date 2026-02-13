@@ -1254,3 +1254,68 @@ fn convert_workspace_edit(edit: &WorkspaceEdit, base: &Path) -> Vec<FileEdits> {
         })
         .collect()
 }
+
+// ── Scene info query ──────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+pub struct SceneInfoOutput {
+    pub file: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nodes: Option<Vec<SceneNodeOutput>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ext_resources: Option<Vec<crate::core::scene::ExtResource>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sub_resources: Option<Vec<crate::core::scene::SubResource>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub connections: Option<Vec<crate::core::scene::Connection>>,
+}
+
+#[derive(Serialize)]
+pub struct SceneNodeOutput {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub r#type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub script: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub groups: Vec<String>,
+}
+
+pub fn query_scene_info(file: &str, nodes_only: bool) -> Result<SceneInfoOutput> {
+    let path = resolve_file(file)?;
+    let data = crate::core::scene::parse_scene_file(&path)?;
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let rel = crate::core::fs::relative_slash(&path, &cwd);
+
+    let nodes: Vec<SceneNodeOutput> = data
+        .nodes
+        .iter()
+        .map(|n| SceneNodeOutput {
+            name: n.name.clone(),
+            r#type: n.type_name.clone(),
+            parent: n.parent.clone(),
+            script: n.script.clone(),
+            groups: n.groups.clone(),
+        })
+        .collect();
+
+    if nodes_only {
+        Ok(SceneInfoOutput {
+            file: rel,
+            nodes: Some(nodes),
+            ext_resources: None,
+            sub_resources: None,
+            connections: None,
+        })
+    } else {
+        Ok(SceneInfoOutput {
+            file: rel,
+            nodes: Some(nodes),
+            ext_resources: Some(data.ext_resources),
+            sub_resources: Some(data.sub_resources),
+            connections: Some(data.connections),
+        })
+    }
+}

@@ -766,7 +766,7 @@ dependencies = [
 
 [[package]]
 name = "gd"
-version = "0.1.20"
+version = "0.1.22"
 dependencies = [
  "clap",
  "clap_complete",
@@ -794,6 +794,7 @@ dependencies = [
  "tower-lsp",
  "tree-sitter",
  "tree-sitter-gdscript",
+ "tree-sitter-godot-resource",
  "ureq",
  "urlencoding",
  "walkdir",
@@ -2237,6 +2238,16 @@ name = "tree-sitter-gdscript"
 version = "6.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b7a37fe8c0a10c0c39ecd5b2f7db53933f691488f5572409a4d3c0dfeb3f6108"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "tree-sitter-godot-resource"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bda4879302b1aca314d842cb73f55321f0f7a753760d451f1d7753632477de41"
 dependencies = [
  "cc",
  "tree-sitter-language",

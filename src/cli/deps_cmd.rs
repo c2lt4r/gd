@@ -19,6 +19,9 @@ pub struct DepsArgs {
     /// Show reverse dependencies (files that depend on the given file)
     #[arg(long)]
     pub reverse: Option<String>,
+    /// Include .tscn/.tres scene dependencies in the graph
+    #[arg(long)]
+    pub include_resources: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -47,6 +50,18 @@ pub fn exec(args: DepsArgs) -> Result<()> {
         let rel = crate::core::fs::relative_slash(file_path, &root);
         let deps = extract_dependencies(file_path)?;
         dep_map.insert(rel, deps);
+    }
+
+    // Include scene/resource file dependencies
+    if args.include_resources {
+        let resource_files = crate::core::fs::collect_resource_files(&root)?;
+        for file_path in &resource_files {
+            let rel = crate::core::fs::relative_slash(file_path, &root);
+            let deps = extract_resource_dependencies(file_path);
+            if !deps.is_empty() {
+                dep_map.insert(rel, deps);
+            }
+        }
     }
 
     // Reverse dependency mode
@@ -176,6 +191,46 @@ fn collect_deps(node: Node, source: &[u8], deps: &mut Vec<String>) {
     for child in node.children(&mut cursor) {
         collect_deps(child, source, deps);
     }
+}
+
+/// Extract dependencies from a .tscn/.tres file (ext_resource paths).
+fn extract_resource_dependencies(path: &Path) -> Vec<String> {
+    let source = match std::fs::read_to_string(path) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+
+    let ext = path.extension().and_then(|e| e.to_str());
+    let mut deps = Vec::new();
+
+    match ext {
+        Some("tscn") => {
+            if let Ok(data) = crate::core::scene::parse_scene(&source) {
+                for ext_res in &data.ext_resources {
+                    if !ext_res.path.is_empty() {
+                        // Convert res:// paths to relative
+                        let dep = ext_res.path.strip_prefix("res://").unwrap_or(&ext_res.path);
+                        deps.push(dep.to_string());
+                    }
+                }
+            }
+        }
+        Some("tres") => {
+            if let Ok(data) = crate::core::scene::parse_tres(&source) {
+                for ext_res in &data.ext_resources {
+                    if !ext_res.path.is_empty() {
+                        let dep = ext_res.path.strip_prefix("res://").unwrap_or(&ext_res.path);
+                        deps.push(dep.to_string());
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+
+    deps.sort();
+    deps.dedup();
+    deps
 }
 
 /// Detect cycles using DFS with white/gray/black coloring.

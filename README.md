@@ -13,6 +13,8 @@ Built with [tree-sitter](https://tree-sitter.github.io/) for accurate parsing an
 - **Manage addons** from Git or the Godot Asset Library (with lockfile and update support)
 - **Generate CI/CD** configurations for GitHub Actions and GitLab CI
 - **LSP server** with formatting, diagnostics, hover, go-to-definition, references, rename, completion, and 16 refactoring commands
+- **Scene analysis** &mdash; validate `.tscn`/`.tres` files, visualize scene node hierarchies, and track resource dependencies
+- **Godot LSP proxy** &mdash; forward hover, completion, and go-to-definition to Godot's built-in LSP when the editor is running
 - **Analyze** your project with dependency graphs, class trees, and code statistics
 
 ## Installation
@@ -62,18 +64,18 @@ gd run
 | `gd lint` | Lint GDScript files |
 | `gd run` | Run the Godot project |
 | `gd build` | Build/export the Godot project |
-| `gd check` | Check project for errors (parse, structural, semantic) without building (`--format json`) |
+| `gd check` | Check project for errors (parse, structural, semantic, `.tscn`/`.tres` validation) (`--format json`) |
 | `gd clean` | Clean build artifacts |
 | `gd test` | Run GDScript tests with GUT, gdUnit4, or raw scripts (`--format json`) |
 | `gd completions` | Generate shell completions (bash, zsh, fish, etc.) |
-| `gd tree` | Show project class hierarchy |
+| `gd tree` | Show project class hierarchy (`--scene` for scene node trees) |
 | `gd doc` | Generate documentation from doc comments (`--format json`, `--check`) |
 | `gd watch` | Watch files and run fmt/lint on changes |
 | `gd addons` | Manage project addons (install, remove, search, update, lock) |
 | `gd stats` | Show project statistics (`--diff <branch>`, `--by-dir`, `--top N`) |
 | `gd ci` | Generate CI/CD pipeline configuration |
 | `gd lsp` | Start the LSP server, or run one-shot queries (see below) |
-| `gd deps` | Show script dependency graph |
+| `gd deps` | Show script dependency graph (`--include-resources` for `.tscn`/`.tres`) |
 | `gd man` | Generate man page |
 | `gd upgrade` | Self-update to latest release |
 
@@ -169,11 +171,27 @@ gd watch --no-lint
 # Show dependency tree
 gd deps
 
+# Include .tscn/.tres resource dependencies
+gd deps --include-resources
+
 # Output as Graphviz DOT
 gd deps --format dot
 
 # Output as JSON
 gd deps --format json
+```
+
+### Scene Tree
+
+```sh
+# Show scene node hierarchy for a .tscn file
+gd tree --scene main.tscn
+
+# Show all scenes in a directory
+gd tree --scene .
+
+# JSON output
+gd tree --scene main.tscn --format json
 ```
 
 ### Statistics
@@ -432,6 +450,7 @@ Example GitHub Actions step:
 - **Find references** &mdash; find all usages across the project
 - **Rename** &mdash; rename symbols across files with prepare-rename support
 - **Completion** &mdash; context-aware autocomplete for symbols, builtins, and lifecycle methods
+- **Godot proxy** &mdash; forwards hover, completion, and definition to Godot's built-in LSP (port 6005) when the editor is running, with `--godot-port` and `--no-godot-proxy` flags
 
 ### One-Shot CLI Queries
 
@@ -479,6 +498,10 @@ gd lsp symbols --file player.gd --kind function,signal
 gd lsp view --file player.gd --range 10-20
 gd lsp view --file player.gd --start-line 15 --context 3
 gd lsp view --file player.gd --format json  # structured output for AI tools
+
+# Scene info (nodes, resources, connections from a .tscn file)
+gd lsp scene-info --file main.tscn
+gd lsp scene-info --file main.tscn --nodes-only
 
 # Create a new GDScript file with scaffolding
 gd lsp create-file --file enemies/boss.gd --extends CharacterBody2D --class-name Boss

@@ -6,7 +6,10 @@ use miette::Result;
 use serde::Serialize;
 use tree_sitter::Node;
 
-use crate::core::{config::Config, config::find_project_root, fs::collect_gdscript_files, parser};
+use crate::core::{
+    config::Config, config::find_project_root, fs::collect_gdscript_files,
+    fs::collect_resource_files, parser, resource_parser, scene,
+};
 use crate::lint::matches_ignore_pattern;
 
 #[derive(Args)]
@@ -85,6 +88,64 @@ pub fn exec(args: CheckArgs) -> Result<()> {
                                 report_errors(&mut cursor, &source, file);
                             }
                             report_structural(&structural, &source, file);
+                        }
+                    }
+                }
+                Err(e) => {
+                    error_count += 1;
+                    if json_mode {
+                        let rel = crate::core::fs::relative_slash(file, &cwd);
+                        parse_errors.push(ParseError {
+                            file: rel,
+                            line: 0,
+                            column: 0,
+                            message: format!("{e}"),
+                        });
+                    } else {
+                        eprintln!("{e}");
+                    }
+                }
+            }
+        }
+    }
+
+    // Check resource files (.tscn/.tres)
+    for root in &roots {
+        let project_root = find_project_root(root).or_else(|| find_project_root(&cwd));
+        let resource_files = collect_resource_files(root)?;
+        for file in &resource_files {
+            if matches_ignore_pattern(file, &ignore_base, &config.lint.ignore_patterns) {
+                continue;
+            }
+            checked += 1;
+            match resource_parser::parse_resource_file(file) {
+                Ok((source, tree)) => {
+                    let root_node = tree.root_node();
+                    if root_node.has_error() {
+                        error_count += 1;
+                        if json_mode {
+                            let mut cursor = root_node.walk();
+                            collect_errors(&mut cursor, file, &cwd, &mut parse_errors);
+                        } else {
+                            let mut cursor = root_node.walk();
+                            report_errors(&mut cursor, &source, file);
+                        }
+                    }
+
+                    // Validate resource paths and references in .tscn files
+                    if let Some(ext) = file.extension()
+                        && ext == "tscn"
+                        && let Some(ref proj_root) = project_root
+                        && let Ok(scene_data) = scene::parse_scene(&source)
+                    {
+                        let scene_errors = validate_scene(&scene_data, proj_root, file, &cwd);
+                        if !scene_errors.is_empty() {
+                            error_count += 1;
+                        }
+                        if json_mode {
+                            parse_errors.extend(scene_errors);
+                        } else {
+                            report_scene_errors(&scene_errors, file);
                         }
                     }
                 }
@@ -426,6 +487,92 @@ fn report_structural(errors: &[StructuralError], source: &str, file: &Path) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Scene (.tscn) validation
+// ---------------------------------------------------------------------------
+
+fn validate_scene(
+    data: &scene::SceneData,
+    project_root: &Path,
+    file: &Path,
+    cwd: &Path,
+) -> Vec<ParseError> {
+    let rel = crate::core::fs::relative_slash(file, cwd);
+    let mut errors = Vec::new();
+
+    // Check ext_resource paths exist on disk
+    for ext in &data.ext_resources {
+        if !ext.path.is_empty()
+            && let Some(resolved) = scene::resolve_res_path(&ext.path, project_root)
+            && !resolved.exists()
+        {
+            errors.push(ParseError {
+                file: rel.clone(),
+                line: 0,
+                column: 0,
+                message: format!("broken resource path: {} (file not found)", ext.path),
+            });
+        }
+    }
+
+    // Check for orphaned ext_resources (declared but never referenced)
+    for ext in &data.ext_resources {
+        if !scene::is_ext_resource_referenced(&ext.id, data) {
+            errors.push(ParseError {
+                file: rel.clone(),
+                line: 0,
+                column: 0,
+                message: format!(
+                    "orphaned ext_resource: {} ({}) is declared but never referenced",
+                    ext.id, ext.path
+                ),
+            });
+        }
+    }
+
+    // Check script references — script ExtResource must point to an existing .gd file
+    for node in &data.nodes {
+        if let Some(ref script_val) = node.script
+            && let Some(ext_id) = extract_ext_resource_id(script_val)
+            && let Some(ext) = data.ext_resources.iter().find(|e| e.id == ext_id)
+            && let Some(resolved) = scene::resolve_res_path(&ext.path, project_root)
+            && !resolved.exists()
+        {
+            errors.push(ParseError {
+                file: rel.clone(),
+                line: 0,
+                column: 0,
+                message: format!(
+                    "missing script: node \"{}\" references {} which doesn't exist",
+                    node.name, ext.path
+                ),
+            });
+        }
+    }
+
+    errors
+}
+
+/// Extract the id from `ExtResource("some_id")`.
+fn extract_ext_resource_id(value: &str) -> Option<&str> {
+    let trimmed = value.trim();
+    let inner = trimmed.strip_prefix("ExtResource(")?.strip_suffix(')')?;
+    let inner = inner.trim().trim_matches('"');
+    Some(inner)
+}
+
+fn report_scene_errors(errors: &[ParseError], _file: &Path) {
+    use owo_colors::OwoColorize;
+    for err in errors {
+        eprintln!(
+            "{} {} {}",
+            format!("{}:", err.file).dimmed(),
+            "warning:".yellow().bold(),
+            err.message,
+        );
+    }
+}
+
 fn collect_errors(
     cursor: &mut tree_sitter::TreeCursor,
     file: &Path,
@@ -631,5 +778,39 @@ mod tests {
         let source =
             "extends Node\n\n#region Signals\nsignal foo\n#endregion\n\nfunc _ready():\n\tpass\n";
         assert!(structural_errors(source).is_empty());
+    }
+
+    // -- Scene validation --
+
+    #[test]
+    fn extract_ext_resource_id_basic() {
+        assert_eq!(
+            super::extract_ext_resource_id(r#"ExtResource("1_abc")"#),
+            Some("1_abc")
+        );
+    }
+
+    #[test]
+    fn extract_ext_resource_id_none() {
+        assert_eq!(super::extract_ext_resource_id("not_a_reference"), None);
+    }
+
+    #[test]
+    fn validate_scene_orphaned_ext_resource() {
+        let source = r#"[gd_scene format=3]
+
+[ext_resource type="Texture2D" path="res://icon.png" id="unused_1"]
+
+[node name="Root" type="Node2D"]
+"#;
+        let data = crate::core::scene::parse_scene(source).unwrap();
+        let root = std::path::Path::new("/nonexistent");
+        let cwd = std::path::Path::new("/cwd");
+        let file = std::path::Path::new("/cwd/test.tscn");
+        let errors = super::validate_scene(&data, root, file, cwd);
+        assert!(
+            errors.iter().any(|e| e.message.contains("orphaned")),
+            "should detect orphaned ext_resource"
+        );
     }
 }

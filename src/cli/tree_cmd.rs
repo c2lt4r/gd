@@ -5,6 +5,8 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use crate::core::scene;
+
 #[derive(Args)]
 pub struct TreeArgs {
     /// Files or directories to analyze (defaults to current directory)
@@ -15,6 +17,9 @@ pub struct TreeArgs {
     /// Output format
     #[arg(long, default_value = "tree")]
     pub format: String,
+    /// Show scene node hierarchy from a .tscn file (or directory of .tscn files)
+    #[arg(long)]
+    pub scene: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -37,6 +42,11 @@ struct TreeOutput {
 }
 
 pub fn exec(args: TreeArgs) -> Result<()> {
+    // Scene hierarchy mode
+    if let Some(ref scene_path) = args.scene {
+        return exec_scene(scene_path, &args.format);
+    }
+
     // Determine root directory
     let root = if args.paths.is_empty() {
         std::env::current_dir().map_err(|e| miette!("Failed to get current directory: {e}"))?
@@ -271,5 +281,183 @@ fn render_tree(root: &Path, file_count: usize, classes: &[ClassInfo], classes_on
         if !is_last_base {
             println!();
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Scene hierarchy mode (--scene)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Serialize)]
+struct SceneTreeNode {
+    name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    r#type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    script: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    children: Vec<SceneTreeNode>,
+}
+
+fn exec_scene(scene_path: &str, format: &str) -> Result<()> {
+    let path = PathBuf::from(scene_path);
+
+    if path.is_dir() {
+        // Show all scenes in the directory
+        let files = crate::core::fs::collect_resource_files(&path)?;
+        let tscn_files: Vec<_> = files
+            .iter()
+            .filter(|f| f.extension().is_some_and(|e| e == "tscn"))
+            .collect();
+
+        if tscn_files.is_empty() {
+            println!("No .tscn files found in {}", path.display());
+            return Ok(());
+        }
+
+        if format == "json" {
+            let mut scenes = Vec::new();
+            for file in &tscn_files {
+                if let Ok(data) = scene::parse_scene_file(file) {
+                    let rel = crate::core::fs::relative_slash(file, &path);
+                    let tree = build_scene_tree(&data);
+                    scenes.push(serde_json::json!({
+                        "file": rel,
+                        "root": tree,
+                    }));
+                }
+            }
+            let json = serde_json::to_string_pretty(&scenes)
+                .map_err(|e| miette!("Failed to serialize JSON: {e}"))?;
+            println!("{json}");
+        } else {
+            for (i, file) in tscn_files.iter().enumerate() {
+                let rel = crate::core::fs::relative_slash(file, &path);
+                if let Ok(data) = scene::parse_scene_file(file) {
+                    let tree = build_scene_tree(&data);
+                    println!("{}", rel.cyan().bold());
+                    render_scene_node(&tree, "", true);
+                    if i < tscn_files.len() - 1 {
+                        println!();
+                    }
+                }
+            }
+        }
+    } else {
+        // Single .tscn file
+        let data = scene::parse_scene_file(&path)?;
+
+        if format == "json" {
+            let tree = build_scene_tree(&data);
+            let json = serde_json::to_string_pretty(&tree)
+                .map_err(|e| miette!("Failed to serialize JSON: {e}"))?;
+            println!("{json}");
+        } else {
+            let tree = build_scene_tree(&data);
+            println!("{} {}", "Scene:".bold(), scene_path.cyan().bold());
+            render_scene_node(&tree, "", true);
+        }
+    }
+
+    Ok(())
+}
+
+/// Build a nested tree from the flat list of scene nodes.
+fn build_scene_tree(data: &scene::SceneData) -> SceneTreeNode {
+    if data.nodes.is_empty() {
+        return SceneTreeNode {
+            name: "(empty)".to_string(),
+            r#type: None,
+            script: None,
+            children: Vec::new(),
+        };
+    }
+
+    // The root node is the one without a parent
+    let root_node = &data.nodes[0];
+    let mut root = SceneTreeNode {
+        name: root_node.name.clone(),
+        r#type: root_node.type_name.clone(),
+        script: script_display(&root_node.script),
+        children: Vec::new(),
+    };
+
+    // Build children by parent path
+    // parent="." means direct child of root
+    // parent="NodeA" means child of NodeA
+    // parent="NodeA/NodeB" means child of NodeA/NodeB
+    add_children(&mut root, "", &data.nodes[1..]);
+
+    root
+}
+
+/// Recursively add children to their parent nodes.
+fn add_children(parent: &mut SceneTreeNode, parent_path: &str, remaining: &[scene::SceneNode]) {
+    for node in remaining {
+        let node_parent = node.parent.as_deref().unwrap_or("");
+        if node_parent == "." && parent_path.is_empty()
+            || node_parent == parent_path && !parent_path.is_empty()
+        {
+            let child_path = if parent_path.is_empty() {
+                node.name.clone()
+            } else {
+                format!("{}/{}", parent_path, node.name)
+            };
+
+            let mut child = SceneTreeNode {
+                name: node.name.clone(),
+                r#type: node.type_name.clone(),
+                script: script_display(&node.script),
+                children: Vec::new(),
+            };
+            add_children(&mut child, &child_path, remaining);
+            parent.children.push(child);
+        }
+    }
+}
+
+/// Extract a human-readable script path from the script property value.
+fn script_display(script: &Option<String>) -> Option<String> {
+    script.clone()
+}
+
+fn render_scene_node(node: &SceneTreeNode, prefix: &str, is_last: bool) {
+    let connector = if prefix.is_empty() {
+        ""
+    } else if is_last {
+        "└── "
+    } else {
+        "├── "
+    };
+
+    let type_str = node
+        .r#type
+        .as_deref()
+        .map(|t| format!(" ({})", t.green()))
+        .unwrap_or_default();
+
+    let script_str = node
+        .script
+        .as_deref()
+        .map(|s| format!(" {}", s.dimmed()))
+        .unwrap_or_default();
+
+    println!(
+        "{}{}{}{type_str}{script_str}",
+        prefix,
+        connector,
+        node.name.cyan(),
+    );
+
+    let child_prefix = if prefix.is_empty() {
+        "  ".to_string()
+    } else if is_last {
+        format!("{}    ", prefix)
+    } else {
+        format!("{}│   ", prefix)
+    };
+
+    for (i, child) in node.children.iter().enumerate() {
+        render_scene_node(child, &child_prefix, i == node.children.len() - 1);
     }
 }

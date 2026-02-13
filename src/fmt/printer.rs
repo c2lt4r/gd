@@ -1510,7 +1510,10 @@ mod tests {
             "multiline dict should stay multiline, got:\n{output}"
         );
         let second = format_source(&output);
-        assert_eq!(output, second, "not idempotent!\nFirst:\n{output}\nSecond:\n{second}");
+        assert_eq!(
+            output, second,
+            "not idempotent!\nFirst:\n{output}\nSecond:\n{second}"
+        );
     }
 
     #[test]
@@ -1522,7 +1525,10 @@ mod tests {
             "multiline array should stay multiline, got:\n{output}"
         );
         let second = format_source(&output);
-        assert_eq!(output, second, "not idempotent!\nFirst:\n{output}\nSecond:\n{second}");
+        assert_eq!(
+            output, second,
+            "not idempotent!\nFirst:\n{output}\nSecond:\n{second}"
+        );
     }
 
     #[test]
@@ -1563,18 +1569,14 @@ mod tests {
 
     #[test]
     fn test_typed_array_const_with_comments() {
-        let input =
-            "const X: PackedStringArray = [\n\t\"A\",  # comment\n\t\"B\",  # comment\n]\n";
+        let input = "const X: PackedStringArray = [\n\t\"A\",  # comment\n\t\"B\",  # comment\n]\n";
         let output = format_source(input);
         let tree = crate::core::parser::parse(&output).unwrap();
         assert!(
             !tree.root_node().has_error(),
             "formatted output has parse errors:\n{output}"
         );
-        assert!(
-            output.contains("\"A\",  # comment"),
-            "got:\n{output}"
-        );
+        assert!(output.contains("\"A\",  # comment"), "got:\n{output}");
     }
 
     #[test]
@@ -1588,8 +1590,7 @@ mod tests {
 
     #[test]
     fn test_line_continuation_chain_with_comment() {
-        let input =
-            "func f():\n\tvar x := a\\\n\t\t.b()\\\n\t\t# comment\n\t\t.c()\n";
+        let input = "func f():\n\tvar x := a\\\n\t\t.b()\\\n\t\t# comment\n\t\t.c()\n";
         let pass1 = format_source(input);
         let pass2 = format_source(&pass1);
         assert_eq!(pass1, pass2, "not idempotent");
@@ -1606,8 +1607,7 @@ mod tests {
 
     #[test]
     fn test_line_continuation_in_params_idempotent() {
-        let input =
-            "func f(a: int, b: int, \\\n\t\tc: int) -> void:\n\tpass\n";
+        let input = "func f(a: int, b: int, \\\n\t\tc: int) -> void:\n\tpass\n";
         let pass1 = format_source(input);
         let pass2 = format_source(&pass1);
         eprintln!("=== PASS 1 ===\n{pass1}\n=== PASS 2 ===\n{pass2}\n=== END ===");

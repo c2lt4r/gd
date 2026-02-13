@@ -7,6 +7,12 @@ use miette::Result;
 pub struct LspArgs {
     #[command(subcommand)]
     pub command: Option<LspCommand>,
+    /// Port for Godot's built-in LSP server (default: 6005)
+    #[arg(long, default_value = "6005")]
+    pub godot_port: u16,
+    /// Disable proxy to Godot's built-in LSP server
+    #[arg(long)]
+    pub no_godot_proxy: bool,
 }
 
 #[derive(Subcommand)]
@@ -420,6 +426,15 @@ pub enum LspCommand {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Show scene structure from a .tscn file (nodes, resources, connections)
+    SceneInfo {
+        /// Path to the .tscn file
+        #[arg(long)]
+        file: String,
+        /// Show only nodes (compact output)
+        #[arg(long)]
+        nodes_only: bool,
+    },
     /// Change a function's signature and update all call sites
     ChangeSignature {
         /// Path to the GDScript file
@@ -504,7 +519,12 @@ fn read_content(input_file: Option<&str>) -> Result<String> {
 pub fn exec(args: LspArgs) -> Result<()> {
     let Some(command) = args.command else {
         // No subcommand — start the LSP server (backward compatible)
-        crate::lsp::run_server();
+        let port = if args.no_godot_proxy {
+            0
+        } else {
+            args.godot_port
+        };
+        crate::lsp::run_server_with_options(port);
         return Ok(());
     };
 
@@ -918,8 +938,8 @@ pub fn exec(args: LspArgs) -> Result<()> {
             } else {
                 let s = start_line
                     .ok_or_else(|| miette::miette!("--start-line or --range is required"))?;
-                let e = end_line
-                    .ok_or_else(|| miette::miette!("--end-line or --range is required"))?;
+                let e =
+                    end_line.ok_or_else(|| miette::miette!("--end-line or --range is required"))?;
                 (s, e)
             };
             let content = read_content(input_file.as_deref())?;
@@ -993,6 +1013,12 @@ pub fn exec(args: LspArgs) -> Result<()> {
             dry_run,
         } => {
             let result = crate::lsp::query::query_extract_class(&file, &symbols, &to, dry_run)?;
+            let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+            println!("{json}");
+            Ok(())
+        }
+        LspCommand::SceneInfo { file, nodes_only } => {
+            let result = crate::lsp::query::query_scene_info(&file, nodes_only)?;
             let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
             println!("{json}");
             Ok(())
