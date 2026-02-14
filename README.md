@@ -14,7 +14,7 @@ Built with [tree-sitter](https://tree-sitter.github.io/) for accurate parsing an
 - **Generate CI/CD** configurations for GitHub Actions and GitLab CI
 - **LSP server** with formatting, diagnostics, hover, go-to-definition, references, rename, completion, and 16 refactoring commands
 - **Scene analysis** &mdash; validate `.tscn`/`.tres` files, visualize scene node hierarchies, and track resource dependencies
-- **Debug** a running Godot game via DAP and Godot's binary debug protocol &mdash; breakpoints, stepping, variable inspection, expression evaluation, live scene tree, node inspection, game speed control, and hot-reload
+- **Debug** a running Godot game via Godot's binary debug protocol &mdash; breakpoints, stepping, variable inspection, expression evaluation, live scene tree, node inspection, game speed control, and hot-reload
 - **Godot LSP proxy** &mdash; forward hover, completion, and go-to-definition to Godot's built-in LSP when the editor is running
 - **Analyze** your project with dependency graphs, class trees, and code statistics
 
@@ -233,7 +233,7 @@ gd ci github --export --godot-version 4.4
 
 ### Daemon
 
-A background daemon maintains persistent Godot LSP and DAP connections, so CLI queries are instant. It auto-starts on the first query and auto-exits after 5 minutes of inactivity.
+A background daemon maintains persistent Godot LSP and debug protocol connections, so CLI queries are instant. It auto-starts on the first query and auto-exits after 5 minutes of inactivity.
 
 ```sh
 # Show daemon connectivity and state
@@ -257,7 +257,7 @@ godot_path = "C:/path/to/godot.exe"
 
 ### Debugging
 
-Debug a running Godot game via DAP and Godot's native binary debug protocol. The background daemon maintains persistent connections, so CLI queries are instant.
+Debug a running Godot game via Godot's native binary debug protocol. The background daemon maintains persistent connections, so CLI queries are instant.
 
 ```sh
 # Run the project (auto-wires debug connection)
