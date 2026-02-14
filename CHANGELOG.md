@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.2.3] - 2026-02-14
+## [0.2.4] - 2026-02-14
 
 ### Added
 - **Cross-file resolution engine** (`src/core/workspace_index.rs`) — Layer 3: project-wide symbol index that maps `class_name` declarations to their symbols, parses `project.godot` autoloads, and resolves `preload()` targets. Built once at lint time, shared read-only across parallel file linting.
@@ -13,6 +13,8 @@
   - `unsafe-void-return` — now detects user-defined void functions across files
   - `native-method-override` — now checks user-defined base class methods, not just ClassDB
 - **Project-aware type inference** — `infer_expression_type_with_project()` resolves method return types from user-defined base classes before falling back to ClassDB
+
+## [0.2.3] - 2026-02-14
 
 ### Changed
 - **Remove image processing dependencies** — removed `base64`, `png`, and `jpeg-encoder` crates. Screenshot commands now return PNG file paths instead of base64-encoded data. Reduces binary size by ~240 KB.
