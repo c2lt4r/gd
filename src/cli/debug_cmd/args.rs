@@ -284,7 +284,7 @@ pub struct SetPropArgs {
     /// New value (JSON: numbers, strings, booleans, null)
     #[arg(long)]
     pub value: String,
-    /// Take a screenshot after setting the property (outputs base64 PNG)
+    /// Take a screenshot after setting the property (outputs PNG path)
     #[arg(long)]
     pub screenshot: bool,
     /// Output format
@@ -379,7 +379,7 @@ pub struct SetPropFieldArgs {
     /// New value (JSON)
     #[arg(long)]
     pub value: String,
-    /// Take a screenshot after setting the property (outputs base64 PNG)
+    /// Take a screenshot after setting the property (outputs PNG path)
     #[arg(long)]
     pub screenshot: bool,
     /// Output format
@@ -618,7 +618,7 @@ pub struct TransformCamera3dArgs {
 
 #[derive(Args)]
 pub struct ScreenshotArgs {
-    /// Write PNG to file instead of printing base64 to stdout
+    /// Copy PNG to this path (default: prints temp file path)
     #[arg(long, short)]
     pub output: Option<String>,
     /// Output format

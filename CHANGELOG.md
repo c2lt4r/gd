@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.2.3] - 2026-02-14
+
+### Changed
+- **Remove image processing dependencies** — removed `base64`, `png`, and `jpeg-encoder` crates. Screenshot commands now return PNG file paths instead of base64-encoded data. Reduces binary size by ~240 KB.
+
 ## [0.2.2] - 2026-02-14
 
 ### Added

@@ -86,9 +86,9 @@ gd debug scene camera-view --format json  # JSON: camera info + every spatial no
 gd debug camera override [--off]       # Take/release remote camera control
 gd debug camera transform-2d --transform <json-array-6-floats>
 gd debug camera transform-3d --transform <json-array-12-floats> --perspective <bool> --fov <N> --near <N> --far <N>
-gd debug camera screenshot             # Output base64 PNG to stdout (default)
-gd debug camera screenshot --format json  # JSON with width, height, format, data (base64) fields
-gd debug camera screenshot --output <file>  # Write PNG file instead of base64 output
+gd debug camera screenshot             # Output PNG file path
+gd debug camera screenshot --format json  # JSON with width, height, format, path fields
+gd debug camera screenshot --output <file>  # Copy PNG to specified path
 gd debug profiler --name scripts|visual|servers [--off]  # Toggle profiler
 
 # Live editing (gd debug live <cmd>, requires `live set-root` first)
@@ -216,7 +216,7 @@ gd upgrade [--check]                   # Self-update
 # --rich                  Enrich inspect with ClassDB docs (type descriptions, docs URLs)
 # --off                   Toggle pattern: mute-audio --off, suspend --off, skip-breakpoints --off
 # --dry-run               Preview refactoring changes without applying
-# --screenshot             Auto-capture screenshot after set-prop/set-prop-field (outputs base64)
+# --screenshot             Auto-capture screenshot after set-prop/set-prop-field (outputs PNG path)
 # --check                 CI mode: exit 1 on issues (fmt --check, doc --check)
 # res:// paths            Godot resource paths used in debug breakpoints and live editing
 # Object IDs              From scene-tree output, used in inspect/set-prop/set-prop-field

@@ -126,26 +126,13 @@ pub fn dispatch_debug_request_screenshot(
     };
     match ds.cmd_request_screenshot(id) {
         Some(result) => {
-            // Read the PNG file from Godot's temp dir and base64-encode it
             let file_path = crate::core::fs::windows_to_wsl_path(&result.path);
-            match std::fs::read(&file_path) {
-                Ok(bytes) => {
-                    use base64::Engine;
-                    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
-                    // Clean up the temp file
-                    let _ = std::fs::remove_file(&file_path);
-                    ok_response(serde_json::json!({
-                        "width": result.width,
-                        "height": result.height,
-                        "data": b64,
-                        "format": "png",
-                    }))
-                }
-                Err(e) => error_response(&format!(
-                    "Screenshot captured ({}x{}) but failed to read {}: {e}",
-                    result.width, result.height, file_path
-                )),
-            }
+            ok_response(serde_json::json!({
+                "width": result.width,
+                "height": result.height,
+                "path": file_path,
+                "format": "png",
+            }))
         }
         None => error_response("request_screenshot failed or timed out"),
     }

@@ -5,7 +5,7 @@ use super::args::{
     IgnoreErrorsArgs, OutputFormat, ReloadScriptsArgs, SetPropArgs, SetPropFieldArgs,
     SkipBreakpointsArgs, StepArgs, SuspendArgs, TimeScaleArgs,
 };
-use super::camera::take_screenshot_b64;
+use super::camera::take_screenshot;
 use super::{daemon_cmd, ensure_binary_debug};
 
 // ── One-shot: set-prop ──────────────────────────────────────────────
@@ -34,10 +34,10 @@ pub(crate) fn cmd_set_prop(args: &SetPropArgs) -> Result<()> {
     match args.format {
         OutputFormat::Json => {
             if args.screenshot {
-                let (w, h, b64) = take_screenshot_b64()?;
+                let (w, h, path) = take_screenshot(None)?;
                 let mut combined = result.clone();
                 combined["screenshot"] = serde_json::json!({
-                    "width": w, "height": h, "format": "png", "data": b64,
+                    "width": w, "height": h, "format": "png", "path": path,
                 });
                 println!("{}", serde_json::to_string_pretty(&combined).unwrap());
             } else {
@@ -53,8 +53,8 @@ pub(crate) fn cmd_set_prop(args: &SetPropArgs) -> Result<()> {
                 args.value.green(),
             );
             if args.screenshot {
-                let (_w, _h, b64) = take_screenshot_b64()?;
-                print!("{b64}");
+                let (_w, _h, path) = take_screenshot(None)?;
+                println!("{path}");
             }
         }
     }
@@ -262,9 +262,9 @@ pub(crate) fn cmd_set_prop_field(args: &SetPropFieldArgs) -> Result<()> {
                 "value": json_value,
             });
             if args.screenshot {
-                let (w, h, b64) = take_screenshot_b64()?;
+                let (w, h, path) = take_screenshot(None)?;
                 out["screenshot"] = serde_json::json!({
-                    "width": w, "height": h, "format": "png", "data": b64,
+                    "width": w, "height": h, "format": "png", "path": path,
                 });
             }
             println!("{}", serde_json::to_string_pretty(&out).unwrap());
@@ -279,8 +279,8 @@ pub(crate) fn cmd_set_prop_field(args: &SetPropFieldArgs) -> Result<()> {
                 args.value.green(),
             );
             if args.screenshot {
-                let (_w, _h, b64) = take_screenshot_b64()?;
-                print!("{b64}");
+                let (_w, _h, path) = take_screenshot(None)?;
+                println!("{path}");
             }
         }
     }
