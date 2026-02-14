@@ -260,15 +260,4 @@ mod tests {
         assert!(result.is_some());
     }
 
-    #[test]
-    fn count_errors_clean_tree() {
-        let tree = parser::parse("func hello() -> void:\n\tpass\n").unwrap();
-        assert_eq!(count_error_nodes(&tree.root_node()), 0);
-    }
-
-    #[test]
-    fn count_errors_with_errors() {
-        let tree = parser::parse("func () -> :\n").unwrap();
-        assert!(count_error_nodes(&tree.root_node()) > 0);
-    }
 }

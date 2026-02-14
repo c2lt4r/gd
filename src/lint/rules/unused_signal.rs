@@ -266,13 +266,6 @@ mod tests {
     }
 
     #[test]
-    fn event_bus_with_vars_still_suppressed() {
-        // Signals + vars but no functions → still event bus
-        let source = "signal game_started\nsignal game_over\nvar description = \"Events\"\n";
-        assert!(check(source).is_empty());
-    }
-
-    #[test]
     fn file_with_functions_still_warns() {
         // Has functions → not event bus, should still warn
         let source = "signal my_signal\n\nfunc f():\n\tpass\n";

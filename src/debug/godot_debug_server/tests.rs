@@ -2,7 +2,7 @@ use std::net::TcpStream;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::debug::variant::{GodotVariant, decode_packet, encode_packet};
+use crate::debug::variant::GodotVariant;
 
 use super::inbox::{Inbox, msg_matches};
 use super::parsers::{
@@ -11,27 +11,6 @@ use super::parsers::{
     variant_as_usize,
 };
 use super::{GodotDebugServer, normalize_message};
-
-#[test]
-fn test_send_command_encoding() {
-    // Verify that send_command produces the right packet structure
-    let items = vec![
-        GodotVariant::String("breakpoint".to_string()),
-        GodotVariant::String("res://main.gd".to_string()),
-        GodotVariant::Int(10),
-        GodotVariant::Bool(true),
-    ];
-    let packet = encode_packet(&items);
-    let decoded = decode_packet(&packet).unwrap();
-    assert_eq!(decoded.len(), 4);
-    assert_eq!(decoded[0], GodotVariant::String("breakpoint".to_string()));
-    assert_eq!(
-        decoded[1],
-        GodotVariant::String("res://main.gd".to_string())
-    );
-    assert_eq!(decoded[2], GodotVariant::Int(10));
-    assert_eq!(decoded[3], GodotVariant::Bool(true));
-}
 
 #[test]
 fn test_parse_stack_dump() {

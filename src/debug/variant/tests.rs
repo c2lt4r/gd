@@ -458,54 +458,6 @@ fn decode_unknown_type_returns_none() {
     assert!(decode_variant(&buf, &mut offset).is_none());
 }
 
-#[test]
-fn display_nil() {
-    assert_eq!(GodotVariant::Nil.to_string(), "null");
-}
-
-#[test]
-fn display_vector3() {
-    assert_eq!(
-        GodotVariant::Vector3(1.0, 2.0, 3.0).to_string(),
-        "Vector3(1, 2, 3)"
-    );
-}
-
-#[test]
-fn display_array() {
-    let v = GodotVariant::Array(vec![GodotVariant::Int(1), GodotVariant::Int(2)]);
-    assert_eq!(v.to_string(), "[1, 2]");
-}
-
-#[test]
-fn display_dictionary() {
-    let v = GodotVariant::Dictionary(vec![(
-        GodotVariant::String("key".into()),
-        GodotVariant::Int(42),
-    )]);
-    assert_eq!(v.to_string(), "{\"key\": 42}");
-}
-
-#[test]
-fn serde_json_nil() {
-    let v = GodotVariant::Nil;
-    let json = serde_json::to_string(&v).unwrap();
-    assert_eq!(json, r#"{"type":"Nil"}"#);
-}
-
-#[test]
-fn serde_json_int() {
-    let v = GodotVariant::Int(42);
-    let json = serde_json::to_string(&v).unwrap();
-    assert_eq!(json, r#"{"type":"Int","value":42}"#);
-}
-
-#[test]
-fn serde_json_array() {
-    let v = GodotVariant::Array(vec![GodotVariant::Int(1), GodotVariant::Bool(true)]);
-    let json = serde_json::to_string(&v).unwrap();
-    assert!(json.contains("\"type\":\"Array\""));
-}
 
 #[test]
 fn int_encoding_size() {

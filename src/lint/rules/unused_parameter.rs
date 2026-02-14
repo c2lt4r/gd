@@ -223,22 +223,12 @@ mod tests {
     }
 
     #[test]
-    fn does_not_count_nested_function_usage() {
-        // If param is only used in a nested lambda/function, it shouldn't count
+    fn lambda_capture_flagged_as_unused() {
+        // Known limitation: lambda/closure captures aren't detected as usage.
+        // collect_references skips nested function bodies, so `x` inside the
+        // lambda is invisible. Acceptable false positive for an opt-in rule.
         let source = "func f(x: int) -> void:\n\tvar fn := func(): return x\n";
-        // x IS referenced in the lambda body, but our collect_references doesn't
-        // enter nested functions. However, the lambda captures x, which is valid usage.
-        // Actually, let's check: we DO skip nested function_definition and lambda in collect_references.
-        // But the lambda usage IS a reference to x in the outer scope — it's a closure capture.
-        // For simplicity, we treat this as "used" since the identifier appears in a child node
-        // before we hit the lambda node boundary. Let's see how tree-sitter structures this...
-        // Actually, `var fn := func(): return x` - the lambda is a value in variable_statement.
-        // collect_references is called on body, which has the variable_statement as a child.
-        // The variable_statement recurses into its children. The lambda node will be skipped.
-        // So x inside the lambda won't be found. This means we'd get a false positive.
-        // This is acceptable for an opt-in rule, but let's document it.
         let diags = check(source);
-        // x is only used inside the lambda, so we flag it (acceptable for opt-in)
         assert_eq!(diags.len(), 1);
     }
 

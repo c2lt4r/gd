@@ -283,7 +283,7 @@ mod tests {
     fn checks_all_functions() {
         let source = "func a(goodOne: int):\n\tpass\n\nfunc b(badParam: float):\n\tpass\n";
         let diags = check(source);
-        // goodOne -> good_one, badParam -> bad_param
+        // Both are camelCase violations: goodOne, badParam
         assert_eq!(diags.len(), 2);
     }
 

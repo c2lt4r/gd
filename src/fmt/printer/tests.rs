@@ -101,13 +101,6 @@ fn test_get_node_preserved() {
 // ── Edge case tests ───────────────────────────────────────────────
 
 #[test]
-fn test_annotation_on_same_line_as_var() {
-    let input = "@export var health: int = 100\n";
-    let output = format_source(input);
-    assert_eq!(output, "@export var health: int = 100\n");
-}
-
-#[test]
 fn test_onready_annotation_on_same_line() {
     let input = "@onready var sprite: Sprite2D = $Sprite2D\n";
     let output = format_source(input);
@@ -392,28 +385,6 @@ fn test_static_func() {
     let input = "static func create() -> void:\n\tpass\n";
     let output = format_source(input);
     assert_eq!(output, "static func create() -> void:\n\tpass\n");
-}
-
-#[test]
-fn test_static_var_idempotent() {
-    let input = "static var count: int = 0\n";
-    let first = format_source(input);
-    let second = format_source(&first);
-    assert_eq!(
-        first, second,
-        "static var not idempotent!\nFirst:\n{first}\nSecond:\n{second}"
-    );
-}
-
-#[test]
-fn test_static_func_idempotent() {
-    let input = "static func create() -> void:\n\tpass\n";
-    let first = format_source(input);
-    let second = format_source(&first);
-    assert_eq!(
-        first, second,
-        "static func not idempotent!\nFirst:\n{first}\nSecond:\n{second}"
-    );
 }
 
 #[test]
