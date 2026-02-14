@@ -2,6 +2,18 @@
 
 ## [0.2.3] - 2026-02-14
 
+### Added
+- **Cross-file resolution engine** (`src/core/workspace_index.rs`) — Layer 3: project-wide symbol index that maps `class_name` declarations to their symbols, parses `project.godot` autoloads, and resolves `preload()` targets. Built once at lint time, shared read-only across parallel file linting.
+- **3 new lint rules** (72 → 75 total):
+  - `shadowed-variable-base-class` (opt-in) — local variable shadows a member of a user-defined base class
+  - `static-called-on-instance` (default-on) — static method called on `self` or typed instance instead of the class
+  - `missing-tool` (opt-in) — base class has `@tool` but this script does not
+- **Enhanced existing rules with cross-file awareness:**
+  - `return-value-discarded` — now detects user-defined non-void functions across files
+  - `unsafe-void-return` — now detects user-defined void functions across files
+  - `native-method-override` — now checks user-defined base class methods, not just ClassDB
+- **Project-aware type inference** — `infer_expression_type_with_project()` resolves method return types from user-defined base classes before falling back to ClassDB
+
 ### Changed
 - **Remove image processing dependencies** — removed `base64`, `png`, and `jpeg-encoder` crates. Screenshot commands now return PNG file paths instead of base64-encoded data. Reduces binary size by ~240 KB.
 

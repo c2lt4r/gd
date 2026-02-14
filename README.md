@@ -7,7 +7,7 @@ Built with [tree-sitter](https://tree-sitter.github.io/) for accurate parsing an
 ## Features
 
 - **Format** GDScript files with an AST-based formatter aligned to the [GDScript style guide](https://docs.godotengine.org/en/stable/tutorials/scripting/gdscript/gdscript_styleguide.html)
-- **Lint** with 72 built-in rules (17 auto-fixable), SARIF output for CI
+- **Lint** with 75 built-in rules (17 auto-fixable), SARIF output for CI
 - **Run**, **build**, **test**, and **clean** your Godot project from the terminal
 - **Watch** for file changes and auto-lint/format on save
 - **Manage addons** from Git or the Godot Asset Library (with lockfile and update support)
@@ -371,7 +371,7 @@ The template system automatically finds `project.godot` within the repository to
 
 ## Lint Rules
 
-All 72 built-in rules (43 default-enabled, 29 opt-in):
+All 75 built-in rules (44 default-enabled, 31 opt-in):
 
 | Rule | Description | Severity | Fixable |
 |------|-------------|----------|---------|
@@ -438,6 +438,7 @@ All 72 built-in rules (43 default-enabled, 29 opt-in):
 | `max-file-lines` | Enforce maximum file length | warning | |
 | `max-line-length` | Enforce maximum line length | warning | |
 | `max-public-methods` | Enforce maximum public methods per class | warning | |
+| `missing-tool` | Detect missing `@tool` when base class has it | warning | |
 | `narrowing-conversion` | Detect float-to-int narrowing conversions | warning | yes |
 | `native-method-override` | Detect overriding native engine methods | error | |
 | `null-after-await` | Warn on member access after `await` without null guard | warning | |
@@ -445,7 +446,9 @@ All 72 built-in rules (43 default-enabled, 29 opt-in):
 | `print-statement` | Detect debug print calls | info | |
 | `redundant-static-unload` | Detect `@static_unload` without any `static var` | warning | |
 | `return-value-discarded` | Detect discarded non-void function return values | info | |
+| `shadowed-variable-base-class` | Detect local variables shadowing base class members | warning | |
 | `signal-not-connected` | Detect signals emitted but never connected | info | |
+| `static-called-on-instance` | Detect static methods called on instances | warning | |
 | `todo-comment` | Detect TODO/FIXME/HACK comments | info | |
 | `unsafe-void-return` | Detect returning or assigning void call results | warning | yes |
 | `unused-parameter` | Detect unused function parameters | warning | |

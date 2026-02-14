@@ -3,7 +3,10 @@ use tree_sitter::{Node, Tree};
 use super::{Fix, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
 use crate::core::symbol_table::SymbolTable;
-use crate::core::type_inference::{InferredType, infer_expression_type};
+use crate::core::type_inference::{
+    InferredType, infer_expression_type, infer_expression_type_with_project,
+};
+use crate::core::workspace_index::ProjectIndex;
 
 pub struct UnsafeVoidReturn;
 
@@ -28,16 +31,35 @@ impl LintRule for UnsafeVoidReturn {
         symbols: &SymbolTable,
     ) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        check_node(tree.root_node(), source, symbols, &mut diags);
+        check_node(tree.root_node(), source, symbols, None, &mut diags);
+        diags
+    }
+
+    fn check_with_project(
+        &self,
+        tree: &Tree,
+        source: &str,
+        _config: &LintConfig,
+        symbols: &SymbolTable,
+        project: &ProjectIndex,
+    ) -> Vec<LintDiagnostic> {
+        let mut diags = Vec::new();
+        check_node(tree.root_node(), source, symbols, Some(project), &mut diags);
         diags
     }
 }
 
-fn check_node(node: Node, source: &str, symbols: &SymbolTable, diags: &mut Vec<LintDiagnostic>) {
+fn check_node(
+    node: Node,
+    source: &str,
+    symbols: &SymbolTable,
+    project: Option<&ProjectIndex>,
+    diags: &mut Vec<LintDiagnostic>,
+) {
     // Look for `return <expr>` where `<expr>` is a void function call
     if node.kind() == "return_statement"
         && let Some(expr) = node.named_child(0)
-        && is_void_call(&expr, source, symbols)
+        && is_void_call(&expr, source, symbols, project)
     {
         let call_text = expr.utf8_text(source.as_bytes()).ok().unwrap_or("?");
         let display = if call_text.len() > 40 {
@@ -72,7 +94,7 @@ fn check_node(node: Node, source: &str, symbols: &SymbolTable, diags: &mut Vec<L
     // Also check variable assignments: `var x = void_func()`
     if node.kind() == "variable_statement"
         && let Some(value) = node.child_by_field_name("value")
-        && is_void_call(&value, source, symbols)
+        && is_void_call(&value, source, symbols, project)
     {
         let var_name = node
             .child_by_field_name("name")
@@ -104,7 +126,7 @@ fn check_node(node: Node, source: &str, symbols: &SymbolTable, diags: &mut Vec<L
     let mut cursor = node.walk();
     if cursor.goto_first_child() {
         loop {
-            check_node(cursor.node(), source, symbols, diags);
+            check_node(cursor.node(), source, symbols, project, diags);
             if !cursor.goto_next_sibling() {
                 break;
             }
@@ -112,7 +134,12 @@ fn check_node(node: Node, source: &str, symbols: &SymbolTable, diags: &mut Vec<L
     }
 }
 
-fn is_void_call(node: &Node, source: &str, symbols: &SymbolTable) -> bool {
+fn is_void_call(
+    node: &Node,
+    source: &str,
+    symbols: &SymbolTable,
+    project: Option<&ProjectIndex>,
+) -> bool {
     // Only flag actual call expressions (not identifiers or other exprs)
     let is_call = node.kind() == "call"
         || (node.kind() == "attribute" && {
@@ -123,10 +150,12 @@ fn is_void_call(node: &Node, source: &str, symbols: &SymbolTable) -> bool {
     if !is_call {
         return false;
     }
-    matches!(
-        infer_expression_type(node, source, symbols),
-        Some(InferredType::Void)
-    )
+    let inferred = if let Some(proj) = project {
+        infer_expression_type_with_project(node, source, symbols, proj)
+    } else {
+        infer_expression_type(node, source, symbols)
+    };
+    matches!(inferred, Some(InferredType::Void))
 }
 
 #[cfg(test)]

@@ -43,6 +43,7 @@ pub mod variant_inference;
 
 pub mod callable_null_check;
 pub mod class_definitions_order;
+
 pub mod cyclomatic_complexity;
 pub mod deeply_nested_code;
 pub mod duplicate_delegate;
@@ -74,6 +75,10 @@ pub mod too_many_parameters;
 pub mod unused_parameter;
 pub mod unused_private_class_variable;
 
+pub mod missing_tool;
+pub mod shadowed_variable_base_class;
+pub mod static_called_on_instance;
+
 use std::collections::HashMap;
 use std::fmt;
 use std::str::FromStr;
@@ -81,6 +86,7 @@ use tree_sitter::Tree;
 
 use crate::core::config::{LintConfig, RuleConfig};
 use crate::core::symbol_table::SymbolTable;
+use crate::core::workspace_index::ProjectIndex;
 
 /// Severity of a lint diagnostic.
 /// Ordered: Info < Warning < Error (used for `--severity` filtering).
@@ -170,6 +176,20 @@ pub trait LintRule: Send + Sync {
     ) -> Vec<LintDiagnostic> {
         self.check(tree, source, config)
     }
+
+    /// Run the rule with access to the project-wide symbol index.
+    /// Default delegates to `check_with_symbols()`.
+    /// Override this in rules that need cross-file resolution (Layer 3).
+    fn check_with_project(
+        &self,
+        tree: &Tree,
+        source: &str,
+        config: &LintConfig,
+        symbols: &SymbolTable,
+        _project: &ProjectIndex,
+    ) -> Vec<LintDiagnostic> {
+        self.check_with_symbols(tree, source, config, symbols)
+    }
 }
 
 /// Return all active rules based on config.
@@ -253,6 +273,9 @@ pub fn all_rules(
         Box::new(standalone_ternary::StandaloneTernary),
         Box::new(assert_always_true::AssertAlwaysTrue),
         Box::new(assert_always_false::AssertAlwaysFalse),
+        Box::new(shadowed_variable_base_class::ShadowedVariableBaseClass),
+        Box::new(static_called_on_instance::StaticCalledOnInstance),
+        Box::new(missing_tool::MissingTool),
     ];
     all.into_iter()
         .filter(|r| {

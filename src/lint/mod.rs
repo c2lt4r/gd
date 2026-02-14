@@ -13,6 +13,7 @@ use crate::core::config::{Config, find_project_root};
 use crate::core::fs::collect_gdscript_files;
 use crate::core::parser;
 use crate::core::symbol_table;
+use crate::core::workspace_index::ProjectIndex;
 
 use diagnostics::{FileLintResult, print_diagnostic, print_json, print_sarif};
 use rules::{Fix, LintDiagnostic, Severity, all_rules};
@@ -89,6 +90,9 @@ pub fn run_lint(paths: &[String], opts: &LintOptions) -> Result<()> {
     // Use project root (not cwd) as base for ignore patterns
     let ignore_base = find_project_root(&config_search_dir).unwrap_or_else(|| cwd.clone());
 
+    // Build project-wide symbol index for cross-file resolution (Layer 3)
+    let project_index = ProjectIndex::build(&ignore_base);
+
     // Merge CLI --exclude patterns with config ignore_patterns
     let mut ignore_patterns = config.lint.ignore_patterns.clone();
     ignore_patterns.extend(opts.exclude_patterns.iter().cloned());
@@ -97,15 +101,15 @@ pub fn run_lint(paths: &[String], opts: &LintOptions) -> Result<()> {
     let file_results: Vec<(PathBuf, Vec<LintDiagnostic>)> = files
         .par_iter()
         .filter(|path| !matches_ignore_pattern(path, &ignore_base, &ignore_patterns))
-        .filter_map(
-            |path| match lint_file(path, &rules, &config, opts, &ignore_base) {
+        .filter_map(|path| {
+            match lint_file(path, &rules, &config, opts, &ignore_base, &project_index) {
                 Ok(diags) => Some((path.clone(), diags)),
                 Err(e) => {
                     eprintln!("{}: {}", path.display().red(), e);
                     None
                 }
-            },
-        )
+            }
+        })
         .collect();
 
     // Post-collection filtering
@@ -304,6 +308,7 @@ fn lint_file(
     config: &Config,
     opts: &LintOptions,
     ignore_base: &Path,
+    project: &ProjectIndex,
 ) -> Result<Vec<LintDiagnostic>> {
     let (source, tree) = parser::parse_file(path)?;
     let symbols = symbol_table::build(&tree, &source);
@@ -313,7 +318,7 @@ fn lint_file(
         if is_rule_excluded_by_override(path, ignore_base, rule.name(), &config.lint.overrides) {
             continue;
         }
-        let diags = rule.check_with_symbols(&tree, &source, &config.lint, &symbols);
+        let diags = rule.check_with_project(&tree, &source, &config.lint, &symbols, project);
         all_diags.extend(diags);
     }
 

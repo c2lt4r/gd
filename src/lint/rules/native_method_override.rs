@@ -3,6 +3,7 @@ use tree_sitter::Tree;
 use super::{LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
 use crate::core::symbol_table::SymbolTable;
+use crate::core::workspace_index::ProjectIndex;
 
 pub struct NativeMethodOverride;
 
@@ -27,23 +28,38 @@ impl LintRule for NativeMethodOverride {
         symbols: &SymbolTable,
     ) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        check_table(symbols, &mut diags);
+        check_table(symbols, None, &mut diags);
         for (_, inner) in &symbols.inner_classes {
-            check_table(inner, &mut diags);
+            check_table(inner, None, &mut diags);
+        }
+        diags
+    }
+
+    fn check_with_project(
+        &self,
+        _tree: &Tree,
+        _source: &str,
+        _config: &LintConfig,
+        symbols: &SymbolTable,
+        project: &ProjectIndex,
+    ) -> Vec<LintDiagnostic> {
+        let mut diags = Vec::new();
+        check_table(symbols, Some(project), &mut diags);
+        for (_, inner) in &symbols.inner_classes {
+            check_table(inner, Some(project), &mut diags);
         }
         diags
     }
 }
 
-fn check_table(symbols: &SymbolTable, diags: &mut Vec<LintDiagnostic>) {
+fn check_table(
+    symbols: &SymbolTable,
+    project: Option<&ProjectIndex>,
+    diags: &mut Vec<LintDiagnostic>,
+) {
     let Some(ref extends) = symbols.extends else {
         return;
     };
-
-    // Only check against engine classes (class_db)
-    if !crate::class_db::class_exists(extends) {
-        return;
-    }
 
     for func in &symbols.functions {
         // Skip virtual methods (prefixed with _) — these are meant to be overridden
@@ -51,6 +67,7 @@ fn check_table(symbols: &SymbolTable, diags: &mut Vec<LintDiagnostic>) {
             continue;
         }
 
+        // Check engine classes via ClassDB
         if crate::class_db::method_exists(extends, &func.name) {
             diags.push(LintDiagnostic {
                 rule: "native-method-override",
@@ -59,6 +76,26 @@ fn check_table(symbols: &SymbolTable, diags: &mut Vec<LintDiagnostic>) {
                     func.name
                 ),
                 severity: Severity::Error,
+                line: func.line,
+                column: 0,
+                end_column: None,
+                fix: None,
+                context_lines: None,
+            });
+            continue;
+        }
+
+        // Check user-defined base classes via project index
+        if let Some(proj) = project
+            && proj.method_exists(extends, &func.name)
+        {
+            diags.push(LintDiagnostic {
+                rule: "native-method-override",
+                message: format!(
+                    "`{}()` overrides a method from base class `{extends}` — this may cause unexpected behavior",
+                    func.name
+                ),
+                severity: Severity::Warning,
                 line: func.line,
                 column: 0,
                 end_column: None,

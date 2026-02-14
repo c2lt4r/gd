@@ -6,6 +6,7 @@
 use tree_sitter::Node;
 
 use super::symbol_table::SymbolTable;
+use super::workspace_index::ProjectIndex;
 use crate::class_db;
 
 /// An inferred type for a GDScript expression.
@@ -98,6 +99,136 @@ pub fn infer_expression_type(
 
         _ => None,
     }
+}
+
+/// Try to infer the type of an expression AST node, with access to the project-wide index.
+///
+/// This extends `infer_expression_type` with cross-file resolution: user-defined base class
+/// methods, autoload types, and preloaded script types.
+pub fn infer_expression_type_with_project(
+    node: &Node,
+    source: &str,
+    symbols: &SymbolTable,
+    project: &ProjectIndex,
+) -> Option<InferredType> {
+    match node.kind() {
+        "call" => infer_call_with_project(node, source, symbols, project),
+        "attribute" => infer_attribute_with_project(node, source, symbols, project),
+        // For all other node kinds, delegate to the per-file inference
+        _ => infer_expression_type(node, source, symbols),
+    }
+}
+
+/// Infer type from a function/constructor call, with project-wide resolution.
+fn infer_call_with_project(
+    node: &Node,
+    source: &str,
+    symbols: &SymbolTable,
+    project: &ProjectIndex,
+) -> Option<InferredType> {
+    let func_node = node
+        .child_by_field_name("function")
+        .or_else(|| node.named_child(0))?;
+    let func_name = func_node.utf8_text(source.as_bytes()).ok()?;
+
+    // 1. Constructor calls
+    if let Some(typ) = constructor_return_type(func_name) {
+        return Some(typ);
+    }
+
+    // 2. GDScript builtin functions
+    if let Some(typ) = builtin_function_return_type(func_name) {
+        return Some(typ);
+    }
+
+    // 3. Self method calls — symbol table first
+    for func in &symbols.functions {
+        if func.name == func_name {
+            return func.return_type.as_ref().map_or_else(
+                || Some(InferredType::Variant),
+                |ret| {
+                    if ret.name == "void" {
+                        Some(InferredType::Void)
+                    } else {
+                        Some(classify_type_name(&ret.name))
+                    }
+                },
+            );
+        }
+    }
+
+    // 4. Project index: check user-defined base classes via extends chain
+    if let Some(extends) = &symbols.extends
+        && let Some(ret) = project.method_return_type(extends, func_name)
+    {
+        return Some(classify_type_str(&ret));
+    }
+
+    // 5. ClassDB lookup via extends chain
+    if let Some(extends) = &symbols.extends
+        && let Some(ret_type) = class_db::method_return_type(extends, func_name)
+    {
+        return Some(parse_class_db_type(ret_type));
+    }
+
+    None
+}
+
+/// Infer type from an attribute expression, with project-wide resolution.
+fn infer_attribute_with_project(
+    node: &Node,
+    source: &str,
+    symbols: &SymbolTable,
+    project: &ProjectIndex,
+) -> Option<InferredType> {
+    let mut has_call = false;
+    let mut method_name = None;
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == "attribute_call" {
+            has_call = true;
+            if let Some(name_node) = child.named_child(0) {
+                method_name = name_node.utf8_text(source.as_bytes()).ok();
+            }
+        }
+    }
+
+    if !has_call {
+        return None;
+    }
+
+    let method = method_name?;
+    let receiver = node.named_child(0)?;
+    let receiver_type = infer_expression_type_with_project(&receiver, source, symbols, project)?;
+
+    let class_name = match &receiver_type {
+        InferredType::Builtin(b) => *b,
+        InferredType::Class(c) => c.as_str(),
+        _ => return None,
+    };
+
+    // Try project index first (user-defined types)
+    if let Some(ret) = project.method_return_type(class_name, method) {
+        return Some(classify_type_str(&ret));
+    }
+
+    // Fall back to ClassDB
+    if let Some(ret_type) = class_db::method_return_type(class_name, method) {
+        return Some(parse_class_db_type(ret_type));
+    }
+
+    None
+}
+
+/// Classify a type string from the project index (may be "void", "int", etc.).
+fn classify_type_str(name: &str) -> InferredType {
+    if name == "void" {
+        return InferredType::Void;
+    }
+    if name == "Variant" || name.is_empty() {
+        return InferredType::Variant;
+    }
+    classify_type_name(name)
 }
 
 /// Infer type of a unary operator expression.
@@ -1095,5 +1226,117 @@ func f():
     #[test]
     fn is_numeric_string() {
         assert!(!InferredType::Builtin("String").is_numeric());
+    }
+
+    // ── Project-aware inference ────────────────────────────────────
+
+    mod project_tests {
+        use super::*;
+        use crate::core::workspace_index;
+        use std::path::PathBuf;
+
+        fn infer_var_value_with_project(
+            source: &str,
+            project_files: &[(&str, &str)],
+        ) -> Option<InferredType> {
+            let root = PathBuf::from("/test_project");
+            let file_entries: Vec<(PathBuf, &str)> = project_files
+                .iter()
+                .map(|(name, src)| (root.join(name), *src))
+                .collect();
+            let project = workspace_index::build_from_sources(&root, &file_entries, &[]);
+
+            let tree = parser::parse(source).unwrap();
+            let symbols = symbol_table::build(&tree, source);
+            let root_node = tree.root_node();
+            find_first_var_value_project(&root_node, source, &symbols, &project)
+        }
+
+        fn find_first_var_value_project(
+            node: &tree_sitter::Node,
+            source: &str,
+            symbols: &SymbolTable,
+            project: &workspace_index::ProjectIndex,
+        ) -> Option<InferredType> {
+            if node.kind() == "variable_statement"
+                && let Some(value) = node.child_by_field_name("value")
+            {
+                return infer_expression_type_with_project(&value, source, symbols, project);
+            }
+            let mut cursor = node.walk();
+            for child in node.children(&mut cursor) {
+                if let Some(result) = find_first_var_value_project(&child, source, symbols, project)
+                {
+                    return Some(result);
+                }
+            }
+            None
+        }
+
+        #[test]
+        fn cross_file_base_class_method() {
+            let source = "\
+extends BaseEnemy
+func f():
+\tvar x = get_health()
+";
+            let result = infer_var_value_with_project(
+                source,
+                &[(
+                    "base.gd",
+                    "class_name BaseEnemy\nextends CharacterBody2D\nfunc get_health() -> int:\n\treturn 100\n",
+                )],
+            );
+            assert_eq!(result, Some(InferredType::Builtin("int")));
+        }
+
+        #[test]
+        fn cross_file_void_method() {
+            let source = "\
+extends BaseEnemy
+func f():
+\tvar x = take_damage()
+";
+            let result = infer_var_value_with_project(
+                source,
+                &[(
+                    "base.gd",
+                    "class_name BaseEnemy\nextends Node\nfunc take_damage() -> void:\n\tpass\n",
+                )],
+            );
+            assert_eq!(result, Some(InferredType::Void));
+        }
+
+        #[test]
+        fn cross_file_classdb_fallback() {
+            let source = "\
+extends MyNode
+func f():
+\tvar x = get_child(0)
+";
+            let result = infer_var_value_with_project(
+                source,
+                &[("mynode.gd", "class_name MyNode\nextends Node\n")],
+            );
+            // get_child is from ClassDB Node
+            assert_eq!(result, Some(InferredType::Class("Node".to_string())));
+        }
+
+        #[test]
+        fn cross_file_no_return_annotation() {
+            let source = "\
+extends Utils
+func f():
+\tvar x = compute()
+";
+            let result = infer_var_value_with_project(
+                source,
+                &[(
+                    "utils.gd",
+                    "class_name Utils\nextends Node\nfunc compute():\n\treturn 42\n",
+                )],
+            );
+            assert_eq!(result, Some(InferredType::Variant));
+        }
     }
 }

@@ -3,7 +3,10 @@ use tree_sitter::{Node, Tree};
 use super::{LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
 use crate::core::symbol_table::SymbolTable;
-use crate::core::type_inference::{InferredType, infer_expression_type};
+use crate::core::type_inference::{
+    InferredType, infer_expression_type, infer_expression_type_with_project,
+};
+use crate::core::workspace_index::ProjectIndex;
 
 pub struct ReturnValueDiscarded;
 
@@ -28,16 +31,35 @@ impl LintRule for ReturnValueDiscarded {
         symbols: &SymbolTable,
     ) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        check_node(tree.root_node(), source, symbols, &mut diags);
+        check_node(tree.root_node(), source, symbols, None, &mut diags);
+        diags
+    }
+
+    fn check_with_project(
+        &self,
+        tree: &Tree,
+        source: &str,
+        _config: &LintConfig,
+        symbols: &SymbolTable,
+        project: &ProjectIndex,
+    ) -> Vec<LintDiagnostic> {
+        let mut diags = Vec::new();
+        check_node(tree.root_node(), source, symbols, Some(project), &mut diags);
         diags
     }
 }
 
-fn check_node(node: Node, source: &str, symbols: &SymbolTable, diags: &mut Vec<LintDiagnostic>) {
+fn check_node(
+    node: Node,
+    source: &str,
+    symbols: &SymbolTable,
+    project: Option<&ProjectIndex>,
+    diags: &mut Vec<LintDiagnostic>,
+) {
     // Look for expression statements that are function calls with non-void return
     if node.kind() == "expression_statement"
         && let Some(expr) = node.named_child(0)
-        && is_discarded_non_void_call(&expr, source, symbols)
+        && is_discarded_non_void_call(&expr, source, symbols, project)
     {
         let call_text = expr.utf8_text(source.as_bytes()).ok().unwrap_or("?");
         let display = if call_text.len() > 40 {
@@ -60,7 +82,7 @@ fn check_node(node: Node, source: &str, symbols: &SymbolTable, diags: &mut Vec<L
     let mut cursor = node.walk();
     if cursor.goto_first_child() {
         loop {
-            check_node(cursor.node(), source, symbols, diags);
+            check_node(cursor.node(), source, symbols, project, diags);
             if !cursor.goto_next_sibling() {
                 break;
             }
@@ -68,7 +90,12 @@ fn check_node(node: Node, source: &str, symbols: &SymbolTable, diags: &mut Vec<L
     }
 }
 
-fn is_discarded_non_void_call(node: &Node, source: &str, symbols: &SymbolTable) -> bool {
+fn is_discarded_non_void_call(
+    node: &Node,
+    source: &str,
+    symbols: &SymbolTable,
+    project: Option<&ProjectIndex>,
+) -> bool {
     // Only check actual call expressions
     let is_call = node.kind() == "call"
         || (node.kind() == "attribute" && {
@@ -80,7 +107,13 @@ fn is_discarded_non_void_call(node: &Node, source: &str, symbols: &SymbolTable) 
         return false;
     }
 
-    match infer_expression_type(node, source, symbols) {
+    let inferred = if let Some(proj) = project {
+        infer_expression_type_with_project(node, source, symbols, proj)
+    } else {
+        infer_expression_type(node, source, symbols)
+    };
+
+    match inferred {
         Some(InferredType::Void) | None => false,
         Some(_) => true,
     }
