@@ -154,7 +154,7 @@ pub fn stop_daemon(project_root: &Path) -> bool {
     }
 }
 
-/// Send shutdown to a daemon, wait briefly, then force-kill if needed.
+/// Send shutdown to a daemon, wait for it to die, then clean up.
 fn kill_daemon(pid: u32, port: u16, project_root: &Path) {
     // Try graceful shutdown first
     let _ = send_query(
@@ -163,7 +163,14 @@ fn kill_daemon(pid: u32, port: u16, project_root: &Path) {
         &serde_json::json!({}),
         Duration::from_secs(2),
     );
-    std::thread::sleep(Duration::from_millis(200));
+
+    // Wait up to 1s for graceful exit
+    for _ in 0..10 {
+        if !is_pid_alive(pid) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
 
     // Force kill if still alive
     if is_pid_alive(pid) {
@@ -178,6 +185,13 @@ fn kill_daemon(pid: u32, port: u16, project_root: &Path) {
             let _ = std::process::Command::new("taskkill")
                 .args(["/F", "/PID", &pid.to_string()])
                 .output();
+        }
+        // Wait for force-kill to take effect and port to be released
+        for _ in 0..10 {
+            if !is_pid_alive(pid) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
         }
     }
 

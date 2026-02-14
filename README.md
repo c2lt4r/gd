@@ -295,10 +295,17 @@ gd debug scene-tree
 # Inspect a node by object ID (from scene-tree output)
 gd debug inspect --id 456
 gd debug inspect --id 456 --brief   # stripped-down output for AI
+gd debug inspect --id 456 --rich    # enrich with ClassDB docs and metadata
 
 # Set properties on a node at runtime
 gd debug set-prop --id 456 --property speed --value 100.0
 gd debug set-prop-field --id 456 --property position --field x --value 5.0
+gd debug set-var --name speed --value 42 --frame 0  # modify local variable at breakpoint
+
+# Camera and scene overview
+gd debug camera-view              # active camera + all spatial node transforms
+gd debug screenshot               # capture game viewport (JPEG)
+gd debug screenshot --output frame.jpg
 
 # Game loop control
 gd debug suspend             # freeze the game loop

@@ -1,6 +1,6 @@
 [package]
 name = "gd"
-version = "0.1.29"
+version = "0.1.30"
 edition = "2024"
 description = "A comprehensive Godot toolchain - format, lint, build, run, and manage Godot projects"
 license = "MIT"
@@ -65,6 +65,8 @@ tokio = { version = "1", features = ["io-std", "rt-multi-thread", "macros"] }
 dashmap = "6"
 path-slash = "0.2.1"
 base64 = "0.22.1"
+png = "0.18"
+jpeg-encoder = "0.6"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

@@ -67,7 +67,7 @@ struct DaemonServer {
     game_running: Arc<std::sync::atomic::AtomicBool>,
     /// Set when a DAP operation fails unexpectedly — triggers reconnect on next use.
     dap_needs_reconnect: std::sync::atomic::AtomicBool,
-    debug_server: Mutex<Option<crate::debug::godot_debug_server::GodotDebugServer>>,
+    debug_server: Mutex<Option<Arc<crate::debug::godot_debug_server::GodotDebugServer>>>,
     /// PID of the game process launched by `gd run` (for `gd debug stop`).
     game_pid: Mutex<Option<u32>>,
     /// Cached Godot binary path from DAP process events (Windows path in WSL).
@@ -979,21 +979,47 @@ fn dispatch_debug_start_server(
         .and_then(|p| p.as_u64())
         .unwrap_or(crate::debug::godot_debug_server::GodotDebugServer::DEFAULT_PORT as u64)
         as u16;
+
+    // Reuse existing server if it's on the same port
+    {
+        let guard = server.debug_server.lock().unwrap();
+        if let Some(existing) = guard.as_ref()
+            && existing.port() == port
+        {
+            return ok_response(serde_json::json!({"port": port}));
+        }
+    }
+
+    // Drop existing server first to release the old port
+    *server.debug_server.lock().unwrap() = None;
+    // Brief pause to let the OS release the port if needed
+    std::thread::sleep(Duration::from_millis(50));
+
     let ds = match crate::debug::godot_debug_server::GodotDebugServer::new(port) {
         Some(s) => s,
         None => return error_response("Failed to create debug server (port may be in use)"),
     };
     let actual_port = ds.port();
-    *server.debug_server.lock().unwrap() = Some(ds);
+    *server.debug_server.lock().unwrap() = Some(Arc::new(ds));
     ok_response(serde_json::json!({"port": actual_port}))
 }
 
 fn dispatch_debug_accept(server: &DaemonServer, params: &serde_json::Value) -> DaemonResponse {
     let timeout = params.get("timeout").and_then(|t| t.as_u64()).unwrap_or(30);
-    let guard = server.debug_server.lock().unwrap();
-    let Some(ds) = guard.as_ref() else {
-        return error_response("No debug server running — call debug_start_server first");
+
+    // Clone the Arc so we can release the mutex before blocking on accept.
+    // This is critical — accept() can block for up to 30s and we must not
+    // hold the lock during that time or all debug queries will time out.
+    let ds = {
+        let guard = server.debug_server.lock().unwrap();
+        match guard.as_ref() {
+            Some(ds) => Arc::clone(ds),
+            None => {
+                return error_response("No debug server running — call debug_start_server first");
+            }
+        }
     };
+
     let connected = ds.accept(Duration::from_secs(timeout));
     if connected {
         server
@@ -1003,9 +1029,17 @@ fn dispatch_debug_accept(server: &DaemonServer, params: &serde_json::Value) -> D
     ok_response(serde_json::json!({"connected": connected}))
 }
 
+/// Clone the debug server Arc from the daemon mutex.
+/// This releases the mutex immediately so other daemon queries aren't blocked
+/// while long-running debug commands (batch inspect, accept, etc.) execute.
+fn get_debug_server(
+    server: &DaemonServer,
+) -> Option<Arc<crate::debug::godot_debug_server::GodotDebugServer>> {
+    server.debug_server.lock().unwrap().as_ref().map(Arc::clone)
+}
+
 fn dispatch_debug_scene_tree(server: &DaemonServer) -> DaemonResponse {
-    let guard = server.debug_server.lock().unwrap();
-    let Some(ds) = guard.as_ref() else {
+    let Some(ds) = get_debug_server(server) else {
         return error_response("No debug server running");
     };
     match ds.cmd_request_scene_tree() {
@@ -1018,8 +1052,7 @@ fn dispatch_debug_inspect(server: &DaemonServer, params: &serde_json::Value) -> 
     let Some(object_id) = params.get("object_id").and_then(|o| o.as_u64()) else {
         return error_response("missing 'object_id' parameter");
     };
-    let guard = server.debug_server.lock().unwrap();
-    let Some(ds) = guard.as_ref() else {
+    let Some(ds) = get_debug_server(server) else {
         return error_response("No debug server running");
     };
     match ds.cmd_inspect_object(object_id) {
@@ -1046,8 +1079,7 @@ fn dispatch_debug_set_property(
         .unwrap_or(serde_json::Value::Null);
     let variant = json_to_variant(&value_param);
 
-    let guard = server.debug_server.lock().unwrap();
-    let Some(ds) = guard.as_ref() else {
+    let Some(ds) = get_debug_server(server) else {
         return error_response("No debug server running");
     };
     if ds.cmd_set_object_property(object_id, property, variant) {
@@ -1062,8 +1094,7 @@ fn dispatch_debug_suspend(server: &DaemonServer, params: &serde_json::Value) -> 
         .get("suspend")
         .and_then(|s| s.as_bool())
         .unwrap_or(true);
-    let guard = server.debug_server.lock().unwrap();
-    let Some(ds) = guard.as_ref() else {
+    let Some(ds) = get_debug_server(server) else {
         return error_response("No debug server running");
     };
     if ds.cmd_suspend(suspend) {
@@ -1074,8 +1105,7 @@ fn dispatch_debug_suspend(server: &DaemonServer, params: &serde_json::Value) -> 
 }
 
 fn dispatch_debug_next_frame(server: &DaemonServer) -> DaemonResponse {
-    let guard = server.debug_server.lock().unwrap();
-    let Some(ds) = guard.as_ref() else {
+    let Some(ds) = get_debug_server(server) else {
         return error_response("No debug server running");
     };
     if ds.cmd_next_frame() {
@@ -1089,8 +1119,7 @@ fn dispatch_debug_time_scale(server: &DaemonServer, params: &serde_json::Value) 
     let Some(scale) = params.get("scale").and_then(|s| s.as_f64()) else {
         return error_response("missing 'scale' parameter");
     };
-    let guard = server.debug_server.lock().unwrap();
-    let Some(ds) = guard.as_ref() else {
+    let Some(ds) = get_debug_server(server) else {
         return error_response("No debug server running");
     };
     if ds.cmd_set_speed(scale) {
@@ -1101,8 +1130,7 @@ fn dispatch_debug_time_scale(server: &DaemonServer, params: &serde_json::Value) 
 }
 
 fn dispatch_debug_reload_scripts(server: &DaemonServer) -> DaemonResponse {
-    let guard = server.debug_server.lock().unwrap();
-    let Some(ds) = guard.as_ref() else {
+    let Some(ds) = get_debug_server(server) else {
         return error_response("No debug server running");
     };
     if ds.cmd_reload_scripts() {
@@ -1113,8 +1141,7 @@ fn dispatch_debug_reload_scripts(server: &DaemonServer) -> DaemonResponse {
 }
 
 fn dispatch_debug_server_status(server: &DaemonServer) -> DaemonResponse {
-    let guard = server.debug_server.lock().unwrap();
-    match guard.as_ref() {
+    match get_debug_server(server) {
         Some(ds) => ok_response(serde_json::json!({
             "running": true,
             "port": ds.port(),
@@ -1126,8 +1153,7 @@ fn dispatch_debug_server_status(server: &DaemonServer) -> DaemonResponse {
 
 /// Simple execution control command (continue/break/next/step/out).
 fn dispatch_debug_cmd_simple(server: &DaemonServer, action: &str) -> DaemonResponse {
-    let guard = server.debug_server.lock().unwrap();
-    let Some(ds) = guard.as_ref() else {
+    let Some(ds) = get_debug_server(server) else {
         return error_response("No debug server running");
     };
     let ok = match action {
@@ -1147,8 +1173,7 @@ fn dispatch_debug_cmd_simple(server: &DaemonServer, action: &str) -> DaemonRespo
 
 /// Simple no-arg command that returns success/failure.
 fn dispatch_debug_simple(server: &DaemonServer, label: &str) -> DaemonResponse {
-    let guard = server.debug_server.lock().unwrap();
-    let Some(ds) = guard.as_ref() else {
+    let Some(ds) = get_debug_server(server) else {
         return error_response("No debug server running");
     };
     let ok = match label {
@@ -1176,8 +1201,7 @@ fn dispatch_debug_breakpoint(server: &DaemonServer, params: &serde_json::Value) 
         .get("enabled")
         .and_then(|e| e.as_bool())
         .unwrap_or(true);
-    let guard = server.debug_server.lock().unwrap();
-    let Some(ds) = guard.as_ref() else {
+    let Some(ds) = get_debug_server(server) else {
         return error_response("No debug server running");
     };
     if ds.cmd_breakpoint(path, line as u32, enabled) {
@@ -1196,8 +1220,7 @@ fn dispatch_debug_bool_cmd(
     let Some(value) = params.get("value").and_then(|v| v.as_bool()) else {
         return error_response("missing 'value' parameter");
     };
-    let guard = server.debug_server.lock().unwrap();
-    let Some(ds) = guard.as_ref() else {
+    let Some(ds) = get_debug_server(server) else {
         return error_response("No debug server running");
     };
     let ok = match label {
@@ -1213,8 +1236,7 @@ fn dispatch_debug_bool_cmd(
 }
 
 fn dispatch_debug_get_stack_dump(server: &DaemonServer) -> DaemonResponse {
-    let guard = server.debug_server.lock().unwrap();
-    let Some(ds) = guard.as_ref() else {
+    let Some(ds) = get_debug_server(server) else {
         return error_response("No debug server running");
     };
     match ds.cmd_get_stack_dump() {
@@ -1230,8 +1252,7 @@ fn dispatch_debug_get_stack_frame_vars(
     let Some(frame) = params.get("frame").and_then(|f| f.as_u64()) else {
         return error_response("missing 'frame' parameter");
     };
-    let guard = server.debug_server.lock().unwrap();
-    let Some(ds) = guard.as_ref() else {
+    let Some(ds) = get_debug_server(server) else {
         return error_response("No debug server running");
     };
     match ds.cmd_get_stack_frame_vars(frame as u32) {
@@ -1245,8 +1266,7 @@ fn dispatch_debug_evaluate(server: &DaemonServer, params: &serde_json::Value) ->
         return error_response("missing 'expression' parameter");
     };
     let frame = params.get("frame").and_then(|f| f.as_u64()).unwrap_or(0);
-    let guard = server.debug_server.lock().unwrap();
-    let Some(ds) = guard.as_ref() else {
+    let Some(ds) = get_debug_server(server) else {
         return error_response("No debug server running");
     };
     match ds.cmd_evaluate(expression, frame as u32) {
@@ -1267,8 +1287,7 @@ fn dispatch_debug_inspect_objects(
         .get("selection")
         .and_then(|s| s.as_bool())
         .unwrap_or(false);
-    let guard = server.debug_server.lock().unwrap();
-    let Some(ds) = guard.as_ref() else {
+    let Some(ds) = get_debug_server(server) else {
         return error_response("No debug server running");
     };
     match ds.cmd_inspect_objects(&ids, selection) {
@@ -1284,8 +1303,7 @@ fn dispatch_debug_save_node(server: &DaemonServer, params: &serde_json::Value) -
     let Some(path) = params.get("path").and_then(|p| p.as_str()) else {
         return error_response("missing 'path' parameter");
     };
-    let guard = server.debug_server.lock().unwrap();
-    let Some(ds) = guard.as_ref() else {
+    let Some(ds) = get_debug_server(server) else {
         return error_response("No debug server running");
     };
     match ds.cmd_save_node(object_id, path) {
@@ -1311,24 +1329,158 @@ fn dispatch_debug_set_property_field(
         .get("value")
         .cloned()
         .unwrap_or(serde_json::Value::Null);
-    let variant = json_to_variant(&value_param);
-    let guard = server.debug_server.lock().unwrap();
-    let Some(ds) = guard.as_ref() else {
+    let new_field_val = json_to_variant(&value_param);
+    let Some(ds) = get_debug_server(server) else {
         return error_response("No debug server running");
     };
-    if ds.cmd_set_object_property_field(object_id, property, variant, field) {
+
+    // Godot's fieldwise_assign casts the value to the property's type, so passing a
+    // scalar (e.g. Float(7.0)) for a Vector3 sub-field silently fails.
+    // Fix: inspect → modify sub-field client-side → set the full property value.
+    let Some(info) = ds.cmd_inspect_object(object_id) else {
+        return error_response("failed to inspect object — is the game running?");
+    };
+    let Some(prop) = info.properties.iter().find(|p| p.name == property) else {
+        return error_response(&format!(
+            "property '{property}' not found on object {object_id}"
+        ));
+    };
+    let mut current = prop.value.clone();
+    if !variant_set_field(&mut current, field, &new_field_val) {
+        return error_response(&format!("cannot set field '{field}' on {current:?}"));
+    }
+    if ds.cmd_set_object_property(object_id, property, current) {
         ok_response(serde_json::json!({"ok": true}))
     } else {
-        error_response("set_property_field failed")
+        error_response("set_object_property failed")
     }
+}
+
+/// Set a named sub-field on a GodotVariant (client-side fieldwise assignment).
+fn variant_set_field(
+    target: &mut crate::debug::variant::GodotVariant,
+    field: &str,
+    value: &crate::debug::variant::GodotVariant,
+) -> bool {
+    use crate::debug::variant::GodotVariant;
+
+    let as_f64 = match value {
+        GodotVariant::Float(f) => Some(*f),
+        GodotVariant::Int(i) => Some(*i as f64),
+        _ => None,
+    };
+    let as_f32 = as_f64.map(|f| f as f32);
+    let as_i32 = match value {
+        GodotVariant::Int(i) => Some(*i as i32),
+        GodotVariant::Float(f) => Some(*f as i32),
+        _ => None,
+    };
+
+    match target {
+        GodotVariant::Vector2(x, y) => {
+            let Some(v) = as_f64 else { return false };
+            match field {
+                "x" => *x = v,
+                "y" => *y = v,
+                _ => return false,
+            }
+        }
+        GodotVariant::Vector2i(x, y) => {
+            let Some(v) = as_i32 else { return false };
+            match field {
+                "x" => *x = v,
+                "y" => *y = v,
+                _ => return false,
+            }
+        }
+        GodotVariant::Vector3(x, y, z) => {
+            let Some(v) = as_f64 else { return false };
+            match field {
+                "x" => *x = v,
+                "y" => *y = v,
+                "z" => *z = v,
+                _ => return false,
+            }
+        }
+        GodotVariant::Vector3i(x, y, z) => {
+            let Some(v) = as_i32 else { return false };
+            match field {
+                "x" => *x = v,
+                "y" => *y = v,
+                "z" => *z = v,
+                _ => return false,
+            }
+        }
+        GodotVariant::Vector4(x, y, z, w) => {
+            let Some(v) = as_f64 else { return false };
+            match field {
+                "x" => *x = v,
+                "y" => *y = v,
+                "z" => *z = v,
+                "w" => *w = v,
+                _ => return false,
+            }
+        }
+        GodotVariant::Vector4i(x, y, z, w) => {
+            let Some(v) = as_i32 else { return false };
+            match field {
+                "x" => *x = v,
+                "y" => *y = v,
+                "z" => *z = v,
+                "w" => *w = v,
+                _ => return false,
+            }
+        }
+        GodotVariant::Color(r, g, b, a) => {
+            let Some(v) = as_f32 else { return false };
+            match field {
+                "r" => *r = v,
+                "g" => *g = v,
+                "b" => *b = v,
+                "a" => *a = v,
+                _ => return false,
+            }
+        }
+        GodotVariant::Rect2(x, y, w, h) => {
+            let Some(v) = as_f64 else { return false };
+            match field {
+                "x" => *x = v,
+                "y" => *y = v,
+                "w" | "width" => *w = v,
+                "h" | "height" => *h = v,
+                _ => return false,
+            }
+        }
+        GodotVariant::Plane(a, b, c, d) => {
+            let Some(v) = as_f64 else { return false };
+            match field {
+                "x" => *a = v,
+                "y" => *b = v,
+                "z" => *c = v,
+                "d" => *d = v,
+                _ => return false,
+            }
+        }
+        GodotVariant::Quaternion(x, y, z, w) => {
+            let Some(v) = as_f64 else { return false };
+            match field {
+                "x" => *x = v,
+                "y" => *y = v,
+                "z" => *z = v,
+                "w" => *w = v,
+                _ => return false,
+            }
+        }
+        _ => return false,
+    }
+    true
 }
 
 fn dispatch_debug_mute_audio(server: &DaemonServer, params: &serde_json::Value) -> DaemonResponse {
     let Some(mute) = params.get("mute").and_then(|m| m.as_bool()) else {
         return error_response("missing 'mute' parameter");
     };
-    let guard = server.debug_server.lock().unwrap();
-    let Some(ds) = guard.as_ref() else {
+    let Some(ds) = get_debug_server(server) else {
         return error_response("No debug server running");
     };
     if ds.cmd_mute_audio(mute) {
@@ -1346,8 +1498,7 @@ fn dispatch_debug_reload_cached_files(
         return error_response("missing 'files' parameter");
     };
     let files: Vec<&str> = files_arr.iter().filter_map(|v| v.as_str()).collect();
-    let guard = server.debug_server.lock().unwrap();
-    let Some(ds) = guard.as_ref() else {
+    let Some(ds) = get_debug_server(server) else {
         return error_response("No debug server running");
     };
     if ds.cmd_reload_cached_files(&files) {
@@ -1364,8 +1515,7 @@ fn dispatch_debug_override_cameras(
     let Some(enable) = params.get("enable").and_then(|e| e.as_bool()) else {
         return error_response("missing 'enable' parameter");
     };
-    let guard = server.debug_server.lock().unwrap();
-    let Some(ds) = guard.as_ref() else {
+    let Some(ds) = get_debug_server(server) else {
         return error_response("No debug server running");
     };
     if ds.cmd_override_cameras(enable) {
@@ -1389,8 +1539,7 @@ fn dispatch_debug_transform_camera_2d(
     for (i, v) in arr.iter().enumerate() {
         transform[i] = v.as_f64().unwrap_or(0.0);
     }
-    let guard = server.debug_server.lock().unwrap();
-    let Some(ds) = guard.as_ref() else {
+    let Some(ds) = get_debug_server(server) else {
         return error_response("No debug server running");
     };
     if ds.cmd_transform_camera_2d(transform) {
@@ -1427,8 +1576,7 @@ fn dispatch_debug_transform_camera_3d(
     let Some(far) = params.get("far").and_then(|f| f.as_f64()) else {
         return error_response("missing 'far' parameter");
     };
-    let guard = server.debug_server.lock().unwrap();
-    let Some(ds) = guard.as_ref() else {
+    let Some(ds) = get_debug_server(server) else {
         return error_response("No debug server running");
     };
     if ds.cmd_transform_camera_3d(transform, perspective, fov, near, far) {
@@ -1445,8 +1593,7 @@ fn dispatch_debug_request_screenshot(
     let Some(id) = params.get("id").and_then(|i| i.as_u64()) else {
         return error_response("missing 'id' parameter");
     };
-    let guard = server.debug_server.lock().unwrap();
-    let Some(ds) = guard.as_ref() else {
+    let Some(ds) = get_debug_server(server) else {
         return error_response("No debug server running");
     };
     match ds.cmd_request_screenshot(id) {
@@ -1486,8 +1633,7 @@ fn dispatch_debug_int_cmd(
     let Some(value) = params.get(param_name).and_then(|v| v.as_i64()) else {
         return error_response(&format!("missing '{param_name}' parameter"));
     };
-    let guard = server.debug_server.lock().unwrap();
-    let Some(ds) = guard.as_ref() else {
+    let Some(ds) = get_debug_server(server) else {
         return error_response("No debug server running");
     };
     let ok = match label {
@@ -1512,8 +1658,7 @@ fn dispatch_debug_bool_param(
     let Some(value) = params.get(param_name).and_then(|v| v.as_bool()) else {
         return error_response(&format!("missing '{param_name}' parameter"));
     };
-    let guard = server.debug_server.lock().unwrap();
-    let Some(ds) = guard.as_ref() else {
+    let Some(ds) = get_debug_server(server) else {
         return error_response("No debug server running");
     };
     let ok = match label {
@@ -1541,8 +1686,7 @@ fn dispatch_debug_live_set_root(
     let Some(scene_file) = params.get("scene_file").and_then(|s| s.as_str()) else {
         return error_response("missing 'scene_file' parameter");
     };
-    let guard = server.debug_server.lock().unwrap();
-    let Some(ds) = guard.as_ref() else {
+    let Some(ds) = get_debug_server(server) else {
         return error_response("No debug server running");
     };
     if ds.cmd_live_set_root(scene_path, scene_file) {
@@ -1564,8 +1708,7 @@ fn dispatch_debug_live_path(
     let Some(id) = params.get("id").and_then(|i| i.as_i64()) else {
         return error_response("missing 'id' parameter");
     };
-    let guard = server.debug_server.lock().unwrap();
-    let Some(ds) = guard.as_ref() else {
+    let Some(ds) = get_debug_server(server) else {
         return error_response("No debug server running");
     };
     let ok = match label {
@@ -1597,8 +1740,7 @@ fn dispatch_debug_live_prop(
         .cloned()
         .unwrap_or(serde_json::Value::Null);
     let variant = json_to_variant(&value_param);
-    let guard = server.debug_server.lock().unwrap();
-    let Some(ds) = guard.as_ref() else {
+    let Some(ds) = get_debug_server(server) else {
         return error_response("No debug server running");
     };
     let ok = match label {
@@ -1628,8 +1770,7 @@ fn dispatch_debug_live_prop_res(
     let Some(res_path) = params.get("res_path").and_then(|r| r.as_str()) else {
         return error_response("missing 'res_path' parameter");
     };
-    let guard = server.debug_server.lock().unwrap();
-    let Some(ds) = guard.as_ref() else {
+    let Some(ds) = get_debug_server(server) else {
         return error_response("No debug server running");
     };
     let ok = match label {
@@ -1661,8 +1802,7 @@ fn dispatch_debug_live_call(
         .and_then(|a| a.as_array())
         .map(|arr| arr.iter().map(json_to_variant).collect())
         .unwrap_or_default();
-    let guard = server.debug_server.lock().unwrap();
-    let Some(ds) = guard.as_ref() else {
+    let Some(ds) = get_debug_server(server) else {
         return error_response("No debug server running");
     };
     let ok = match label {
@@ -1690,8 +1830,7 @@ fn dispatch_debug_live_create_node(
     let Some(name) = params.get("name").and_then(|n| n.as_str()) else {
         return error_response("missing 'name' parameter");
     };
-    let guard = server.debug_server.lock().unwrap();
-    let Some(ds) = guard.as_ref() else {
+    let Some(ds) = get_debug_server(server) else {
         return error_response("No debug server running");
     };
     if ds.cmd_live_create_node(parent, class, name) {
@@ -1714,8 +1853,7 @@ fn dispatch_debug_live_instantiate_node(
     let Some(name) = params.get("name").and_then(|n| n.as_str()) else {
         return error_response("missing 'name' parameter");
     };
-    let guard = server.debug_server.lock().unwrap();
-    let Some(ds) = guard.as_ref() else {
+    let Some(ds) = get_debug_server(server) else {
         return error_response("No debug server running");
     };
     if ds.cmd_live_instantiate_node(parent, scene, name) {
@@ -1734,8 +1872,7 @@ fn dispatch_debug_live_single_path(
     let Some(path) = params.get("path").and_then(|p| p.as_str()) else {
         return error_response("missing 'path' parameter");
     };
-    let guard = server.debug_server.lock().unwrap();
-    let Some(ds) = guard.as_ref() else {
+    let Some(ds) = get_debug_server(server) else {
         return error_response("No debug server running");
     };
     let ok = match label {
@@ -1759,8 +1896,7 @@ fn dispatch_debug_live_remove_and_keep(
     let Some(object_id) = params.get("object_id").and_then(|o| o.as_u64()) else {
         return error_response("missing 'object_id' parameter");
     };
-    let guard = server.debug_server.lock().unwrap();
-    let Some(ds) = guard.as_ref() else {
+    let Some(ds) = get_debug_server(server) else {
         return error_response("No debug server running");
     };
     if ds.cmd_live_remove_and_keep_node(path, object_id) {
@@ -1783,8 +1919,7 @@ fn dispatch_debug_live_restore_node(
     let Some(pos) = params.get("pos").and_then(|p| p.as_i64()) else {
         return error_response("missing 'pos' parameter");
     };
-    let guard = server.debug_server.lock().unwrap();
-    let Some(ds) = guard.as_ref() else {
+    let Some(ds) = get_debug_server(server) else {
         return error_response("No debug server running");
     };
     if ds.cmd_live_restore_node(object_id, path, pos as i32) {
@@ -1804,8 +1939,7 @@ fn dispatch_debug_live_duplicate_node(
     let Some(new_name) = params.get("new_name").and_then(|n| n.as_str()) else {
         return error_response("missing 'new_name' parameter");
     };
-    let guard = server.debug_server.lock().unwrap();
-    let Some(ds) = guard.as_ref() else {
+    let Some(ds) = get_debug_server(server) else {
         return error_response("No debug server running");
     };
     if ds.cmd_live_duplicate_node(path, new_name) {
@@ -1831,8 +1965,7 @@ fn dispatch_debug_live_reparent_node(
     let Some(pos) = params.get("pos").and_then(|p| p.as_i64()) else {
         return error_response("missing 'pos' parameter");
     };
-    let guard = server.debug_server.lock().unwrap();
-    let Some(ds) = guard.as_ref() else {
+    let Some(ds) = get_debug_server(server) else {
         return error_response("No debug server running");
     };
     if ds.cmd_live_reparent_node(path, new_parent, new_name, pos as i32) {
@@ -1852,8 +1985,7 @@ fn dispatch_debug_toggle_profiler(
     let Some(enable) = params.get("enable").and_then(|e| e.as_bool()) else {
         return error_response("missing 'enable' parameter");
     };
-    let guard = server.debug_server.lock().unwrap();
-    let Some(ds) = guard.as_ref() else {
+    let Some(ds) = get_debug_server(server) else {
         return error_response("No debug server running");
     };
     if ds.cmd_toggle_profiler(profiler, enable) {
@@ -1878,8 +2010,173 @@ fn json_to_variant(value: &serde_json::Value) -> crate::debug::variant::GodotVar
             }
         }
         serde_json::Value::String(s) => GodotVariant::String(s.clone()),
-        _ => GodotVariant::Nil,
+        serde_json::Value::Array(arr) => json_array_to_variant(arr),
+        serde_json::Value::Object(obj) => json_object_to_variant(obj),
     }
+}
+
+/// Convert a JSON array to the best-fit GodotVariant based on element count.
+/// Float arrays: 2→Vector2, 3→Vector3, 4→Vector4, 6→Transform2D, 9→Basis, 12→Transform3D, 16→Projection
+/// Int arrays (all integers): 2→Vector2i, 3→Vector3i, 4→Vector4i
+/// Mixed/other: generic Array with recursive conversion.
+fn json_array_to_variant(arr: &[serde_json::Value]) -> crate::debug::variant::GodotVariant {
+    use crate::debug::variant::GodotVariant;
+
+    // Check if all elements are numbers
+    let all_numbers = arr.iter().all(|v| v.is_number());
+    if !all_numbers {
+        // Generic array — recurse into each element
+        return GodotVariant::Array(arr.iter().map(json_to_variant).collect());
+    }
+
+    // Check if all elements are integers (no fractional part)
+    let all_ints = arr.iter().all(|v| v.as_i64().is_some());
+
+    let floats: Vec<f64> = arr.iter().filter_map(|v| v.as_f64()).collect();
+    if floats.len() != arr.len() {
+        return GodotVariant::Array(arr.iter().map(json_to_variant).collect());
+    }
+
+    match floats.len() {
+        2 if all_ints => GodotVariant::Vector2i(floats[0] as i32, floats[1] as i32),
+        2 => GodotVariant::Vector2(floats[0], floats[1]),
+        3 if all_ints => {
+            GodotVariant::Vector3i(floats[0] as i32, floats[1] as i32, floats[2] as i32)
+        }
+        3 => GodotVariant::Vector3(floats[0], floats[1], floats[2]),
+        4 if all_ints => GodotVariant::Vector4i(
+            floats[0] as i32,
+            floats[1] as i32,
+            floats[2] as i32,
+            floats[3] as i32,
+        ),
+        4 => GodotVariant::Vector4(floats[0], floats[1], floats[2], floats[3]),
+        6 => GodotVariant::Transform2D([
+            floats[0], floats[1], floats[2], floats[3], floats[4], floats[5],
+        ]),
+        9 => GodotVariant::Basis([
+            floats[0], floats[1], floats[2], floats[3], floats[4], floats[5], floats[6], floats[7],
+            floats[8],
+        ]),
+        12 => GodotVariant::Transform3D([
+            floats[0], floats[1], floats[2], floats[3], floats[4], floats[5], floats[6], floats[7],
+            floats[8], floats[9], floats[10], floats[11],
+        ]),
+        16 => GodotVariant::Projection([
+            floats[0], floats[1], floats[2], floats[3], floats[4], floats[5], floats[6], floats[7],
+            floats[8], floats[9], floats[10], floats[11], floats[12], floats[13], floats[14],
+            floats[15],
+        ]),
+        _ => GodotVariant::Array(arr.iter().map(json_to_variant).collect()),
+    }
+}
+
+/// Convert a JSON object to a GodotVariant.
+/// Supports typed wrappers: `{"Vector3": [1,2,3]}`, `{"Color": [1,0,0,1]}`, etc.
+/// Falls back to Dictionary for unrecognized shapes.
+fn json_object_to_variant(
+    obj: &serde_json::Map<String, serde_json::Value>,
+) -> crate::debug::variant::GodotVariant {
+    use crate::debug::variant::GodotVariant;
+
+    // Single-key type wrapper: {"Vector3": [1.0, 2.0, 3.0]}
+    if obj.len() == 1 {
+        let (key, inner) = obj.iter().next().unwrap();
+        if let Some(arr) = inner.as_array() {
+            let floats: Vec<f64> = arr.iter().filter_map(|v| v.as_f64()).collect();
+            if floats.len() == arr.len() {
+                match (key.as_str(), floats.len()) {
+                    ("Vector2", 2) => return GodotVariant::Vector2(floats[0], floats[1]),
+                    ("Vector2i", 2) => {
+                        return GodotVariant::Vector2i(floats[0] as i32, floats[1] as i32);
+                    }
+                    ("Rect2", 4) => {
+                        return GodotVariant::Rect2(floats[0], floats[1], floats[2], floats[3]);
+                    }
+                    ("Rect2i", 4) => {
+                        return GodotVariant::Rect2i(
+                            floats[0] as i32,
+                            floats[1] as i32,
+                            floats[2] as i32,
+                            floats[3] as i32,
+                        );
+                    }
+                    ("Vector3", 3) => {
+                        return GodotVariant::Vector3(floats[0], floats[1], floats[2]);
+                    }
+                    ("Vector3i", 3) => {
+                        return GodotVariant::Vector3i(
+                            floats[0] as i32,
+                            floats[1] as i32,
+                            floats[2] as i32,
+                        );
+                    }
+                    ("Transform2D", 6) => {
+                        return GodotVariant::Transform2D([
+                            floats[0], floats[1], floats[2], floats[3], floats[4], floats[5],
+                        ]);
+                    }
+                    ("Vector4", 4) => {
+                        return GodotVariant::Vector4(floats[0], floats[1], floats[2], floats[3]);
+                    }
+                    ("Vector4i", 4) => {
+                        return GodotVariant::Vector4i(
+                            floats[0] as i32,
+                            floats[1] as i32,
+                            floats[2] as i32,
+                            floats[3] as i32,
+                        );
+                    }
+                    ("Plane", 4) => {
+                        return GodotVariant::Plane(floats[0], floats[1], floats[2], floats[3]);
+                    }
+                    ("Quaternion", 4) => {
+                        return GodotVariant::Quaternion(floats[0], floats[1], floats[2], floats[3]);
+                    }
+                    ("AABB", 6) => {
+                        return GodotVariant::Aabb([
+                            floats[0], floats[1], floats[2], floats[3], floats[4], floats[5],
+                        ]);
+                    }
+                    ("Basis", 9) => {
+                        return GodotVariant::Basis([
+                            floats[0], floats[1], floats[2], floats[3], floats[4], floats[5],
+                            floats[6], floats[7], floats[8],
+                        ]);
+                    }
+                    ("Transform3D", 12) => {
+                        return GodotVariant::Transform3D([
+                            floats[0], floats[1], floats[2], floats[3], floats[4], floats[5],
+                            floats[6], floats[7], floats[8], floats[9], floats[10], floats[11],
+                        ]);
+                    }
+                    ("Projection", 16) => {
+                        return GodotVariant::Projection([
+                            floats[0], floats[1], floats[2], floats[3], floats[4], floats[5],
+                            floats[6], floats[7], floats[8], floats[9], floats[10], floats[11],
+                            floats[12], floats[13], floats[14], floats[15],
+                        ]);
+                    }
+                    ("Color", 4) => {
+                        return GodotVariant::Color(
+                            floats[0] as f32,
+                            floats[1] as f32,
+                            floats[2] as f32,
+                            floats[3] as f32,
+                        );
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    // Generic dictionary
+    GodotVariant::Dictionary(
+        obj.iter()
+            .map(|(k, v)| (GodotVariant::String(k.clone()), json_to_variant(v)))
+            .collect(),
+    )
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.1.30] - 2026-02-14
+
+### Added
+- **`gd debug camera-view`** — show active camera info and all spatial node transforms in the running game. Detects cameras by engine class, script path, or node name (case-insensitive). Script classes (`res://...`) are included as spatial candidates and filtered by actual transform properties.
+- **`gd debug screenshot`** — capture game viewport as JPEG (base64 via debug protocol, PNG→JPEG conversion). Supports `--output <file>` to save to disk.
+- **`gd debug set-var`** — modify local variables at breakpoints (name + value + stack frame)
+- **`gd debug inspect --rich`** — enrich output with ClassDB docs: class descriptions, property documentation, Godot docs URLs. Walks the full inheritance chain.
+- **Property enrichment** — `inspect --rich` now resolves enum values to names, adds range metadata, and annotates type/resource hints from ClassDB
+
+### Fixed
+- **Debug server mutex deadlock** — all daemon dispatch functions now clone an `Arc<GodotDebugServer>` and release the daemon mutex before executing. Previously, long-running operations (batch inspect, accept) held the mutex for 10-30s, blocking all other debug queries and causing cascading timeouts.
+- **Batch inspect reliability** — `cmd_inspect_objects` now issues individual inspect commands per object instead of a single batch send. Prevents one missing/freed object from breaking the entire batch.
+- **`set-prop` with Vector3 values** — fixed `json_to_variant` catch-all that silently converted arrays/objects to Nil. Now maps JSON arrays by element count to Vector2/3/4/Transform/Basis/Projection, and JSON objects support typed wrappers like `{"Vector3": [1,2,3]}`.
+- **`set-prop-field` sub-field assignment** — rewrote to use client-side inspect→modify→set instead of Godot's broken `fieldwise_assign` (which casts scalar values to the property type, zeroing sub-fields).
+- **`eval` return values** — fixed 3-field vs 4-field parsing of Godot's `evaluation_return` protocol (was returning variant type ID instead of actual value).
+- **Daemon kill race condition** — `kill_daemon` now polls for process exit (up to 2s) instead of a fixed 200ms sleep, preventing port conflicts on restart.
+- **`accept()` interruptible** — debug server accept loop checks the `running` flag so server replacement interrupts pending accepts within ~50ms.
+- **Screenshot size** — PNG→JPEG conversion (quality 80) via `png` + `jpeg-encoder` crates instead of raw PNG base64.
+
 ## [0.1.29] - 2026-02-14
 
 ### Added

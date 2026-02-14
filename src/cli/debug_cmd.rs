@@ -60,7 +60,14 @@ pub enum DebugCommand {
     SetPropField(SetPropFieldArgs),
     /// Toggle a profiler (scripts, visual, servers)
     Profiler(ProfilerArgs),
-    /// Live editing: set root scene
+    /// Live editing: set root scene (REQUIRED before live-node-prop/live-res-prop)
+    ///
+    /// Establishes the root mapping for live editing. All live-node-prop, live-res-prop,
+    /// and live-*-call commands use live edit IDs assigned by this mapping — these are
+    /// NOT the same as object IDs from scene-tree/inspect.
+    ///
+    /// Workflow: live-set-root → then use live-node-prop/live-res-prop with the IDs
+    /// from this mapping. Use scene-tree object IDs for inspect/set-prop instead.
     #[command(name = "live-set-root")]
     LiveSetRoot(LiveSetRootArgs),
     /// Live editing: create a new node
@@ -78,10 +85,10 @@ pub enum DebugCommand {
     /// Live editing: reparent a node
     #[command(name = "live-reparent")]
     LiveReparent(LiveReparentArgs),
-    /// Live editing: set a node property
+    /// Live editing: set a node property (uses live edit ID, not object ID)
     #[command(name = "live-node-prop")]
     LiveNodeProp(LiveNodePropArgs),
-    /// Live editing: call a method on a node
+    /// Live editing: call a method on a node (uses live edit ID, not object ID)
     #[command(name = "live-node-call")]
     LiveNodeCall(LiveNodeCallArgs),
 
@@ -119,6 +126,12 @@ pub enum DebugCommand {
     InspectObjects(InspectObjectsArgs),
 
     // ── Camera ──
+    /// Structured spatial data: all visible nodes with positions, rotations, and camera info
+    ///
+    /// Returns JSON with camera transform and every spatial node's position/rotation/scale.
+    /// Designed for AI reasoning about spatial relationships without needing screenshots.
+    #[command(name = "camera-view")]
+    CameraView(CameraViewArgs),
     /// Transform 2D camera
     #[command(name = "transform-camera-2d")]
     TransformCamera2d(TransformCamera2dArgs),
@@ -162,30 +175,30 @@ pub enum DebugCommand {
     ClearSelection(StepArgs),
 
     // ── Live editing: resource operations ──
-    /// Live editing: set node path mapping
+    /// Live editing: set node path mapping (uses live edit ID)
     #[command(name = "live-node-path")]
     LiveNodePath(LivePathArgs),
-    /// Live editing: set resource path mapping
+    /// Live editing: set resource path mapping (uses live edit ID)
     #[command(name = "live-res-path")]
     LiveResPath(LivePathArgs),
-    /// Live editing: set resource property
+    /// Live editing: set resource property (uses live edit ID)
     #[command(name = "live-res-prop")]
     LiveResProp(LiveNodePropArgs),
-    /// Live editing: set node property to resource
+    /// Live editing: set node property to resource (uses live edit ID)
     #[command(name = "live-node-prop-res")]
     LiveNodePropRes(LivePropResArgs),
-    /// Live editing: set resource property to resource
+    /// Live editing: set resource property to resource (uses live edit ID)
     #[command(name = "live-res-prop-res")]
     LiveResPropRes(LivePropResArgs),
-    /// Live editing: call method on resource
+    /// Live editing: call method on resource (uses live edit ID)
     #[command(name = "live-res-call")]
     LiveResCall(LiveNodeCallArgs),
 
     // ── Live editing: advanced node operations ──
-    /// Live editing: remove node but keep reference
+    /// Live editing: remove node but keep reference (uses object ID)
     #[command(name = "live-remove-keep")]
     LiveRemoveKeep(LiveRemoveKeepArgs),
-    /// Live editing: restore previously removed node
+    /// Live editing: restore previously removed node (uses object ID)
     #[command(name = "live-restore")]
     LiveRestore(LiveRestoreArgs),
 
@@ -286,6 +299,9 @@ pub struct SetPropArgs {
     /// New value (JSON: numbers, strings, booleans, null)
     #[arg(long)]
     pub value: String,
+    /// Take a screenshot after setting the property (outputs base64 PNG)
+    #[arg(long)]
+    pub screenshot: bool,
     /// Output format
     #[arg(long, default_value = "human")]
     pub format: OutputFormat,
@@ -378,6 +394,9 @@ pub struct SetPropFieldArgs {
     /// New value (JSON)
     #[arg(long)]
     pub value: String,
+    /// Take a screenshot after setting the property (outputs base64 PNG)
+    #[arg(long)]
+    pub screenshot: bool,
     /// Output format
     #[arg(long, default_value = "human")]
     pub format: OutputFormat,
@@ -398,10 +417,10 @@ pub struct ProfilerArgs {
 
 #[derive(Args)]
 pub struct LiveSetRootArgs {
-    /// Scene path (e.g. "/root/Main")
+    /// Scene path (e.g. "/root/Main") — maps to Godot's live edit root
     #[arg(long)]
     pub path: String,
-    /// Scene file (e.g. "res://main.tscn")
+    /// Scene file (e.g. "res://main.tscn") — the .tscn file for this scene
     #[arg(long)]
     pub file: String,
     /// Output format
@@ -485,7 +504,7 @@ pub struct LiveReparentArgs {
 
 #[derive(Args)]
 pub struct LiveNodePropArgs {
-    /// Live edit node ID (from live-set-root mapping)
+    /// Live edit ID (from live-set-root mapping — NOT the object ID from scene-tree)
     #[arg(long)]
     pub id: i32,
     /// Property name
@@ -501,7 +520,7 @@ pub struct LiveNodePropArgs {
 
 #[derive(Args)]
 pub struct LiveNodeCallArgs {
-    /// Live edit node ID
+    /// Live edit ID (from live-set-root mapping — NOT the object ID from scene-tree)
     #[arg(long)]
     pub id: i32,
     /// Method name
@@ -574,6 +593,13 @@ pub struct InspectObjectsArgs {
 }
 
 #[derive(Args)]
+pub struct CameraViewArgs {
+    /// Output format
+    #[arg(long, default_value = "human")]
+    pub format: OutputFormat,
+}
+
+#[derive(Args)]
 pub struct TransformCamera2dArgs {
     /// Transform as JSON array of 6 floats
     #[arg(long)]
@@ -607,9 +633,9 @@ pub struct TransformCamera3dArgs {
 
 #[derive(Args)]
 pub struct ScreenshotArgs {
-    /// Output file path (default: screenshot.png in current directory)
-    #[arg(long, short, default_value = "screenshot.png")]
-    pub output: String,
+    /// Write PNG to file instead of printing base64 to stdout
+    #[arg(long, short)]
+    pub output: Option<String>,
     /// Output format
     #[arg(long, default_value = "human")]
     pub format: OutputFormat,
@@ -650,7 +676,7 @@ pub struct LivePathArgs {
     /// Node/resource path
     #[arg(long)]
     pub path: String,
-    /// Live edit ID
+    /// Live edit ID (from live-set-root mapping — NOT the object ID from scene-tree)
     #[arg(long)]
     pub id: i32,
     /// Output format
@@ -660,7 +686,7 @@ pub struct LivePathArgs {
 
 #[derive(Args)]
 pub struct LivePropResArgs {
-    /// Live edit node/resource ID
+    /// Live edit ID (from live-set-root mapping — NOT the object ID from scene-tree)
     #[arg(long)]
     pub id: i32,
     /// Property name
@@ -778,6 +804,7 @@ pub fn exec(args: DebugArgs) -> Result<()> {
         DebugCommand::Vars(a) => cmd_vars(a),
         DebugCommand::Eval(a) => cmd_evaluate(a),
         DebugCommand::InspectObjects(a) => cmd_inspect_objects(a),
+        DebugCommand::CameraView(a) => cmd_camera_view(a),
         DebugCommand::TransformCamera2d(a) => cmd_transform_camera_2d(a),
         DebugCommand::TransformCamera3d(a) => cmd_transform_camera_3d(a),
         DebugCommand::Screenshot(a) => cmd_screenshot(a),
@@ -832,21 +859,29 @@ fn ensure_binary_debug() -> Result<()> {
         if status.get("connected").and_then(|c| c.as_bool()) == Some(true) {
             return Ok(()); // Already running and connected
         }
+        // Server exists but no game connected yet — the async accept from
+        // `gd run` may still be waiting. Try a short accept to catch it.
         let port = status.get("port").and_then(|p| p.as_u64()).unwrap_or(0);
+        let accept = daemon_dap_timeout("debug_accept", serde_json::json!({"timeout": 3}), 8);
+        if let Some(r) = accept
+            && r.get("connected").and_then(|c| c.as_bool()) == Some(true)
+        {
+            return Ok(());
+        }
         return Err(miette!(
             "Debug server running on port {port} but no game is connected.\n\
-             Launch your game with: gd run --debug\n\
+             Launch your game with: gd run\n\
              Or manually: godot --remote-debug tcp://127.0.0.1:{port}"
         ));
     }
 
-    // Start the debug server
+    // No server running — start one
     let result = daemon_dap("debug_start_server", serde_json::json!({}))
         .ok_or_else(|| miette!("Failed to start binary debug server (daemon not available)"))?;
     let port = result.get("port").and_then(|p| p.as_u64()).unwrap_or(0);
 
     // Wait briefly for a connection, then advise
-    let accept = daemon_dap_timeout("debug_accept", serde_json::json!({"timeout": 2}), 5);
+    let accept = daemon_dap_timeout("debug_accept", serde_json::json!({"timeout": 3}), 8);
     if let Some(r) = accept
         && r.get("connected").and_then(|c| c.as_bool()) == Some(true)
     {
@@ -855,7 +890,7 @@ fn ensure_binary_debug() -> Result<()> {
 
     Err(miette!(
         "Debug server started on port {port} — waiting for game connection.\n\
-         Launch your game with: gd run --debug\n\
+         Launch your game with: gd run\n\
          Or manually: godot --remote-debug tcp://127.0.0.1:{port}"
     ))
 }
@@ -2414,7 +2449,16 @@ fn cmd_set_prop(args: SetPropArgs) -> Result<()> {
 
     match args.format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&result).unwrap());
+            if args.screenshot {
+                let (w, h, b64) = take_screenshot_b64()?;
+                let mut combined = result.clone();
+                combined["screenshot"] = serde_json::json!({
+                    "width": w, "height": h, "format": "png", "data": b64,
+                });
+                println!("{}", serde_json::to_string_pretty(&combined).unwrap());
+            } else {
+                println!("{}", serde_json::to_string_pretty(&result).unwrap());
+            }
         }
         OutputFormat::Human => {
             println!(
@@ -2424,6 +2468,10 @@ fn cmd_set_prop(args: SetPropArgs) -> Result<()> {
                 args.property.cyan(),
                 args.value.green(),
             );
+            if args.screenshot {
+                let (_w, _h, b64) = take_screenshot_b64()?;
+                print!("{b64}");
+            }
         }
     }
     Ok(())
@@ -2700,16 +2748,19 @@ fn cmd_set_prop_field(args: SetPropFieldArgs) -> Result<()> {
     })?;
     match args.format {
         OutputFormat::Json => {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&serde_json::json!({
-                    "object_id": args.id,
-                    "property": args.property,
-                    "field": args.field,
-                    "value": json_value,
-                }))
-                .unwrap()
-            );
+            let mut out = serde_json::json!({
+                "object_id": args.id,
+                "property": args.property,
+                "field": args.field,
+                "value": json_value,
+            });
+            if args.screenshot {
+                let (w, h, b64) = take_screenshot_b64()?;
+                out["screenshot"] = serde_json::json!({
+                    "width": w, "height": h, "format": "png", "data": b64,
+                });
+            }
+            println!("{}", serde_json::to_string_pretty(&out).unwrap());
         }
         OutputFormat::Human => {
             println!(
@@ -2720,6 +2771,10 @@ fn cmd_set_prop_field(args: SetPropFieldArgs) -> Result<()> {
                 args.field.cyan(),
                 args.value.green(),
             );
+            if args.screenshot {
+                let (_w, _h, b64) = take_screenshot_b64()?;
+                print!("{b64}");
+            }
         }
     }
     Ok(())
@@ -3376,7 +3431,246 @@ fn cmd_inspect_objects(args: InspectObjectsArgs) -> Result<()> {
     Ok(())
 }
 
-// ── Camera (binary protocol) ────────────────────────────────────────
+// ── Camera view: structured spatial data ─────────────────────────────
+//
+// Alternative approach not yet implemented: inject a temporary GDScript via
+// reload-scripts that collects spatial data engine-side (frustum culling,
+// physics layer info, etc). Would give true visibility data but is more
+// invasive — modifies the project filesystem and risks game state changes.
+// The current client-side batch approach (scene-tree + batch inspect) is
+// non-invasive and sufficient for most AI debugging workflows.
+
+fn cmd_camera_view(args: CameraViewArgs) -> Result<()> {
+    ensure_binary_debug()?;
+
+    // Step 1: Get the scene tree
+    let tree = daemon_dap("debug_scene_tree", serde_json::json!({}))
+        .ok_or_else(|| miette!("Failed to get scene tree — is a game running?"))?;
+
+    // Step 2: Collect all spatial node IDs and find camera nodes
+    let mut spatial_ids: Vec<(u64, String, String)> = Vec::new(); // (id, name, class)
+    let mut camera_ids: Vec<(u64, String, String)> = Vec::new();
+
+    /// Check if a class is a known spatial type via the engine class DB.
+    fn is_spatial_engine_class(class: &str) -> bool {
+        class == "Node3D"
+            || class == "Node2D"
+            || crate::class_db::inherits(class, "Node3D")
+            || crate::class_db::inherits(class, "Node2D")
+    }
+
+    /// Check if a class (engine name or script path) looks like a camera.
+    /// Script paths like "res://scripts/player_camera.gd" use case-insensitive match.
+    fn is_camera_class(class: &str, node_name: &str) -> bool {
+        class == "Camera3D"
+            || class == "Camera2D"
+            || crate::class_db::inherits(class, "Camera3D")
+            || crate::class_db::inherits(class, "Camera2D")
+            || class.to_ascii_lowercase().contains("camera")
+            || node_name.to_ascii_lowercase().contains("camera")
+    }
+
+    /// Script paths (res://...) aren't in class_db so we can't determine
+    /// inheritance. Include them as spatial candidates — they'll be filtered
+    /// after inspection based on whether they actually have transform properties.
+    fn is_script_class(class: &str) -> bool {
+        class.starts_with("res://")
+    }
+
+    fn walk_tree(
+        node: &serde_json::Value,
+        spatial_ids: &mut Vec<(u64, String, String)>,
+        camera_ids: &mut Vec<(u64, String, String)>,
+    ) {
+        let name = node["name"].as_str().unwrap_or("").to_string();
+        let class = node["class_name"].as_str().unwrap_or("").to_string();
+        let id = node["object_id"].as_u64().unwrap_or(0);
+        if id != 0 && !class.is_empty() {
+            let camera = is_camera_class(&class, &name);
+            if camera {
+                camera_ids.push((id, name.clone(), class.clone()));
+            }
+            if is_spatial_engine_class(&class) || is_script_class(&class) || camera {
+                spatial_ids.push((id, name, class));
+            }
+        }
+        if let Some(children) = node["children"].as_array() {
+            for child in children {
+                walk_tree(child, spatial_ids, camera_ids);
+            }
+        }
+    }
+
+    // The tree may be a single root node or an array of nodes
+    if let Some(nodes) = tree.get("nodes").and_then(|n| n.as_array()) {
+        for node in nodes {
+            walk_tree(node, &mut spatial_ids, &mut camera_ids);
+        }
+    } else if let Some(nodes) = tree.as_array() {
+        for node in nodes {
+            walk_tree(node, &mut spatial_ids, &mut camera_ids);
+        }
+    } else {
+        walk_tree(&tree, &mut spatial_ids, &mut camera_ids);
+    }
+
+    if spatial_ids.is_empty() {
+        return Err(miette!("No spatial nodes found in the scene tree"));
+    }
+
+    // Step 3: Batch inspect all spatial nodes
+    let all_ids: Vec<u64> = spatial_ids.iter().map(|(id, _, _)| *id).collect();
+    // Scale timeout: ~0.5s per node + 5s base, capped at 60s
+    let inspect_timeout = (all_ids.len() as u64 / 2 + 5).min(60);
+    let inspect_result = daemon_dap_timeout(
+        "debug_inspect_objects",
+        serde_json::json!({"ids": all_ids, "selection": false}),
+        inspect_timeout,
+    )
+    .ok_or_else(|| miette!("Failed to batch inspect spatial nodes"))?;
+
+    let inspected = inspect_result
+        .as_array()
+        .map(|a| a.as_slice())
+        .unwrap_or(&[]);
+
+    // Build lookup by object_id (responses may arrive out-of-order or be partial)
+    let mut inspect_by_id: std::collections::HashMap<u64, &serde_json::Value> =
+        std::collections::HashMap::new();
+    for obj in inspected {
+        if let Some(oid) = obj["object_id"].as_u64() {
+            inspect_by_id.insert(oid, obj);
+        }
+    }
+
+    // Step 4: Extract spatial properties from each inspected node
+    let spatial_props = [
+        "position",
+        "global_position",
+        "rotation",
+        "rotation_degrees",
+        "scale",
+    ];
+    let camera_props = ["fov", "size", "near", "far", "current", "projection"];
+
+    let mut nodes_out: Vec<serde_json::Value> = Vec::new();
+    let mut camera_out: Option<serde_json::Value> = None;
+
+    for (id, name, class) in &spatial_ids {
+        let obj = inspect_by_id.get(id);
+        let mut node_data = serde_json::json!({
+            "name": name,
+            "class": class,
+            "object_id": id,
+        });
+
+        let mut has_spatial = false;
+        if let Some(obj) = obj
+            && let Some(props) = obj["properties"].as_array()
+        {
+            let is_camera = camera_ids.iter().any(|(cid, _, _)| cid == id);
+            for p in props {
+                let pname = p["name"].as_str().unwrap_or("");
+                if spatial_props.contains(&pname) {
+                    node_data[pname] = format_spatial_value(&p["value"]);
+                    has_spatial = true;
+                } else if is_camera && camera_props.contains(&pname) {
+                    node_data[pname] = format_spatial_value(&p["value"]);
+                }
+            }
+        }
+
+        // Script classes were included speculatively — drop if no spatial props
+        if !has_spatial && is_script_class(class) {
+            // Still check if it's a camera (cameras are useful even without transforms)
+            if !camera_ids.iter().any(|(cid, _, _)| cid == id) {
+                continue;
+            }
+        }
+
+        // If this is a camera, also store as the camera info
+        if camera_ids.iter().any(|(cid, _, _)| cid == id) {
+            camera_out = Some(node_data.clone());
+        }
+
+        nodes_out.push(node_data);
+    }
+
+    let output = serde_json::json!({
+        "camera": camera_out,
+        "node_count": nodes_out.len(),
+        "nodes": nodes_out,
+    });
+
+    match args.format {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&output).unwrap());
+        }
+        OutputFormat::Human => {
+            if let Some(cam) = &camera_out {
+                let cam_name = cam["name"].as_str().unwrap_or("?");
+                let cam_class = cam["class"].as_str().unwrap_or("?");
+                println!(
+                    "{} {} {}",
+                    "Camera:".bold(),
+                    cam_name.cyan(),
+                    format!("({cam_class})").dimmed(),
+                );
+                if let Some(pos) = cam.get("global_position") {
+                    println!("  position: {}", format!("{pos}").green());
+                }
+                if let Some(rot) = cam.get("rotation_degrees").or_else(|| cam.get("rotation")) {
+                    println!("  rotation: {}", format!("{rot}").green());
+                }
+                if let Some(fov) = cam.get("fov") {
+                    println!("  fov: {}", format!("{fov}").green());
+                }
+                println!();
+            } else {
+                println!("{}", "No camera found in scene".dimmed());
+                println!();
+            }
+            println!("{} ({} spatial nodes)", "Nodes:".bold(), nodes_out.len());
+            for node in &nodes_out {
+                let name = node["name"].as_str().unwrap_or("?");
+                let class = node["class"].as_str().unwrap_or("?");
+                let pos = node.get("global_position").or_else(|| node.get("position"));
+                let rot = node
+                    .get("rotation_degrees")
+                    .or_else(|| node.get("rotation"));
+                let pos_str = pos
+                    .map(|v| format!("{v}"))
+                    .unwrap_or_else(|| "?".to_string());
+                let rot_str = rot
+                    .map(|v| format!("{v}"))
+                    .unwrap_or_else(|| "?".to_string());
+                println!(
+                    "  {} {} pos={} rot={}",
+                    name.cyan(),
+                    format!("({class})").dimmed(),
+                    pos_str.green(),
+                    rot_str.green(),
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Format a variant value for spatial display (simplify vectors to arrays).
+fn format_spatial_value(value: &serde_json::Value) -> serde_json::Value {
+    // Godot variants come as {"Vector3": [x,y,z]} — flatten to just [x,y,z]
+    if let Some(obj) = value.as_object()
+        && obj.len() == 1
+        && let Some(inner) = obj.values().next()
+        && inner.is_array()
+    {
+        return inner.clone();
+    }
+    value.clone()
+}
+
+// ── Camera transforms (binary protocol) ──────────────────────────────
 
 fn cmd_transform_camera_2d(args: TransformCamera2dArgs) -> Result<()> {
     ensure_binary_debug()?;
@@ -3448,56 +3742,149 @@ fn cmd_transform_camera_3d(args: TransformCamera3dArgs) -> Result<()> {
 
 // ── Screenshot (binary protocol) ────────────────────────────────────
 
-fn cmd_screenshot(args: ScreenshotArgs) -> Result<()> {
-    ensure_binary_debug()?;
-    // Use a monotonic counter for the screenshot ID
+/// Take a screenshot and return (width, height, base64_data).
+/// Reused by `cmd_screenshot` and `--screenshot` flags on set-prop commands.
+fn take_screenshot_b64() -> Result<(u64, u64, String)> {
+    use base64::Engine;
+
     let id = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(1);
     let result = daemon_dap("debug_request_screenshot", serde_json::json!({"id": id}))
-        .ok_or_else(|| miette!("Failed — is a game running?"))?;
+        .ok_or_else(|| miette!("Screenshot failed — is a game running?"))?;
 
     let width = result["width"].as_u64().unwrap_or(0);
     let height = result["height"].as_u64().unwrap_or(0);
-    let b64_data = result["data"]
+    let png_b64 = result["data"]
         .as_str()
         .ok_or_else(|| miette!("No screenshot data in response"))?;
 
-    // Decode base64 PNG and write to output file
-    use base64::Engine;
+    // Convert PNG → JPEG to reduce base64 size (~3-5x smaller)
     let png_bytes = base64::engine::general_purpose::STANDARD
-        .decode(b64_data)
+        .decode(png_b64)
         .map_err(|e| miette!("Failed to decode screenshot data: {e}"))?;
+    let jpeg_b64 = png_to_jpeg_b64(&png_bytes)?;
+    Ok((width, height, jpeg_b64))
+}
 
-    std::fs::write(&args.output, &png_bytes)
-        .map_err(|e| miette!("Failed to write screenshot to {}: {e}", args.output))?;
+/// Convert PNG bytes to JPEG, return as base64.
+fn png_to_jpeg_b64(png_bytes: &[u8]) -> Result<String> {
+    use base64::Engine;
 
-    match args.format {
+    let decoder = png::Decoder::new(std::io::Cursor::new(png_bytes));
+    let mut reader = decoder
+        .read_info()
+        .map_err(|e| miette!("Failed to decode PNG: {e}"))?;
+    let mut buf = vec![0u8; reader.output_buffer_size().unwrap_or(0)];
+    let info = reader
+        .next_frame(&mut buf)
+        .map_err(|e| miette!("Failed to read PNG frame: {e}"))?;
+    let pixels = &buf[..info.buffer_size()];
+    let width = info.width as u16;
+    let height = info.height as u16;
+
+    // Convert to RGB if RGBA (strip alpha)
+    let rgb_data = match info.color_type {
+        png::ColorType::Rgba => {
+            let mut rgb = Vec::with_capacity(pixels.len() / 4 * 3);
+            for chunk in pixels.chunks_exact(4) {
+                rgb.extend_from_slice(&chunk[..3]);
+            }
+            rgb
+        }
+        png::ColorType::Rgb => pixels.to_vec(),
+        other => return Err(miette!("Unsupported PNG color type: {other:?}")),
+    };
+
+    let mut jpeg_buf = Vec::new();
+    let encoder = jpeg_encoder::Encoder::new(&mut jpeg_buf, 80);
+    encoder
+        .encode(&rgb_data, width, height, jpeg_encoder::ColorType::Rgb)
+        .map_err(|e| miette!("Failed to encode JPEG: {e}"))?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(&jpeg_buf))
+}
+
+/// Print screenshot as base64 JPEG (default) or write to file (PNG).
+fn print_screenshot(
+    b64_data: &str,
+    width: u64,
+    height: u64,
+    output: Option<&str>,
+    format: &OutputFormat,
+) -> Result<()> {
+    if let Some(output) = output {
+        // --output writes JPEG to file (same as base64 output, just decoded to bytes)
+        use base64::Engine;
+        let img_bytes = base64::engine::general_purpose::STANDARD
+            .decode(b64_data)
+            .map_err(|e| miette!("Failed to decode screenshot data: {e}"))?;
+
+        let fmt_label = "jpeg";
+        let bytes_to_write = img_bytes;
+
+        std::fs::write(output, &bytes_to_write)
+            .map_err(|e| miette!("Failed to write screenshot to {output}: {e}"))?;
+
+        match format {
+            OutputFormat::Json => {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "path": output,
+                        "width": width,
+                        "height": height,
+                        "format": fmt_label,
+                        "size": bytes_to_write.len(),
+                    }))
+                    .unwrap()
+                );
+            }
+            OutputFormat::Human => {
+                let size_kb = bytes_to_write.len() / 1024;
+                println!(
+                    "{} {}x{} ({size_kb} KB) → {}",
+                    "Screenshot saved".green(),
+                    width,
+                    height,
+                    output.cyan(),
+                );
+            }
+        }
+        return Ok(());
+    }
+
+    // Default: output JPEG base64 to stdout
+    match format {
         OutputFormat::Json => {
             println!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
-                    "path": args.output,
                     "width": width,
                     "height": height,
-                    "size": png_bytes.len(),
+                    "format": "jpeg",
+                    "data": b64_data,
                 }))
                 .unwrap()
             );
         }
         OutputFormat::Human => {
-            let size_kb = png_bytes.len() / 1024;
-            println!(
-                "{} {}x{} ({size_kb} KB) → {}",
-                "Screenshot saved".green(),
-                width,
-                height,
-                args.output.cyan(),
-            );
+            print!("{b64_data}");
         }
     }
     Ok(())
+}
+
+fn cmd_screenshot(args: ScreenshotArgs) -> Result<()> {
+    ensure_binary_debug()?;
+    let (width, height, b64_data) = take_screenshot_b64()?;
+    print_screenshot(
+        &b64_data,
+        width,
+        height,
+        args.output.as_deref(),
+        &args.format,
+    )
 }
 
 // ── File management (binary protocol) ───────────────────────────────

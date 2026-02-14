@@ -44,7 +44,9 @@ gd debug inspect --id <N> --brief      # AI-friendly: just name=value pairs, no 
 gd debug inspect --id <N> --rich       # Enriched with ClassDB docs per property
 gd debug inspect-objects --id <N> [--id <M>...]  # Inspect multiple objects at once
 gd debug set-prop --id <N> --property <name> --value <val>       # Set property
+gd debug set-prop --id <N> --property <name> --value <val> --screenshot  # Set + auto-screenshot
 gd debug set-prop-field --id <N> --property <name> --field <f> --value <val>  # Set sub-field (e.g. position.x)
+gd debug set-prop-field --id <N> --property <name> --field <f> --value <val> --screenshot  # Set + auto-screenshot
 gd debug save-node --id <N> --path <file>        # Save node to file on game's filesystem
 
 # Execution control
@@ -78,20 +80,28 @@ gd debug mute-audio [--off]            # Mute/unmute
 gd debug stop                          # Stop the running game (alias for gd stop)
 
 # Camera & visual
+gd debug camera-view                   # Structured spatial data: all nodes with positions/rotations
+gd debug camera-view --format json     # JSON: camera info + every spatial node's transform
 gd debug override-camera [--off]       # Take/release remote camera control
 gd debug transform-camera-2d --transform <json-array-6-floats>
 gd debug transform-camera-3d --transform <json-array-12-floats> --perspective <bool> --fov <N> --near <N> --far <N>
-gd debug screenshot --output <file>    # Request screenshot from game
+gd debug screenshot                    # Output base64 PNG to stdout (default)
+gd debug screenshot --format json      # JSON with width, height, format, data (base64) fields
+gd debug screenshot --output <file>    # Write PNG file instead of base64 output
 gd debug profiler --name scripts|visual|servers [--off]  # Toggle profiler
 
 # Live editing (requires live-set-root first)
+# NOTE: live-*-prop and live-*-call use "live edit IDs" from live-set-root mapping.
+# These are NOT the same as object IDs from scene-tree/inspect. Two ID systems:
+#   - Object IDs: from scene-tree, used with inspect/set-prop/set-prop-field
+#   - Live edit IDs: from live-set-root, used with live-node-prop/live-res-prop/live-*-call
 gd debug live-set-root --path </root/Main> --file <res://main.tscn>  # Set root for live edits
 gd debug live-create-node --parent <path> --class <ClassName> --name <name>
 gd debug live-instantiate --parent <path> --scene <res://scene.tscn> --name <name>
 gd debug live-remove-node --path <node-path>
 gd debug live-duplicate --path <node-path> --name <new-name>
 gd debug live-reparent --path <node-path> --new-parent <path> [--name <name>] [--pos <N>]
-gd debug live-node-prop --id <N> --property <name> --value <json>    # ID from live-set-root mapping
+gd debug live-node-prop --id <N> --property <name> --value <json>    # N = live edit ID
 gd debug live-node-call --id <N> --method <name> [--args <json-array>]
 gd debug live-res-prop --id <N> --property <name> --value <json>
 gd debug live-res-call --id <N> --method <name> [--args <json-array>]
@@ -99,8 +109,8 @@ gd debug live-node-prop-res --id <N> --property <name> --res-path <res://path>
 gd debug live-res-prop-res --id <N> --property <name> --res-path <res://path>
 gd debug live-node-path --path <node-path> --id <N>     # Set node path mapping
 gd debug live-res-path --path <res-path> --id <N>       # Set resource path mapping
-gd debug live-remove-keep --path <node-path> --object-id <N>  # Remove but keep reference
-gd debug live-restore --object-id <N> --path <node-path> [--pos <N>]  # Restore removed node
+gd debug live-remove-keep --path <node-path> --object-id <N>  # Remove but keep ref (uses object ID)
+gd debug live-restore --object-id <N> --path <node-path> [--pos <N>]  # Restore (uses object ID)
 
 # File & selection
 gd debug reload-cached --file <path> [--file <path>...]  # Reload cached files
@@ -203,9 +213,10 @@ gd upgrade [--check]                   # Self-update
 # --rich                  Enrich inspect with ClassDB docs (type descriptions, docs URLs)
 # --off                   Toggle pattern: mute-audio --off, suspend --off, skip-breakpoints --off
 # --dry-run               Preview refactoring changes without applying
+# --screenshot             Auto-capture screenshot after set-prop/set-prop-field (outputs base64)
 # --check                 CI mode: exit 1 on issues (fmt --check, doc --check)
 # res:// paths            Godot resource paths used in debug breakpoints and live editing
-# Object IDs              From scene-tree output, used in inspect/set-prop
+# Object IDs              From scene-tree output, used in inspect/set-prop/set-prop-field
 # Live edit IDs           From live-set-root mapping, used in live-node-prop/live-res-prop (different from object IDs)
 # stdin commands          replace-body, replace-symbol, insert, edit-range read content from stdin (or --input-file)
 "#;

@@ -185,10 +185,15 @@ impl GodotDebugServer {
 
     /// Accept a connection from the game (blocking, with timeout).
     /// Returns true if a connection was accepted.
+    /// Checks `running` flag so it can be interrupted by dropping the server.
     pub fn accept(&self, timeout: Duration) -> bool {
         let _ = self.listener.set_nonblocking(true);
         let deadline = Instant::now() + timeout;
         loop {
+            // Check if we've been shut down (e.g. server replaced)
+            if !*self.running.lock().unwrap() {
+                return false;
+            }
             match self.listener.accept() {
                 Ok((tcp_stream, _addr)) => {
                     let _ = tcp_stream.set_nonblocking(false);
@@ -205,7 +210,7 @@ impl GodotDebugServer {
                     if Instant::now() >= deadline {
                         return false;
                     }
-                    std::thread::sleep(Duration::from_millis(10));
+                    std::thread::sleep(Duration::from_millis(50));
                 }
                 Err(_) => return false,
             }
@@ -463,41 +468,14 @@ impl GodotDebugServer {
         }
     }
 
-    /// Inspect multiple objects at once (Godot 4.x).
-    /// Format: [Array([id1, id2, ...]), Bool(selection)]
-    /// Returns info for the first object in the response.
-    pub fn cmd_inspect_objects(&self, ids: &[u64], selection: bool) -> Option<Vec<ObjectInfo>> {
-        let ids_array =
-            GodotVariant::Array(ids.iter().map(|&id| GodotVariant::Int(id as i64)).collect());
-        if !self.send_command(
-            "scene:inspect_objects",
-            &[ids_array, GodotVariant::Bool(selection)],
-        ) {
-            return None;
-        }
-        // Collect responses for each requested object
+    /// Inspect multiple objects by issuing individual inspect commands.
+    /// More reliable than sending all IDs in one batch — each object gets
+    /// its own send/receive cycle so a missing object doesn't break the rest.
+    pub fn cmd_inspect_objects(&self, ids: &[u64], _selection: bool) -> Option<Vec<ObjectInfo>> {
         let mut results = Vec::new();
-        let deadline = Instant::now() + Duration::from_secs(5);
-        for _ in ids {
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                break;
-            }
-            let msg = self.wait_message_any(
-                &[
-                    "scene:inspect_objects",
-                    "remote_selection_invalidated",
-                    "remote_nothing_selected",
-                ],
-                remaining,
-            );
-            match msg.as_deref().and_then(|m| m.first()) {
-                Some(GodotVariant::String(cmd)) if cmd == "scene:inspect_objects" => {
-                    if let Some(info) = parse_object_info(msg.as_deref().unwrap()) {
-                        results.push(info);
-                    }
-                }
-                _ => break,
+        for &id in ids {
+            if let Some(info) = self.cmd_inspect_object(id) {
+                results.push(info);
             }
         }
         Some(results)
@@ -1063,7 +1041,10 @@ fn parse_var_counts(msg: &[GodotVariant]) -> Option<(usize, usize, usize)> {
     Some((local, member, global))
 }
 
-/// Parse a single variable message: [String("stack_frame_var"), String(name), Int(type), Variant(value)]
+/// Parse a single variable message.
+/// Godot ScriptStackVariable.serialize() format (4 fields):
+///   [String(name), Int(scope_type), Int(variant_type_id), Variant(value)]
+/// Wire message: [String("stack_frame_var"), name, scope_type, variant_type_id, value]
 fn parse_debug_variable(msg: &[GodotVariant]) -> Option<DebugVariable> {
     let args = if msg
         .first()
@@ -1073,12 +1054,13 @@ fn parse_debug_variable(msg: &[GodotVariant]) -> Option<DebugVariable> {
     } else {
         msg
     };
-    if args.len() < 3 {
+    if args.len() < 4 {
         return None;
     }
     let name = variant_as_string(&args[0])?;
-    let var_type = variant_as_i32(&args[1])?;
-    let value = args.get(2).cloned().unwrap_or(GodotVariant::Nil);
+    // args[1] = scope type (0=local, 1=member, 2=global) — unused
+    let var_type = variant_as_i32(&args[2])?;
+    let value = args.get(3).cloned().unwrap_or(GodotVariant::Nil);
     Some(DebugVariable {
         name,
         value,
@@ -1086,7 +1068,10 @@ fn parse_debug_variable(msg: &[GodotVariant]) -> Option<DebugVariable> {
     })
 }
 
-/// Parse evaluation_return: [String("evaluation_return"), String(name), Int(type), Variant(value)]
+/// Parse evaluation_return response.
+/// Godot ScriptStackVariable.serialize() format (4 fields):
+///   [String(name), Int(scope_type=3), Int(variant_type_id), Variant(value)]
+/// Wire message: [String("evaluation_return"), name, scope_type, variant_type_id, value]
 fn parse_eval_result(msg: &[GodotVariant]) -> Option<EvalResult> {
     let args = if msg
         .first()
@@ -1096,12 +1081,13 @@ fn parse_eval_result(msg: &[GodotVariant]) -> Option<EvalResult> {
     } else {
         msg
     };
-    if args.len() < 3 {
+    if args.len() < 4 {
         return None;
     }
     let name = variant_as_string(&args[0])?;
-    let var_type = variant_as_i32(&args[1])?;
-    let value = args.get(2).cloned().unwrap_or(GodotVariant::Nil);
+    // args[1] = scope type (always 3 for eval) — unused
+    let var_type = variant_as_i32(&args[2])?;
+    let value = args.get(3).cloned().unwrap_or(GodotVariant::Nil);
     Some(EvalResult {
         name,
         value,
@@ -1398,10 +1384,12 @@ mod tests {
 
     #[test]
     fn test_parse_debug_variable() {
+        // Godot ScriptStackVariable.serialize(): [name, scope_type, variant_type_id, value]
         let msg = vec![
             GodotVariant::String("stack_frame_var".into()),
             GodotVariant::String("health".into()),
-            GodotVariant::Int(2), // type
+            GodotVariant::Int(0), // scope_type (0=local)
+            GodotVariant::Int(2), // variant_type_id (2=Int)
             GodotVariant::Int(100),
         ];
         let v = parse_debug_variable(&msg).unwrap();
@@ -1412,16 +1400,33 @@ mod tests {
 
     #[test]
     fn test_parse_eval_result() {
+        // Godot ScriptStackVariable.serialize(): [name, scope_type=3, variant_type_id, value]
         let msg = vec![
             GodotVariant::String("evaluation_return".into()),
             GodotVariant::String("2 + 2".into()),
-            GodotVariant::Int(2),
+            GodotVariant::Int(3), // scope_type (3=eval)
+            GodotVariant::Int(2), // variant_type_id (2=Int)
             GodotVariant::Int(4),
         ];
         let r = parse_eval_result(&msg).unwrap();
         assert_eq!(r.name, "2 + 2");
         assert_eq!(r.var_type, 2);
         assert_eq!(r.value, GodotVariant::Int(4));
+    }
+
+    #[test]
+    fn test_parse_eval_result_vector3() {
+        let msg = vec![
+            GodotVariant::String("evaluation_return".into()),
+            GodotVariant::String("Vector3(1,2,3)".into()),
+            GodotVariant::Int(3), // scope_type
+            GodotVariant::Int(9), // variant_type_id (9=Vector3)
+            GodotVariant::Vector3(1.0, 2.0, 3.0),
+        ];
+        let r = parse_eval_result(&msg).unwrap();
+        assert_eq!(r.name, "Vector3(1,2,3)");
+        assert_eq!(r.var_type, 9);
+        assert_eq!(r.value, GodotVariant::Vector3(1.0, 2.0, 3.0));
     }
 
     #[test]
