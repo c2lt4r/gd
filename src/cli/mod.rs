@@ -12,6 +12,7 @@ pub mod fmt_cmd;
 pub mod init_cmd;
 pub mod lint_cmd;
 pub mod llm_cmd;
+pub mod log_cmd;
 pub mod lsp_cmd;
 pub mod man_cmd;
 pub mod new_cmd;
@@ -76,6 +77,8 @@ pub enum Command {
     Stats(stats_cmd::StatsArgs),
     /// Generate CI/CD pipeline configuration
     Ci(ci_cmd::CiArgs),
+    /// View game output log from the last `gd run`
+    Log(log_cmd::LogArgs),
     /// Start the Language Server Protocol server
     Lsp(lsp_cmd::LspArgs),
     /// Show script dependency graph
@@ -110,6 +113,7 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Scene(ref args) => scene_cmd::exec(args),
         Command::Stats(ref args) => stats_cmd::exec(args),
         Command::Ci(args) => ci_cmd::exec(args),
+        Command::Log(ref args) => log_cmd::exec(args),
         Command::Lsp(args) => lsp_cmd::exec(args),
         Command::Deps(ref args) => deps_cmd::exec(args),
         Command::Man(ref args) => man_cmd::exec(args),

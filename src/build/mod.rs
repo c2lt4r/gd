@@ -1,8 +1,10 @@
 use miette::{Result, miette};
 use owo_colors::OwoColorize;
 use std::env;
+use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex};
 
 use crate::core::config::Config;
 use crate::core::fs;
@@ -128,6 +130,7 @@ fn search_path() -> Option<PathBuf> {
 }
 
 /// Run the Godot project.
+#[allow(clippy::too_many_lines)]
 pub fn run_project(
     scene: Option<&str>,
     debug: bool,
@@ -190,15 +193,18 @@ pub fn run_project(
         cmd.arg(arg);
     }
 
-    if log {
-        cmd.stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .stdin(Stdio::null());
-    } else {
-        cmd.stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .stdin(Stdio::null());
+    // Always capture output to log file
+    let log_path = log_file_path(&project.root);
+    if let Some(parent) = log_path.parent() {
+        std::fs::create_dir_all(parent).ok();
     }
+    let log_file = std::fs::File::create(&log_path)
+        .map_err(|e| miette!("Failed to create log file: {e}"))?;
+    let log_file = Arc::new(Mutex::new(BufWriter::new(log_file)));
+
+    cmd.stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .stdin(Stdio::null());
 
     let mut child = cmd
         .spawn()
@@ -213,12 +219,44 @@ pub fn run_project(
         None,
     );
 
+    let stdout = child.stdout.take().expect("stdout was piped");
+    let stderr = child.stderr.take().expect("stderr was piped");
+
+    let log1 = Arc::clone(&log_file);
+    let stdout_thread = std::thread::spawn(move || {
+        let reader = BufReader::new(stdout);
+        for line in reader.lines().map_while(Result::ok) {
+            if log {
+                println!("{line}");
+            }
+            if let Ok(mut f) = log1.lock() {
+                let _ = writeln!(f, "{line}");
+            }
+        }
+    });
+
+    let log2 = Arc::clone(&log_file);
+    let stderr_thread = std::thread::spawn(move || {
+        let reader = BufReader::new(stderr);
+        for line in reader.lines().map_while(Result::ok) {
+            if log {
+                eprintln!("{line}");
+            }
+            if let Ok(mut f) = log2.lock() {
+                let _ = writeln!(f, "{line}");
+            }
+        }
+    });
+
     if log {
-        // Wait for the child so stdout/stderr stay connected
+        let _ = stdout_thread.join();
+        let _ = stderr_thread.join();
         let _ = child.wait();
     } else {
-        // Reap the child in a background thread to avoid zombies
+        // Reap the child and reader threads in the background to avoid zombies
         std::thread::spawn(move || {
+            let _ = stdout_thread.join();
+            let _ = stderr_thread.join();
             let _ = child.wait();
         });
     }
@@ -249,6 +287,11 @@ pub fn run_project(
     );
 
     Ok(())
+}
+
+/// Path to the game log file within a project.
+pub fn log_file_path(project_root: &Path) -> PathBuf {
+    project_root.join(".godot").join("gd-game.log")
 }
 
 /// Export/build the Godot project.

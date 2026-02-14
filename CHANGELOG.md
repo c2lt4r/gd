@@ -5,6 +5,8 @@
 ### Added
 - **`gd scene attach-script`** — attach a GDScript file to a node in a `.tscn` scene. Auto-increments `ext_resource` ID, updates `load_steps`, supports `--node <name>` and `--dry-run`.
 - **`gd run --log`** — stream Godot's stdout/stderr to the terminal for debugging print output and error backtraces
+- **`gd log`** — view game output from the last `gd run`. Supports `--tail N`, `--follow` (real-time), and `--clear`.
+- **Always-capture game logs** — `gd run` now always writes Godot's stdout/stderr to `.godot/gd-game.log`, even without `--log`. When `--log` is set, output is tee'd to both the terminal and the log file.
 
 ## [0.2.6] - 2026-02-14
 

@@ -63,8 +63,9 @@ gd run
 | `gd init` | Initialize gd toolchain in an existing project (detects export paths) |
 | `gd fmt` | Format GDScript files |
 | `gd lint` | Lint GDScript files |
-| `gd run` | Run the Godot project (non-blocking, auto-wires debug, `--log` for stdout/stderr) |
+| `gd run` | Run the Godot project (non-blocking, auto-wires debug, always captures to `.godot/gd-game.log`, `--log` to tee to terminal) |
 | `gd stop` | Stop the running Godot game |
+| `gd log` | View game output from last run (`--tail N`, `--follow`, `--clear`) |
 | `gd build` | Build/export the Godot project |
 | `gd check` | Check project for errors (parse, structural, semantic, `.tscn`/`.tres` validation) (`--format json`) |
 | `gd clean` | Clean build artifacts |
@@ -279,6 +280,11 @@ gd run
 
 # Run with Godot's stdout/stderr streamed to terminal
 gd run --log
+
+# View game output from the last run (always captured)
+gd log
+gd log --tail 20
+gd log --follow
 
 # Stop the running game
 gd stop
