@@ -1,6 +1,6 @@
 use tree_sitter::{Node, Tree};
 
-use super::{LintDiagnostic, LintRule, Severity};
+use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
 
 pub struct PrintStatement;
@@ -8,6 +8,10 @@ pub struct PrintStatement;
 impl LintRule for PrintStatement {
     fn name(&self) -> &'static str {
         "print-statement"
+    }
+
+    fn category(&self) -> LintCategory {
+        LintCategory::Maintenance
     }
 
     fn check(&self, tree: &Tree, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {

@@ -88,6 +88,65 @@ use crate::core::config::{LintConfig, RuleConfig};
 use crate::core::symbol_table::SymbolTable;
 use crate::core::workspace_index::ProjectIndex;
 
+/// Clippy-style category for organizing lint rules.
+/// Each rule belongs to exactly one category. Categories can be bulk-enabled
+/// or disabled via `[lint]` in gd.toml.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LintCategory {
+    /// Definite bugs
+    Correctness,
+    /// Likely bugs, may be intentional
+    Suspicious,
+    /// Naming and code style
+    Style,
+    /// Code size and complexity metrics
+    Complexity,
+    /// Godot runtime performance
+    Performance,
+    /// Godot engine best practices
+    Godot,
+    /// Type system strictness
+    TypeSafety,
+    /// Unused code and debug artifacts
+    Maintenance,
+}
+
+impl fmt::Display for LintCategory {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            LintCategory::Correctness => write!(f, "correctness"),
+            LintCategory::Suspicious => write!(f, "suspicious"),
+            LintCategory::Style => write!(f, "style"),
+            LintCategory::Complexity => write!(f, "complexity"),
+            LintCategory::Performance => write!(f, "performance"),
+            LintCategory::Godot => write!(f, "godot"),
+            LintCategory::TypeSafety => write!(f, "type_safety"),
+            LintCategory::Maintenance => write!(f, "maintenance"),
+        }
+    }
+}
+
+impl FromStr for LintCategory {
+    type Err = String;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s {
+            "correctness" => Ok(LintCategory::Correctness),
+            "suspicious" => Ok(LintCategory::Suspicious),
+            "style" => Ok(LintCategory::Style),
+            "complexity" => Ok(LintCategory::Complexity),
+            "performance" => Ok(LintCategory::Performance),
+            "godot" => Ok(LintCategory::Godot),
+            "type_safety" => Ok(LintCategory::TypeSafety),
+            "maintenance" => Ok(LintCategory::Maintenance),
+            _ => Err(format!(
+                "invalid category '{s}': expected correctness, suspicious, style, complexity, performance, godot, type_safety, or maintenance"
+            )),
+        }
+    }
+}
+
 /// Severity of a lint diagnostic.
 /// Ordered: Info < Warning < Error (used for `--severity` filtering).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize)]
@@ -155,6 +214,9 @@ pub trait LintRule: Send + Sync {
     /// Unique rule identifier (e.g. "naming-convention").
     fn name(&self) -> &'static str;
 
+    /// Category this rule belongs to (e.g. correctness, style, performance).
+    fn category(&self) -> LintCategory;
+
     /// Whether this rule is enabled by default. Opt-in rules return false
     /// and must be explicitly enabled via `[lint.rules.<name>]` in gd.toml.
     fn default_enabled(&self) -> bool {
@@ -193,12 +255,18 @@ pub trait LintRule: Send + Sync {
 }
 
 /// Return all active rules based on config.
-/// - Default-enabled rules are included unless explicitly disabled.
-/// - Opt-in rules (default_enabled=false) are included only when
-///   configured in `[lint.rules.<name>]` with severity != "off".
+///
+/// Resolution order (highest wins):
+/// 1. `disabled_rules` list → always disables (backward compat)
+/// 2. Per-rule `severity = "off"` → always disables
+/// 3. Per-rule config (severity != "off") → enables with that severity
+/// 4. Category setting → enables/disables + sets severity for all rules in category
+/// 5. Rule's built-in default (`default_enabled` + default severity)
+#[allow(clippy::too_many_lines)]
 pub fn all_rules(
     disabled: &[String],
     rules_config: &HashMap<String, RuleConfig>,
+    lint_config: &LintConfig,
 ) -> Vec<Box<dyn LintRule>> {
     let all: Vec<Box<dyn LintRule>> = vec![
         Box::new(naming_convention::NamingConvention),
@@ -280,22 +348,135 @@ pub fn all_rules(
     all.into_iter()
         .filter(|r| {
             let name = r.name();
+
+            // 1. disabled_rules always wins
             if disabled.iter().any(|d| d == name) {
                 return false;
             }
-            // severity = "off" disables any rule (default-enabled or opt-in)
+
+            // 2. Per-rule severity = "off" always disables
             if rules_config
                 .get(name)
                 .is_some_and(|c| c.severity.as_deref() == Some("off"))
             {
                 return false;
             }
+
+            // 3. Per-rule config with severity != "off" → enables
+            if rules_config.get(name).is_some_and(|c| c.severity.is_some()) {
+                return true;
+            }
+
+            // 4. Category setting
+            if let Some(cat_level) = lint_config.category_level(r.category()) {
+                return cat_level != "off";
+            }
+
+            // 5. Rule's built-in default
             if r.default_enabled() {
                 true
             } else {
-                // Opt-in: only include if explicitly configured
+                // Opt-in: only include if explicitly configured (no severity set but has config entry)
                 rules_config.get(name).is_some()
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn empty_rules_config() -> HashMap<String, RuleConfig> {
+        HashMap::new()
+    }
+
+    fn default_lint_config() -> LintConfig {
+        LintConfig::default()
+    }
+
+    #[test]
+    fn all_rules_returns_all_default_enabled_with_no_config() {
+        let rules = all_rules(&[], &empty_rules_config(), &default_lint_config());
+        // Default-enabled rules should be present, opt-in ones should not
+        assert!(rules.iter().any(|r| r.name() == "duplicate-signal"));
+        assert!(!rules.iter().any(|r| r.name() == "variant-inference"));
+    }
+
+    #[test]
+    fn category_enables_opt_in_rules() {
+        // type_safety = "warning" should enable opt-in rules like variant-inference
+        let mut config = default_lint_config();
+        config.type_safety = Some("warning".to_string());
+        let rules = all_rules(&[], &empty_rules_config(), &config);
+        assert!(rules.iter().any(|r| r.name() == "variant-inference"));
+        assert!(rules.iter().any(|r| r.name() == "static-type-inference"));
+    }
+
+    #[test]
+    fn category_disables_default_enabled_rules() {
+        // correctness = "off" should disable rules like duplicate-signal
+        let mut config = default_lint_config();
+        config.correctness = Some("off".to_string());
+        let rules = all_rules(&[], &empty_rules_config(), &config);
+        assert!(!rules.iter().any(|r| r.name() == "duplicate-signal"));
+        assert!(!rules.iter().any(|r| r.name() == "duplicate-function"));
+    }
+
+    #[test]
+    fn per_rule_overrides_category() {
+        // style = "off" disables all style rules, but per-rule severity re-enables one
+        let mut config = default_lint_config();
+        config.style = Some("off".to_string());
+        let mut rules_config = HashMap::new();
+        rules_config.insert(
+            "naming-convention".to_string(),
+            RuleConfig {
+                severity: Some("error".to_string()),
+                ..RuleConfig::default()
+            },
+        );
+        let rules = all_rules(&[], &rules_config, &config);
+        assert!(rules.iter().any(|r| r.name() == "naming-convention"));
+        assert!(!rules.iter().any(|r| r.name() == "shadowed-variable"));
+    }
+
+    #[test]
+    fn disabled_rules_overrides_category() {
+        // type_safety = "warning" enables variant-inference, but disabled_rules overrides
+        let mut config = default_lint_config();
+        config.type_safety = Some("warning".to_string());
+        let disabled = vec!["variant-inference".to_string()];
+        let rules = all_rules(&disabled, &empty_rules_config(), &config);
+        assert!(!rules.iter().any(|r| r.name() == "variant-inference"));
+        // Other type_safety rules still enabled
+        assert!(rules.iter().any(|r| r.name() == "missing-type-hint"));
+    }
+
+    #[test]
+    fn every_rule_has_a_category() {
+        let rules = all_rules(&[], &empty_rules_config(), &default_lint_config());
+        for rule in &rules {
+            // Just verify it doesn't panic
+            let _ = rule.category();
+        }
+    }
+
+    #[test]
+    fn category_display_roundtrip() {
+        for cat in [
+            LintCategory::Correctness,
+            LintCategory::Suspicious,
+            LintCategory::Style,
+            LintCategory::Complexity,
+            LintCategory::Performance,
+            LintCategory::Godot,
+            LintCategory::TypeSafety,
+            LintCategory::Maintenance,
+        ] {
+            let s = cat.to_string();
+            let parsed: LintCategory = s.parse().unwrap();
+            assert_eq!(cat, parsed);
+        }
+    }
 }

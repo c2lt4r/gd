@@ -1,6 +1,6 @@
 use tree_sitter::{Node, Tree};
 
-use super::{LintDiagnostic, LintRule, Severity};
+use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
 use crate::core::symbol_table::SymbolTable;
 
@@ -9,6 +9,10 @@ pub struct GetNodeDefaultWithoutOnready;
 impl LintRule for GetNodeDefaultWithoutOnready {
     fn name(&self) -> &'static str {
         "get-node-default-without-onready"
+    }
+
+    fn category(&self) -> LintCategory {
+        LintCategory::Correctness
     }
 
     fn default_enabled(&self) -> bool {

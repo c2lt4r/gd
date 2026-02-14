@@ -1,6 +1,6 @@
 use tree_sitter::{Node, Tree};
 
-use super::{LintDiagnostic, LintRule, Severity};
+use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
 
 pub struct AwaitInReady;
@@ -8,6 +8,10 @@ pub struct AwaitInReady;
 impl LintRule for AwaitInReady {
     fn name(&self) -> &'static str {
         "await-in-ready"
+    }
+
+    fn category(&self) -> LintCategory {
+        LintCategory::Godot
     }
 
     fn check(&self, tree: &Tree, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {

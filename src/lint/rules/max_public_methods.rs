@@ -1,6 +1,6 @@
 use tree_sitter::{Node, Tree};
 
-use super::{LintDiagnostic, LintRule, Severity};
+use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
 
 pub struct MaxPublicMethods;
@@ -8,6 +8,10 @@ pub struct MaxPublicMethods;
 impl LintRule for MaxPublicMethods {
     fn name(&self) -> &'static str {
         "max-public-methods"
+    }
+
+    fn category(&self) -> LintCategory {
+        LintCategory::Complexity
     }
 
     fn default_enabled(&self) -> bool {

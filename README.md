@@ -371,90 +371,113 @@ The template system automatically finds `project.godot` within the repository to
 
 ## Lint Rules
 
-All 75 built-in rules (44 default-enabled, 31 opt-in):
+75 built-in rules organized into 8 categories (44 default-enabled, 31 opt-in):
 
-| Rule | Description | Severity | Fixable |
-|------|-------------|----------|---------|
-| `await-in-ready` | Detect `await` in `_ready()` | warning | |
-| `callable-null-check` | Warn on `.call()` without `.is_valid()` guard | warning | |
-| `comparison-with-boolean` | Flag explicit `== true`/`false` comparisons | warning | yes |
-| `comparison-with-itself` | Detect `x == x` self-comparisons | warning | |
-| `cyclomatic-complexity` | Warn on high cyclomatic complexity | warning | |
-| `deeply-nested-code` | Warn on deeply nested code blocks | warning | |
-| `duplicate-function` | Detect duplicate function definitions | error | |
-| `duplicate-key` | Detect duplicate dictionary keys | warning | |
-| `duplicate-signal` | Detect duplicate signal declarations | error | |
-| `duplicated-load` | Detect duplicate load/preload calls | warning | |
-| `empty-function` | Detect functions with only `pass` in body | warning | |
-| `enum-naming` | Enforce PascalCase/UPPER_SNAKE_CASE enums | warning | yes |
-| `float-comparison` | Warn on float equality comparisons | warning | yes |
-| `get-node-in-process` | Detect `get_node()` in `_process()` | warning | |
-| `integer-division` | Warn on integer literal division truncation | warning | |
-| `long-function` | Warn on functions exceeding line threshold | warning | |
-| `loop-variable-name` | Enforce snake_case loop variables | warning | yes |
-| `missing-return` | Detect missing return in typed functions | warning | |
-| `missing-type-hint` | Warn on missing type annotations | warning | |
-| `monitoring-in-signal` | Detect direct `monitoring`/`monitorable` assignment in Area signal callbacks | warning | |
-| `naming-convention` | Enforce snake_case/PascalCase naming | warning | yes |
-| `node-ready-order` | Detect node access before tree is ready | warning | |
-| `parameter-naming` | Enforce snake_case parameters | warning | yes |
-| `parameter-shadows-field` | Warn when parameter name shadows a class field | warning | |
-| `physics-in-process` | Detect physics calls in `_process()` | warning | |
-| `preload-type-hint` | Warn on untyped preload/load assignments | warning | |
-| `private-method-access` | Warn on calling private methods externally | warning | |
-| `redundant-else` | Detect unnecessary else after return | warning | yes |
-| `return-type-mismatch` | Detect void/non-void return mismatches | warning | |
-| `self-assignment` | Detect `x = x` assignments | warning | yes |
-| `shadowed-variable` | Detect variable shadowing in inner scopes | warning | |
-| `signal-name-convention` | Warn on signals with `on_` prefix | warning | yes |
-| `standalone-expression` | Detect side-effect-free expressions | warning | |
-| `standalone-ternary` | Detect ternary used as statement (result unused) | warning | |
-| `static-type-inference` | Suggest explicit type annotations | warning | |
-| `too-many-parameters` | Warn on functions with too many parameters | warning | |
-| `unnecessary-pass` | Detect `pass` in non-empty function bodies | warning | yes |
-| `unreachable-code` | Detect code after return/break/continue | warning | yes |
-| `untyped-array` | Suggest typed array annotations | warning | |
-| `untyped-array-literal` | Warn on `var x := [...]` without typed Array annotation | warning | yes |
-| `unused-preload` | Detect unused preload variables | warning | |
-| `unused-signal` | Detect signals that are never emitted | warning | |
-| `unused-variable` | Detect unused local variables | warning | yes |
+### Categories
 
-**Opt-in rules** (enable via `[lint.rules.<name>]` in `gd.toml`):
+| Category | Description | Rules |
+|----------|-------------|-------|
+| **correctness** | Definite bugs | 13 |
+| **suspicious** | Likely bugs, may be intentional | 10 |
+| **style** | Naming and code style | 14 |
+| **complexity** | Code size and complexity metrics | 8 |
+| **performance** | Godot runtime performance | 4 |
+| **godot** | Godot engine best practices | 10 |
+| **type_safety** | Type system strictness | 7 |
+| **maintenance** | Unused code and debug artifacts | 9 |
 
-| Rule | Description | Severity | Fixable |
-|------|-------------|----------|---------|
-| `assert-always-false` | Detect `assert(false)`, `assert(0)`, `assert(null)` | warning | yes |
-| `assert-always-true` | Detect `assert(true)`, `assert(1)`, `assert("string")` | warning | yes |
-| `breakpoint-statement` | Detect leftover `breakpoint` statements | info | |
-| `class-definitions-order` | Enforce canonical member ordering | warning | |
-| `duplicate-delegate` | Detect pure pass-through delegate functions | info | |
-| `enum-variable-without-default` | Warn on enum-typed variables without a default value | warning | |
-| `enum-without-class-name` | Warn on enum type annotations in scripts without `class_name` | warning | |
-| `get-node-default-without-onready` | Detect `$`/`get_node()` default without `@onready` | error | |
-| `god-object` | Warn on classes with too many functions/members/lines | warning | |
-| `incompatible-ternary` | Detect ternary branches with incompatible types | warning | |
-| `look-at-before-tree` | Detect tree-dependent calls before `add_child()` | warning | |
-| `magic-number` | Flag unexplained numeric literals | warning | |
-| `max-file-lines` | Enforce maximum file length | warning | |
-| `max-line-length` | Enforce maximum line length | warning | |
-| `max-public-methods` | Enforce maximum public methods per class | warning | |
-| `missing-tool` | Detect missing `@tool` when base class has it | warning | |
-| `narrowing-conversion` | Detect float-to-int narrowing conversions | warning | yes |
-| `native-method-override` | Detect overriding native engine methods | error | |
-| `null-after-await` | Warn on member access after `await` without null guard | warning | |
-| `onready-with-export` | Detect `@onready` combined with `@export` | error | |
-| `print-statement` | Detect debug print calls | info | |
-| `redundant-static-unload` | Detect `@static_unload` without any `static var` | warning | |
-| `return-value-discarded` | Detect discarded non-void function return values | info | |
-| `shadowed-variable-base-class` | Detect local variables shadowing base class members | warning | |
-| `signal-not-connected` | Detect signals emitted but never connected | info | |
-| `static-called-on-instance` | Detect static methods called on instances | warning | |
-| `todo-comment` | Detect TODO/FIXME/HACK comments | info | |
-| `unsafe-void-return` | Detect returning or assigning void call results | warning | yes |
-| `unused-parameter` | Detect unused function parameters | warning | |
-| `unused-private-class-variable` | Detect unused `_`-prefixed class variables | warning | |
-| `use-before-assign` | Detect method calls accessing uninitialized members | warning | |
-| `variant-inference` | Warn on `:=` inferring Variant from dict/array access | warning | |
+Categories can be bulk-controlled in `gd.toml`:
+
+```toml
+[lint]
+correctness = "error"      # all correctness rules → error severity
+type_safety = "warning"    # enable all type safety rules (incl. opt-in)
+maintenance = "off"        # disable all maintenance rules
+
+# Per-rule overrides still take precedence
+[lint.rules.print-statement]
+severity = "warning"       # re-enable despite maintenance = "off"
+```
+
+### All Rules
+
+| Rule | Category | Description | Severity | Fixable |
+|------|----------|-------------|----------|---------|
+| `assert-always-false` | correctness | Detect `assert(false)`, `assert(0)`, `assert(null)` | warning | yes |
+| `assert-always-true` | correctness | Detect `assert(true)`, `assert(1)`, `assert("string")` | warning | yes |
+| `await-in-ready` | godot | Detect `await` in `_ready()` | warning | |
+| `breakpoint-statement` | maintenance | Detect leftover `breakpoint` statements | info | |
+| `callable-null-check` | godot | Warn on `.call()` without `.is_valid()` guard | warning | |
+| `class-definitions-order` | style | Enforce canonical member ordering | warning | |
+| `comparison-with-boolean` | style | Flag explicit `== true`/`false` comparisons | warning | yes |
+| `comparison-with-itself` | correctness | Detect `x == x` self-comparisons | warning | |
+| `cyclomatic-complexity` | complexity | Warn on high cyclomatic complexity | warning | |
+| `deeply-nested-code` | complexity | Warn on deeply nested code blocks | warning | |
+| `duplicate-delegate` | maintenance | Detect pure pass-through delegate functions | info | |
+| `duplicate-function` | correctness | Detect duplicate function definitions | error | |
+| `duplicate-key` | correctness | Detect duplicate dictionary keys | warning | |
+| `duplicate-signal` | correctness | Detect duplicate signal declarations | error | |
+| `duplicated-load` | performance | Detect duplicate load/preload calls | warning | |
+| `empty-function` | style | Detect functions with only `pass` in body | warning | |
+| `enum-naming` | style | Enforce PascalCase/UPPER_SNAKE_CASE enums | warning | yes |
+| `enum-variable-without-default` | godot | Warn on enum-typed variables without a default value | warning | |
+| `enum-without-class-name` | godot | Warn on enum type annotations in scripts without `class_name` | warning | |
+| `float-comparison` | suspicious | Warn on float equality comparisons | warning | yes |
+| `get-node-default-without-onready` | correctness | Detect `$`/`get_node()` default without `@onready` | error | |
+| `get-node-in-process` | performance | Detect `get_node()` in `_process()` | warning | |
+| `god-object` | complexity | Warn on classes with too many functions/members/lines | warning | |
+| `incompatible-ternary` | suspicious | Detect ternary branches with incompatible types | warning | |
+| `integer-division` | suspicious | Warn on integer literal division truncation | warning | |
+| `long-function` | complexity | Warn on functions exceeding line threshold | warning | |
+| `look-at-before-tree` | godot | Detect tree-dependent calls before `add_child()` | warning | |
+| `loop-variable-name` | style | Enforce snake_case loop variables | warning | yes |
+| `magic-number` | type_safety | Flag unexplained numeric literals | warning | |
+| `max-file-lines` | complexity | Enforce maximum file length | warning | |
+| `max-line-length` | complexity | Enforce maximum line length | warning | |
+| `max-public-methods` | complexity | Enforce maximum public methods per class | warning | |
+| `missing-return` | correctness | Detect missing return in typed functions | warning | |
+| `missing-tool` | godot | Detect missing `@tool` when base class has it | warning | |
+| `missing-type-hint` | type_safety | Warn on missing type annotations | warning | |
+| `monitoring-in-signal` | godot | Detect direct `monitoring`/`monitorable` assignment in Area signal callbacks | warning | |
+| `naming-convention` | style | Enforce snake_case/PascalCase naming | warning | yes |
+| `narrowing-conversion` | suspicious | Detect float-to-int narrowing conversions | warning | yes |
+| `native-method-override` | suspicious | Detect overriding native engine methods | error | |
+| `node-ready-order` | godot | Detect node access before tree is ready | warning | |
+| `null-after-await` | suspicious | Warn on member access after `await` without null guard | warning | |
+| `onready-with-export` | correctness | Detect `@onready` combined with `@export` | error | |
+| `parameter-naming` | style | Enforce snake_case parameters | warning | yes |
+| `parameter-shadows-field` | style | Warn when parameter name shadows a class field | warning | |
+| `physics-in-process` | performance | Detect physics calls in `_process()` | warning | |
+| `preload-type-hint` | performance | Warn on untyped preload/load assignments | warning | |
+| `print-statement` | maintenance | Detect debug print calls | info | |
+| `private-method-access` | type_safety | Warn on calling private methods externally | warning | |
+| `redundant-else` | style | Detect unnecessary else after return | warning | yes |
+| `redundant-static-unload` | godot | Detect `@static_unload` without any `static var` | warning | |
+| `return-type-mismatch` | correctness | Detect void/non-void return mismatches | warning | |
+| `return-value-discarded` | suspicious | Detect discarded non-void function return values | info | |
+| `self-assignment` | correctness | Detect `x = x` assignments | warning | yes |
+| `shadowed-variable` | style | Detect variable shadowing in inner scopes | warning | |
+| `shadowed-variable-base-class` | style | Detect local variables shadowing base class members | warning | |
+| `signal-name-convention` | style | Warn on signals with `on_` prefix | warning | yes |
+| `signal-not-connected` | godot | Detect signals emitted but never connected | info | |
+| `standalone-expression` | style | Detect side-effect-free expressions | warning | |
+| `standalone-ternary` | suspicious | Detect ternary used as statement (result unused) | warning | |
+| `static-called-on-instance` | suspicious | Detect static methods called on instances | warning | |
+| `static-type-inference` | type_safety | Suggest explicit type annotations | warning | |
+| `todo-comment` | maintenance | Detect TODO/FIXME/HACK comments | info | |
+| `too-many-parameters` | complexity | Warn on functions with too many parameters | warning | |
+| `unnecessary-pass` | style | Detect `pass` in non-empty function bodies | warning | yes |
+| `unreachable-code` | correctness | Detect code after return/break/continue | warning | yes |
+| `unsafe-void-return` | suspicious | Detect returning or assigning void call results | warning | yes |
+| `untyped-array` | type_safety | Suggest typed array annotations | warning | |
+| `untyped-array-literal` | type_safety | Warn on `var x := [...]` without typed Array annotation | warning | yes |
+| `unused-parameter` | maintenance | Detect unused function parameters | warning | |
+| `unused-preload` | maintenance | Detect unused preload variables | warning | |
+| `unused-private-class-variable` | maintenance | Detect unused `_`-prefixed class variables | warning | |
+| `unused-signal` | maintenance | Detect signals that are never emitted | warning | |
+| `unused-variable` | maintenance | Detect unused local variables | warning | yes |
+| `use-before-assign` | correctness | Detect method calls accessing uninitialized members | warning | |
+| `variant-inference` | type_safety | Warn on `:=` inferring Variant from dict/array access | warning | |
 
 ### Inline Suppression
 
@@ -490,16 +513,19 @@ blank_lines_around_classes = 2
 trailing_newline = true
 
 [lint]
-disabled_rules = []
-max_function_length = 50
 ignore_patterns = ["addons/**"]
 
-# Per-rule severity overrides
-[lint.rules.magic-number]
-severity = "warning"  # enable opt-in rule
+# Category-level controls: "off" | "info" | "warning" | "error"
+correctness = "error"
+type_safety = "warning"    # enables all type-safety rules incl. opt-in
+maintenance = "off"        # disables all maintenance rules
 
+# Per-rule overrides (take precedence over category)
 [lint.rules.naming-convention]
-severity = "error"  # upgrade to error
+severity = "error"
+
+[lint.rules.print-statement]
+severity = "warning"       # re-enable despite maintenance = "off"
 
 [build]
 output_dir = "build"
@@ -538,6 +564,14 @@ extra_args = []
 | `max_god_object_members` | `15` | Max member variables before `god-object` warns |
 | `max_god_object_lines` | `500` | Max lines before `god-object` warns |
 | `ignore_patterns` | `[]` | Glob patterns for files to skip |
+| `correctness` | (none) | Category level: `"off"`, `"info"`, `"warning"`, `"error"` |
+| `suspicious` | (none) | Category level for likely-bug rules |
+| `style` | (none) | Category level for naming/style rules |
+| `complexity` | (none) | Category level for complexity metric rules |
+| `performance` | (none) | Category level for performance rules |
+| `godot` | (none) | Category level for Godot best-practice rules |
+| `type_safety` | (none) | Category level for type-system rules |
+| `maintenance` | (none) | Category level for unused-code/debug rules |
 
 **`[lint.rules.<name>]`** — per-rule overrides:
 
@@ -545,7 +579,7 @@ extra_args = []
 |--------|--------|-------------|
 | `severity` | `"info"`, `"warning"`, `"error"`, `"off"` | Override severity or disable a rule |
 
-Set severity on an opt-in rule to enable it. Set `"off"` to disable any rule.
+Resolution order (highest wins): `disabled_rules` > per-rule severity > category level > rule default.
 
 **`[build]`**
 
@@ -635,9 +669,8 @@ gd lsp symbols --file player.gd
 
 # Filter symbols by kind
 gd lsp symbols --file player.gd --kind function,signal
-```
 
-# View lines from a file (human-readable by default)
+# View lines from a file
 gd lsp view --file player.gd --range 10-20
 gd lsp view --file player.gd --start-line 15 --context 3
 gd lsp view --file player.gd --format json  # structured output for AI tools

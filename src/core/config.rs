@@ -80,6 +80,24 @@ pub struct LintConfig {
     /// Per-path rule overrides.
     #[serde(default)]
     pub overrides: Vec<LintOverride>,
+
+    // Category-level overrides: "off" | "info" | "warning" | "error"
+    /// Definite bugs
+    pub correctness: Option<String>,
+    /// Likely bugs, may be intentional
+    pub suspicious: Option<String>,
+    /// Naming and code style
+    pub style: Option<String>,
+    /// Code size and complexity metrics
+    pub complexity: Option<String>,
+    /// Godot runtime performance
+    pub performance: Option<String>,
+    /// Godot engine best practices
+    pub godot: Option<String>,
+    /// Type system strictness
+    pub type_safety: Option<String>,
+    /// Unused code and debug artifacts
+    pub maintenance: Option<String>,
 }
 
 impl Default for LintConfig {
@@ -99,6 +117,31 @@ impl Default for LintConfig {
             rules: HashMap::new(),
             ignore_patterns: Vec::new(),
             overrides: Vec::new(),
+            correctness: None,
+            suspicious: None,
+            style: None,
+            complexity: None,
+            performance: None,
+            godot: None,
+            type_safety: None,
+            maintenance: None,
+        }
+    }
+}
+
+impl LintConfig {
+    /// Get the configured level for a category, if set.
+    pub fn category_level(&self, cat: crate::lint::rules::LintCategory) -> Option<&str> {
+        use crate::lint::rules::LintCategory;
+        match cat {
+            LintCategory::Correctness => self.correctness.as_deref(),
+            LintCategory::Suspicious => self.suspicious.as_deref(),
+            LintCategory::Style => self.style.as_deref(),
+            LintCategory::Complexity => self.complexity.as_deref(),
+            LintCategory::Performance => self.performance.as_deref(),
+            LintCategory::Godot => self.godot.as_deref(),
+            LintCategory::TypeSafety => self.type_safety.as_deref(),
+            LintCategory::Maintenance => self.maintenance.as_deref(),
         }
     }
 }
@@ -217,6 +260,15 @@ fn warn_unknown_keys(raw: &toml::Value) {
         "rules",
         "ignore_patterns",
         "overrides",
+        // Category-level overrides
+        "correctness",
+        "suspicious",
+        "style",
+        "complexity",
+        "performance",
+        "godot",
+        "type_safety",
+        "maintenance",
     ];
     let known_rule = &[
         "severity",
@@ -386,6 +438,10 @@ mod tests {
             disabled_rules = ["unused-variable"]
             max_function_length = 80
             ignore_patterns = ["addons/**"]
+            correctness = "error"
+            suspicious = "warning"
+            type_safety = "warning"
+            maintenance = "off"
 
             [[lint.overrides]]
             paths = ["**/test/**", "**/tests/**"]

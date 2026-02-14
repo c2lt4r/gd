@@ -1,6 +1,6 @@
 use tree_sitter::{Node, Tree};
 
-use super::{Fix, LintDiagnostic, LintRule, Severity};
+use super::{Fix, LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
 use crate::core::symbol_table::SymbolTable;
 use crate::core::type_inference::{InferredType, infer_expression_type};
@@ -10,6 +10,10 @@ pub struct UntypedArrayLiteral;
 impl LintRule for UntypedArrayLiteral {
     fn name(&self) -> &'static str {
         "untyped-array-literal"
+    }
+
+    fn category(&self) -> LintCategory {
+        LintCategory::TypeSafety
     }
 
     fn check(&self, _tree: &Tree, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {

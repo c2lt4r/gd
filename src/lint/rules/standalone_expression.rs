@@ -1,6 +1,6 @@
 use tree_sitter::{Node, Tree};
 
-use super::{LintDiagnostic, LintRule, Severity};
+use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
 
 pub struct StandaloneExpression;
@@ -8,6 +8,10 @@ pub struct StandaloneExpression;
 impl LintRule for StandaloneExpression {
     fn name(&self) -> &'static str {
         "standalone-expression"
+    }
+
+    fn category(&self) -> LintCategory {
+        LintCategory::Style
     }
 
     fn check(&self, tree: &Tree, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {

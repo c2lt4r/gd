@@ -1,6 +1,6 @@
 use tree_sitter::{Node, Tree};
 
-use super::{LintDiagnostic, LintRule, Severity};
+use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
 
 pub struct CyclomaticComplexity;
@@ -8,6 +8,10 @@ pub struct CyclomaticComplexity;
 impl LintRule for CyclomaticComplexity {
     fn name(&self) -> &'static str {
         "cyclomatic-complexity"
+    }
+
+    fn category(&self) -> LintCategory {
+        LintCategory::Complexity
     }
 
     fn check(&self, tree: &Tree, source: &str, config: &LintConfig) -> Vec<LintDiagnostic> {

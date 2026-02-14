@@ -1,6 +1,6 @@
 use tree_sitter::Tree;
 
-use super::{LintDiagnostic, LintRule, Severity};
+use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
 use crate::core::symbol_table::SymbolTable;
 
@@ -9,6 +9,10 @@ pub struct OnreadyWithExport;
 impl LintRule for OnreadyWithExport {
     fn name(&self) -> &'static str {
         "onready-with-export"
+    }
+
+    fn category(&self) -> LintCategory {
+        LintCategory::Correctness
     }
 
     fn default_enabled(&self) -> bool {

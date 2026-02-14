@@ -1,6 +1,6 @@
 use tree_sitter::{Node, Tree};
 
-use super::{LintDiagnostic, LintRule, Severity};
+use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
 use crate::core::symbol_table::SymbolTable;
 
@@ -9,6 +9,10 @@ pub struct UnusedPrivateClassVariable;
 impl LintRule for UnusedPrivateClassVariable {
     fn name(&self) -> &'static str {
         "unused-private-class-variable"
+    }
+
+    fn category(&self) -> LintCategory {
+        LintCategory::Maintenance
     }
 
     fn default_enabled(&self) -> bool {

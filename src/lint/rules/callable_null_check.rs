@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use tree_sitter::{Node, Tree};
 
-use super::{LintDiagnostic, LintRule, Severity};
+use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
 
 pub struct CallableNullCheck;
@@ -9,6 +9,10 @@ pub struct CallableNullCheck;
 impl LintRule for CallableNullCheck {
     fn name(&self) -> &'static str {
         "callable-null-check"
+    }
+
+    fn category(&self) -> LintCategory {
+        LintCategory::Godot
     }
 
     fn check(&self, tree: &Tree, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {

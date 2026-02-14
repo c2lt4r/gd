@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use tree_sitter::{Node, Tree};
 
-use super::{LintDiagnostic, LintRule, Severity};
+use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
 
 pub struct UnusedParameter;
@@ -9,6 +9,10 @@ pub struct UnusedParameter;
 impl LintRule for UnusedParameter {
     fn name(&self) -> &'static str {
         "unused-parameter"
+    }
+
+    fn category(&self) -> LintCategory {
+        LintCategory::Maintenance
     }
 
     fn default_enabled(&self) -> bool {

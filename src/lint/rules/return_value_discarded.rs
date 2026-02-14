@@ -1,6 +1,6 @@
 use tree_sitter::{Node, Tree};
 
-use super::{LintDiagnostic, LintRule, Severity};
+use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
 use crate::core::symbol_table::SymbolTable;
 use crate::core::type_inference::{
@@ -13,6 +13,10 @@ pub struct ReturnValueDiscarded;
 impl LintRule for ReturnValueDiscarded {
     fn name(&self) -> &'static str {
         "return-value-discarded"
+    }
+
+    fn category(&self) -> LintCategory {
+        LintCategory::Suspicious
     }
 
     fn default_enabled(&self) -> bool {

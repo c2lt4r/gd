@@ -1,6 +1,6 @@
 use tree_sitter::{Node, Tree};
 
-use super::{Fix, LintDiagnostic, LintRule, Severity};
+use super::{Fix, LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
 
 pub struct ComparisonWithBoolean;
@@ -8,6 +8,10 @@ pub struct ComparisonWithBoolean;
 impl LintRule for ComparisonWithBoolean {
     fn name(&self) -> &'static str {
         "comparison-with-boolean"
+    }
+
+    fn category(&self) -> LintCategory {
+        LintCategory::Style
     }
 
     fn check(&self, tree: &Tree, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {

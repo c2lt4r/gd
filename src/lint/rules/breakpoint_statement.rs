@@ -1,6 +1,6 @@
 use tree_sitter::{Node, Tree};
 
-use super::{LintDiagnostic, LintRule, Severity};
+use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
 
 pub struct BreakpointStatement;
@@ -8,6 +8,10 @@ pub struct BreakpointStatement;
 impl LintRule for BreakpointStatement {
     fn name(&self) -> &'static str {
         "breakpoint-statement"
+    }
+
+    fn category(&self) -> LintCategory {
+        LintCategory::Maintenance
     }
 
     fn default_enabled(&self) -> bool {

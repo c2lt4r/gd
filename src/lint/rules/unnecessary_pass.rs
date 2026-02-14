@@ -1,6 +1,6 @@
 use tree_sitter::{Node, Tree};
 
-use super::{Fix, LintDiagnostic, LintRule, Severity};
+use super::{Fix, LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
 
 pub struct UnnecessaryPass;
@@ -8,6 +8,10 @@ pub struct UnnecessaryPass;
 impl LintRule for UnnecessaryPass {
     fn name(&self) -> &'static str {
         "unnecessary-pass"
+    }
+
+    fn category(&self) -> LintCategory {
+        LintCategory::Style
     }
 
     fn check(&self, tree: &Tree, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {

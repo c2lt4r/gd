@@ -1,6 +1,6 @@
 use tree_sitter::{Node, Tree};
 
-use super::{Fix, LintDiagnostic, LintRule, Severity};
+use super::{Fix, LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
 
 pub struct SelfAssignment;
@@ -8,6 +8,10 @@ pub struct SelfAssignment;
 impl LintRule for SelfAssignment {
     fn name(&self) -> &'static str {
         "self-assignment"
+    }
+
+    fn category(&self) -> LintCategory {
+        LintCategory::Correctness
     }
 
     fn check(&self, tree: &Tree, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {

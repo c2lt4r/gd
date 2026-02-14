@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use tree_sitter::{Node, Tree};
 
-use super::{LintDiagnostic, LintRule, Severity};
+use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
 
 pub struct MagicNumber;
@@ -70,6 +70,10 @@ const DEFAULT_ALLOWED_CONTEXTS: &[&str] = &[
 impl LintRule for MagicNumber {
     fn name(&self) -> &'static str {
         "magic-number"
+    }
+
+    fn category(&self) -> LintCategory {
+        LintCategory::TypeSafety
     }
 
     fn default_enabled(&self) -> bool {

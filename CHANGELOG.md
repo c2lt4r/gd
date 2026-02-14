@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.2.5] - 2026-02-14
+
+### Added
+- **Lint categories** — 8 categories for bulk rule control: `correctness`, `suspicious`, `style`, `complexity`, `performance`, `godot`, `type_safety`, `maintenance`. Each of the 75 rules belongs to exactly one category.
+- **Category config in `[lint]`** — set `type_safety = "warning"` to enable all type-safety rules (including opt-in), `maintenance = "off"` to disable all maintenance rules, etc.
+- **5-level severity resolution** — disabled_rules > per-rule severity > per-rule config > category level > rule default
+
+### Changed
+- `gd init` template rewritten to be minimal with category examples
+- README lint section reorganized by category with bulk-control documentation
+
 ## [0.2.4] - 2026-02-14
 
 ### Added

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use tree_sitter::{Node, Tree};
 
-use super::{Fix, LintDiagnostic, LintRule, Severity};
+use super::{Fix, LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
 
 pub struct UnusedVariable;
@@ -9,6 +9,10 @@ pub struct UnusedVariable;
 impl LintRule for UnusedVariable {
     fn name(&self) -> &'static str {
         "unused-variable"
+    }
+
+    fn category(&self) -> LintCategory {
+        LintCategory::Maintenance
     }
 
     fn check(&self, tree: &Tree, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {

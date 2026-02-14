@@ -78,14 +78,11 @@ pub fn run_lint(paths: &[String], opts: &LintOptions) -> Result<()> {
         return Ok(());
     }
 
-    // Merge rules with severity "off" into disabled list
-    let mut disabled = config.lint.disabled_rules.clone();
-    for (rule_name, rule_config) in &config.lint.rules {
-        if rule_config.severity.as_deref() == Some("off") && !disabled.contains(rule_name) {
-            disabled.push(rule_name.clone());
-        }
-    }
-    let rules = all_rules(&disabled, &config.lint.rules);
+    let rules = all_rules(
+        &config.lint.disabled_rules,
+        &config.lint.rules,
+        &config.lint,
+    );
 
     // Use project root (not cwd) as base for ignore patterns
     let ignore_base = find_project_root(&config_search_dir).unwrap_or_else(|| cwd.clone());
@@ -322,8 +319,20 @@ fn lint_file(
         all_diags.extend(diags);
     }
 
-    // Apply severity overrides from per-rule config
+    // Apply severity overrides: category first, then per-rule (higher priority)
     for diag in &mut all_diags {
+        // Category-level severity
+        if let Some(rule_obj) = rules.iter().find(|r| r.name() == diag.rule)
+            && let Some(cat_level) = config.lint.category_level(rule_obj.category())
+        {
+            match cat_level {
+                "info" => diag.severity = Severity::Info,
+                "warning" => diag.severity = Severity::Warning,
+                "error" => diag.severity = Severity::Error,
+                _ => {}
+            }
+        }
+        // Per-rule severity overrides category
         if let Some(rule_config) = config.lint.rules.get(diag.rule) {
             match rule_config.severity.as_deref() {
                 Some("info") => diag.severity = Severity::Info,

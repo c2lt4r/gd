@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use tree_sitter::{Node, Tree};
 
-use super::{LintDiagnostic, LintRule, Severity};
+use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
 
 pub struct NullAfterAwait;
@@ -10,6 +10,10 @@ pub struct NullAfterAwait;
 impl LintRule for NullAfterAwait {
     fn name(&self) -> &'static str {
         "null-after-await"
+    }
+
+    fn category(&self) -> LintCategory {
+        LintCategory::Suspicious
     }
 
     fn default_enabled(&self) -> bool {

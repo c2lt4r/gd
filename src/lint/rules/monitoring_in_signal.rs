@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use tree_sitter::{Node, Tree};
 
-use super::{LintDiagnostic, LintRule, Severity};
+use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
 
 pub struct MonitoringInSignal;
@@ -25,6 +25,10 @@ const DANGEROUS_PROPS: &[&str] = &["monitoring", "monitorable"];
 impl LintRule for MonitoringInSignal {
     fn name(&self) -> &'static str {
         "monitoring-in-signal"
+    }
+
+    fn category(&self) -> LintCategory {
+        LintCategory::Godot
     }
 
     fn check(&self, tree: &Tree, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {

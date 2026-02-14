@@ -1,6 +1,6 @@
 use tree_sitter::{Node, Tree};
 
-use super::{LintDiagnostic, LintRule, Severity};
+use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
 
 pub struct ComparisonWithItself;
@@ -8,6 +8,10 @@ pub struct ComparisonWithItself;
 impl LintRule for ComparisonWithItself {
     fn name(&self) -> &'static str {
         "comparison-with-itself"
+    }
+
+    fn category(&self) -> LintCategory {
+        LintCategory::Correctness
     }
 
     fn check(&self, tree: &Tree, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {

@@ -1,6 +1,6 @@
 use tree_sitter::{Node, Tree};
 
-use super::{Fix, LintDiagnostic, LintRule, Severity};
+use super::{Fix, LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
 
 pub struct UnreachableCode;
@@ -8,6 +8,10 @@ pub struct UnreachableCode;
 impl LintRule for UnreachableCode {
     fn name(&self) -> &'static str {
         "unreachable-code"
+    }
+
+    fn category(&self) -> LintCategory {
+        LintCategory::Correctness
     }
 
     fn check(&self, tree: &Tree, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {

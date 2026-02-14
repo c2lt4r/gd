@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use tree_sitter::{Node, Tree};
 
-use super::{LintDiagnostic, LintRule, Severity};
+use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
 
 pub struct DuplicatedLoad;
@@ -9,6 +9,10 @@ pub struct DuplicatedLoad;
 impl LintRule for DuplicatedLoad {
     fn name(&self) -> &'static str {
         "duplicated-load"
+    }
+
+    fn category(&self) -> LintCategory {
+        LintCategory::Performance
     }
 
     fn check(&self, tree: &Tree, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {

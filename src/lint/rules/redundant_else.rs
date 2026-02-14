@@ -1,6 +1,6 @@
 use tree_sitter::{Node, Tree};
 
-use super::{Fix, LintDiagnostic, LintRule, Severity};
+use super::{Fix, LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
 
 pub struct RedundantElse;
@@ -8,6 +8,10 @@ pub struct RedundantElse;
 impl LintRule for RedundantElse {
     fn name(&self) -> &'static str {
         "redundant-else"
+    }
+
+    fn category(&self) -> LintCategory {
+        LintCategory::Style
     }
 
     fn check(&self, tree: &Tree, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {

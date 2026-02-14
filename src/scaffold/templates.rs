@@ -34,58 +34,29 @@ Thumbs.db
 ";
 
 pub const GD_TOML_TEMPLATE: &str = r#"# gd toolchain configuration
-# All options shown with their defaults. Uncomment to override.
+# See: https://github.com/c2lt4r/gd
 
 [fmt]
 use_tabs = true
 indent_size = 4
 max_line_length = 100
-# blank_lines_around_functions = 2
-# blank_lines_around_classes = 2
-# trailing_newline = true
 
 [lint]
-disabled_rules = []
 # ignore_patterns = ["addons/**"]
-# max_function_length = 50
-# max_function_params = 5
-# max_cyclomatic_complexity = 10
-# max_nesting_depth = 4
-# max_line_length = 120
-# max_file_lines = 500
-# max_public_methods = 20
-# max_god_object_functions = 20
-# max_god_object_members = 15
-# max_god_object_lines = 500
 
-# Per-rule severity overrides
-# Set severity to enable opt-in rules, change level, or "off" to disable
+# Category-level controls: "off" | "info" | "warning" | "error"
+# correctness = "error"      # definite bugs (default: on)
+# suspicious = "warning"     # likely bugs (default: on)
+# style = "warning"          # naming and code style (default: on)
+# type_safety = "warning"    # enable all type-safety rules incl. opt-in
+# maintenance = "off"        # disable unused-code/debug rules
+
+# Per-rule overrides (take precedence over category)
 # [lint.rules.naming-convention]
 # severity = "error"
 
-# [lint.rules.magic-number]
-# severity = "warning"      # enable opt-in rule
-
 # [lint.rules.print-statement]
-# severity = "off"          # disable a default rule
-
-# [lint.rules.god-object]
-# severity = "warning"      # enable opt-in rule
-
-# [lint.rules.duplicate-delegate]
-# severity = "info"         # enable opt-in rule
-
-# [lint.rules.signal-not-connected]
-# severity = "info"         # enable opt-in rule
-
-# Per-path rule exclusions
-# [[lint.overrides]]
-# paths = ["addons/**"]
-# exclude_rules = ["naming-convention"]
-
-# [[lint.overrides]]
-# paths = ["tests/**"]
-# exclude_rules = ["unused-variable"]
+# severity = "off"
 
 [build]
 output_dir = "build"

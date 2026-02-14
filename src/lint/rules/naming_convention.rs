@@ -1,6 +1,6 @@
 use tree_sitter::Tree;
 
-use super::{Fix, LintDiagnostic, LintRule, Severity};
+use super::{Fix, LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
 
 pub struct NamingConvention;
@@ -8,6 +8,10 @@ pub struct NamingConvention;
 impl LintRule for NamingConvention {
     fn name(&self) -> &'static str {
         "naming-convention"
+    }
+
+    fn category(&self) -> LintCategory {
+        LintCategory::Style
     }
 
     fn check(&self, tree: &Tree, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {

@@ -1,6 +1,6 @@
 use tree_sitter::{Node, Tree};
 
-use super::{LintDiagnostic, LintRule, Severity};
+use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
 use crate::core::symbol_table::SymbolTable;
 use crate::core::workspace_index::ProjectIndex;
@@ -10,6 +10,10 @@ pub struct ShadowedVariableBaseClass;
 impl LintRule for ShadowedVariableBaseClass {
     fn name(&self) -> &'static str {
         "shadowed-variable-base-class"
+    }
+
+    fn category(&self) -> LintCategory {
+        LintCategory::Style
     }
 
     fn default_enabled(&self) -> bool {

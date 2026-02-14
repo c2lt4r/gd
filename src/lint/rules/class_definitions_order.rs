@@ -1,6 +1,6 @@
 use tree_sitter::{Node, Tree};
 
-use super::{LintDiagnostic, LintRule, Severity};
+use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
 
 pub struct ClassDefinitionsOrder;
@@ -8,6 +8,10 @@ pub struct ClassDefinitionsOrder;
 impl LintRule for ClassDefinitionsOrder {
     fn name(&self) -> &'static str {
         "class-definitions-order"
+    }
+
+    fn category(&self) -> LintCategory {
+        LintCategory::Style
     }
 
     fn default_enabled(&self) -> bool {

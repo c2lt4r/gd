@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use tree_sitter::{Node, Tree};
 
-use super::{LintDiagnostic, LintRule, Severity};
+use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
 
 pub struct DuplicateKey;
@@ -9,6 +9,10 @@ pub struct DuplicateKey;
 impl LintRule for DuplicateKey {
     fn name(&self) -> &'static str {
         "duplicate-key"
+    }
+
+    fn category(&self) -> LintCategory {
+        LintCategory::Correctness
     }
 
     fn check(&self, tree: &Tree, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {

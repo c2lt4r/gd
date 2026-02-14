@@ -11,7 +11,11 @@ pub fn provide_code_actions(uri: &Url, source: &str, range: &Range) -> Option<Co
         .ok()
         .and_then(|cwd| crate::core::config::Config::load(&cwd).ok())
         .unwrap_or_default();
-    let rules = crate::lint::rules::all_rules(&config.lint.disabled_rules, &config.lint.rules);
+    let rules = crate::lint::rules::all_rules(
+        &config.lint.disabled_rules,
+        &config.lint.rules,
+        &config.lint,
+    );
 
     let mut all_diags = Vec::new();
     for rule in &rules {

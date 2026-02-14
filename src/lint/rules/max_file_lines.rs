@@ -1,6 +1,6 @@
 use tree_sitter::Tree;
 
-use super::{LintDiagnostic, LintRule, Severity};
+use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
 
 pub struct MaxFileLines;
@@ -8,6 +8,10 @@ pub struct MaxFileLines;
 impl LintRule for MaxFileLines {
     fn name(&self) -> &'static str {
         "max-file-lines"
+    }
+
+    fn category(&self) -> LintCategory {
+        LintCategory::Complexity
     }
 
     fn default_enabled(&self) -> bool {

@@ -1,6 +1,6 @@
 use tree_sitter::{Node, Tree};
 
-use super::{LintDiagnostic, LintRule, Severity};
+use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
 
 pub struct DuplicateDelegate;
@@ -8,6 +8,10 @@ pub struct DuplicateDelegate;
 impl LintRule for DuplicateDelegate {
     fn name(&self) -> &'static str {
         "duplicate-delegate"
+    }
+
+    fn category(&self) -> LintCategory {
+        LintCategory::Maintenance
     }
 
     fn default_enabled(&self) -> bool {

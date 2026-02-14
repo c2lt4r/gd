@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use tree_sitter::{Node, Tree};
 
-use super::{LintDiagnostic, LintRule, Severity};
+use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
 
 pub struct DuplicateSignal;
@@ -9,6 +9,10 @@ pub struct DuplicateSignal;
 impl LintRule for DuplicateSignal {
     fn name(&self) -> &'static str {
         "duplicate-signal"
+    }
+
+    fn category(&self) -> LintCategory {
+        LintCategory::Correctness
     }
 
     fn check(&self, tree: &Tree, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {

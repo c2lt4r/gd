@@ -1,6 +1,6 @@
 use tree_sitter::{Node, Tree};
 
-use super::{LintDiagnostic, LintRule, Severity};
+use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
 use crate::core::symbol_table::SymbolTable;
 use crate::core::type_inference::{InferredType, infer_expression_type};
@@ -10,6 +10,10 @@ pub struct VariantInference;
 impl LintRule for VariantInference {
     fn name(&self) -> &'static str {
         "variant-inference"
+    }
+
+    fn category(&self) -> LintCategory {
+        LintCategory::TypeSafety
     }
 
     fn default_enabled(&self) -> bool {

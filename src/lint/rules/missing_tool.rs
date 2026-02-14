@@ -1,6 +1,6 @@
 use tree_sitter::Tree;
 
-use super::{LintDiagnostic, LintRule, Severity};
+use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
 use crate::core::symbol_table::SymbolTable;
 use crate::core::workspace_index::ProjectIndex;
@@ -10,6 +10,10 @@ pub struct MissingTool;
 impl LintRule for MissingTool {
     fn name(&self) -> &'static str {
         "missing-tool"
+    }
+
+    fn category(&self) -> LintCategory {
+        LintCategory::Godot
     }
 
     fn default_enabled(&self) -> bool {

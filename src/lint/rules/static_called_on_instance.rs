@@ -1,6 +1,6 @@
 use tree_sitter::{Node, Tree};
 
-use super::{LintDiagnostic, LintRule, Severity};
+use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
 use crate::core::symbol_table::SymbolTable;
 use crate::core::workspace_index::ProjectIndex;
@@ -10,6 +10,10 @@ pub struct StaticCalledOnInstance;
 impl LintRule for StaticCalledOnInstance {
     fn name(&self) -> &'static str {
         "static-called-on-instance"
+    }
+
+    fn category(&self) -> LintCategory {
+        LintCategory::Suspicious
     }
 
     fn check(&self, _tree: &Tree, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {

@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use tree_sitter::{Node, Tree};
 
-use super::{LintDiagnostic, LintRule, Severity};
+use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
 
 pub struct SignalNotConnected;
@@ -9,6 +9,10 @@ pub struct SignalNotConnected;
 impl LintRule for SignalNotConnected {
     fn name(&self) -> &'static str {
         "signal-not-connected"
+    }
+
+    fn category(&self) -> LintCategory {
+        LintCategory::Godot
     }
 
     fn default_enabled(&self) -> bool {

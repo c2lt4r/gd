@@ -1,6 +1,6 @@
 use tree_sitter::{Node, Tree};
 
-use super::{LintDiagnostic, LintRule, Severity};
+use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
 
 pub struct EnumWithoutClassName;
@@ -8,6 +8,10 @@ pub struct EnumWithoutClassName;
 impl LintRule for EnumWithoutClassName {
     fn name(&self) -> &'static str {
         "enum-without-class-name"
+    }
+
+    fn category(&self) -> LintCategory {
+        LintCategory::Godot
     }
 
     fn default_enabled(&self) -> bool {

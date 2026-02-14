@@ -1,6 +1,6 @@
 use tree_sitter::{Node, Tree};
 
-use super::{Fix, LintDiagnostic, LintRule, Severity};
+use super::{Fix, LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
 
 pub struct AssertAlwaysFalse;
@@ -8,6 +8,10 @@ pub struct AssertAlwaysFalse;
 impl LintRule for AssertAlwaysFalse {
     fn name(&self) -> &'static str {
         "assert-always-false"
+    }
+
+    fn category(&self) -> LintCategory {
+        LintCategory::Correctness
     }
 
     fn default_enabled(&self) -> bool {
