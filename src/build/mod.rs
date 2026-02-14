@@ -132,6 +132,7 @@ pub fn run_project(
     scene: Option<&str>,
     debug: bool,
     verbose: bool,
+    log: bool,
     extra: &[String],
 ) -> Result<()> {
     let cwd = env::current_dir().unwrap_or_default();
@@ -189,9 +190,15 @@ pub fn run_project(
         cmd.arg(arg);
     }
 
-    cmd.stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .stdin(Stdio::null());
+    if log {
+        cmd.stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .stdin(Stdio::null());
+    } else {
+        cmd.stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .stdin(Stdio::null());
+    }
 
     let mut child = cmd
         .spawn()
@@ -206,10 +213,15 @@ pub fn run_project(
         None,
     );
 
-    // Reap the child in a background thread to avoid zombies
-    std::thread::spawn(move || {
+    if log {
+        // Wait for the child so stdout/stderr stay connected
         let _ = child.wait();
-    });
+    } else {
+        // Reap the child in a background thread to avoid zombies
+        std::thread::spawn(move || {
+            let _ = child.wait();
+        });
+    }
 
     // Tell the daemon to accept the debug connection (fire-and-forget)
     if debug_port.is_some() {

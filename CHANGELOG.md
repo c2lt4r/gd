@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.2.7] - 2026-02-14
+
+### Added
+- **`gd scene attach-script`** — attach a GDScript file to a node in a `.tscn` scene. Auto-increments `ext_resource` ID, updates `load_steps`, supports `--node <name>` and `--dry-run`.
+- **`gd run --log`** — stream Godot's stdout/stderr to the terminal for debugging print output and error backtraces
+
 ## [0.2.6] - 2026-02-14
 
 ### Added

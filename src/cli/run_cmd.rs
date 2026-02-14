@@ -11,11 +11,20 @@ pub struct RunArgs {
     /// Run in verbose mode
     #[arg(short, long)]
     pub verbose: bool,
+    /// Stream Godot's stdout/stderr to the terminal
+    #[arg(short, long)]
+    pub log: bool,
     /// Extra args to pass to Godot
     #[arg(last = true)]
     pub extra: Vec<String>,
 }
 
 pub fn exec(args: &RunArgs) -> Result<()> {
-    crate::build::run_project(args.scene.as_deref(), args.debug, args.verbose, &args.extra)
+    crate::build::run_project(
+        args.scene.as_deref(),
+        args.debug,
+        args.verbose,
+        args.log,
+        &args.extra,
+    )
 }

@@ -63,7 +63,7 @@ gd run
 | `gd init` | Initialize gd toolchain in an existing project (detects export paths) |
 | `gd fmt` | Format GDScript files |
 | `gd lint` | Lint GDScript files |
-| `gd run` | Run the Godot project (non-blocking, auto-wires debug) |
+| `gd run` | Run the Godot project (non-blocking, auto-wires debug, `--log` for stdout/stderr) |
 | `gd stop` | Stop the running Godot game |
 | `gd build` | Build/export the Godot project |
 | `gd check` | Check project for errors (parse, structural, semantic, `.tscn`/`.tres` validation) (`--format json`) |
@@ -78,6 +78,7 @@ gd run
 | `gd ci` | Generate CI/CD pipeline configuration |
 | `gd daemon` | Manage the background daemon (status, stop, restart) |
 | `gd debug` | Debug a running Godot game (breakpoints, stepping, eval, scene tree, inspect, time control) |
+| `gd scene` | Manage `.tscn` scene files (attach scripts to nodes) |
 | `gd lsp` | Start the LSP server, or run one-shot queries (see below) |
 | `gd deps` | Show script dependency graph (`--include-resources` for `.tscn`/`.tres`) |
 | `gd man` | Generate man page |
@@ -199,6 +200,19 @@ gd tree --scene .
 gd tree --scene main.tscn --format json
 ```
 
+### Scene Management
+
+```sh
+# Attach a script to the root node of a scene
+gd scene attach-script main.tscn player.gd
+
+# Attach to a specific node
+gd scene attach-script main.tscn enemy_ai.gd --node Enemy
+
+# Preview changes without writing
+gd scene attach-script main.tscn player.gd --dry-run
+```
+
 ### Statistics
 
 ```sh
@@ -262,6 +276,9 @@ Debug a running Godot game via Godot's native binary debug protocol. The backgro
 ```sh
 # Run the project (auto-wires debug connection)
 gd run
+
+# Run with Godot's stdout/stderr streamed to terminal
+gd run --log
 
 # Stop the running game
 gd stop
