@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.31] - 2026-02-14
+
+### Changed
+- **Enforce `clippy::pedantic`** — deny-level pedantic lints across the entire codebase. Fixed 460+ violations (redundant closures, manual `is_empty`, needless borrows, `match` vs `if let`, etc.).
+- **Remove DAP client** — stripped `dap_client.rs` and all DAP-specific code paths. The binary debug protocol (`godot_debug_server`) is the sole debug transport.
+- **Split 7 god files into 43 submodules** — `debug_cmd` (10), `daemon` (6), `variant` (4), `test_cmd` (5), `godot_debug_server` (7), `printer` (6), `query` (5). No public API changes; all items re-exported from `mod.rs`. Every file now under 750 lines.
+
 ## [0.1.30] - 2026-02-14
 
 ### Added

@@ -95,7 +95,9 @@ pub fn inline_method(
         ));
     }
     // If there's a return, it must be the last top-level statement
-    if return_count == 1 && body_stmts.last().map(tree_sitter::Node::kind) != Some("return_statement") {
+    if return_count == 1
+        && body_stmts.last().map(tree_sitter::Node::kind) != Some("return_statement")
+    {
         return Err(miette::miette!(
             "cannot inline function with non-trailing return statement"
         ));
@@ -196,8 +198,10 @@ pub fn inline_method(
                         .child_by_field_name("name")
                         .and_then(|n| n.utf8_text(source.as_bytes()).ok())
                         .unwrap_or("x");
-                    let _ =
-                        writeln!(inlined_lines_text, "{call_indent}var {var_name} = {ret_expr}");
+                    let _ = writeln!(
+                        inlined_lines_text,
+                        "{call_indent}var {var_name} = {ret_expr}"
+                    );
                 } else {
                     // x = func() → body + x = expr
                     let left = parent

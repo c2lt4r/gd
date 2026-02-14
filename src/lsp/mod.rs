@@ -19,16 +19,16 @@ mod workspace;
 use dashmap::DashMap;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::{
-    CodeActionParams, CodeActionResponse, CompletionItem, CompletionItemKind, CompletionParams,
-    CompletionResponse, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
-    DidOpenTextDocumentParams, DidSaveTextDocumentParams, DocumentFormattingParams,
-    DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse,
-    Hover, HoverContents, HoverParams, InitializeParams, InitializeResult, InitializedParams,
+    CodeActionParams, CodeActionProviderCapability, CodeActionResponse, CompletionItem,
+    CompletionItemKind, CompletionOptions, CompletionParams, CompletionResponse,
+    DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
+    DidSaveTextDocumentParams, DocumentFormattingParams, DocumentSymbolParams,
+    DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents,
+    HoverParams, HoverProviderCapability, InitializeParams, InitializeResult, InitializedParams,
     Location, MarkupContent, MarkupKind, MessageType, OneOf, Position, PrepareRenameResponse,
-    Range, ReferenceParams, RenameOptions, RenameParams, ServerCapabilities, ServerInfo, TextEdit,
-    TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind, Url,
+    Range, ReferenceParams, RenameOptions, RenameParams, ServerCapabilities, ServerInfo,
+    TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, Url,
     WorkDoneProgressOptions, WorkspaceEdit,
-    CodeActionProviderCapability, CompletionOptions, HoverProviderCapability,
 };
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 

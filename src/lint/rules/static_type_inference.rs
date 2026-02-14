@@ -37,9 +37,7 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
 
             diags.push(LintDiagnostic {
                 rule: "static-type-inference",
-                message: format!(
-                    "variable `{var_name}` could have an explicit type: `{inferred}`"
-                ),
+                message: format!("variable `{var_name}` could have an explicit type: `{inferred}`"),
                 severity: Severity::Warning,
                 line,
                 column: col,

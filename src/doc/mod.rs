@@ -465,9 +465,7 @@ pub fn run_doc_check(paths: &[String]) -> Result<()> {
         for (file, method) in &undocumented {
             println!("{} {file}: {method}() missing doc comment", "✗".red());
         }
-        println!(
-            "\n{documented_methods}/{total_methods} public methods documented"
-        );
+        println!("\n{documented_methods}/{total_methods} public methods documented");
         std::process::exit(1);
     }
 }

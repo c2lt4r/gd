@@ -152,7 +152,10 @@ pub fn run_project(
         None,
     ) {
         Some(result) => {
-            let port = result.get("port").and_then(serde_json::Value::as_u64).unwrap_or(0);
+            let port = result
+                .get("port")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
             if port > 0 {
                 cmd.arg("--remote-debug")
                     .arg(format!("tcp://127.0.0.1:{port}"));

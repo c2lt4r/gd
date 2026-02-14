@@ -38,9 +38,7 @@ impl LintRule for SignalNotConnected {
             if emitted.contains(name) && !connected.contains(name) {
                 diags.push(LintDiagnostic {
                     rule: "signal-not-connected",
-                    message: format!(
-                        "signal `{name}` is emitted but never connected in this file"
-                    ),
+                    message: format!("signal `{name}` is emitted but never connected in this file"),
                     severity: Severity::Info,
                     line: *line,
                     column: *column,

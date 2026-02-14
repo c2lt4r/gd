@@ -116,9 +116,7 @@ fn check_attribute_physics_call(node: Node, source: &str, diags: &mut Vec<LintDi
 fn make_diagnostic(method: &str, node: Node) -> LintDiagnostic {
     LintDiagnostic {
         rule: "physics-in-process",
-        message: format!(
-            "`{method}()` should be called in _physics_process(), not _process()"
-        ),
+        message: format!("`{method}()` should be called in _physics_process(), not _process()"),
         severity: Severity::Warning,
         line: node.start_position().row,
         column: node.start_position().column,

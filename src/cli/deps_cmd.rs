@@ -281,8 +281,10 @@ fn dfs_cycle<'a>(
             if gray.contains(dep_str) {
                 // Found a cycle - extract it from path
                 let cycle_start = path.iter().position(|&n| n == dep_str).unwrap();
-                let mut cycle: Vec<String> =
-                    path[cycle_start..].iter().map(std::string::ToString::to_string).collect();
+                let mut cycle: Vec<String> = path[cycle_start..]
+                    .iter()
+                    .map(std::string::ToString::to_string)
+                    .collect();
                 cycle.push(dep.clone());
                 cycles.push(cycle);
             } else if white.contains(dep_str) {

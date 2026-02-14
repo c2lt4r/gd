@@ -608,11 +608,7 @@ fn generate_call_site_multi_return(
 
     let mut lines = format!("{indent}var {result_name} = {name}({args})\n");
     for v in return_vars {
-        let _ = writeln!(
-            lines,
-            "{indent}{} = {result_name}[\"{}\"]",
-            v.name, v.name
-        );
+        let _ = writeln!(lines, "{indent}{} = {result_name}[\"{}\"]", v.name, v.name);
     }
     lines
 }

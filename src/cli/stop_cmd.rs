@@ -7,7 +7,10 @@ pub fn exec() -> Result<()> {
         crate::lsp::daemon_client::query_daemon("debug_stop_game", serde_json::json!({}), None)
         && result.get("error").is_none()
     {
-        let pid = result.get("pid").and_then(serde_json::Value::as_u64).unwrap_or(0);
+        let pid = result
+            .get("pid")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0);
         println!("{} Game stopped (pid {pid})", "✓".green());
         return Ok(());
     }

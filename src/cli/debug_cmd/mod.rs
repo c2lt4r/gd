@@ -1,0 +1,180 @@
+mod args;
+mod camera;
+mod control;
+mod live;
+mod misc;
+mod properties;
+mod rewrite;
+mod scene;
+mod selection;
+
+pub use args::*;
+
+use miette::{Result, miette};
+
+pub fn exec(args: &DebugArgs) -> Result<()> {
+    match args.command {
+        DebugCommand::Stop => crate::cli::stop_cmd::exec(),
+        DebugCommand::SceneTree(ref a) => scene::cmd_scene_tree(a),
+        DebugCommand::Inspect(ref a) => scene::cmd_inspect(a),
+        DebugCommand::SetProp(ref a) => properties::cmd_set_prop(a),
+        DebugCommand::Suspend(ref a) => properties::cmd_suspend(a),
+        DebugCommand::NextFrame(ref a) => properties::cmd_next_frame(a),
+        DebugCommand::TimeScale(ref a) => properties::cmd_time_scale(a),
+        DebugCommand::ReloadScripts(ref a) => properties::cmd_reload_scripts(a),
+        DebugCommand::ReloadAllScripts(ref a) => properties::cmd_reload_all_scripts(a),
+        DebugCommand::SkipBreakpoints(ref a) => properties::cmd_skip_breakpoints(a),
+        DebugCommand::IgnoreErrors(ref a) => properties::cmd_ignore_errors(a),
+        DebugCommand::MuteAudio(ref a) => misc::cmd_mute_audio(a),
+        DebugCommand::OverrideCamera(ref a) => misc::cmd_override_camera(a),
+        DebugCommand::SaveNode(ref a) => misc::cmd_save_node(a),
+        DebugCommand::SetPropField(ref a) => properties::cmd_set_prop_field(a),
+        DebugCommand::Profiler(ref a) => misc::cmd_profiler(a),
+        DebugCommand::LiveSetRoot(ref a) => live::cmd_live_set_root(a),
+        DebugCommand::LiveCreateNode(ref a) => live::cmd_live_create_node(a),
+        DebugCommand::LiveInstantiate(ref a) => live::cmd_live_instantiate(a),
+        DebugCommand::LiveRemoveNode(ref a) => live::cmd_live_remove_node(a),
+        DebugCommand::LiveDuplicate(ref a) => live::cmd_live_duplicate(a),
+        DebugCommand::LiveReparent(ref a) => live::cmd_live_reparent(a),
+        DebugCommand::LiveNodeProp(ref a) => live::cmd_live_node_prop(a),
+        DebugCommand::LiveNodeCall(ref a) => live::cmd_live_node_call(a),
+        DebugCommand::Continue(ref a) => control::cmd_exec_continue(a),
+        DebugCommand::Pause(ref a) => control::cmd_exec_pause(a),
+        DebugCommand::Next(ref a) => control::cmd_exec_next(a),
+        DebugCommand::StepIn(ref a) => control::cmd_exec_step_in(a),
+        DebugCommand::StepOutFn(ref a) => control::cmd_exec_step_out(a),
+        DebugCommand::Breakpoint(ref a) => control::cmd_breakpoint(a),
+        DebugCommand::Stack(ref a) => control::cmd_stack(a),
+        DebugCommand::Vars(ref a) => control::cmd_vars(a),
+        DebugCommand::Eval(ref a) => control::cmd_evaluate(a),
+        DebugCommand::InspectObjects(ref a) => scene::cmd_inspect_objects(a),
+        DebugCommand::CameraView(ref a) => scene::cmd_camera_view(a),
+        DebugCommand::TransformCamera2d(ref a) => camera::cmd_transform_camera_2d(a),
+        DebugCommand::TransformCamera3d(ref a) => camera::cmd_transform_camera_3d(a),
+        DebugCommand::Screenshot(ref a) => camera::cmd_screenshot(a),
+        DebugCommand::ReloadCached(ref a) => misc::cmd_reload_cached(a),
+        DebugCommand::NodeSelectType(ref a) => selection::cmd_node_select_type(a),
+        DebugCommand::NodeSelectMode(ref a) => selection::cmd_node_select_mode(a),
+        DebugCommand::NodeSelectVisible(ref a) => selection::cmd_node_select_visible(a),
+        DebugCommand::NodeSelectAvoidLocked(ref a) => selection::cmd_node_select_avoid_locked(a),
+        DebugCommand::NodeSelectPreferGroup(ref a) => selection::cmd_node_select_prefer_group(a),
+        DebugCommand::NodeSelectResetCam2d(ref a) => selection::cmd_node_select_reset_cam_2d(a),
+        DebugCommand::NodeSelectResetCam3d(ref a) => selection::cmd_node_select_reset_cam_3d(a),
+        DebugCommand::ClearSelection(ref a) => selection::cmd_clear_selection(a),
+        DebugCommand::LiveNodePath(ref a) => live::cmd_live_node_path(a),
+        DebugCommand::LiveResPath(ref a) => live::cmd_live_res_path(a),
+        DebugCommand::LiveResProp(ref a) => live::cmd_live_res_prop(a),
+        DebugCommand::LiveNodePropRes(ref a) => live::cmd_live_node_prop_res(a),
+        DebugCommand::LiveResPropRes(ref a) => live::cmd_live_res_prop_res(a),
+        DebugCommand::LiveResCall(ref a) => live::cmd_live_res_call(a),
+        DebugCommand::LiveRemoveKeep(ref a) => live::cmd_live_remove_keep(a),
+        DebugCommand::LiveRestore(ref a) => live::cmd_live_restore(a),
+        DebugCommand::Server(ref a) => misc::cmd_server(a),
+    }
+}
+
+// ── Daemon helpers ───────────────────────────────────────────────────
+
+/// Send a command through the daemon, returning the result.
+fn daemon_cmd(method: &str, params: serde_json::Value) -> Option<serde_json::Value> {
+    crate::lsp::daemon_client::query_daemon(method, params, None)
+}
+
+/// Send a command through the daemon with a custom timeout.
+fn daemon_cmd_timeout(
+    method: &str,
+    params: serde_json::Value,
+    timeout_secs: u64,
+) -> Option<serde_json::Value> {
+    crate::lsp::daemon_client::query_daemon(
+        method,
+        params,
+        Some(std::time::Duration::from_secs(timeout_secs + 5)),
+    )
+}
+
+/// Ensure the binary debug server is running and a game is connected.
+/// Returns Ok(()) if ready, or a helpful error with instructions.
+fn ensure_binary_debug() -> Result<()> {
+    // Check current status
+    if let Some(status) = daemon_cmd("debug_server_status", serde_json::json!({}))
+        && status.get("running").and_then(serde_json::Value::as_bool) == Some(true)
+    {
+        if status.get("connected").and_then(serde_json::Value::as_bool) == Some(true) {
+            return Ok(()); // Already running and connected
+        }
+        // Server exists but no game connected yet — the async accept from
+        // `gd run` may still be waiting. Try a short accept to catch it.
+        let port = status
+            .get("port")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0);
+        let accept = daemon_cmd_timeout("debug_accept", serde_json::json!({"timeout": 3}), 8);
+        if let Some(r) = accept
+            && r.get("connected").and_then(serde_json::Value::as_bool) == Some(true)
+        {
+            return Ok(());
+        }
+        return Err(miette!(
+            "Debug server running on port {port} but no game is connected.\n\
+             Launch your game with: gd run\n\
+             Or manually: godot --remote-debug tcp://127.0.0.1:{port}"
+        ));
+    }
+
+    // No server running — start one
+    let result = daemon_cmd("debug_start_server", serde_json::json!({}))
+        .ok_or_else(|| miette!("Failed to start binary debug server (daemon not available)"))?;
+    let port = result
+        .get("port")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+
+    // Wait briefly for a connection, then advise
+    let accept = daemon_cmd_timeout("debug_accept", serde_json::json!({"timeout": 3}), 8);
+    if let Some(r) = accept
+        && r.get("connected").and_then(serde_json::Value::as_bool) == Some(true)
+    {
+        return Ok(());
+    }
+
+    Err(miette!(
+        "Debug server started on port {port} — waiting for game connection.\n\
+         Launch your game with: gd run\n\
+         Or manually: godot --remote-debug tcp://127.0.0.1:{port}"
+    ))
+}
+
+/// Check if the game is currently paused at a breakpoint.
+/// Uses the daemon's atomic flag (set by reader thread on debug_enter/debug_exit),
+/// so this returns instantly with no network round-trip.
+fn is_at_breakpoint() -> bool {
+    daemon_cmd("debug_is_at_breakpoint", serde_json::json!({}))
+        .and_then(|v| v.get("at_breakpoint")?.as_bool())
+        == Some(true)
+}
+
+/// Try to enter the debug loop so evaluate works.
+/// If already at a breakpoint, returns false (no action needed).
+/// Otherwise sends `break` and waits for the game to pause.
+/// Returns true if we auto-broke (caller should auto-continue after eval).
+///
+/// NOTE: `break` pauses the engine but may not provide GDScript context.
+/// Breakpoints set on script lines provide full context for evaluate.
+fn debug_break_for_eval() -> bool {
+    if is_at_breakpoint() {
+        return false;
+    }
+    let break_ok = daemon_cmd("debug_break_exec", serde_json::json!({}));
+    if break_ok.is_none() {
+        return false;
+    }
+    for _ in 0..10 {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        if is_at_breakpoint() {
+            return true;
+        }
+    }
+    // Break didn't pause within 1s — still return true so caller tries to continue
+    true
+}

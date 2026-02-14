@@ -134,9 +134,7 @@ pub fn create_from_github(name: &str, from: &str) -> miette::Result<()> {
     );
 
     // Download zip archive from GitHub
-    let url = format!(
-        "https://github.com/{owner}/{repo}/archive/{git_ref}.zip"
-    );
+    let url = format!("https://github.com/{owner}/{repo}/archive/{git_ref}.zip");
     let response = ureq::get(&url)
         .call()
         .map_err(|e| miette::miette!("Failed to download template: {e}"))?;

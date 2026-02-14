@@ -399,8 +399,7 @@ fn rewrite_call_arguments(
     // Build new argument list in new param order
     let mut new_args = Vec::new();
     let mut placeholders = Vec::new();
-    let reorder_names: Option<Vec<&str>> =
-        reorder.map(|r| r.split(',').map(str::trim).collect());
+    let reorder_names: Option<Vec<&str>> = reorder.map(|r| r.split(',').map(str::trim).collect());
 
     for param in new_params {
         if let Some(arg) = arg_map.get(&param.name) {

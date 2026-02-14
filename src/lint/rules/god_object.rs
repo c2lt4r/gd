@@ -31,9 +31,7 @@ impl LintRule for GodObject {
             reasons.push(format!("{funcs} functions (max {max_functions})"));
         }
         if members > max_members {
-            reasons.push(format!(
-                "{members} member variables (max {max_members})"
-            ));
+            reasons.push(format!("{members} member variables (max {max_members})"));
         }
         if lines > max_lines {
             reasons.push(format!("{lines} lines (max {max_lines})"));
@@ -125,9 +123,7 @@ fn check_classes(
                         reasons.push(format!("{funcs} functions (max {max_functions})"));
                     }
                     if members > max_members {
-                        reasons.push(format!(
-                            "{members} member variables (max {max_members})"
-                        ));
+                        reasons.push(format!("{members} member variables (max {max_members})"));
                     }
                     if class_lines > max_lines {
                         reasons.push(format!("{class_lines} lines (max {max_lines})"));

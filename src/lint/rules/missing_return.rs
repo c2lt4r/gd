@@ -217,9 +217,7 @@ fn emit_warning(func: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
 
     diags.push(LintDiagnostic {
         rule: "missing-return",
-        message: format!(
-            "function `{name}` has a return type but may not return a value",
-        ),
+        message: format!("function `{name}` has a return type but may not return a value",),
         severity: Severity::Warning,
         line: func.start_position().row,
         column: func.start_position().column,

@@ -106,9 +106,7 @@ fn check_node(
                     let fixed = to_pascal_case(name);
                     diags.push(LintDiagnostic {
                         rule: "naming-convention",
-                        message: format!(
-                            "class_name `{name}` should use PascalCase: `{fixed}`"
-                        ),
+                        message: format!("class_name `{name}` should use PascalCase: `{fixed}`"),
                         severity: Severity::Warning,
                         line: name_node.start_position().row,
                         column: name_node.start_position().column,

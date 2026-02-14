@@ -64,9 +64,21 @@ fn is_pure_expression(node: &Node, source: &str) -> bool {
     match node.kind() {
         // Pure value references, literals, binary/unary operators,
         // subscript, array/dictionary constructors, ternary expressions
-        "identifier" | "integer" | "float" | "string" | "true" | "false" | "null" | "get_node"
-        | "node_path" | "binary_operator" | "unary_operator" | "subscript" | "array"
-        | "dictionary" | "conditional_expression" => true,
+        "identifier"
+        | "integer"
+        | "float"
+        | "string"
+        | "true"
+        | "false"
+        | "null"
+        | "get_node"
+        | "node_path"
+        | "binary_operator"
+        | "unary_operator"
+        | "subscript"
+        | "array"
+        | "dictionary"
+        | "conditional_expression" => true,
 
         // Parenthesized expression - check inner
         "parenthesized_expression" => {

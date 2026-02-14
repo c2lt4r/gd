@@ -24,9 +24,7 @@ impl LintRule for MaxPublicMethods {
         if top_level_count > max_methods {
             diags.push(LintDiagnostic {
                 rule: "max-public-methods",
-                message: format!(
-                    "script has {top_level_count} public methods (max {max_methods})"
-                ),
+                message: format!("script has {top_level_count} public methods (max {max_methods})"),
                 severity: Severity::Warning,
                 line: 0,
                 column: 0,

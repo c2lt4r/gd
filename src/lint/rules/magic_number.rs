@@ -92,7 +92,10 @@ impl LintRule for MagicNumber {
         let allowed_contexts: HashSet<&str> = if let Some(rc) = rule_config
             && !rc.allowed_contexts.is_empty()
         {
-            rc.allowed_contexts.iter().map(std::string::String::as_str).collect()
+            rc.allowed_contexts
+                .iter()
+                .map(std::string::String::as_str)
+                .collect()
         } else {
             DEFAULT_ALLOWED_CONTEXTS.iter().copied().collect()
         };

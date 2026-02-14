@@ -109,8 +109,16 @@ pub fn run_lint(paths: &[String], opts: &LintOptions) -> Result<()> {
 
     // Post-collection filtering
     let severity_threshold = opts.severity_filter.unwrap_or(Severity::Info);
-    let rule_filter: HashSet<&str> = opts.rule_filter.iter().map(std::string::String::as_str).collect();
-    let exclude_rules: HashSet<&str> = opts.exclude_rules.iter().map(std::string::String::as_str).collect();
+    let rule_filter: HashSet<&str> = opts
+        .rule_filter
+        .iter()
+        .map(std::string::String::as_str)
+        .collect();
+    let exclude_rules: HashSet<&str> = opts
+        .exclude_rules
+        .iter()
+        .map(std::string::String::as_str)
+        .collect();
 
     let filtered_results: Vec<(PathBuf, Vec<&LintDiagnostic>)> = file_results
         .iter()

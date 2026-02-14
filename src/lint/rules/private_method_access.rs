@@ -69,9 +69,7 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
         {
             diags.push(LintDiagnostic {
                 rule: "private-method-access",
-                message: format!(
-                    "accessing private method `{method_name}` on external object"
-                ),
+                message: format!("accessing private method `{method_name}` on external object"),
                 severity: Severity::Warning,
                 line: method_row,
                 column: method_col,
@@ -104,9 +102,7 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
             {
                 diags.push(LintDiagnostic {
                     rule: "private-method-access",
-                    message: format!(
-                        "accessing private method `{method_text}` on external object"
-                    ),
+                    message: format!("accessing private method `{method_text}` on external object"),
                     severity: Severity::Warning,
                     line: method_node.start_position().row,
                     column: method_node.start_position().column,

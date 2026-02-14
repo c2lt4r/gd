@@ -73,9 +73,7 @@ fn check_function(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
     for (name, (line, col, _byte_start)) in unused {
         diags.push(LintDiagnostic {
             rule: "unused-parameter",
-            message: format!(
-                "parameter `{name}` is never used; prefix with `_` if intentional"
-            ),
+            message: format!("parameter `{name}` is never used; prefix with `_` if intentional"),
             severity: Severity::Warning,
             line: *line,
             column: *col,

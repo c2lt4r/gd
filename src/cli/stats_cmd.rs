@@ -192,11 +192,14 @@ fn collect_current_stats(root: &Path, args: &StatsArgs) -> Result<ProjectStats> 
                 .path
                 .parent()
                 .and_then(|p| p.strip_prefix(root).ok())
-                .map_or_else(|| ".".to_string(), |p| {
-                    use path_slash::PathExt;
-                    let s = p.to_slash_lossy().to_string();
-                    if s.is_empty() { ".".to_string() } else { s }
-                });
+                .map_or_else(
+                    || ".".to_string(),
+                    |p| {
+                        use path_slash::PathExt;
+                        let s = p.to_slash_lossy().to_string();
+                        if s.is_empty() { ".".to_string() } else { s }
+                    },
+                );
             let entry = dir_map.entry(dir).or_insert((0, 0, 0));
             entry.0 += 1;
             entry.1 += fs.lines_code;
