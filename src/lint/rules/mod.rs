@@ -43,7 +43,9 @@ pub mod cyclomatic_complexity;
 pub mod deeply_nested_code;
 pub mod duplicate_delegate;
 pub mod enum_naming;
+pub mod enum_variable_without_default;
 pub mod enum_without_class_name;
+pub mod get_node_default_without_onready;
 pub mod get_node_in_process;
 pub mod god_object;
 pub mod look_at_before_tree;
@@ -51,15 +53,19 @@ pub mod loop_variable_name;
 pub mod max_file_lines;
 pub mod max_line_length;
 pub mod max_public_methods;
+pub mod native_method_override;
+pub mod onready_with_export;
 pub mod parameter_naming;
 pub mod parameter_shadows_field;
 pub mod physics_in_process;
 pub mod print_statement;
 pub mod redundant_else;
+pub mod redundant_static_unload;
 pub mod signal_not_connected;
 pub mod todo_comment;
 pub mod too_many_parameters;
 pub mod unused_parameter;
+pub mod unused_private_class_variable;
 
 use std::collections::HashMap;
 use std::fmt;
@@ -67,6 +73,7 @@ use std::str::FromStr;
 use tree_sitter::Tree;
 
 use crate::core::config::{LintConfig, RuleConfig};
+use crate::core::symbol_table::SymbolTable;
 
 /// Severity of a lint diagnostic.
 /// Ordered: Info < Warning < Error (used for `--severity` filtering).
@@ -143,6 +150,19 @@ pub trait LintRule: Send + Sync {
 
     /// Run the rule against a parsed file and return diagnostics.
     fn check(&self, tree: &Tree, source: &str, config: &LintConfig) -> Vec<LintDiagnostic>;
+
+    /// Run the rule with access to the per-file symbol table.
+    /// Default delegates to `check()`, ignoring the symbol table.
+    /// Override this in rules that need declaration-level type information.
+    fn check_with_symbols(
+        &self,
+        tree: &Tree,
+        source: &str,
+        config: &LintConfig,
+        _symbols: &SymbolTable,
+    ) -> Vec<LintDiagnostic> {
+        self.check(tree, source, config)
+    }
 }
 
 /// Return all active rules based on config.
@@ -213,6 +233,12 @@ pub fn all_rules(
         Box::new(monitoring_in_signal::MonitoringInSignal),
         Box::new(use_before_assign::UseBeforeAssign),
         Box::new(enum_without_class_name::EnumWithoutClassName),
+        Box::new(onready_with_export::OnreadyWithExport),
+        Box::new(enum_variable_without_default::EnumVariableWithoutDefault),
+        Box::new(redundant_static_unload::RedundantStaticUnload),
+        Box::new(get_node_default_without_onready::GetNodeDefaultWithoutOnready),
+        Box::new(unused_private_class_variable::UnusedPrivateClassVariable),
+        Box::new(native_method_override::NativeMethodOverride),
     ];
     all.into_iter()
         .filter(|r| {

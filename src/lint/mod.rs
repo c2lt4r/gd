@@ -12,6 +12,7 @@ use similar::TextDiff;
 use crate::core::config::{Config, find_project_root};
 use crate::core::fs::collect_gdscript_files;
 use crate::core::parser;
+use crate::core::symbol_table;
 
 use diagnostics::{FileLintResult, print_diagnostic, print_json, print_sarif};
 use rules::{Fix, LintDiagnostic, Severity, all_rules};
@@ -305,13 +306,14 @@ fn lint_file(
     ignore_base: &Path,
 ) -> Result<Vec<LintDiagnostic>> {
     let (source, tree) = parser::parse_file(path)?;
+    let symbols = symbol_table::build(&tree, &source);
 
     let mut all_diags = Vec::new();
     for rule in rules {
         if is_rule_excluded_by_override(path, ignore_base, rule.name(), &config.lint.overrides) {
             continue;
         }
-        let diags = rule.check(&tree, &source, &config.lint);
+        let diags = rule.check_with_symbols(&tree, &source, &config.lint, &symbols);
         all_diags.extend(diags);
     }
 

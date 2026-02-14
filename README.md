@@ -7,7 +7,7 @@ Built with [tree-sitter](https://tree-sitter.github.io/) for accurate parsing an
 ## Features
 
 - **Format** GDScript files with an AST-based formatter aligned to the [GDScript style guide](https://docs.godotengine.org/en/stable/tutorials/scripting/gdscript/gdscript_styleguide.html)
-- **Lint** with 59 built-in rules (13 auto-fixable), SARIF output for CI
+- **Lint** with 65 built-in rules (13 auto-fixable), SARIF output for CI
 - **Run**, **build**, **test**, and **clean** your Godot project from the terminal
 - **Watch** for file changes and auto-lint/format on save
 - **Manage addons** from Git or the Godot Asset Library (with lockfile and update support)
@@ -371,7 +371,7 @@ The template system automatically finds `project.godot` within the repository to
 
 ## Lint Rules
 
-All 59 built-in rules (42 default-enabled, 17 opt-in):
+All 65 built-in rules (42 default-enabled, 23 opt-in):
 
 | Rule | Description | Severity | Fixable |
 |------|-------------|----------|---------|
@@ -437,7 +437,13 @@ All 59 built-in rules (42 default-enabled, 17 opt-in):
 | `todo-comment` | Detect TODO/FIXME/HACK comments | info | |
 | `unused-parameter` | Detect unused function parameters | warning | |
 | `use-before-assign` | Detect method calls accessing uninitialized members | warning | |
+| `enum-variable-without-default` | Warn on enum-typed variables without a default value | warning | |
 | `enum-without-class-name` | Warn on enum type annotations in scripts without `class_name` | warning | |
+| `get-node-default-without-onready` | Detect `$`/`get_node()` default without `@onready` | error | |
+| `native-method-override` | Detect overriding native engine methods | error | |
+| `onready-with-export` | Detect `@onready` combined with `@export` | error | |
+| `redundant-static-unload` | Detect `@static_unload` without any `static var` | warning | |
+| `unused-private-class-variable` | Detect unused `_`-prefixed class variables | warning | |
 | `variant-inference` | Warn on `:=` inferring Variant from dict/array access | warning | |
 
 ### Inline Suppression

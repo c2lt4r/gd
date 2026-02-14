@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.2.1] - 2026-02-14
+
+### Added
+- **Symbol table** (`src/core/symbol_table.rs`) — per-file declaration-level type tracking built from tree-sitter ASTs. Extracts variables, functions, signals, enums, constants, annotations (`@tool`, `@onready`, `@export`, etc.), `class_name`, `extends`, inner classes, and type annotations.
+- **6 new symbol-table-aware lint rules** (all opt-in):
+  - `onready-with-export` (error) — `@onready` and `@export` on the same variable conflict at runtime
+  - `enum-variable-without-default` (warning) — enum-typed variable without default will be `0`, not the first enum member
+  - `redundant-static-unload` (warning) — `@static_unload` annotation with no static variables to unload
+  - `get-node-default-without-onready` (error) — `$`/`get_node()` in variable default without `@onready`
+  - `unused-private-class-variable` (warning) — `_`-prefixed variable declared but never referenced
+  - `native-method-override` (error) — function name shadows a method inherited from an engine class
+- Lint pipeline now builds symbol table once per file and passes it to all rules via `check_with_symbols()`
+
 ## [0.2.0] - 2026-02-14
 
 ### Breaking
