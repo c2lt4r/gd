@@ -43,6 +43,7 @@ pub mod cyclomatic_complexity;
 pub mod deeply_nested_code;
 pub mod duplicate_delegate;
 pub mod enum_naming;
+pub mod enum_without_class_name;
 pub mod get_node_in_process;
 pub mod god_object;
 pub mod look_at_before_tree;
@@ -211,6 +212,7 @@ pub fn all_rules(
         Box::new(look_at_before_tree::LookAtBeforeTree),
         Box::new(monitoring_in_signal::MonitoringInSignal),
         Box::new(use_before_assign::UseBeforeAssign),
+        Box::new(enum_without_class_name::EnumWithoutClassName),
     ];
     all.into_iter()
         .filter(|r| {

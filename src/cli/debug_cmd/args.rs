@@ -8,81 +8,6 @@ pub struct DebugArgs {
 
 #[derive(Subcommand)]
 pub enum DebugCommand {
-    // ── Binary debug protocol commands ──
-    /// Show the running game's scene tree
-    #[command(name = "scene-tree")]
-    SceneTree(SceneTreeArgs),
-    /// Inspect a scene node's properties by object ID
-    Inspect(InspectArgs),
-    /// Set a property on a scene node by object ID
-    #[command(name = "set-prop")]
-    SetProp(SetPropArgs),
-    /// Suspend (freeze) the game loop
-    Suspend(SuspendArgs),
-    /// Advance one physics frame while suspended
-    #[command(name = "next-frame")]
-    NextFrame(StepArgs),
-    /// Set the game's time scale (Engine.time_scale)
-    #[command(name = "time-scale")]
-    TimeScale(TimeScaleArgs),
-    /// Hot-reload GDScript files in the running game
-    #[command(name = "reload-scripts")]
-    ReloadScripts(ReloadScriptsArgs),
-    /// Reload all scripts in the running game (binary protocol)
-    #[command(name = "reload-all-scripts")]
-    ReloadAllScripts(StepArgs),
-    /// Skip all breakpoints (toggle)
-    #[command(name = "skip-breakpoints")]
-    SkipBreakpoints(SkipBreakpointsArgs),
-    /// Ignore error breaks (toggle)
-    #[command(name = "ignore-errors")]
-    IgnoreErrors(IgnoreErrorsArgs),
-    /// Mute/unmute game audio
-    #[command(name = "mute-audio")]
-    MuteAudio(MuteAudioArgs),
-    /// Override the game camera (take remote control)
-    #[command(name = "override-camera")]
-    OverrideCamera(OverrideCameraArgs),
-    /// Save a scene node to a file
-    #[command(name = "save-node")]
-    SaveNode(SaveNodeArgs),
-    /// Set a specific field within a property (e.g. position.x)
-    #[command(name = "set-prop-field")]
-    SetPropField(SetPropFieldArgs),
-    /// Toggle a profiler (scripts, visual, servers)
-    Profiler(ProfilerArgs),
-    /// Live editing: set root scene (REQUIRED before live-node-prop/live-res-prop)
-    ///
-    /// Establishes the root mapping for live editing. All live-node-prop, live-res-prop,
-    /// and live-*-call commands use live edit IDs assigned by this mapping — these are
-    /// NOT the same as object IDs from scene-tree/inspect.
-    ///
-    /// Workflow: live-set-root → then use live-node-prop/live-res-prop with the IDs
-    /// from this mapping. Use scene-tree object IDs for inspect/set-prop instead.
-    #[command(name = "live-set-root")]
-    LiveSetRoot(LiveSetRootArgs),
-    /// Live editing: create a new node
-    #[command(name = "live-create-node")]
-    LiveCreateNode(LiveCreateNodeArgs),
-    /// Live editing: instantiate a scene
-    #[command(name = "live-instantiate")]
-    LiveInstantiate(LiveInstantiateArgs),
-    /// Live editing: remove a node
-    #[command(name = "live-remove-node")]
-    LiveRemoveNode(LiveRemoveNodeArgs),
-    /// Live editing: duplicate a node
-    #[command(name = "live-duplicate")]
-    LiveDuplicate(LiveDuplicateArgs),
-    /// Live editing: reparent a node
-    #[command(name = "live-reparent")]
-    LiveReparent(LiveReparentArgs),
-    /// Live editing: set a node property (uses live edit ID, not object ID)
-    #[command(name = "live-node-prop")]
-    LiveNodeProp(LiveNodePropArgs),
-    /// Live editing: call a method on a node (uses live edit ID, not object ID)
-    #[command(name = "live-node-call")]
-    LiveNodeCall(LiveNodeCallArgs),
-
     /// Stop the running game (alias for `gd stop`)
     Stop,
 
@@ -111,90 +36,201 @@ pub enum DebugCommand {
     /// Evaluate expression
     Eval(EvalBinArgs),
 
-    // ── Multi-object inspection ──
+    // ── Properties ──
+    /// Set a property on a scene node by object ID
+    #[command(name = "set-prop")]
+    SetProp(SetPropArgs),
+    /// Set a specific field within a property (e.g. position.x)
+    #[command(name = "set-prop-field")]
+    SetPropField(SetPropFieldArgs),
+
+    // ── Game loop control ──
+    /// Suspend (freeze) the game loop
+    Suspend(SuspendArgs),
+    /// Advance one physics frame while suspended
+    #[command(name = "next-frame")]
+    NextFrame(StepArgs),
+    /// Set the game's time scale (Engine.time_scale)
+    #[command(name = "time-scale")]
+    TimeScale(TimeScaleArgs),
+    /// Hot-reload GDScript files in the running game
+    #[command(name = "reload-scripts")]
+    ReloadScripts(ReloadScriptsArgs),
+    /// Reload all scripts in the running game (binary protocol)
+    #[command(name = "reload-all-scripts")]
+    ReloadAllScripts(StepArgs),
+    /// Skip all breakpoints (toggle)
+    #[command(name = "skip-breakpoints")]
+    SkipBreakpoints(SkipBreakpointsArgs),
+    /// Ignore error breaks (toggle)
+    #[command(name = "ignore-errors")]
+    IgnoreErrors(IgnoreErrorsArgs),
+    /// Mute/unmute game audio
+    #[command(name = "mute-audio")]
+    MuteAudio(MuteAudioArgs),
+    /// Toggle a profiler (scripts, visual, servers)
+    Profiler(ProfilerArgs),
+    /// Save a scene node to a file
+    #[command(name = "save-node")]
+    SaveNode(SaveNodeArgs),
+    /// Reload cached files
+    #[command(name = "reload-cached")]
+    ReloadCached(ReloadCachedArgs),
+
+    // ── Subcommand groups ──
+    /// Live editing commands (requires `live set-root` first)
+    Live(LiveArgs),
+    /// Scene inspection commands
+    Scene(SceneGroupArgs),
+    /// Camera and screenshot commands
+    Camera(CameraGroupArgs),
+    /// Node selection commands
+    Select(SelectArgs),
+
+    /// Start the binary debug server and print the port (for manual testing)
+    Server(ServerArgs),
+}
+
+// ── Live editing subcommand group ────────────────────────────────────
+
+#[derive(Args)]
+pub struct LiveArgs {
+    #[command(subcommand)]
+    pub command: LiveCommand,
+}
+
+#[derive(Subcommand)]
+pub enum LiveCommand {
+    /// Set root scene (REQUIRED before other live commands)
+    ///
+    /// Establishes the root mapping for live editing. All node-prop, res-prop,
+    /// and *-call commands use live edit IDs assigned by this mapping — these are
+    /// NOT the same as object IDs from scene tree/inspect.
+    ///
+    /// Workflow: set-root → then use node-prop/res-prop with the IDs
+    /// from this mapping. Use scene tree object IDs for inspect/set-prop instead.
+    #[command(name = "set-root")]
+    SetRoot(LiveSetRootArgs),
+    /// Create a new node
+    #[command(name = "create-node")]
+    CreateNode(LiveCreateNodeArgs),
+    /// Instantiate a scene
+    Instantiate(LiveInstantiateArgs),
+    /// Remove a node
+    #[command(name = "remove-node")]
+    RemoveNode(LiveRemoveNodeArgs),
+    /// Duplicate a node
+    Duplicate(LiveDuplicateArgs),
+    /// Reparent a node
+    Reparent(LiveReparentArgs),
+    /// Set a node property (uses live edit ID, not object ID)
+    #[command(name = "node-prop")]
+    NodeProp(LiveNodePropArgs),
+    /// Call a method on a node (uses live edit ID, not object ID)
+    #[command(name = "node-call")]
+    NodeCall(LiveNodeCallArgs),
+    /// Set node path mapping (uses live edit ID)
+    #[command(name = "node-path")]
+    NodePath(LivePathArgs),
+    /// Set resource path mapping (uses live edit ID)
+    #[command(name = "res-path")]
+    ResPath(LivePathArgs),
+    /// Set resource property (uses live edit ID)
+    #[command(name = "res-prop")]
+    ResProp(LiveNodePropArgs),
+    /// Set node property to resource (uses live edit ID)
+    #[command(name = "node-prop-res")]
+    NodePropRes(LivePropResArgs),
+    /// Set resource property to resource (uses live edit ID)
+    #[command(name = "res-prop-res")]
+    ResPropRes(LivePropResArgs),
+    /// Call method on resource (uses live edit ID)
+    #[command(name = "res-call")]
+    ResCall(LiveNodeCallArgs),
+    /// Remove node but keep reference (uses object ID)
+    #[command(name = "remove-keep")]
+    RemoveKeep(LiveRemoveKeepArgs),
+    /// Restore previously removed node (uses object ID)
+    Restore(LiveRestoreArgs),
+}
+
+// ── Scene inspection subcommand group ────────────────────────────────
+
+#[derive(Args)]
+pub struct SceneGroupArgs {
+    #[command(subcommand)]
+    pub command: SceneGroupCommand,
+}
+
+#[derive(Subcommand)]
+pub enum SceneGroupCommand {
+    /// Show the running game's scene tree
+    Tree(SceneTreeArgs),
+    /// Inspect a scene node's properties by object ID
+    Inspect(InspectArgs),
     /// Inspect multiple objects
     #[command(name = "inspect-objects")]
     InspectObjects(InspectObjectsArgs),
-
-    // ── Camera ──
     /// Structured spatial data: all visible nodes with positions, rotations, and camera info
     ///
     /// Returns JSON with camera transform and every spatial node's position/rotation/scale.
     /// Designed for AI reasoning about spatial relationships without needing screenshots.
     #[command(name = "camera-view")]
     CameraView(CameraViewArgs),
-    /// Transform 2D camera
-    #[command(name = "transform-camera-2d")]
-    TransformCamera2d(TransformCamera2dArgs),
-    /// Transform 3D camera
-    #[command(name = "transform-camera-3d")]
-    TransformCamera3d(TransformCamera3dArgs),
+}
 
-    // ── Screenshot ──
+// ── Camera subcommand group ──────────────────────────────────────────
+
+#[derive(Args)]
+pub struct CameraGroupArgs {
+    #[command(subcommand)]
+    pub command: CameraGroupCommand,
+}
+
+#[derive(Subcommand)]
+pub enum CameraGroupCommand {
+    /// Override the game camera (take remote control)
+    Override(OverrideCameraArgs),
+    /// Transform 2D camera
+    #[command(name = "transform-2d")]
+    Transform2d(TransformCamera2dArgs),
+    /// Transform 3D camera
+    #[command(name = "transform-3d")]
+    Transform3d(TransformCamera3dArgs),
     /// Request screenshot
     Screenshot(ScreenshotArgs),
+}
 
-    // ── File management ──
-    /// Reload cached files
-    #[command(name = "reload-cached")]
-    ReloadCached(ReloadCachedArgs),
+// ── Node selection subcommand group ──────────────────────────────────
 
-    // ── Node selection ──
+#[derive(Args)]
+pub struct SelectArgs {
+    #[command(subcommand)]
+    pub command: SelectCommand,
+}
+
+#[derive(Subcommand)]
+pub enum SelectCommand {
     /// Set selection type
-    #[command(name = "node-select-type")]
-    NodeSelectType(NodeSelectIntArgs),
+    Type(NodeSelectIntArgs),
     /// Set selection mode
-    #[command(name = "node-select-mode")]
-    NodeSelectMode(NodeSelectIntArgs),
+    Mode(NodeSelectIntArgs),
     /// Toggle visibility filter
-    #[command(name = "node-select-visible")]
-    NodeSelectVisible(ToggleFmtArgs),
+    Visible(ToggleFmtArgs),
     /// Toggle avoid locked
-    #[command(name = "node-select-avoid-locked")]
-    NodeSelectAvoidLocked(ToggleFmtArgs),
+    #[command(name = "avoid-locked")]
+    AvoidLocked(ToggleFmtArgs),
     /// Toggle prefer group
-    #[command(name = "node-select-prefer-group")]
-    NodeSelectPreferGroup(ToggleFmtArgs),
+    #[command(name = "prefer-group")]
+    PreferGroup(ToggleFmtArgs),
     /// Reset 2D selection camera
-    #[command(name = "node-select-reset-cam-2d")]
-    NodeSelectResetCam2d(StepArgs),
+    #[command(name = "reset-cam-2d")]
+    ResetCam2d(StepArgs),
     /// Reset 3D selection camera
-    #[command(name = "node-select-reset-cam-3d")]
-    NodeSelectResetCam3d(StepArgs),
+    #[command(name = "reset-cam-3d")]
+    ResetCam3d(StepArgs),
     /// Clear selection
-    #[command(name = "clear-selection")]
-    ClearSelection(StepArgs),
-
-    // ── Live editing: resource operations ──
-    /// Live editing: set node path mapping (uses live edit ID)
-    #[command(name = "live-node-path")]
-    LiveNodePath(LivePathArgs),
-    /// Live editing: set resource path mapping (uses live edit ID)
-    #[command(name = "live-res-path")]
-    LiveResPath(LivePathArgs),
-    /// Live editing: set resource property (uses live edit ID)
-    #[command(name = "live-res-prop")]
-    LiveResProp(LiveNodePropArgs),
-    /// Live editing: set node property to resource (uses live edit ID)
-    #[command(name = "live-node-prop-res")]
-    LiveNodePropRes(LivePropResArgs),
-    /// Live editing: set resource property to resource (uses live edit ID)
-    #[command(name = "live-res-prop-res")]
-    LiveResPropRes(LivePropResArgs),
-    /// Live editing: call method on resource (uses live edit ID)
-    #[command(name = "live-res-call")]
-    LiveResCall(LiveNodeCallArgs),
-
-    // ── Live editing: advanced node operations ──
-    /// Live editing: remove node but keep reference (uses object ID)
-    #[command(name = "live-remove-keep")]
-    LiveRemoveKeep(LiveRemoveKeepArgs),
-    /// Live editing: restore previously removed node (uses object ID)
-    #[command(name = "live-restore")]
-    LiveRestore(LiveRestoreArgs),
-
-    /// Start the binary debug server and print the port (for manual testing)
-    Server(ServerArgs),
+    Clear(StepArgs),
 }
 
 #[derive(Args)]

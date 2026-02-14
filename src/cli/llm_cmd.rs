@@ -38,12 +38,12 @@ gd test                                # Run tests (auto-detects GUT/gdUnit4/scr
 gd test --format json                  # Machine-readable test results
 
 ## Debug (requires running game via `gd run`)
-# Scene inspection
-gd debug scene-tree                    # Live scene tree (node names, classes, object IDs)
-gd debug inspect --id <N>              # Inspect node properties (all fields)
-gd debug inspect --id <N> --brief      # AI-friendly: just name=value pairs, no Godot internals
-gd debug inspect --id <N> --rich       # Enriched with ClassDB docs per property
-gd debug inspect-objects --id <N> [--id <M>...]  # Inspect multiple objects at once
+# Scene inspection (gd debug scene <cmd>)
+gd debug scene tree                    # Live scene tree (node names, classes, object IDs)
+gd debug scene inspect --id <N>        # Inspect node properties (all fields)
+gd debug scene inspect --id <N> --brief      # AI-friendly: just name=value pairs, no Godot internals
+gd debug scene inspect --id <N> --rich       # Enriched with ClassDB docs per property
+gd debug scene inspect-objects --id <N> [--id <M>...]  # Inspect multiple objects at once
 gd debug set-prop --id <N> --property <name> --value <val>       # Set property
 gd debug set-prop --id <N> --property <name> --value <val> --screenshot  # Set + auto-screenshot
 gd debug set-prop-field --id <N> --property <name> --field <f> --value <val>  # Set sub-field (e.g. position.x)
@@ -80,49 +80,51 @@ gd debug reload-all-scripts            # Reload all scripts (full)
 gd debug mute-audio [--off]            # Mute/unmute
 gd debug stop                          # Stop the running game (alias for gd stop)
 
-# Camera & visual
-gd debug camera-view                   # Structured spatial data: all nodes with positions/rotations
-gd debug camera-view --format json     # JSON: camera info + every spatial node's transform
-gd debug override-camera [--off]       # Take/release remote camera control
-gd debug transform-camera-2d --transform <json-array-6-floats>
-gd debug transform-camera-3d --transform <json-array-12-floats> --perspective <bool> --fov <N> --near <N> --far <N>
-gd debug screenshot                    # Output base64 PNG to stdout (default)
-gd debug screenshot --format json      # JSON with width, height, format, data (base64) fields
-gd debug screenshot --output <file>    # Write PNG file instead of base64 output
+# Camera & visual (gd debug camera <cmd>)
+gd debug scene camera-view             # Structured spatial data: all nodes with positions/rotations
+gd debug scene camera-view --format json  # JSON: camera info + every spatial node's transform
+gd debug camera override [--off]       # Take/release remote camera control
+gd debug camera transform-2d --transform <json-array-6-floats>
+gd debug camera transform-3d --transform <json-array-12-floats> --perspective <bool> --fov <N> --near <N> --far <N>
+gd debug camera screenshot             # Output base64 PNG to stdout (default)
+gd debug camera screenshot --format json  # JSON with width, height, format, data (base64) fields
+gd debug camera screenshot --output <file>  # Write PNG file instead of base64 output
 gd debug profiler --name scripts|visual|servers [--off]  # Toggle profiler
 
-# Live editing (requires live-set-root first)
-# NOTE: live-*-prop and live-*-call use "live edit IDs" from live-set-root mapping.
-# These are NOT the same as object IDs from scene-tree/inspect. Two ID systems:
-#   - Object IDs: from scene-tree, used with inspect/set-prop/set-prop-field
-#   - Live edit IDs: from live-set-root, used with live-node-prop/live-res-prop/live-*-call
-gd debug live-set-root --path </root/Main> --file <res://main.tscn>  # Set root for live edits
-gd debug live-create-node --parent <path> --class <ClassName> --name <name>
-gd debug live-instantiate --parent <path> --scene <res://scene.tscn> --name <name>
-gd debug live-remove-node --path <node-path>
-gd debug live-duplicate --path <node-path> --name <new-name>
-gd debug live-reparent --path <node-path> --new-parent <path> [--name <name>] [--pos <N>]
-gd debug live-node-prop --id <N> --property <name> --value <json>    # N = live edit ID
-gd debug live-node-call --id <N> --method <name> [--args <json-array>]
-gd debug live-res-prop --id <N> --property <name> --value <json>
-gd debug live-res-call --id <N> --method <name> [--args <json-array>]
-gd debug live-node-prop-res --id <N> --property <name> --res-path <res://path>
-gd debug live-res-prop-res --id <N> --property <name> --res-path <res://path>
-gd debug live-node-path --path <node-path> --id <N>     # Set node path mapping
-gd debug live-res-path --path <res-path> --id <N>       # Set resource path mapping
-gd debug live-remove-keep --path <node-path> --object-id <N>  # Remove but keep ref (uses object ID)
-gd debug live-restore --object-id <N> --path <node-path> [--pos <N>]  # Restore (uses object ID)
+# Live editing (gd debug live <cmd>, requires `live set-root` first)
+# NOTE: live *-prop and *-call use "live edit IDs" from live set-root mapping.
+# These are NOT the same as object IDs from scene tree/inspect. Two ID systems:
+#   - Object IDs: from scene tree, used with inspect/set-prop/set-prop-field
+#   - Live edit IDs: from live set-root, used with live node-prop/res-prop/*-call
+gd debug live set-root --path </root/Main> --file <res://main.tscn>  # Set root for live edits
+gd debug live create-node --parent <path> --class <ClassName> --name <name>
+gd debug live instantiate --parent <path> --scene <res://scene.tscn> --name <name>
+gd debug live remove-node --path <node-path>
+gd debug live duplicate --path <node-path> --name <new-name>
+gd debug live reparent --path <node-path> --new-parent <path> [--name <name>] [--pos <N>]
+gd debug live node-prop --id <N> --property <name> --value <json>    # N = live edit ID
+gd debug live node-call --id <N> --method <name> [--args <json-array>]
+gd debug live res-prop --id <N> --property <name> --value <json>
+gd debug live res-call --id <N> --method <name> [--args <json-array>]
+gd debug live node-prop-res --id <N> --property <name> --res-path <res://path>
+gd debug live res-prop-res --id <N> --property <name> --res-path <res://path>
+gd debug live node-path --path <node-path> --id <N>     # Set node path mapping
+gd debug live res-path --path <res-path> --id <N>       # Set resource path mapping
+gd debug live remove-keep --path <node-path> --object-id <N>  # Remove but keep ref (uses object ID)
+gd debug live restore --object-id <N> --path <node-path> [--pos <N>]  # Restore (uses object ID)
 
-# File & selection
+# File management
 gd debug reload-cached --file <path> [--file <path>...]  # Reload cached files
-gd debug node-select-type --value <N>
-gd debug node-select-mode --value <N>
-gd debug node-select-visible [--off]
-gd debug node-select-avoid-locked [--off]
-gd debug node-select-prefer-group [--off]
-gd debug node-select-reset-cam-2d
-gd debug node-select-reset-cam-3d
-gd debug clear-selection
+
+# Node selection (gd debug select <cmd>)
+gd debug select type --value <N>
+gd debug select mode --value <N>
+gd debug select visible [--off]
+gd debug select avoid-locked [--off]
+gd debug select prefer-group [--off]
+gd debug select reset-cam-2d
+gd debug select reset-cam-3d
+gd debug select clear
 
 ## Daemon
 gd daemon status                       # Show daemon state (game_running, ports, etc.)

@@ -15,9 +15,25 @@ use miette::{Result, miette};
 pub fn exec(args: &DebugArgs) -> Result<()> {
     match args.command {
         DebugCommand::Stop => crate::cli::stop_cmd::exec(),
-        DebugCommand::SceneTree(ref a) => scene::cmd_scene_tree(a),
-        DebugCommand::Inspect(ref a) => scene::cmd_inspect(a),
+
+        // Execution control
+        DebugCommand::Continue(ref a) => control::cmd_exec_continue(a),
+        DebugCommand::Pause(ref a) => control::cmd_exec_pause(a),
+        DebugCommand::Next(ref a) => control::cmd_exec_next(a),
+        DebugCommand::StepIn(ref a) => control::cmd_exec_step_in(a),
+        DebugCommand::StepOutFn(ref a) => control::cmd_exec_step_out(a),
+
+        // Debugging
+        DebugCommand::Breakpoint(ref a) => control::cmd_breakpoint(a),
+        DebugCommand::Stack(ref a) => control::cmd_stack(a),
+        DebugCommand::Vars(ref a) => control::cmd_vars(a),
+        DebugCommand::Eval(ref a) => control::cmd_evaluate(a),
+
+        // Properties
         DebugCommand::SetProp(ref a) => properties::cmd_set_prop(a),
+        DebugCommand::SetPropField(ref a) => properties::cmd_set_prop_field(a),
+
+        // Game loop control
         DebugCommand::Suspend(ref a) => properties::cmd_suspend(a),
         DebugCommand::NextFrame(ref a) => properties::cmd_next_frame(a),
         DebugCommand::TimeScale(ref a) => properties::cmd_time_scale(a),
@@ -26,50 +42,73 @@ pub fn exec(args: &DebugArgs) -> Result<()> {
         DebugCommand::SkipBreakpoints(ref a) => properties::cmd_skip_breakpoints(a),
         DebugCommand::IgnoreErrors(ref a) => properties::cmd_ignore_errors(a),
         DebugCommand::MuteAudio(ref a) => misc::cmd_mute_audio(a),
-        DebugCommand::OverrideCamera(ref a) => misc::cmd_override_camera(a),
-        DebugCommand::SaveNode(ref a) => misc::cmd_save_node(a),
-        DebugCommand::SetPropField(ref a) => properties::cmd_set_prop_field(a),
         DebugCommand::Profiler(ref a) => misc::cmd_profiler(a),
-        DebugCommand::LiveSetRoot(ref a) => live::cmd_live_set_root(a),
-        DebugCommand::LiveCreateNode(ref a) => live::cmd_live_create_node(a),
-        DebugCommand::LiveInstantiate(ref a) => live::cmd_live_instantiate(a),
-        DebugCommand::LiveRemoveNode(ref a) => live::cmd_live_remove_node(a),
-        DebugCommand::LiveDuplicate(ref a) => live::cmd_live_duplicate(a),
-        DebugCommand::LiveReparent(ref a) => live::cmd_live_reparent(a),
-        DebugCommand::LiveNodeProp(ref a) => live::cmd_live_node_prop(a),
-        DebugCommand::LiveNodeCall(ref a) => live::cmd_live_node_call(a),
-        DebugCommand::Continue(ref a) => control::cmd_exec_continue(a),
-        DebugCommand::Pause(ref a) => control::cmd_exec_pause(a),
-        DebugCommand::Next(ref a) => control::cmd_exec_next(a),
-        DebugCommand::StepIn(ref a) => control::cmd_exec_step_in(a),
-        DebugCommand::StepOutFn(ref a) => control::cmd_exec_step_out(a),
-        DebugCommand::Breakpoint(ref a) => control::cmd_breakpoint(a),
-        DebugCommand::Stack(ref a) => control::cmd_stack(a),
-        DebugCommand::Vars(ref a) => control::cmd_vars(a),
-        DebugCommand::Eval(ref a) => control::cmd_evaluate(a),
-        DebugCommand::InspectObjects(ref a) => scene::cmd_inspect_objects(a),
-        DebugCommand::CameraView(ref a) => scene::cmd_camera_view(a),
-        DebugCommand::TransformCamera2d(ref a) => camera::cmd_transform_camera_2d(a),
-        DebugCommand::TransformCamera3d(ref a) => camera::cmd_transform_camera_3d(a),
-        DebugCommand::Screenshot(ref a) => camera::cmd_screenshot(a),
+        DebugCommand::SaveNode(ref a) => misc::cmd_save_node(a),
         DebugCommand::ReloadCached(ref a) => misc::cmd_reload_cached(a),
-        DebugCommand::NodeSelectType(ref a) => selection::cmd_node_select_type(a),
-        DebugCommand::NodeSelectMode(ref a) => selection::cmd_node_select_mode(a),
-        DebugCommand::NodeSelectVisible(ref a) => selection::cmd_node_select_visible(a),
-        DebugCommand::NodeSelectAvoidLocked(ref a) => selection::cmd_node_select_avoid_locked(a),
-        DebugCommand::NodeSelectPreferGroup(ref a) => selection::cmd_node_select_prefer_group(a),
-        DebugCommand::NodeSelectResetCam2d(ref a) => selection::cmd_node_select_reset_cam_2d(a),
-        DebugCommand::NodeSelectResetCam3d(ref a) => selection::cmd_node_select_reset_cam_3d(a),
-        DebugCommand::ClearSelection(ref a) => selection::cmd_clear_selection(a),
-        DebugCommand::LiveNodePath(ref a) => live::cmd_live_node_path(a),
-        DebugCommand::LiveResPath(ref a) => live::cmd_live_res_path(a),
-        DebugCommand::LiveResProp(ref a) => live::cmd_live_res_prop(a),
-        DebugCommand::LiveNodePropRes(ref a) => live::cmd_live_node_prop_res(a),
-        DebugCommand::LiveResPropRes(ref a) => live::cmd_live_res_prop_res(a),
-        DebugCommand::LiveResCall(ref a) => live::cmd_live_res_call(a),
-        DebugCommand::LiveRemoveKeep(ref a) => live::cmd_live_remove_keep(a),
-        DebugCommand::LiveRestore(ref a) => live::cmd_live_restore(a),
+
+        // Subcommand groups
+        DebugCommand::Live(ref a) => exec_live(a),
+        DebugCommand::Scene(ref a) => exec_scene(a),
+        DebugCommand::Camera(ref a) => exec_camera(a),
+        DebugCommand::Select(ref a) => exec_select(a),
+
         DebugCommand::Server(ref a) => misc::cmd_server(a),
+    }
+}
+
+fn exec_live(args: &LiveArgs) -> Result<()> {
+    ensure_binary_debug()?;
+    match args.command {
+        LiveCommand::SetRoot(ref a) => live::cmd_live_set_root(a),
+        LiveCommand::CreateNode(ref a) => live::cmd_live_create_node(a),
+        LiveCommand::Instantiate(ref a) => live::cmd_live_instantiate(a),
+        LiveCommand::RemoveNode(ref a) => live::cmd_live_remove_node(a),
+        LiveCommand::Duplicate(ref a) => live::cmd_live_duplicate(a),
+        LiveCommand::Reparent(ref a) => live::cmd_live_reparent(a),
+        LiveCommand::NodeProp(ref a) => live::cmd_live_node_prop(a),
+        LiveCommand::NodeCall(ref a) => live::cmd_live_node_call(a),
+        LiveCommand::NodePath(ref a) => live::cmd_live_node_path(a),
+        LiveCommand::ResPath(ref a) => live::cmd_live_res_path(a),
+        LiveCommand::ResProp(ref a) => live::cmd_live_res_prop(a),
+        LiveCommand::NodePropRes(ref a) => live::cmd_live_node_prop_res(a),
+        LiveCommand::ResPropRes(ref a) => live::cmd_live_res_prop_res(a),
+        LiveCommand::ResCall(ref a) => live::cmd_live_res_call(a),
+        LiveCommand::RemoveKeep(ref a) => live::cmd_live_remove_keep(a),
+        LiveCommand::Restore(ref a) => live::cmd_live_restore(a),
+    }
+}
+
+fn exec_scene(args: &SceneGroupArgs) -> Result<()> {
+    ensure_binary_debug()?;
+    match args.command {
+        SceneGroupCommand::Tree(ref a) => scene::cmd_scene_tree(a),
+        SceneGroupCommand::Inspect(ref a) => scene::cmd_inspect(a),
+        SceneGroupCommand::InspectObjects(ref a) => scene::cmd_inspect_objects(a),
+        SceneGroupCommand::CameraView(ref a) => scene::cmd_camera_view(a),
+    }
+}
+
+fn exec_camera(args: &CameraGroupArgs) -> Result<()> {
+    ensure_binary_debug()?;
+    match args.command {
+        CameraGroupCommand::Override(ref a) => misc::cmd_override_camera(a),
+        CameraGroupCommand::Transform2d(ref a) => camera::cmd_transform_camera_2d(a),
+        CameraGroupCommand::Transform3d(ref a) => camera::cmd_transform_camera_3d(a),
+        CameraGroupCommand::Screenshot(ref a) => camera::cmd_screenshot(a),
+    }
+}
+
+fn exec_select(args: &SelectArgs) -> Result<()> {
+    ensure_binary_debug()?;
+    match args.command {
+        SelectCommand::Type(ref a) => selection::cmd_node_select_type(a),
+        SelectCommand::Mode(ref a) => selection::cmd_node_select_mode(a),
+        SelectCommand::Visible(ref a) => selection::cmd_node_select_visible(a),
+        SelectCommand::AvoidLocked(ref a) => selection::cmd_node_select_avoid_locked(a),
+        SelectCommand::PreferGroup(ref a) => selection::cmd_node_select_prefer_group(a),
+        SelectCommand::ResetCam2d(ref a) => selection::cmd_node_select_reset_cam_2d(a),
+        SelectCommand::ResetCam3d(ref a) => selection::cmd_node_select_reset_cam_3d(a),
+        SelectCommand::Clear(ref a) => selection::cmd_clear_selection(a),
     }
 }
 

@@ -7,7 +7,7 @@ Built with [tree-sitter](https://tree-sitter.github.io/) for accurate parsing an
 ## Features
 
 - **Format** GDScript files with an AST-based formatter aligned to the [GDScript style guide](https://docs.godotengine.org/en/stable/tutorials/scripting/gdscript/gdscript_styleguide.html)
-- **Lint** with 58 built-in rules (13 auto-fixable), SARIF output for CI
+- **Lint** with 59 built-in rules (13 auto-fixable), SARIF output for CI
 - **Run**, **build**, **test**, and **clean** your Godot project from the terminal
 - **Watch** for file changes and auto-lint/format on save
 - **Manage addons** from Git or the Godot Asset Library (with lockfile and update support)
@@ -290,12 +290,12 @@ gd debug vars --frame 0
 gd debug eval --expr "self.speed"
 
 # Live scene tree
-gd debug scene-tree
+gd debug scene tree
 
-# Inspect a node by object ID (from scene-tree output)
-gd debug inspect --id 456
-gd debug inspect --id 456 --brief   # stripped-down output for AI
-gd debug inspect --id 456 --rich    # enrich with ClassDB docs and metadata
+# Inspect a node by object ID (from scene tree output)
+gd debug scene inspect --id 456
+gd debug scene inspect --id 456 --brief   # stripped-down output for AI
+gd debug scene inspect --id 456 --rich    # enrich with ClassDB docs and metadata
 
 # Set properties on a node at runtime
 gd debug set-prop --id 456 --property speed --value 100.0
@@ -303,9 +303,9 @@ gd debug set-prop-field --id 456 --property position --field x --value 5.0
 gd debug set-var --name speed --value 42 --frame 0  # modify local variable at breakpoint
 
 # Camera and scene overview
-gd debug camera-view              # active camera + all spatial node transforms
-gd debug screenshot               # capture game viewport (JPEG)
-gd debug screenshot --output frame.jpg
+gd debug scene camera-view        # active camera + all spatial node transforms
+gd debug camera screenshot        # capture game viewport (JPEG)
+gd debug camera screenshot --output frame.jpg
 
 # Game loop control
 gd debug suspend             # freeze the game loop
@@ -323,8 +323,8 @@ gd debug attach
 # JSON output for scripting
 gd debug breakpoint --path res://scripts/player.gd --line 42 --format json
 gd debug next --format json
-gd debug scene-tree --format json
-gd debug inspect --id 456 --format json
+gd debug scene tree --format json
+gd debug scene inspect --id 456 --format json
 ```
 
 Interactive session commands (`gd debug attach`):
@@ -371,7 +371,7 @@ The template system automatically finds `project.godot` within the repository to
 
 ## Lint Rules
 
-All 58 built-in rules (42 default-enabled, 16 opt-in):
+All 59 built-in rules (42 default-enabled, 17 opt-in):
 
 | Rule | Description | Severity | Fixable |
 |------|-------------|----------|---------|
@@ -437,6 +437,7 @@ All 58 built-in rules (42 default-enabled, 16 opt-in):
 | `todo-comment` | Detect TODO/FIXME/HACK comments | info | |
 | `unused-parameter` | Detect unused function parameters | warning | |
 | `use-before-assign` | Detect method calls accessing uninitialized members | warning | |
+| `enum-without-class-name` | Warn on enum type annotations in scripts without `class_name` | warning | |
 | `variant-inference` | Warn on `:=` inferring Variant from dict/array access | warning | |
 
 ### Inline Suppression

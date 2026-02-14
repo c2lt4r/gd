@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.2.0] - 2026-02-14
+
+### Breaking
+- **Debug API grouping** — flat `gd debug <cmd>` commands reorganized into nested subcommand groups:
+  - `gd debug scene tree` (was `scene-tree`), `gd debug scene inspect` (was `inspect`), `gd debug scene inspect-objects`, `gd debug scene camera-view`
+  - `gd debug camera screenshot` (was `screenshot`), `gd debug camera override` (was `override-camera`), `gd debug camera transform-2d`, `gd debug camera transform-3d`
+  - `gd debug live set-root` (was `live-set-root`), `gd debug live create-node`, etc.
+  - `gd debug select type` (was `node-select-type`), `gd debug select clear` (was `clear-selection`), etc.
+  - Top-level commands (`stop`, `continue`, `next`, `step-in`, `step-out`, `breakpoint`, `stack`, `vars`, `eval`, `set-prop`, `suspend`, etc.) remain unchanged
+
+### Added
+- **`enum-without-class-name` lint rule** (opt-in) — warns when a script defines a named enum but has no `class_name`, and a type annotation references that enum. Godot qualifies such enums as `filename.gd.EnumName`, so bare `EnumName` annotations fail to resolve.
+- **`variant-inference` now detects compound expressions** — catches `:=` on binary/comparison operators (`dict["key"] == "switch"`), parenthesized expressions (`(dict["key"])`), and unary operators (`not dict["key"]`) that contain Variant-producing sub-expressions. Previously only direct subscript and method calls were detected.
+- `gd check` mirrors the same Variant detection improvements (binary, parenthesized, unary)
+
 ## [0.1.31] - 2026-02-14
 
 ### Changed

@@ -437,6 +437,23 @@ fn is_variant_producing_expr(node: &Node, source: &str) -> bool {
             }
             false
         }
+        // Binary/comparison operators with a Variant operand produce Variant
+        // e.g., dict["key"] == "switch", dict["key"] + 1
+        "binary_operator" | "comparison_operator" => {
+            node.named_child(0)
+                .is_some_and(|c| is_variant_producing_expr(&c, source))
+                || node
+                    .named_child(1)
+                    .is_some_and(|c| is_variant_producing_expr(&c, source))
+        }
+        // Parenthesized: unwrap and check inner expression
+        "parenthesized_expression" => node
+            .named_child(0)
+            .is_some_and(|c| is_variant_producing_expr(&c, source)),
+        // Unary operators: `not dict["key"]`
+        "unary_operator" => node
+            .child_by_field_name("operand")
+            .is_some_and(|c| is_variant_producing_expr(&c, source)),
         _ => false,
     }
 }

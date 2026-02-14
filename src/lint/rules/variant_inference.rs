@@ -89,6 +89,23 @@ fn is_variant_producing(node: Node, source: &str) -> bool {
             }
             false
         }
+        // Binary/comparison operators with a Variant operand produce Variant
+        // e.g., dict["key"] == "switch", dict["key"] + 1
+        "binary_operator" | "comparison_operator" => {
+            node.named_child(0)
+                .is_some_and(|c| is_variant_producing(c, source))
+                || node
+                    .named_child(1)
+                    .is_some_and(|c| is_variant_producing(c, source))
+        }
+        // Parenthesized: unwrap and check inner expression
+        "parenthesized_expression" => node
+            .named_child(0)
+            .is_some_and(|c| is_variant_producing(c, source)),
+        // Unary operators: `not dict["key"]`
+        "unary_operator" => node
+            .child_by_field_name("operand")
+            .is_some_and(|c| is_variant_producing(c, source)),
         _ => false,
     }
 }
@@ -150,6 +167,37 @@ mod tests {
     #[test]
     fn no_warning_regular_equals() {
         let source = "func f():\n\tvar x = dict[\"key\"]\n";
+        let diags = check(source);
+        assert!(diags.is_empty());
+    }
+
+    #[test]
+    fn detects_variant_comparison() {
+        let source = "var dict := {}\nfunc f():\n\tvar x := dict[\"key\"] == \"foo\"\n";
+        let diags = check(source);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("Variant"));
+    }
+
+    #[test]
+    fn detects_variant_binary_op() {
+        let source = "var dict := {}\nfunc f():\n\tvar x := dict[\"key\"] + 1\n";
+        let diags = check(source);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("Variant"));
+    }
+
+    #[test]
+    fn detects_parenthesized_variant() {
+        let source = "var dict := {}\nfunc f():\n\tvar x := (dict[\"key\"])\n";
+        let diags = check(source);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("Variant"));
+    }
+
+    #[test]
+    fn no_warning_typed_comparison() {
+        let source = "var dict := {}\nfunc f():\n\tvar x: bool = dict[\"key\"] == \"foo\"\n";
         let diags = check(source);
         assert!(diags.is_empty());
     }
