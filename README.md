@@ -7,7 +7,7 @@ Built with [tree-sitter](https://tree-sitter.github.io/) for accurate parsing an
 ## Features
 
 - **Format** GDScript files with an AST-based formatter aligned to the [GDScript style guide](https://docs.godotengine.org/en/stable/tutorials/scripting/gdscript/gdscript_styleguide.html)
-- **Lint** with 75 built-in rules (17 auto-fixable), SARIF output for CI
+- **Lint** with 76 built-in rules (17 auto-fixable), SARIF output for CI
 - **Run**, **build**, **test**, and **clean** your Godot project from the terminal
 - **Watch** for file changes and auto-lint/format on save
 - **Manage addons** from Git or the Godot Asset Library (with lockfile and update support)
@@ -371,13 +371,13 @@ The template system automatically finds `project.godot` within the repository to
 
 ## Lint Rules
 
-75 built-in rules organized into 8 categories (44 default-enabled, 31 opt-in):
+76 built-in rules organized into 8 categories (45 default-enabled, 31 opt-in):
 
 ### Categories
 
 | Category | Description | Rules |
 |----------|-------------|-------|
-| **correctness** | Definite bugs | 13 |
+| **correctness** | Definite bugs | 14 |
 | **suspicious** | Likely bugs, may be intentional | 10 |
 | **style** | Naming and code style | 14 |
 | **complexity** | Code size and complexity metrics | 8 |
@@ -419,6 +419,7 @@ severity = "warning"       # re-enable despite maintenance = "off"
 | `duplicate-signal` | correctness | Detect duplicate signal declarations | error | |
 | `duplicated-load` | performance | Detect duplicate load/preload calls | warning | |
 | `empty-function` | style | Detect functions with only `pass` in body | warning | |
+| `enum-name-collision` | correctness | Detect inner enum names that collide with a global `class_name` | error | |
 | `enum-naming` | style | Enforce PascalCase/UPPER_SNAKE_CASE enums | warning | yes |
 | `enum-variable-without-default` | godot | Warn on enum-typed variables without a default value | warning | |
 | `enum-without-class-name` | godot | Warn on enum type annotations in scripts without `class_name` | warning | |

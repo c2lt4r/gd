@@ -454,6 +454,19 @@ fn is_variant_producing_expr(node: &Node, source: &str) -> bool {
         "unary_operator" => node
             .child_by_field_name("operand")
             .is_some_and(|c| is_variant_producing_expr(&c, source)),
+        // Builtin function calls that return Variant (polymorphic builtins)
+        "call" => {
+            let func_node = node
+                .child_by_field_name("function")
+                .or_else(|| node.named_child(0));
+            if let Some(func) = func_node
+                && let Ok(name) = func.utf8_text(source.as_bytes())
+            {
+                matches!(name, "max" | "min" | "clamp" | "snapped" | "wrap")
+            } else {
+                false
+            }
+        }
         _ => false,
     }
 }
@@ -776,6 +789,42 @@ mod tests {
     #[test]
     fn no_variant_warning_simple_infer() {
         let source = "func f():\n\tvar x := 42\n";
+        assert!(structural_errors(source).is_empty());
+    }
+
+    #[test]
+    fn variant_infer_from_max() {
+        let source = "func f():\n\tvar x := max(1, 2)\n";
+        let errs = structural_errors(source);
+        assert_eq!(errs.len(), 1);
+        assert!(errs[0].message.contains("Variant"));
+    }
+
+    #[test]
+    fn variant_infer_from_min() {
+        let source = "func f():\n\tvar x := min(1, 2)\n";
+        let errs = structural_errors(source);
+        assert_eq!(errs.len(), 1);
+        assert!(errs[0].message.contains("Variant"));
+    }
+
+    #[test]
+    fn variant_infer_from_clamp() {
+        let source = "func f():\n\tvar x := clamp(5, 1, 10)\n";
+        let errs = structural_errors(source);
+        assert_eq!(errs.len(), 1);
+        assert!(errs[0].message.contains("Variant"));
+    }
+
+    #[test]
+    fn no_variant_from_maxi() {
+        let source = "func f():\n\tvar x := maxi(1, 2)\n";
+        assert!(structural_errors(source).is_empty());
+    }
+
+    #[test]
+    fn no_variant_from_maxf() {
+        let source = "func f():\n\tvar x := maxf(1.0, 2.0)\n";
         assert!(structural_errors(source).is_empty());
     }
 

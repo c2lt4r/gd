@@ -1,9 +1,18 @@
 # Changelog
 
+## [0.2.6] - 2026-02-14
+
+### Added
+- **New lint rule: `enum-name-collision`** (75 → 76 total) — detects when an inner enum name collides with a global `class_name` in the project, which causes Godot type resolution errors
+
+### Fixed
+- `gd check` now detects `:=` Variant inference from polymorphic builtins (`max`, `min`, `clamp`, `snapped`, `wrap`)
+- Type inference engine now correctly returns Variant for polymorphic builtins (typed variants like `maxi`/`maxf` still return their specific types)
+
 ## [0.2.5] - 2026-02-14
 
 ### Added
-- **Lint categories** — 8 categories for bulk rule control: `correctness`, `suspicious`, `style`, `complexity`, `performance`, `godot`, `type_safety`, `maintenance`. Each of the 75 rules belongs to exactly one category.
+- **Lint categories** — 8 categories for bulk rule control: `correctness`, `suspicious`, `style`, `complexity`, `performance`, `godot`, `type_safety`, `maintenance`. Each of the 76 rules belongs to exactly one category.
 - **Category config in `[lint]`** — set `type_safety = "warning"` to enable all type-safety rules (including opt-in), `maintenance = "off"` to disable all maintenance rules, etc.
 - **5-level severity resolution** — disabled_rules > per-rule severity > per-rule config > category level > rule default
 

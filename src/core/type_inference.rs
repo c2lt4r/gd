@@ -666,6 +666,9 @@ pub fn builtin_function_return_type(name: &str) -> Option<InferredType> {
         "print" | "print_rich" | "prints" | "printt" | "printerr" | "print_verbose"
         | "push_error" | "push_warning" | "assert" | "breakpoint" | "seed" | "randomize"
         | "queue_free" | "free" => Some(InferredType::Void),
+        // Polymorphic builtins — accept Variant, return Variant
+        // (typed variants like maxi/maxf/mini/minf/clampi/clampf are above)
+        "max" | "min" | "clamp" | "snapped" | "wrap" => Some(InferredType::Variant),
         // Resource-returning
         "preload" | "load" => Some(InferredType::Class("Resource".to_string())),
         // Collection-returning
@@ -931,6 +934,38 @@ mod tests {
         assert_eq!(
             infer_var_value("func f():\n\tvar x = range(10)\n"),
             Some(InferredType::Builtin("Array"))
+        );
+    }
+
+    #[test]
+    fn builtin_max_returns_variant() {
+        assert_eq!(
+            infer_var_value("func f():\n\tvar x = max(1, 2)\n"),
+            Some(InferredType::Variant)
+        );
+    }
+
+    #[test]
+    fn builtin_min_returns_variant() {
+        assert_eq!(
+            infer_var_value("func f():\n\tvar x = min(1, 2)\n"),
+            Some(InferredType::Variant)
+        );
+    }
+
+    #[test]
+    fn builtin_maxi_returns_int() {
+        assert_eq!(
+            infer_var_value("func f():\n\tvar x = maxi(1, 2)\n"),
+            Some(InferredType::Builtin("int"))
+        );
+    }
+
+    #[test]
+    fn builtin_clamp_returns_variant() {
+        assert_eq!(
+            infer_var_value("func f():\n\tvar x = clamp(5, 1, 10)\n"),
+            Some(InferredType::Variant)
         );
     }
 

@@ -47,6 +47,7 @@ pub mod class_definitions_order;
 pub mod cyclomatic_complexity;
 pub mod deeply_nested_code;
 pub mod duplicate_delegate;
+pub mod enum_name_collision;
 pub mod enum_naming;
 pub mod enum_variable_without_default;
 pub mod enum_without_class_name;
@@ -344,6 +345,7 @@ pub fn all_rules(
         Box::new(shadowed_variable_base_class::ShadowedVariableBaseClass),
         Box::new(static_called_on_instance::StaticCalledOnInstance),
         Box::new(missing_tool::MissingTool),
+        Box::new(enum_name_collision::EnumNameCollision),
     ];
     all.into_iter()
         .filter(|r| {
