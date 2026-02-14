@@ -295,7 +295,10 @@ mod tests {
         // Inherited from Node
         assert!(names.contains(&"add_child"));
         // Each entry should have a return type and defining class
-        let apply_scale = methods.iter().find(|(n, _, _)| *n == "apply_scale").unwrap();
+        let apply_scale = methods
+            .iter()
+            .find(|(n, _, _)| *n == "apply_scale")
+            .unwrap();
         assert_eq!(apply_scale.2, "Node2D");
         let add_child = methods.iter().find(|(n, _, _)| *n == "add_child").unwrap();
         assert_eq!(add_child.2, "Node");

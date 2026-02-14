@@ -247,8 +247,7 @@ impl GodotClient {
             }
 
             // Capture workspace path from changeWorkspace notification
-            if msg.get("method").and_then(|m| m.as_str())
-                == Some("gdscript_client/changeWorkspace")
+            if msg.get("method").and_then(|m| m.as_str()) == Some("gdscript_client/changeWorkspace")
                 && let Some(path) = msg.pointer("/params/path").and_then(|p| p.as_str())
             {
                 *self.godot_prefix.lock().unwrap() = format!("file:///{path}");

@@ -17,6 +17,23 @@ use crate::debug::dap_client::DapClient;
 pub struct DaemonState {
     pub pid: u32,
     pub port: u16,
+    /// Build fingerprint so clients can detect stale daemons after recompilation.
+    #[serde(default)]
+    pub build_id: String,
+}
+
+/// Fingerprint of the current binary (version + mtime).
+/// Changes whenever the binary is recompiled.
+pub fn current_build_id() -> String {
+    let version = env!("CARGO_PKG_VERSION");
+    let mtime = std::env::current_exe()
+        .ok()
+        .and_then(|p| std::fs::metadata(p).ok())
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    format!("{version}-{mtime}")
 }
 
 /// A daemon request sent over TCP.
@@ -43,9 +60,13 @@ struct DaemonServer {
     dap: Mutex<Option<Arc<DapClient>>>,
     dap_caps: Mutex<Option<serde_json::Value>>,
     /// True when a game was launched via DAP and hasn't exited yet.
-    game_running: std::sync::atomic::AtomicBool,
+    /// Wrapped in Arc so the exit-watcher thread can clear it.
+    game_running: Arc<std::sync::atomic::AtomicBool>,
     /// Set when a DAP operation fails unexpectedly — triggers reconnect on next use.
     dap_needs_reconnect: std::sync::atomic::AtomicBool,
+    debug_server: Mutex<Option<crate::debug::godot_debug_server::GodotDebugServer>>,
+    /// Cached Godot binary path from DAP process events (Windows path in WSL).
+    cached_godot_path: Mutex<Option<String>>,
     workspace: WorkspaceIndex,
     project_root: PathBuf,
     godot_port: u16,
@@ -80,8 +101,10 @@ pub fn run(
         godot_ready: std::sync::atomic::AtomicBool::new(false),
         dap: Mutex::new(None),
         dap_caps: Mutex::new(None),
-        game_running: std::sync::atomic::AtomicBool::new(false),
+        game_running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         dap_needs_reconnect: std::sync::atomic::AtomicBool::new(false),
+        debug_server: Mutex::new(None),
+        cached_godot_path: Mutex::new(None),
         workspace,
         project_root: project_root.clone(),
         godot_port,
@@ -166,6 +189,7 @@ fn write_state_file(path: &Path, port: u16) -> miette::Result<()> {
     let state = DaemonState {
         pid: std::process::id(),
         port,
+        build_id: current_build_id(),
     };
     let json =
         serde_json::to_string_pretty(&state).map_err(|e| miette::miette!("serialize: {e}"))?;
@@ -193,9 +217,7 @@ fn idle_monitor(server: std::sync::Arc<DaemonServer>, state_path: &Path) {
 
 /// Handle a single TCP connection. Returns `Some(true)` for shutdown.
 fn handle_connection(server: &DaemonServer, mut stream: TcpStream) -> Option<bool> {
-    stream
-        .set_read_timeout(Some(Duration::from_secs(5)))
-        .ok()?;
+    stream.set_read_timeout(Some(Duration::from_secs(5))).ok()?;
     stream
         .set_write_timeout(Some(Duration::from_secs(5)))
         .ok()?;
@@ -203,8 +225,12 @@ fn handle_connection(server: &DaemonServer, mut stream: TcpStream) -> Option<boo
     let mut reader = BufReader::new(stream.try_clone().ok()?);
     let request = read_request(&mut reader)?;
 
-    // dap_wait_stopped / dap_wait_exited / dap_launch can block — extend timeout
-    if request.method == "dap_wait_stopped" || request.method == "dap_wait_exited" || request.method == "dap_launch" {
+    // dap_wait_stopped / dap_wait_exited / dap_launch / debug_accept can block — extend timeout
+    if request.method == "dap_wait_stopped"
+        || request.method == "dap_wait_exited"
+        || request.method == "dap_launch"
+        || request.method == "debug_accept"
+    {
         let timeout = request
             .params
             .get("timeout")
@@ -253,6 +279,107 @@ fn dispatch(server: &DaemonServer, request: &DaemonRequest) -> DaemonResponse {
         "dap_terminate" => dispatch_dap_terminate(server),
         "dap_disconnect" => dispatch_dap_disconnect(server),
         "dap_reconnect" => dispatch_dap_reconnect(server),
+        "dap_godot_path" => dispatch_dap_godot_path(server),
+        "dap_cache_godot_path" => dispatch_dap_cache_godot_path(server, &request.params),
+        // Binary debug protocol
+        "debug_start_server" => dispatch_debug_start_server(server, &request.params),
+        "debug_accept" => dispatch_debug_accept(server, &request.params),
+        "debug_scene_tree" => dispatch_debug_scene_tree(server),
+        "debug_inspect" => dispatch_debug_inspect(server, &request.params),
+        "debug_set_property" => dispatch_debug_set_property(server, &request.params),
+        "debug_suspend" => dispatch_debug_suspend(server, &request.params),
+        "debug_next_frame" => dispatch_debug_next_frame(server),
+        "debug_time_scale" => dispatch_debug_time_scale(server, &request.params),
+        "debug_reload_scripts" => dispatch_debug_reload_scripts(server),
+        "debug_server_status" => dispatch_debug_server_status(server),
+        // Core debugger (binary protocol)
+        "debug_continue" => dispatch_debug_cmd_simple(server, "continue"),
+        "debug_break_exec" => dispatch_debug_cmd_simple(server, "break"),
+        "debug_next_step" => dispatch_debug_cmd_simple(server, "next"),
+        "debug_step_in" => dispatch_debug_cmd_simple(server, "step"),
+        "debug_step_out" => dispatch_debug_cmd_simple(server, "out"),
+        "debug_breakpoint" => dispatch_debug_breakpoint(server, &request.params),
+        "debug_set_skip_breakpoints" => {
+            dispatch_debug_bool_cmd(server, "skip_breakpoints", &request.params)
+        }
+        "debug_set_ignore_error_breaks" => {
+            dispatch_debug_bool_cmd(server, "ignore_error_breaks", &request.params)
+        }
+        "debug_get_stack_dump" => dispatch_debug_get_stack_dump(server),
+        "debug_get_stack_frame_vars" => {
+            dispatch_debug_get_stack_frame_vars(server, &request.params)
+        }
+        "debug_evaluate" => dispatch_debug_evaluate(server, &request.params),
+        "debug_reload_all_scripts" => dispatch_debug_simple(server, "reload_all_scripts"),
+        // Scene inspection
+        "debug_inspect_objects" => dispatch_debug_inspect_objects(server, &request.params),
+        "debug_clear_selection" => dispatch_debug_simple(server, "clear_selection"),
+        "debug_save_node" => dispatch_debug_save_node(server, &request.params),
+        "debug_set_property_field" => dispatch_debug_set_property_field(server, &request.params),
+        // Audio
+        "debug_mute_audio" => dispatch_debug_mute_audio(server, &request.params),
+        // File reload
+        "debug_reload_cached_files" => dispatch_debug_reload_cached_files(server, &request.params),
+        // Camera override
+        "debug_override_cameras" => dispatch_debug_override_cameras(server, &request.params),
+        "debug_transform_camera_2d" => dispatch_debug_transform_camera_2d(server, &request.params),
+        "debug_transform_camera_3d" => dispatch_debug_transform_camera_3d(server, &request.params),
+        // Screenshots
+        "debug_request_screenshot" => dispatch_debug_request_screenshot(server, &request.params),
+        // Runtime node selection
+        "debug_node_select_set_type" => {
+            dispatch_debug_int_cmd(server, "node_select_type", &request.params, "type")
+        }
+        "debug_node_select_set_mode" => {
+            dispatch_debug_int_cmd(server, "node_select_mode", &request.params, "mode")
+        }
+        "debug_node_select_set_visible" => {
+            dispatch_debug_bool_param(server, "node_select_visible", &request.params, "visible")
+        }
+        "debug_node_select_set_avoid_locked" => {
+            dispatch_debug_bool_param(server, "node_select_avoid_locked", &request.params, "avoid")
+        }
+        "debug_node_select_set_prefer_group" => dispatch_debug_bool_param(
+            server,
+            "node_select_prefer_group",
+            &request.params,
+            "prefer",
+        ),
+        "debug_node_select_reset_camera_2d" => {
+            dispatch_debug_simple(server, "node_select_reset_2d")
+        }
+        "debug_node_select_reset_camera_3d" => {
+            dispatch_debug_simple(server, "node_select_reset_3d")
+        }
+        // Live editing
+        "debug_live_set_root" => dispatch_debug_live_set_root(server, &request.params),
+        "debug_live_node_path" => dispatch_debug_live_path(server, "node_path", &request.params),
+        "debug_live_res_path" => dispatch_debug_live_path(server, "res_path", &request.params),
+        "debug_live_node_prop" => dispatch_debug_live_prop(server, "node_prop", &request.params),
+        "debug_live_node_prop_res" => {
+            dispatch_debug_live_prop_res(server, "node_prop_res", &request.params)
+        }
+        "debug_live_res_prop" => dispatch_debug_live_prop(server, "res_prop", &request.params),
+        "debug_live_res_prop_res" => {
+            dispatch_debug_live_prop_res(server, "res_prop_res", &request.params)
+        }
+        "debug_live_node_call" => dispatch_debug_live_call(server, "node_call", &request.params),
+        "debug_live_res_call" => dispatch_debug_live_call(server, "res_call", &request.params),
+        "debug_live_create_node" => dispatch_debug_live_create_node(server, &request.params),
+        "debug_live_instantiate_node" => {
+            dispatch_debug_live_instantiate_node(server, &request.params)
+        }
+        "debug_live_remove_node" => {
+            dispatch_debug_live_single_path(server, "remove_node", &request.params)
+        }
+        "debug_live_remove_and_keep_node" => {
+            dispatch_debug_live_remove_and_keep(server, &request.params)
+        }
+        "debug_live_restore_node" => dispatch_debug_live_restore_node(server, &request.params),
+        "debug_live_duplicate_node" => dispatch_debug_live_duplicate_node(server, &request.params),
+        "debug_live_reparent_node" => dispatch_debug_live_reparent_node(server, &request.params),
+        // Profiler
+        "debug_toggle_profiler" => dispatch_debug_toggle_profiler(server, &request.params),
         // Control
         "shutdown" => DaemonResponse {
             result: Some(serde_json::json!({"status": "shutdown"})),
@@ -471,7 +598,11 @@ fn dispatch_dap_set_breakpoints(
     let condition = params.get("condition").and_then(|c| c.as_str());
 
     let dap = server.dap.lock().unwrap();
-    match dap.as_ref().unwrap().set_breakpoints(path, &lines, condition) {
+    match dap
+        .as_ref()
+        .unwrap()
+        .set_breakpoints(path, &lines, condition)
+    {
         Some(body) => ok_response(body),
         None => error_response("setBreakpoints failed"),
     }
@@ -575,12 +706,13 @@ fn dispatch_dap_evaluate(server: &DaemonServer, params: &serde_json::Value) -> D
         .get("context")
         .and_then(|c| c.as_str())
         .unwrap_or("repl");
-    let frame_id = params
-        .get("frame_id")
-        .and_then(|f| f.as_i64())
-        .unwrap_or(0);
+    let frame_id = params.get("frame_id").and_then(|f| f.as_i64()).unwrap_or(0);
     let dap = server.dap.lock().unwrap();
-    match dap.as_ref().unwrap().evaluate(expression, context, frame_id) {
+    match dap
+        .as_ref()
+        .unwrap()
+        .evaluate(expression, context, frame_id)
+    {
         Some(body) => ok_response(body),
         None => error_response("evaluate failed"),
     }
@@ -590,10 +722,7 @@ fn dispatch_dap_wait_stopped(server: &DaemonServer, params: &serde_json::Value) 
     if !ensure_dap(server) {
         return error_response("DAP not connected");
     }
-    let timeout = params
-        .get("timeout")
-        .and_then(|t| t.as_u64())
-        .unwrap_or(30);
+    let timeout = params.get("timeout").and_then(|t| t.as_u64()).unwrap_or(30);
     // Clone Arc to release mutex before blocking
     let client = {
         let dap = server.dap.lock().unwrap();
@@ -654,7 +783,7 @@ fn dispatch_dap_launch(server: &DaemonServer, params: &serde_json::Value) -> Dae
         .unwrap_or_else(|| {
             // Fallback: convert WSL path to Windows path if applicable
             let root = server.project_root.to_string_lossy();
-            wsl_to_windows_path(&root).unwrap_or_else(|| root.to_string())
+            crate::core::fs::wsl_to_windows_path(&root).unwrap_or_else(|| root.to_string())
         });
 
     // Launch — this sends initialize + launch + configurationDone and waits
@@ -663,11 +792,28 @@ fn dispatch_dap_launch(server: &DaemonServer, params: &serde_json::Value) -> Dae
 
     match result {
         Some(process_body) => {
-            *server.dap.lock().unwrap() = Some(Arc::new(client));
+            let client = Arc::new(client);
+            *server.dap.lock().unwrap() = Some(Arc::clone(&client));
             *server.dap_caps.lock().unwrap() = None;
             server
                 .game_running
                 .store(true, std::sync::atomic::Ordering::Release);
+            // Cache the Godot binary path for future --debug launches
+            if let Some(name) = process_body.get("name").and_then(|n| n.as_str())
+                && !name.is_empty()
+            {
+                *server.cached_godot_path.lock().unwrap() = Some(name.to_string());
+            }
+            // Monitor for game exit in background so game_running is cleared
+            // automatically when the user closes the game window.
+            {
+                let game_flag = Arc::clone(&server.game_running);
+                std::thread::spawn(move || {
+                    // Wait up to 24 hours — effectively indefinite
+                    let _ = client.wait_for_exited(86400);
+                    game_flag.store(false, std::sync::atomic::Ordering::Release);
+                });
+            }
             ok_response(serde_json::json!({
                 "launched": true,
                 "process": process_body,
@@ -747,6 +893,934 @@ fn dispatch_dap_reconnect(server: &DaemonServer) -> DaemonResponse {
     }
 }
 
+fn dispatch_dap_godot_path(server: &DaemonServer) -> DaemonResponse {
+    let guard = server.cached_godot_path.lock().unwrap();
+    match guard.as_ref() {
+        Some(path) => ok_response(serde_json::json!({"godot_path": path})),
+        None => error_response("No Godot path cached — run `gd run` once to cache it"),
+    }
+}
+
+fn dispatch_dap_cache_godot_path(
+    server: &DaemonServer,
+    params: &serde_json::Value,
+) -> DaemonResponse {
+    let Some(path) = params.get("godot_path").and_then(|p| p.as_str()) else {
+        return error_response("missing 'godot_path' parameter");
+    };
+    *server.cached_godot_path.lock().unwrap() = Some(path.to_string());
+    ok_response(serde_json::json!({"cached": true}))
+}
+
+// ── Binary debug protocol dispatch ───────────────────────────────────────────
+
+fn dispatch_debug_start_server(
+    server: &DaemonServer,
+    params: &serde_json::Value,
+) -> DaemonResponse {
+    let port = params
+        .get("port")
+        .and_then(|p| p.as_u64())
+        .unwrap_or(crate::debug::godot_debug_server::GodotDebugServer::DEFAULT_PORT as u64)
+        as u16;
+    let ds = match crate::debug::godot_debug_server::GodotDebugServer::new(port) {
+        Some(s) => s,
+        None => return error_response("Failed to create debug server (port may be in use)"),
+    };
+    let actual_port = ds.port();
+    *server.debug_server.lock().unwrap() = Some(ds);
+    ok_response(serde_json::json!({"port": actual_port}))
+}
+
+fn dispatch_debug_accept(server: &DaemonServer, params: &serde_json::Value) -> DaemonResponse {
+    let timeout = params.get("timeout").and_then(|t| t.as_u64()).unwrap_or(30);
+    let guard = server.debug_server.lock().unwrap();
+    let Some(ds) = guard.as_ref() else {
+        return error_response("No debug server running — call debug_start_server first");
+    };
+    let connected = ds.accept(Duration::from_secs(timeout));
+    ok_response(serde_json::json!({"connected": connected}))
+}
+
+fn dispatch_debug_scene_tree(server: &DaemonServer) -> DaemonResponse {
+    let guard = server.debug_server.lock().unwrap();
+    let Some(ds) = guard.as_ref() else {
+        return error_response("No debug server running");
+    };
+    match ds.cmd_request_scene_tree() {
+        Some(tree) => ok_response(serde_json::to_value(&tree).unwrap_or_default()),
+        None => error_response("scene tree request failed or timed out"),
+    }
+}
+
+fn dispatch_debug_inspect(server: &DaemonServer, params: &serde_json::Value) -> DaemonResponse {
+    let Some(object_id) = params.get("object_id").and_then(|o| o.as_u64()) else {
+        return error_response("missing 'object_id' parameter");
+    };
+    let guard = server.debug_server.lock().unwrap();
+    let Some(ds) = guard.as_ref() else {
+        return error_response("No debug server running");
+    };
+    match ds.cmd_inspect_object(object_id) {
+        Some(info) => ok_response(serde_json::to_value(&info).unwrap_or_default()),
+        None => error_response(&format!(
+            "object {object_id} not found — it may have been freed (try refreshing the scene tree)"
+        )),
+    }
+}
+
+fn dispatch_debug_set_property(
+    server: &DaemonServer,
+    params: &serde_json::Value,
+) -> DaemonResponse {
+    let Some(object_id) = params.get("object_id").and_then(|o| o.as_u64()) else {
+        return error_response("missing 'object_id' parameter");
+    };
+    let Some(property) = params.get("property").and_then(|p| p.as_str()) else {
+        return error_response("missing 'property' parameter");
+    };
+    let value_param = params
+        .get("value")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let variant = json_to_variant(&value_param);
+
+    let guard = server.debug_server.lock().unwrap();
+    let Some(ds) = guard.as_ref() else {
+        return error_response("No debug server running");
+    };
+    if ds.cmd_set_object_property(object_id, property, variant) {
+        ok_response(serde_json::json!({"set": true}))
+    } else {
+        error_response("set_object_property failed")
+    }
+}
+
+fn dispatch_debug_suspend(server: &DaemonServer, params: &serde_json::Value) -> DaemonResponse {
+    let suspend = params
+        .get("suspend")
+        .and_then(|s| s.as_bool())
+        .unwrap_or(true);
+    let guard = server.debug_server.lock().unwrap();
+    let Some(ds) = guard.as_ref() else {
+        return error_response("No debug server running");
+    };
+    if ds.cmd_suspend(suspend) {
+        ok_response(serde_json::json!({"suspended": suspend}))
+    } else {
+        error_response("suspend command failed")
+    }
+}
+
+fn dispatch_debug_next_frame(server: &DaemonServer) -> DaemonResponse {
+    let guard = server.debug_server.lock().unwrap();
+    let Some(ds) = guard.as_ref() else {
+        return error_response("No debug server running");
+    };
+    if ds.cmd_next_frame() {
+        ok_response(serde_json::json!({"advanced": true}))
+    } else {
+        error_response("next_frame command failed")
+    }
+}
+
+fn dispatch_debug_time_scale(server: &DaemonServer, params: &serde_json::Value) -> DaemonResponse {
+    let Some(scale) = params.get("scale").and_then(|s| s.as_f64()) else {
+        return error_response("missing 'scale' parameter");
+    };
+    let guard = server.debug_server.lock().unwrap();
+    let Some(ds) = guard.as_ref() else {
+        return error_response("No debug server running");
+    };
+    if ds.cmd_set_speed(scale) {
+        ok_response(serde_json::json!({"scale": scale}))
+    } else {
+        error_response("set_speed command failed")
+    }
+}
+
+fn dispatch_debug_reload_scripts(server: &DaemonServer) -> DaemonResponse {
+    let guard = server.debug_server.lock().unwrap();
+    let Some(ds) = guard.as_ref() else {
+        return error_response("No debug server running");
+    };
+    if ds.cmd_reload_scripts() {
+        ok_response(serde_json::json!({"reloaded": true}))
+    } else {
+        error_response("reload_scripts command failed")
+    }
+}
+
+fn dispatch_debug_server_status(server: &DaemonServer) -> DaemonResponse {
+    let guard = server.debug_server.lock().unwrap();
+    match guard.as_ref() {
+        Some(ds) => ok_response(serde_json::json!({
+            "running": true,
+            "port": ds.port(),
+            "connected": ds.is_connected(),
+        })),
+        None => ok_response(serde_json::json!({"running": false})),
+    }
+}
+
+/// Simple execution control command (continue/break/next/step/out).
+fn dispatch_debug_cmd_simple(server: &DaemonServer, action: &str) -> DaemonResponse {
+    let guard = server.debug_server.lock().unwrap();
+    let Some(ds) = guard.as_ref() else {
+        return error_response("No debug server running");
+    };
+    let ok = match action {
+        "continue" => ds.cmd_continue(),
+        "break" => ds.cmd_break(),
+        "next" => ds.cmd_next(),
+        "step" => ds.cmd_step(),
+        "out" => ds.cmd_out(),
+        _ => false,
+    };
+    if ok {
+        ok_response(serde_json::json!({"ok": true}))
+    } else {
+        error_response(&format!("{action} failed"))
+    }
+}
+
+/// Simple no-arg command that returns success/failure.
+fn dispatch_debug_simple(server: &DaemonServer, label: &str) -> DaemonResponse {
+    let guard = server.debug_server.lock().unwrap();
+    let Some(ds) = guard.as_ref() else {
+        return error_response("No debug server running");
+    };
+    let ok = match label {
+        "reload_all_scripts" => ds.cmd_reload_all_scripts(),
+        "clear_selection" => ds.cmd_clear_selection(),
+        "node_select_reset_2d" => ds.cmd_runtime_node_select_reset_camera_2d(),
+        "node_select_reset_3d" => ds.cmd_runtime_node_select_reset_camera_3d(),
+        _ => false,
+    };
+    if ok {
+        ok_response(serde_json::json!({"ok": true}))
+    } else {
+        error_response(&format!("{label} failed"))
+    }
+}
+
+fn dispatch_debug_breakpoint(server: &DaemonServer, params: &serde_json::Value) -> DaemonResponse {
+    let Some(path) = params.get("path").and_then(|p| p.as_str()) else {
+        return error_response("missing 'path' parameter");
+    };
+    let Some(line) = params.get("line").and_then(|l| l.as_u64()) else {
+        return error_response("missing 'line' parameter");
+    };
+    let enabled = params
+        .get("enabled")
+        .and_then(|e| e.as_bool())
+        .unwrap_or(true);
+    let guard = server.debug_server.lock().unwrap();
+    let Some(ds) = guard.as_ref() else {
+        return error_response("No debug server running");
+    };
+    if ds.cmd_breakpoint(path, line as u32, enabled) {
+        ok_response(serde_json::json!({"ok": true}))
+    } else {
+        error_response("breakpoint command failed")
+    }
+}
+
+/// Boolean command helper — dispatches to set_skip_breakpoints or set_ignore_error_breaks.
+fn dispatch_debug_bool_cmd(
+    server: &DaemonServer,
+    label: &str,
+    params: &serde_json::Value,
+) -> DaemonResponse {
+    let Some(value) = params.get("value").and_then(|v| v.as_bool()) else {
+        return error_response("missing 'value' parameter");
+    };
+    let guard = server.debug_server.lock().unwrap();
+    let Some(ds) = guard.as_ref() else {
+        return error_response("No debug server running");
+    };
+    let ok = match label {
+        "skip_breakpoints" => ds.cmd_set_skip_breakpoints(value),
+        "ignore_error_breaks" => ds.cmd_set_ignore_error_breaks(value),
+        _ => false,
+    };
+    if ok {
+        ok_response(serde_json::json!({"ok": true}))
+    } else {
+        error_response(&format!("{label} failed"))
+    }
+}
+
+fn dispatch_debug_get_stack_dump(server: &DaemonServer) -> DaemonResponse {
+    let guard = server.debug_server.lock().unwrap();
+    let Some(ds) = guard.as_ref() else {
+        return error_response("No debug server running");
+    };
+    match ds.cmd_get_stack_dump() {
+        Some(frames) => ok_response(serde_json::to_value(&frames).unwrap_or_default()),
+        None => error_response("get_stack_dump failed or timed out"),
+    }
+}
+
+fn dispatch_debug_get_stack_frame_vars(
+    server: &DaemonServer,
+    params: &serde_json::Value,
+) -> DaemonResponse {
+    let Some(frame) = params.get("frame").and_then(|f| f.as_u64()) else {
+        return error_response("missing 'frame' parameter");
+    };
+    let guard = server.debug_server.lock().unwrap();
+    let Some(ds) = guard.as_ref() else {
+        return error_response("No debug server running");
+    };
+    match ds.cmd_get_stack_frame_vars(frame as u32) {
+        Some(vars) => ok_response(serde_json::to_value(&vars).unwrap_or_default()),
+        None => error_response("get_stack_frame_vars failed or timed out"),
+    }
+}
+
+fn dispatch_debug_evaluate(server: &DaemonServer, params: &serde_json::Value) -> DaemonResponse {
+    let Some(expression) = params.get("expression").and_then(|e| e.as_str()) else {
+        return error_response("missing 'expression' parameter");
+    };
+    let frame = params.get("frame").and_then(|f| f.as_u64()).unwrap_or(0);
+    let guard = server.debug_server.lock().unwrap();
+    let Some(ds) = guard.as_ref() else {
+        return error_response("No debug server running");
+    };
+    match ds.cmd_evaluate(expression, frame as u32) {
+        Some(result) => ok_response(serde_json::to_value(&result).unwrap_or_default()),
+        None => error_response("evaluate failed or timed out"),
+    }
+}
+
+fn dispatch_debug_inspect_objects(
+    server: &DaemonServer,
+    params: &serde_json::Value,
+) -> DaemonResponse {
+    let Some(ids_arr) = params.get("ids").and_then(|i| i.as_array()) else {
+        return error_response("missing 'ids' parameter");
+    };
+    let ids: Vec<u64> = ids_arr.iter().filter_map(|v| v.as_u64()).collect();
+    let selection = params
+        .get("selection")
+        .and_then(|s| s.as_bool())
+        .unwrap_or(false);
+    let guard = server.debug_server.lock().unwrap();
+    let Some(ds) = guard.as_ref() else {
+        return error_response("No debug server running");
+    };
+    match ds.cmd_inspect_objects(&ids, selection) {
+        Some(results) => ok_response(serde_json::to_value(&results).unwrap_or_default()),
+        None => error_response("inspect_objects failed"),
+    }
+}
+
+fn dispatch_debug_save_node(server: &DaemonServer, params: &serde_json::Value) -> DaemonResponse {
+    let Some(object_id) = params.get("object_id").and_then(|o| o.as_u64()) else {
+        return error_response("missing 'object_id' parameter");
+    };
+    let Some(path) = params.get("path").and_then(|p| p.as_str()) else {
+        return error_response("missing 'path' parameter");
+    };
+    let guard = server.debug_server.lock().unwrap();
+    let Some(ds) = guard.as_ref() else {
+        return error_response("No debug server running");
+    };
+    match ds.cmd_save_node(object_id, path) {
+        Some(saved_path) => ok_response(serde_json::json!({"saved": saved_path})),
+        None => error_response("save_node failed"),
+    }
+}
+
+fn dispatch_debug_set_property_field(
+    server: &DaemonServer,
+    params: &serde_json::Value,
+) -> DaemonResponse {
+    let Some(object_id) = params.get("object_id").and_then(|o| o.as_u64()) else {
+        return error_response("missing 'object_id' parameter");
+    };
+    let Some(property) = params.get("property").and_then(|p| p.as_str()) else {
+        return error_response("missing 'property' parameter");
+    };
+    let Some(field) = params.get("field").and_then(|f| f.as_str()) else {
+        return error_response("missing 'field' parameter");
+    };
+    let value_param = params
+        .get("value")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let variant = json_to_variant(&value_param);
+    let guard = server.debug_server.lock().unwrap();
+    let Some(ds) = guard.as_ref() else {
+        return error_response("No debug server running");
+    };
+    if ds.cmd_set_object_property_field(object_id, property, variant, field) {
+        ok_response(serde_json::json!({"ok": true}))
+    } else {
+        error_response("set_property_field failed")
+    }
+}
+
+fn dispatch_debug_mute_audio(server: &DaemonServer, params: &serde_json::Value) -> DaemonResponse {
+    let Some(mute) = params.get("mute").and_then(|m| m.as_bool()) else {
+        return error_response("missing 'mute' parameter");
+    };
+    let guard = server.debug_server.lock().unwrap();
+    let Some(ds) = guard.as_ref() else {
+        return error_response("No debug server running");
+    };
+    if ds.cmd_mute_audio(mute) {
+        ok_response(serde_json::json!({"ok": true}))
+    } else {
+        error_response("mute_audio failed")
+    }
+}
+
+fn dispatch_debug_reload_cached_files(
+    server: &DaemonServer,
+    params: &serde_json::Value,
+) -> DaemonResponse {
+    let Some(files_arr) = params.get("files").and_then(|f| f.as_array()) else {
+        return error_response("missing 'files' parameter");
+    };
+    let files: Vec<&str> = files_arr.iter().filter_map(|v| v.as_str()).collect();
+    let guard = server.debug_server.lock().unwrap();
+    let Some(ds) = guard.as_ref() else {
+        return error_response("No debug server running");
+    };
+    if ds.cmd_reload_cached_files(&files) {
+        ok_response(serde_json::json!({"ok": true}))
+    } else {
+        error_response("reload_cached_files failed")
+    }
+}
+
+fn dispatch_debug_override_cameras(
+    server: &DaemonServer,
+    params: &serde_json::Value,
+) -> DaemonResponse {
+    let Some(enable) = params.get("enable").and_then(|e| e.as_bool()) else {
+        return error_response("missing 'enable' parameter");
+    };
+    let guard = server.debug_server.lock().unwrap();
+    let Some(ds) = guard.as_ref() else {
+        return error_response("No debug server running");
+    };
+    if ds.cmd_override_cameras(enable) {
+        ok_response(serde_json::json!({"ok": true}))
+    } else {
+        error_response("override_cameras failed")
+    }
+}
+
+fn dispatch_debug_transform_camera_2d(
+    server: &DaemonServer,
+    params: &serde_json::Value,
+) -> DaemonResponse {
+    let Some(arr) = params.get("transform").and_then(|t| t.as_array()) else {
+        return error_response("missing 'transform' parameter");
+    };
+    if arr.len() != 6 {
+        return error_response("'transform' must have 6 elements");
+    }
+    let mut transform = [0.0f64; 6];
+    for (i, v) in arr.iter().enumerate() {
+        transform[i] = v.as_f64().unwrap_or(0.0);
+    }
+    let guard = server.debug_server.lock().unwrap();
+    let Some(ds) = guard.as_ref() else {
+        return error_response("No debug server running");
+    };
+    if ds.cmd_transform_camera_2d(transform) {
+        ok_response(serde_json::json!({"ok": true}))
+    } else {
+        error_response("transform_camera_2d failed")
+    }
+}
+
+fn dispatch_debug_transform_camera_3d(
+    server: &DaemonServer,
+    params: &serde_json::Value,
+) -> DaemonResponse {
+    let Some(arr) = params.get("transform").and_then(|t| t.as_array()) else {
+        return error_response("missing 'transform' parameter");
+    };
+    if arr.len() != 12 {
+        return error_response("'transform' must have 12 elements");
+    }
+    let mut transform = [0.0f64; 12];
+    for (i, v) in arr.iter().enumerate() {
+        transform[i] = v.as_f64().unwrap_or(0.0);
+    }
+    let perspective = params
+        .get("perspective")
+        .and_then(|p| p.as_bool())
+        .unwrap_or(true);
+    let Some(fov) = params.get("fov").and_then(|f| f.as_f64()) else {
+        return error_response("missing 'fov' parameter");
+    };
+    let Some(near) = params.get("near").and_then(|n| n.as_f64()) else {
+        return error_response("missing 'near' parameter");
+    };
+    let Some(far) = params.get("far").and_then(|f| f.as_f64()) else {
+        return error_response("missing 'far' parameter");
+    };
+    let guard = server.debug_server.lock().unwrap();
+    let Some(ds) = guard.as_ref() else {
+        return error_response("No debug server running");
+    };
+    if ds.cmd_transform_camera_3d(transform, perspective, fov, near, far) {
+        ok_response(serde_json::json!({"ok": true}))
+    } else {
+        error_response("transform_camera_3d failed")
+    }
+}
+
+fn dispatch_debug_request_screenshot(
+    server: &DaemonServer,
+    params: &serde_json::Value,
+) -> DaemonResponse {
+    let Some(id) = params.get("id").and_then(|i| i.as_u64()) else {
+        return error_response("missing 'id' parameter");
+    };
+    let guard = server.debug_server.lock().unwrap();
+    let Some(ds) = guard.as_ref() else {
+        return error_response("No debug server running");
+    };
+    match ds.cmd_request_screenshot(id) {
+        Some(result) => {
+            // Read the PNG file from Godot's temp dir and base64-encode it
+            let file_path = crate::core::fs::windows_to_wsl_path(&result.path);
+            match std::fs::read(&file_path) {
+                Ok(bytes) => {
+                    use base64::Engine;
+                    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                    // Clean up the temp file
+                    let _ = std::fs::remove_file(&file_path);
+                    ok_response(serde_json::json!({
+                        "width": result.width,
+                        "height": result.height,
+                        "data": b64,
+                        "format": "png",
+                    }))
+                }
+                Err(e) => error_response(&format!(
+                    "Screenshot captured ({}x{}) but failed to read {}: {e}",
+                    result.width, result.height, file_path
+                )),
+            }
+        }
+        None => error_response("request_screenshot failed or timed out"),
+    }
+}
+
+/// Integer parameter command helper (node selection type/mode).
+fn dispatch_debug_int_cmd(
+    server: &DaemonServer,
+    label: &str,
+    params: &serde_json::Value,
+    param_name: &str,
+) -> DaemonResponse {
+    let Some(value) = params.get(param_name).and_then(|v| v.as_i64()) else {
+        return error_response(&format!("missing '{param_name}' parameter"));
+    };
+    let guard = server.debug_server.lock().unwrap();
+    let Some(ds) = guard.as_ref() else {
+        return error_response("No debug server running");
+    };
+    let ok = match label {
+        "node_select_type" => ds.cmd_runtime_node_select_set_type(value as i32),
+        "node_select_mode" => ds.cmd_runtime_node_select_set_mode(value as i32),
+        _ => false,
+    };
+    if ok {
+        ok_response(serde_json::json!({"ok": true}))
+    } else {
+        error_response(&format!("{label} failed"))
+    }
+}
+
+/// Boolean parameter command helper (node selection bools).
+fn dispatch_debug_bool_param(
+    server: &DaemonServer,
+    label: &str,
+    params: &serde_json::Value,
+    param_name: &str,
+) -> DaemonResponse {
+    let Some(value) = params.get(param_name).and_then(|v| v.as_bool()) else {
+        return error_response(&format!("missing '{param_name}' parameter"));
+    };
+    let guard = server.debug_server.lock().unwrap();
+    let Some(ds) = guard.as_ref() else {
+        return error_response("No debug server running");
+    };
+    let ok = match label {
+        "node_select_visible" => ds.cmd_runtime_node_select_set_visible(value),
+        "node_select_avoid_locked" => ds.cmd_runtime_node_select_set_avoid_locked(value),
+        "node_select_prefer_group" => ds.cmd_runtime_node_select_set_prefer_group(value),
+        _ => false,
+    };
+    if ok {
+        ok_response(serde_json::json!({"ok": true}))
+    } else {
+        error_response(&format!("{label} failed"))
+    }
+}
+
+// ── Live editing dispatch ────────────────────────────────────────────────────
+
+fn dispatch_debug_live_set_root(
+    server: &DaemonServer,
+    params: &serde_json::Value,
+) -> DaemonResponse {
+    let Some(scene_path) = params.get("scene_path").and_then(|s| s.as_str()) else {
+        return error_response("missing 'scene_path' parameter");
+    };
+    let Some(scene_file) = params.get("scene_file").and_then(|s| s.as_str()) else {
+        return error_response("missing 'scene_file' parameter");
+    };
+    let guard = server.debug_server.lock().unwrap();
+    let Some(ds) = guard.as_ref() else {
+        return error_response("No debug server running");
+    };
+    if ds.cmd_live_set_root(scene_path, scene_file) {
+        ok_response(serde_json::json!({"ok": true}))
+    } else {
+        error_response("live_set_root failed")
+    }
+}
+
+/// Shared helper for live_node_path / live_res_path.
+fn dispatch_debug_live_path(
+    server: &DaemonServer,
+    label: &str,
+    params: &serde_json::Value,
+) -> DaemonResponse {
+    let Some(path) = params.get("path").and_then(|p| p.as_str()) else {
+        return error_response("missing 'path' parameter");
+    };
+    let Some(id) = params.get("id").and_then(|i| i.as_i64()) else {
+        return error_response("missing 'id' parameter");
+    };
+    let guard = server.debug_server.lock().unwrap();
+    let Some(ds) = guard.as_ref() else {
+        return error_response("No debug server running");
+    };
+    let ok = match label {
+        "node_path" => ds.cmd_live_node_path(path, id as i32),
+        "res_path" => ds.cmd_live_res_path(path, id as i32),
+        _ => false,
+    };
+    if ok {
+        ok_response(serde_json::json!({"ok": true}))
+    } else {
+        error_response(&format!("live_{label} failed"))
+    }
+}
+
+/// Shared helper for live_node_prop / live_res_prop.
+fn dispatch_debug_live_prop(
+    server: &DaemonServer,
+    label: &str,
+    params: &serde_json::Value,
+) -> DaemonResponse {
+    let Some(id) = params.get("id").and_then(|i| i.as_i64()) else {
+        return error_response("missing 'id' parameter");
+    };
+    let Some(property) = params.get("property").and_then(|p| p.as_str()) else {
+        return error_response("missing 'property' parameter");
+    };
+    let value_param = params
+        .get("value")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let variant = json_to_variant(&value_param);
+    let guard = server.debug_server.lock().unwrap();
+    let Some(ds) = guard.as_ref() else {
+        return error_response("No debug server running");
+    };
+    let ok = match label {
+        "node_prop" => ds.cmd_live_node_prop(id as i32, property, variant),
+        "res_prop" => ds.cmd_live_res_prop(id as i32, property, variant),
+        _ => false,
+    };
+    if ok {
+        ok_response(serde_json::json!({"ok": true}))
+    } else {
+        error_response(&format!("live_{label} failed"))
+    }
+}
+
+/// Shared helper for live_node_prop_res / live_res_prop_res.
+fn dispatch_debug_live_prop_res(
+    server: &DaemonServer,
+    label: &str,
+    params: &serde_json::Value,
+) -> DaemonResponse {
+    let Some(id) = params.get("id").and_then(|i| i.as_i64()) else {
+        return error_response("missing 'id' parameter");
+    };
+    let Some(property) = params.get("property").and_then(|p| p.as_str()) else {
+        return error_response("missing 'property' parameter");
+    };
+    let Some(res_path) = params.get("res_path").and_then(|r| r.as_str()) else {
+        return error_response("missing 'res_path' parameter");
+    };
+    let guard = server.debug_server.lock().unwrap();
+    let Some(ds) = guard.as_ref() else {
+        return error_response("No debug server running");
+    };
+    let ok = match label {
+        "node_prop_res" => ds.cmd_live_node_prop_res(id as i32, property, res_path),
+        "res_prop_res" => ds.cmd_live_res_prop_res(id as i32, property, res_path),
+        _ => false,
+    };
+    if ok {
+        ok_response(serde_json::json!({"ok": true}))
+    } else {
+        error_response(&format!("live_{label} failed"))
+    }
+}
+
+/// Shared helper for live_node_call / live_res_call.
+fn dispatch_debug_live_call(
+    server: &DaemonServer,
+    label: &str,
+    params: &serde_json::Value,
+) -> DaemonResponse {
+    let Some(id) = params.get("id").and_then(|i| i.as_i64()) else {
+        return error_response("missing 'id' parameter");
+    };
+    let Some(method) = params.get("method").and_then(|m| m.as_str()) else {
+        return error_response("missing 'method' parameter");
+    };
+    let args: Vec<crate::debug::variant::GodotVariant> = params
+        .get("args")
+        .and_then(|a| a.as_array())
+        .map(|arr| arr.iter().map(json_to_variant).collect())
+        .unwrap_or_default();
+    let guard = server.debug_server.lock().unwrap();
+    let Some(ds) = guard.as_ref() else {
+        return error_response("No debug server running");
+    };
+    let ok = match label {
+        "node_call" => ds.cmd_live_node_call(id as i32, method, &args),
+        "res_call" => ds.cmd_live_res_call(id as i32, method, &args),
+        _ => false,
+    };
+    if ok {
+        ok_response(serde_json::json!({"ok": true}))
+    } else {
+        error_response(&format!("live_{label} failed"))
+    }
+}
+
+fn dispatch_debug_live_create_node(
+    server: &DaemonServer,
+    params: &serde_json::Value,
+) -> DaemonResponse {
+    let Some(parent) = params.get("parent").and_then(|p| p.as_str()) else {
+        return error_response("missing 'parent' parameter");
+    };
+    let Some(class) = params.get("class").and_then(|c| c.as_str()) else {
+        return error_response("missing 'class' parameter");
+    };
+    let Some(name) = params.get("name").and_then(|n| n.as_str()) else {
+        return error_response("missing 'name' parameter");
+    };
+    let guard = server.debug_server.lock().unwrap();
+    let Some(ds) = guard.as_ref() else {
+        return error_response("No debug server running");
+    };
+    if ds.cmd_live_create_node(parent, class, name) {
+        ok_response(serde_json::json!({"ok": true}))
+    } else {
+        error_response("live_create_node failed")
+    }
+}
+
+fn dispatch_debug_live_instantiate_node(
+    server: &DaemonServer,
+    params: &serde_json::Value,
+) -> DaemonResponse {
+    let Some(parent) = params.get("parent").and_then(|p| p.as_str()) else {
+        return error_response("missing 'parent' parameter");
+    };
+    let Some(scene) = params.get("scene").and_then(|s| s.as_str()) else {
+        return error_response("missing 'scene' parameter");
+    };
+    let Some(name) = params.get("name").and_then(|n| n.as_str()) else {
+        return error_response("missing 'name' parameter");
+    };
+    let guard = server.debug_server.lock().unwrap();
+    let Some(ds) = guard.as_ref() else {
+        return error_response("No debug server running");
+    };
+    if ds.cmd_live_instantiate_node(parent, scene, name) {
+        ok_response(serde_json::json!({"ok": true}))
+    } else {
+        error_response("live_instantiate_node failed")
+    }
+}
+
+/// Single path command helper (remove_node).
+fn dispatch_debug_live_single_path(
+    server: &DaemonServer,
+    label: &str,
+    params: &serde_json::Value,
+) -> DaemonResponse {
+    let Some(path) = params.get("path").and_then(|p| p.as_str()) else {
+        return error_response("missing 'path' parameter");
+    };
+    let guard = server.debug_server.lock().unwrap();
+    let Some(ds) = guard.as_ref() else {
+        return error_response("No debug server running");
+    };
+    let ok = match label {
+        "remove_node" => ds.cmd_live_remove_node(path),
+        _ => false,
+    };
+    if ok {
+        ok_response(serde_json::json!({"ok": true}))
+    } else {
+        error_response(&format!("live_{label} failed"))
+    }
+}
+
+fn dispatch_debug_live_remove_and_keep(
+    server: &DaemonServer,
+    params: &serde_json::Value,
+) -> DaemonResponse {
+    let Some(path) = params.get("path").and_then(|p| p.as_str()) else {
+        return error_response("missing 'path' parameter");
+    };
+    let Some(object_id) = params.get("object_id").and_then(|o| o.as_u64()) else {
+        return error_response("missing 'object_id' parameter");
+    };
+    let guard = server.debug_server.lock().unwrap();
+    let Some(ds) = guard.as_ref() else {
+        return error_response("No debug server running");
+    };
+    if ds.cmd_live_remove_and_keep_node(path, object_id) {
+        ok_response(serde_json::json!({"ok": true}))
+    } else {
+        error_response("live_remove_and_keep_node failed")
+    }
+}
+
+fn dispatch_debug_live_restore_node(
+    server: &DaemonServer,
+    params: &serde_json::Value,
+) -> DaemonResponse {
+    let Some(object_id) = params.get("object_id").and_then(|o| o.as_u64()) else {
+        return error_response("missing 'object_id' parameter");
+    };
+    let Some(path) = params.get("path").and_then(|p| p.as_str()) else {
+        return error_response("missing 'path' parameter");
+    };
+    let Some(pos) = params.get("pos").and_then(|p| p.as_i64()) else {
+        return error_response("missing 'pos' parameter");
+    };
+    let guard = server.debug_server.lock().unwrap();
+    let Some(ds) = guard.as_ref() else {
+        return error_response("No debug server running");
+    };
+    if ds.cmd_live_restore_node(object_id, path, pos as i32) {
+        ok_response(serde_json::json!({"ok": true}))
+    } else {
+        error_response("live_restore_node failed")
+    }
+}
+
+fn dispatch_debug_live_duplicate_node(
+    server: &DaemonServer,
+    params: &serde_json::Value,
+) -> DaemonResponse {
+    let Some(path) = params.get("path").and_then(|p| p.as_str()) else {
+        return error_response("missing 'path' parameter");
+    };
+    let Some(new_name) = params.get("new_name").and_then(|n| n.as_str()) else {
+        return error_response("missing 'new_name' parameter");
+    };
+    let guard = server.debug_server.lock().unwrap();
+    let Some(ds) = guard.as_ref() else {
+        return error_response("No debug server running");
+    };
+    if ds.cmd_live_duplicate_node(path, new_name) {
+        ok_response(serde_json::json!({"ok": true}))
+    } else {
+        error_response("live_duplicate_node failed")
+    }
+}
+
+fn dispatch_debug_live_reparent_node(
+    server: &DaemonServer,
+    params: &serde_json::Value,
+) -> DaemonResponse {
+    let Some(path) = params.get("path").and_then(|p| p.as_str()) else {
+        return error_response("missing 'path' parameter");
+    };
+    let Some(new_parent) = params.get("new_parent").and_then(|n| n.as_str()) else {
+        return error_response("missing 'new_parent' parameter");
+    };
+    let Some(new_name) = params.get("new_name").and_then(|n| n.as_str()) else {
+        return error_response("missing 'new_name' parameter");
+    };
+    let Some(pos) = params.get("pos").and_then(|p| p.as_i64()) else {
+        return error_response("missing 'pos' parameter");
+    };
+    let guard = server.debug_server.lock().unwrap();
+    let Some(ds) = guard.as_ref() else {
+        return error_response("No debug server running");
+    };
+    if ds.cmd_live_reparent_node(path, new_parent, new_name, pos as i32) {
+        ok_response(serde_json::json!({"ok": true}))
+    } else {
+        error_response("live_reparent_node failed")
+    }
+}
+
+fn dispatch_debug_toggle_profiler(
+    server: &DaemonServer,
+    params: &serde_json::Value,
+) -> DaemonResponse {
+    let Some(profiler) = params.get("profiler").and_then(|p| p.as_str()) else {
+        return error_response("missing 'profiler' parameter");
+    };
+    let Some(enable) = params.get("enable").and_then(|e| e.as_bool()) else {
+        return error_response("missing 'enable' parameter");
+    };
+    let guard = server.debug_server.lock().unwrap();
+    let Some(ds) = guard.as_ref() else {
+        return error_response("No debug server running");
+    };
+    if ds.cmd_toggle_profiler(profiler, enable) {
+        ok_response(serde_json::json!({"ok": true}))
+    } else {
+        error_response("toggle_profiler failed")
+    }
+}
+
+fn json_to_variant(value: &serde_json::Value) -> crate::debug::variant::GodotVariant {
+    use crate::debug::variant::GodotVariant;
+    match value {
+        serde_json::Value::Null => GodotVariant::Nil,
+        serde_json::Value::Bool(b) => GodotVariant::Bool(*b),
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                GodotVariant::Int(i)
+            } else if let Some(f) = n.as_f64() {
+                GodotVariant::Float(f)
+            } else {
+                GodotVariant::Nil
+            }
+        }
+        serde_json::Value::String(s) => GodotVariant::String(s.clone()),
+        _ => GodotVariant::Nil,
+    }
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 fn ok_response(val: serde_json::Value) -> DaemonResponse {
@@ -761,18 +1835,6 @@ fn error_response(msg: &str) -> DaemonResponse {
         result: None,
         error: Some(msg.to_string()),
     }
-}
-
-/// Convert a WSL path like `/mnt/c/users/carl/project` to `C:/users/carl/project`.
-/// Returns None if the path is not a WSL mount path.
-fn wsl_to_windows_path(path: &str) -> Option<String> {
-    let rest = path.strip_prefix("/mnt/")?;
-    let drive = rest.chars().next()?;
-    if !drive.is_ascii_alphabetic() {
-        return None;
-    }
-    let remainder = &rest[1..]; // everything after the drive letter (starts with / or is empty)
-    Some(format!("{}:{}", drive.to_ascii_uppercase(), remainder))
 }
 
 // ── Content-Length framed I/O ────────────────────────────────────────────────
@@ -834,6 +1896,7 @@ mod tests {
         let state = DaemonState {
             pid: 12345,
             port: 54321,
+            build_id: "0.1.0-123456".to_string(),
         };
         let json = serde_json::to_string(&state).unwrap();
         let parsed: DaemonState = serde_json::from_str(&json).unwrap();
@@ -893,20 +1956,5 @@ mod tests {
         let req: DaemonRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.method, "dap_set_breakpoints");
         assert_eq!(req.params["path"], "test.gd");
-    }
-
-    #[test]
-    fn test_wsl_to_windows_path() {
-        assert_eq!(
-            wsl_to_windows_path("/mnt/c/projects/game"),
-            Some("C:/projects/game".to_string())
-        );
-        assert_eq!(
-            wsl_to_windows_path("/mnt/d/games"),
-            Some("D:/games".to_string())
-        );
-        assert_eq!(wsl_to_windows_path("/mnt/c"), Some("C:".to_string()));
-        assert_eq!(wsl_to_windows_path("/home/user/project"), None);
-        assert_eq!(wsl_to_windows_path("C:/already/windows"), None);
     }
 }

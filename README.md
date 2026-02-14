@@ -14,7 +14,7 @@ Built with [tree-sitter](https://tree-sitter.github.io/) for accurate parsing an
 - **Generate CI/CD** configurations for GitHub Actions and GitLab CI
 - **LSP server** with formatting, diagnostics, hover, go-to-definition, references, rename, completion, and 16 refactoring commands
 - **Scene analysis** &mdash; validate `.tscn`/`.tres` files, visualize scene node hierarchies, and track resource dependencies
-- **Debug** a running Godot game via DAP &mdash; breakpoints, stepping, variable inspection, and expression evaluation
+- **Debug** a running Godot game via DAP and Godot's binary debug protocol &mdash; breakpoints, stepping, variable inspection, expression evaluation, live scene tree, node inspection, game speed control, and hot-reload
 - **Godot LSP proxy** &mdash; forward hover, completion, and go-to-definition to Godot's built-in LSP when the editor is running
 - **Analyze** your project with dependency graphs, class trees, and code statistics
 
@@ -63,7 +63,7 @@ gd run
 | `gd init` | Initialize gd toolchain in an existing project (detects export paths) |
 | `gd fmt` | Format GDScript files |
 | `gd lint` | Lint GDScript files |
-| `gd run` | Run the Godot project (launches via DAP when editor is open) |
+| `gd run` | Run the Godot project (non-blocking, returns immediately) |
 | `gd build` | Build/export the Godot project |
 | `gd check` | Check project for errors (parse, structural, semantic, `.tscn`/`.tres` validation) (`--format json`) |
 | `gd clean` | Clean build artifacts |
@@ -75,7 +75,8 @@ gd run
 | `gd addons` | Manage project addons (install, remove, search, update, lock) |
 | `gd stats` | Show project statistics (`--diff <branch>`, `--by-dir`, `--top N`) |
 | `gd ci` | Generate CI/CD pipeline configuration |
-| `gd debug` | Debug a running Godot game via DAP (breakpoints, stepping, eval, set-var, conditional breaks) |
+| `gd daemon` | Manage the background daemon (status, stop, restart) |
+| `gd debug` | Debug a running Godot game (breakpoints, stepping, eval, scene tree, inspect, time control) |
 | `gd lsp` | Start the LSP server, or run one-shot queries (see below) |
 | `gd deps` | Show script dependency graph (`--include-resources` for `.tscn`/`.tres`) |
 | `gd man` | Generate man page |
@@ -228,12 +229,36 @@ gd ci gitlab
 gd ci github --export --godot-version 4.4
 ```
 
-### Debugging
+### Daemon
 
-Debug a running Godot game via the Debug Adapter Protocol. A background daemon maintains persistent connections to Godot's LSP and DAP servers, so CLI queries are instant.
+A background daemon maintains persistent Godot LSP and DAP connections, so CLI queries are instant. It auto-starts on the first query and auto-exits after 5 minutes of inactivity.
 
 ```sh
-# Launch game with debugging (returns immediately, game runs in Godot)
+# Show daemon connectivity and state
+gd daemon status
+
+# Stop the background daemon
+gd daemon stop
+
+# Restart the daemon
+gd daemon restart
+```
+
+The daemon auto-restarts when it detects a newer `gd` binary (after recompile/upgrade).
+
+**WSL support:** On WSL, `gd run` and `gd build` auto-translate paths between Linux (`/mnt/c/...`) and Windows (`C:/...`) when using a Windows Godot binary. Set the path in `gd.toml`:
+
+```toml
+[run]
+godot_path = "C:/path/to/godot.exe"
+```
+
+### Debugging
+
+Debug a running Godot game via DAP and Godot's native binary debug protocol. The background daemon maintains persistent connections, so CLI queries are instant.
+
+```sh
+# Run the project (returns immediately)
 gd run
 
 # Check DAP connection and threads
@@ -268,14 +293,33 @@ gd debug pause
 # Terminate the running game
 gd debug stop
 
+# Live scene tree (via binary debug protocol)
+gd debug scene-tree
+
+# Inspect a node by object ID (from scene-tree output)
+gd debug inspect --id 456
+
+# Set a property on a node at runtime
+gd debug set-prop --id 456 --property speed --value 100.0
+
+# Game loop control
+gd debug suspend             # freeze the game loop
+gd debug next-frame          # advance one frame while suspended
+gd debug suspend --resume    # resume the game loop
+gd debug time-scale --scale 0.5   # slow-mo (0.5x speed)
+gd debug time-scale --scale 2.0   # fast-forward (2x speed)
+
+# Hot-reload scripts
+gd debug reload-scripts
+
 # Start an interactive debug session (REPL)
 gd debug attach
 
 # JSON output for scripting
 gd debug break --file scripts/player.gd --line 42 --format json
 gd debug next --format json   # returns stack frames + variables after step
-gd debug status --format json
-gd debug eval --expr "self.position" --format json
+gd debug scene-tree --format json
+gd debug inspect --id 456 --format json
 ```
 
 Interactive session commands (`gd debug attach`):
@@ -294,6 +338,13 @@ Interactive session commands (`gd debug attach`):
 | `vars [scope]` | Show variables (locals/members/globals) |
 | `expand <ref>` | Expand nested variable |
 | `eval <expr>` | Evaluate expression |
+| `scene-tree` / `tree` | Show live scene tree |
+| `inspect <id>` / `i` | Inspect node properties |
+| `set-prop <id> <prop> <val>` | Set a node property |
+| `suspend` / `resume` | Freeze/resume game loop |
+| `next-frame` / `nf` | Advance one frame |
+| `timescale <N>` | Set Engine.time_scale |
+| `reload` | Hot-reload scripts |
 | `quit` / `q` | Disconnect and exit |
 
 ### GitHub Templates

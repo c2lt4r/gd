@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use crate::core::config::Config;
+use crate::core::fs;
 use crate::core::project::GodotProject;
 
 /// Binary names to search for on PATH.
@@ -15,12 +16,15 @@ const GODOT_BINARY_NAMES: &[&str] = &["godot", "godot4", "godot-4"];
 /// Search order:
 /// 1. `run.godot_path` in gd.toml config
 /// 2. `GODOT_PATH` environment variable
-/// 3. PATH search for: godot, godot4, godot-4
+/// 3. On WSL: daemon cache (populated from DAP launches)
+/// 4. PATH search for: godot, godot4, godot-4
+/// 5. On WSL (if no Windows binary found): error with setup instructions
 pub fn find_godot(config: &Config) -> Result<PathBuf> {
     // 1. Check config
     if let Some(ref path) = config.run.godot_path {
-        if path.exists() {
-            return Ok(path.clone());
+        let resolved = resolve_configured_path(path);
+        if resolved.exists() {
+            return Ok(resolved);
         }
         return Err(miette!(
             "Godot binary configured in gd.toml not found: {}",
@@ -29,20 +33,38 @@ pub fn find_godot(config: &Config) -> Result<PathBuf> {
     }
 
     // 2. Check GODOT_PATH env var
-    if let Ok(path) = env::var("GODOT_PATH") {
-        let path = PathBuf::from(&path);
-        if path.exists() {
-            return Ok(path);
+    if let Ok(path_str) = env::var("GODOT_PATH") {
+        let resolved = resolve_configured_path(&PathBuf::from(&path_str));
+        if resolved.exists() {
+            return Ok(resolved);
         }
         return Err(miette!(
             "GODOT_PATH environment variable points to missing file: {}",
-            path.display()
+            resolved.display()
         ));
     }
 
-    // 3. Search PATH
+    // 3. On WSL: check daemon cache (populated from DAP launches)
+    if fs::is_wsl()
+        && let Some(path) = find_godot_from_daemon()
+    {
+        return Ok(PathBuf::from(path));
+    }
+
+    // 4. Search PATH
     if let Some(path) = search_path() {
         return Ok(path);
+    }
+
+    // 5. On WSL: give a WSL-specific error message
+    if fs::is_wsl() {
+        return Err(miette!(
+            "Could not find Windows Godot binary.\n\n\
+             Set one of:\n  \
+             - `run.godot_path` in gd.toml (e.g. \"C:/path/to/godot.exe\")\n  \
+             - GODOT_PATH environment variable\n  \
+             - Or run `gd run` once with the Godot editor open to auto-detect"
+        ));
     }
 
     Err(miette!(
@@ -54,6 +76,41 @@ pub fn find_godot(config: &Config) -> Result<PathBuf> {
          - Add godot to your PATH",
         GODOT_BINARY_NAMES.join(", ")
     ))
+}
+
+/// Resolve a configured Godot path. On WSL, converts `C:/...` Windows paths
+/// to `/mnt/c/...` so the file existence check works.
+fn resolve_configured_path(path: &Path) -> PathBuf {
+    if fs::is_wsl() {
+        let s = path.to_string_lossy();
+        let converted = fs::windows_to_wsl_path(&s);
+        if converted != s.as_ref() {
+            return PathBuf::from(converted);
+        }
+    }
+    path.to_path_buf()
+}
+
+/// Query the daemon for a cached Godot binary path (from previous DAP launches).
+/// Returns the WSL-converted path if found.
+fn find_godot_from_daemon() -> Option<String> {
+    let result =
+        crate::lsp::daemon_client::query_daemon("dap_godot_path", serde_json::json!({}), None)?;
+    let path = result.get("godot_path").and_then(|p| p.as_str())?;
+    if path.is_empty() {
+        return None;
+    }
+    Some(fs::windows_to_wsl_path(path))
+}
+
+/// Get the `--path` argument for Godot, translating WSL paths for Windows binaries.
+fn project_path_for_godot(godot: &Path, project_root: &Path) -> String {
+    if fs::is_windows_binary(godot) {
+        let s = project_root.to_string_lossy();
+        fs::wsl_to_windows_path(&s).unwrap_or_else(|| s.to_string())
+    } else {
+        project_root.to_string_lossy().to_string()
+    }
 }
 
 /// Search PATH for any known Godot binary name.
@@ -91,11 +148,37 @@ pub fn run_project(
     );
 
     let mut cmd = Command::new(&godot);
-    cmd.arg("--path").arg(&project.root);
+    cmd.arg("--path")
+        .arg(project_path_for_godot(&godot, &project.root));
 
-    if debug {
+    // If --debug, start our binary debug server and wire --remote-debug
+    let debug_port = if debug {
         cmd.arg("--debug");
-    }
+        match crate::lsp::daemon_client::query_daemon(
+            "debug_start_server",
+            serde_json::json!({}),
+            None,
+        ) {
+            Some(result) => {
+                let port = result.get("port").and_then(|p| p.as_u64()).unwrap_or(0);
+                if port > 0 {
+                    cmd.arg("--remote-debug")
+                        .arg(format!("tcp://127.0.0.1:{port}"));
+                    println!(
+                        "  {} Debug server on port {port} — use {} to interact",
+                        "*".dimmed(),
+                        "gd debug".cyan()
+                    );
+                    Some(port)
+                } else {
+                    None
+                }
+            }
+            None => None,
+        }
+    } else {
+        None
+    };
     if verbose {
         cmd.arg("--verbose");
     }
@@ -115,17 +198,25 @@ pub fn run_project(
         cmd.arg(arg);
     }
 
-    cmd.stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .stdin(Stdio::inherit());
+    cmd.stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .stdin(Stdio::null());
 
-    let status = cmd
-        .status()
+    let _child = cmd
+        .spawn()
         .map_err(|e| miette!("Failed to start Godot: {e}"))?;
 
-    if !status.success() {
-        let code = status.code().unwrap_or(1);
-        std::process::exit(code);
+    // If we started a debug server, tell the daemon to accept (fire-and-forget)
+    if debug_port.is_some() {
+        std::thread::spawn(|| {
+            let _ = crate::lsp::daemon_client::query_daemon(
+                "debug_accept",
+                serde_json::json!({"timeout": 30}),
+                Some(std::time::Duration::from_secs(35)),
+            );
+        });
+        // Give the daemon query time to send before process exit
+        std::thread::sleep(std::time::Duration::from_millis(100));
     }
 
     Ok(())
@@ -229,7 +320,7 @@ pub fn export_project(preset: Option<&str>, output: Option<&str>, release: bool)
     let mut cmd = Command::new(&godot);
     cmd.arg("--headless")
         .arg("--path")
-        .arg(&project.root)
+        .arg(project_path_for_godot(&godot, &project.root))
         .arg(export_flag)
         .arg(&preset_name)
         .arg(&output_file);

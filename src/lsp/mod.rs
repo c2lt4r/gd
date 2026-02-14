@@ -137,7 +137,10 @@ impl LanguageServer for Backend {
 
             if connected {
                 self.client
-                    .log_message(MessageType::INFO, "Daemon connected (Godot proxy available)")
+                    .log_message(
+                        MessageType::INFO,
+                        "Daemon connected (Godot proxy available)",
+                    )
                     .await;
             }
         }
@@ -534,4 +537,3 @@ pub fn run_server_with_options(godot_port: u16) {
             Server::new(stdin, stdout, socket).serve(service).await;
         });
 }
-

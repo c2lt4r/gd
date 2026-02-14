@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.1.27] - 2026-02-14
+
+### Added
+- **`gd daemon`** — top-level command for daemon lifecycle management
+  - `gd daemon status` — show daemon connectivity and state
+  - `gd daemon stop` — stop the background daemon
+  - `gd daemon restart` — restart the daemon (stop + auto-spawn on next query)
+  - Moved from `gd lsp daemon-*` namespace since the daemon is no longer LSP-specific
+- **WSL path translation** — `gd run` and `gd build` now work transparently from WSL with a Windows Godot binary
+  - `find_godot()` resolves Windows paths in `gd.toml`/`GODOT_PATH` on WSL (auto-converts `C:\...` to `/mnt/c/...` for existence checks)
+  - `--path` argument auto-converted from `/mnt/c/...` to `C:/...` when spawning a `.exe` binary
+  - Daemon cache lookup: discovers Godot path from previous DAP launches
+  - Clear error message on WSL when no Windows Godot binary is configured
+- **Daemon auto-restart** — build_id fingerprinting (version + binary mtime) auto-kills stale daemons after recompile
+- **Game exit detection** — daemon auto-clears `game_running` flag when game process exits (no more stale state)
+
+### Changed
+- `gd run` simplified — non-blocking spawn (returns immediately instead of waiting for Godot to exit), removed DAP launch logic
+- WSL path utilities consolidated into `src/core/fs.rs` (removed duplicates from run_cmd, daemon, debug_cmd)
+
+## [0.1.26] - 2026-02-13
+
+### Added
+- **Godot binary debug protocol** — full implementation of Godot's native debug protocol (port 6007), enabling direct game introspection beyond what DAP supports
+  - `src/debug/variant.rs` — binary codec for all 39 Godot Variant types (Nil through PackedVector4Array)
+  - `src/debug/godot_debug_server.rs` — TCP server speaking the binary protocol (length-prefixed Variant-encoded packets)
+- `gd debug scene-tree` — show the running game's live scene tree (node names, classes, object IDs)
+- `gd debug inspect --id <N>` — inspect a scene node's properties by object ID
+- `gd debug set-prop --id <N> --property <name> --value <val>` — set a property on a scene node at runtime
+- `gd debug suspend [--resume]` — freeze/resume the game loop
+- `gd debug next-frame` — advance one physics frame while suspended
+- `gd debug time-scale --scale <N>` — set Engine.time_scale (slow-mo, fast-forward)
+- `gd debug reload-scripts` — hot-reload all GDScript files in the running game
+- Interactive REPL commands: `scene-tree`/`tree`, `inspect`/`i`, `set-prop`, `suspend`, `resume`, `next-frame`/`nf`, `timescale`, `reload`
+- All new commands support `--format json` for scripting
+
 ## [0.1.25] - 2026-02-13
 
 ### Added

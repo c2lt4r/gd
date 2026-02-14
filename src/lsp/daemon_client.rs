@@ -37,18 +37,24 @@ fn query_daemon_with_root(
     if let Some(state) = super::daemon::read_state_file(project_root)
         && is_pid_alive(state.pid)
     {
-        match send_query(state.port, method, &params, timeout) {
-            SendResult::Ok(result) => return Some(result),
-            SendResult::DaemonError(msg) => {
-                // Daemon is alive but returned an error — don't delete state file
-                // or spawn a new daemon. Log the error for debugging.
-                eprintln!("daemon: {msg}");
-                return None;
-            }
-            SendResult::ConnectionFailed => {
-                // Connection actually failed — daemon may have crashed, clean up
-                let _ =
-                    std::fs::remove_file(project_root.join(".godot").join("gd-daemon.json"));
+        // Check if daemon was built from the same binary — auto-restart if stale
+        let current_id = super::daemon::current_build_id();
+        if !state.build_id.is_empty() && state.build_id != current_id {
+            kill_daemon(state.pid, state.port, project_root);
+        } else {
+            match send_query(state.port, method, &params, timeout) {
+                SendResult::Ok(result) => return Some(result),
+                SendResult::DaemonError(msg) => {
+                    // Daemon is alive but returned an error — don't delete state file
+                    // or spawn a new daemon. Log the error for debugging.
+                    eprintln!("daemon: {msg}");
+                    return None;
+                }
+                SendResult::ConnectionFailed => {
+                    // Connection actually failed — daemon may have crashed, clean up
+                    let _ =
+                        std::fs::remove_file(project_root.join(".godot").join("gd-daemon.json"));
+                }
             }
         }
     }
@@ -136,12 +142,54 @@ fn send_query(
     }
 }
 
+/// Stop the daemon for a project. Returns true if a daemon was stopped.
+pub fn stop_daemon(project_root: &Path) -> bool {
+    if let Some(state) = super::daemon::read_state_file(project_root)
+        && is_pid_alive(state.pid)
+    {
+        kill_daemon(state.pid, state.port, project_root);
+        true
+    } else {
+        false
+    }
+}
+
+/// Send shutdown to a daemon, wait briefly, then force-kill if needed.
+fn kill_daemon(pid: u32, port: u16, project_root: &Path) {
+    // Try graceful shutdown first
+    let _ = send_query(
+        port,
+        "shutdown",
+        &serde_json::json!({}),
+        Duration::from_secs(2),
+    );
+    std::thread::sleep(Duration::from_millis(200));
+
+    // Force kill if still alive
+    if is_pid_alive(pid) {
+        #[cfg(unix)]
+        {
+            let _ = std::process::Command::new("kill")
+                .args(["-9", &pid.to_string()])
+                .output();
+        }
+        #[cfg(windows)]
+        {
+            let _ = std::process::Command::new("taskkill")
+                .args(["/F", "/PID", &pid.to_string()])
+                .output();
+        }
+    }
+
+    let _ = std::fs::remove_file(project_root.join(".godot").join("gd-daemon.json"));
+}
+
 fn spawn_daemon(project_root: &Path) -> std::io::Result<()> {
     let exe = std::env::current_exe()?;
     let root_str = project_root.to_string_lossy().to_string();
 
     let mut cmd = std::process::Command::new(exe);
-    cmd.args(["lsp", "daemon", "--project-root", &root_str]);
+    cmd.args(["daemon", "serve", "--project-root", &root_str]);
     cmd.stdin(std::process::Stdio::null());
     cmd.stdout(std::process::Stdio::null());
     cmd.stderr(std::process::Stdio::null());

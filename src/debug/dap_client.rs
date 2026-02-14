@@ -146,12 +146,7 @@ impl DapClient {
     /// Note: Godot 4.x advertises supportsSetVariable but the implementation is broken.
     /// Kept for future use if Godot fixes it. Currently unused — we use eval+set() instead.
     #[allow(dead_code)]
-    pub fn set_variable(
-        &self,
-        variables_reference: i64,
-        name: &str,
-        value: &str,
-    ) -> Option<Value> {
+    pub fn set_variable(&self, variables_reference: i64, name: &str, value: &str) -> Option<Value> {
         self.send_request(
             "setVariable",
             serde_json::json!({

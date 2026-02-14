@@ -5,14 +5,14 @@ use common::{gd_bin, setup_gd_project};
 #[test]
 fn test_daemon_help() {
     let output = gd_bin()
-        .args(["lsp", "daemon", "--help"])
+        .args(["daemon", "--help"])
         .output()
-        .expect("failed to run gd lsp daemon --help");
+        .expect("failed to run gd daemon --help");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(output.status.success());
-    assert!(stdout.contains("--project-root"));
-    assert!(stdout.contains("--godot-port"));
-    assert!(stdout.contains("--dap-port"));
+    assert!(stdout.contains("status"));
+    assert!(stdout.contains("stop"));
+    assert!(stdout.contains("restart"));
 }
 
 #[test]

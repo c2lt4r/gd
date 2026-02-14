@@ -1,4 +1,6 @@
 pub mod dap_client;
+pub mod godot_debug_server;
+pub mod variant;
 
 use serde::Serialize;
 
@@ -12,6 +14,7 @@ pub struct DebugThread {
 
 /// A single stack frame.
 #[derive(Debug, Serialize)]
+#[allow(dead_code)]
 pub struct StackFrame {
     pub id: i64,
     pub name: String,
@@ -21,6 +24,7 @@ pub struct StackFrame {
 
 /// A variable scope (Locals, Members, Globals).
 #[derive(Debug, Serialize)]
+#[allow(dead_code)]
 pub struct Scope {
     pub name: String,
     pub variables_reference: i64,
@@ -28,6 +32,7 @@ pub struct Scope {
 
 /// A runtime variable.
 #[derive(Debug, Serialize)]
+#[allow(dead_code)]
 pub struct Variable {
     pub name: String,
     pub value: String,
@@ -38,12 +43,14 @@ pub struct Variable {
     pub variables_reference: i64,
 }
 
+#[allow(dead_code)]
 fn is_zero(v: &i64) -> bool {
     *v == 0
 }
 
 /// Result of setting a breakpoint.
 #[derive(Debug, Serialize)]
+#[allow(dead_code)]
 pub struct BreakpointResult {
     pub verified: bool,
     pub line: u32,

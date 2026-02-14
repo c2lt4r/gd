@@ -10,62 +10,26 @@ fn test_debug_help() {
         .expect("failed to run gd debug --help");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(output.status.success());
-    assert!(stdout.contains("attach"));
-    assert!(stdout.contains("break"));
-    assert!(stdout.contains("status"));
-    assert!(stdout.contains("stop"));
-    assert!(stdout.contains("continue"));
-    assert!(stdout.contains("next"));
-    assert!(stdout.contains("Step into"));
-    assert!(stdout.contains("step-out"));
-    assert!(stdout.contains("pause"));
-    assert!(stdout.contains("eval"));
-    assert!(stdout.contains("set-var"));
-}
-
-#[test]
-fn test_debug_set_var_help() {
-    let output = gd_bin()
-        .args(["debug", "set-var", "--help"])
-        .output()
-        .expect("failed to run gd debug set-var --help");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(output.status.success());
-    assert!(stdout.contains("--name"));
-    assert!(stdout.contains("--value"));
-}
-
-#[test]
-fn test_debug_break_help() {
-    let output = gd_bin()
-        .args(["debug", "break", "--help"])
-        .output()
-        .expect("failed to run gd debug break --help");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(output.status.success());
-    assert!(stdout.contains("--file"));
-    assert!(stdout.contains("--line"));
-    assert!(stdout.contains("--name"));
-    assert!(stdout.contains("--condition"));
-    assert!(stdout.contains("--timeout"));
-    assert!(stdout.contains("--format"));
-}
-
-#[test]
-fn test_debug_status_help() {
-    let output = gd_bin()
-        .args(["debug", "status", "--help"])
-        .output()
-        .expect("failed to run gd debug status --help");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(output.status.success());
-    assert!(stdout.contains("--format"));
+    // Binary debug protocol commands
+    assert!(stdout.contains("scene-tree"));
+    assert!(stdout.contains("inspect"));
+    assert!(stdout.contains("set-prop"));
+    assert!(stdout.contains("suspend"));
+    assert!(stdout.contains("next-frame"));
+    assert!(stdout.contains("time-scale"));
+    assert!(stdout.contains("reload-scripts"));
+    assert!(stdout.contains("override-camera"));
+    assert!(stdout.contains("save-node"));
+    assert!(stdout.contains("profiler"));
+    // DAP commands should NOT appear
+    assert!(!stdout.contains("attach"));
+    assert!(!stdout.contains("set-var"));
 }
 
 #[test]
 fn test_debug_stepping_format_flag() {
-    // Verify continue/next/step/pause all accept --format
-    for cmd in ["continue", "next", "step", "step-out", "pause"] {
+    // Verify binary protocol commands accept --format
+    for cmd in ["scene-tree", "next-frame", "reload-scripts"] {
         let output = gd_bin()
             .args(["debug", cmd, "--help"])
             .output()
@@ -80,18 +44,14 @@ fn test_debug_stepping_format_flag() {
 }
 
 #[test]
-fn test_debug_no_connection() {
-    // Run in a temp dir with no project.godot — daemon can't start
-    let tmp = tempfile::tempdir().expect("failed to create temp dir");
+fn test_debug_server_help() {
     let output = gd_bin()
-        .args(["debug", "status"])
-        .current_dir(tmp.path())
+        .args(["debug", "server", "--help"])
         .output()
-        .expect("failed to run gd debug status");
-    assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("Could not connect"),
-        "expected connection error, got: {stderr}"
-    );
+        .expect("failed to run gd debug server --help");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success());
+    assert!(stdout.contains("--port"));
+    assert!(stdout.contains("--wait"));
+    assert!(stdout.contains("--timeout"));
 }
