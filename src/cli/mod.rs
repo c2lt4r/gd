@@ -67,7 +67,7 @@ pub enum Command {
     Addons(addons_cmd::AddonsArgs),
     /// Manage the background daemon
     Daemon(daemon_cmd::DaemonArgs),
-    /// Debug a running Godot game via DAP
+    /// Debug a running Godot game via Godot's binary debug protocol
     Debug(debug_cmd::DebugArgs),
     /// Show project statistics
     Stats(stats_cmd::StatsArgs),
