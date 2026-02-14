@@ -1,5 +1,7 @@
 //! Lint rules module - each rule analyzes the tree-sitter AST.
 
+pub mod assert_always_false;
+pub mod assert_always_true;
 pub mod await_in_ready;
 pub mod breakpoint_statement;
 pub mod comparison_with_boolean;
@@ -26,9 +28,11 @@ pub mod self_assignment;
 pub mod shadowed_variable;
 pub mod signal_name_convention;
 pub mod standalone_expression;
+pub mod standalone_ternary;
 pub mod static_type_inference;
 pub mod unnecessary_pass;
 pub mod unreachable_code;
+pub mod unsafe_void_return;
 pub mod untyped_array;
 pub mod untyped_array_literal;
 pub mod unused_preload;
@@ -48,11 +52,13 @@ pub mod enum_without_class_name;
 pub mod get_node_default_without_onready;
 pub mod get_node_in_process;
 pub mod god_object;
+pub mod incompatible_ternary;
 pub mod look_at_before_tree;
 pub mod loop_variable_name;
 pub mod max_file_lines;
 pub mod max_line_length;
 pub mod max_public_methods;
+pub mod narrowing_conversion;
 pub mod native_method_override;
 pub mod onready_with_export;
 pub mod parameter_naming;
@@ -61,6 +67,7 @@ pub mod physics_in_process;
 pub mod print_statement;
 pub mod redundant_else;
 pub mod redundant_static_unload;
+pub mod return_value_discarded;
 pub mod signal_not_connected;
 pub mod todo_comment;
 pub mod too_many_parameters;
@@ -239,6 +246,13 @@ pub fn all_rules(
         Box::new(get_node_default_without_onready::GetNodeDefaultWithoutOnready),
         Box::new(unused_private_class_variable::UnusedPrivateClassVariable),
         Box::new(native_method_override::NativeMethodOverride),
+        Box::new(narrowing_conversion::NarrowingConversion),
+        Box::new(unsafe_void_return::UnsafeVoidReturn),
+        Box::new(return_value_discarded::ReturnValueDiscarded),
+        Box::new(incompatible_ternary::IncompatibleTernary),
+        Box::new(standalone_ternary::StandaloneTernary),
+        Box::new(assert_always_true::AssertAlwaysTrue),
+        Box::new(assert_always_false::AssertAlwaysFalse),
     ];
     all.into_iter()
         .filter(|r| {

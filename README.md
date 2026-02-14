@@ -7,7 +7,7 @@ Built with [tree-sitter](https://tree-sitter.github.io/) for accurate parsing an
 ## Features
 
 - **Format** GDScript files with an AST-based formatter aligned to the [GDScript style guide](https://docs.godotengine.org/en/stable/tutorials/scripting/gdscript/gdscript_styleguide.html)
-- **Lint** with 65 built-in rules (13 auto-fixable), SARIF output for CI
+- **Lint** with 72 built-in rules (17 auto-fixable), SARIF output for CI
 - **Run**, **build**, **test**, and **clean** your Godot project from the terminal
 - **Watch** for file changes and auto-lint/format on save
 - **Manage addons** from Git or the Godot Asset Library (with lockfile and update support)
@@ -371,7 +371,7 @@ The template system automatically finds `project.godot` within the repository to
 
 ## Lint Rules
 
-All 65 built-in rules (42 default-enabled, 23 opt-in):
+All 72 built-in rules (43 default-enabled, 29 opt-in):
 
 | Rule | Description | Severity | Fixable |
 |------|-------------|----------|---------|
@@ -408,6 +408,7 @@ All 65 built-in rules (42 default-enabled, 23 opt-in):
 | `shadowed-variable` | Detect variable shadowing in inner scopes | warning | |
 | `signal-name-convention` | Warn on signals with `on_` prefix | warning | yes |
 | `standalone-expression` | Detect side-effect-free expressions | warning | |
+| `standalone-ternary` | Detect ternary used as statement (result unused) | warning | |
 | `static-type-inference` | Suggest explicit type annotations | warning | |
 | `too-many-parameters` | Warn on functions with too many parameters | warning | |
 | `unnecessary-pass` | Detect `pass` in non-empty function bodies | warning | yes |
@@ -422,28 +423,34 @@ All 65 built-in rules (42 default-enabled, 23 opt-in):
 
 | Rule | Description | Severity | Fixable |
 |------|-------------|----------|---------|
+| `assert-always-false` | Detect `assert(false)`, `assert(0)`, `assert(null)` | warning | yes |
+| `assert-always-true` | Detect `assert(true)`, `assert(1)`, `assert("string")` | warning | yes |
 | `breakpoint-statement` | Detect leftover `breakpoint` statements | info | |
 | `class-definitions-order` | Enforce canonical member ordering | warning | |
-| `look-at-before-tree` | Detect tree-dependent calls before `add_child()` | warning | |
 | `duplicate-delegate` | Detect pure pass-through delegate functions | info | |
+| `enum-variable-without-default` | Warn on enum-typed variables without a default value | warning | |
+| `enum-without-class-name` | Warn on enum type annotations in scripts without `class_name` | warning | |
+| `get-node-default-without-onready` | Detect `$`/`get_node()` default without `@onready` | error | |
 | `god-object` | Warn on classes with too many functions/members/lines | warning | |
+| `incompatible-ternary` | Detect ternary branches with incompatible types | warning | |
+| `look-at-before-tree` | Detect tree-dependent calls before `add_child()` | warning | |
 | `magic-number` | Flag unexplained numeric literals | warning | |
 | `max-file-lines` | Enforce maximum file length | warning | |
 | `max-line-length` | Enforce maximum line length | warning | |
 | `max-public-methods` | Enforce maximum public methods per class | warning | |
+| `narrowing-conversion` | Detect float-to-int narrowing conversions | warning | yes |
+| `native-method-override` | Detect overriding native engine methods | error | |
 | `null-after-await` | Warn on member access after `await` without null guard | warning | |
+| `onready-with-export` | Detect `@onready` combined with `@export` | error | |
 | `print-statement` | Detect debug print calls | info | |
+| `redundant-static-unload` | Detect `@static_unload` without any `static var` | warning | |
+| `return-value-discarded` | Detect discarded non-void function return values | info | |
 | `signal-not-connected` | Detect signals emitted but never connected | info | |
 | `todo-comment` | Detect TODO/FIXME/HACK comments | info | |
+| `unsafe-void-return` | Detect returning or assigning void call results | warning | yes |
 | `unused-parameter` | Detect unused function parameters | warning | |
-| `use-before-assign` | Detect method calls accessing uninitialized members | warning | |
-| `enum-variable-without-default` | Warn on enum-typed variables without a default value | warning | |
-| `enum-without-class-name` | Warn on enum type annotations in scripts without `class_name` | warning | |
-| `get-node-default-without-onready` | Detect `$`/`get_node()` default without `@onready` | error | |
-| `native-method-override` | Detect overriding native engine methods | error | |
-| `onready-with-export` | Detect `@onready` combined with `@export` | error | |
-| `redundant-static-unload` | Detect `@static_unload` without any `static var` | warning | |
 | `unused-private-class-variable` | Detect unused `_`-prefixed class variables | warning | |
+| `use-before-assign` | Detect method calls accessing uninitialized members | warning | |
 | `variant-inference` | Warn on `:=` inferring Variant from dict/array access | warning | |
 
 ### Inline Suppression

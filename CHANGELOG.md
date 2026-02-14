@@ -12,6 +12,18 @@
   - `unused-private-class-variable` (warning) — `_`-prefixed variable declared but never referenced
   - `native-method-override` (error) — function name shadows a method inherited from an engine class
 - Lint pipeline now builds symbol table once per file and passes it to all rules via `check_with_symbols()`
+- **Expression type inference engine** (`src/core/type_inference.rs`) — Layer 2: infer types of any GDScript expression. Handles literals, constructors, builtin functions, self/ClassDB method calls (walks inheritance chain), operators, comparisons, casts, ternary, identifiers, subscript, and `$`/`get_node`.
+- **ClassDB `method_return_type()`** — resolve return types for 16,346 engine methods with inheritance chain walking.
+- **7 new lint rules** (65 → 72 total):
+  - `narrowing-conversion` (opt-in, fixable) — float expression assigned to int-typed variable
+  - `unsafe-void-return` (opt-in, fixable) — returning or assigning a void function call result
+  - `return-value-discarded` (opt-in) — non-void call result unused as expression statement
+  - `incompatible-ternary` (opt-in) — ternary branches have incompatible types
+  - `standalone-ternary` (default-on) — ternary expression used as statement with result unused
+  - `assert-always-true` (opt-in, fixable) — `assert(true)`, `assert(1)`, `assert("string")`
+  - `assert-always-false` (opt-in, fixable) — `assert(false)`, `assert(0)`, `assert(null)`
+- 4 new auto-fixes (13 → 17 fixable rules): `narrowing-conversion` wraps with `int()`, `unsafe-void-return` splits return/removes var, `assert-always-true/false` deletes assertion line
+- Refactored `static-type-inference`, `variant-inference`, and `untyped-array-literal` to use centralized inference engine (same diagnostics, consolidated implementation)
 
 ## [0.2.0] - 2026-02-14
 

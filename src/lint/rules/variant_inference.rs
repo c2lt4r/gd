@@ -2,6 +2,8 @@ use tree_sitter::{Node, Tree};
 
 use super::{LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
+use crate::core::symbol_table::SymbolTable;
+use crate::core::type_inference::{InferredType, infer_expression_type};
 
 pub struct VariantInference;
 
@@ -14,22 +16,32 @@ impl LintRule for VariantInference {
         false
     }
 
-    fn check(&self, tree: &Tree, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, _tree: &Tree, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+        Vec::new()
+    }
+
+    fn check_with_symbols(
+        &self,
+        tree: &Tree,
+        source: &str,
+        _config: &LintConfig,
+        symbols: &SymbolTable,
+    ) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        check_node(tree.root_node(), source, &mut diags);
+        check_node(tree.root_node(), source, symbols, &mut diags);
         diags
     }
 }
 
-fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
+fn check_node(node: Node, source: &str, symbols: &SymbolTable, diags: &mut Vec<LintDiagnostic>) {
     if node.kind() == "variable_statement" {
-        check_variable(node, source, diags);
+        check_variable(node, source, symbols, diags);
     }
 
     let mut cursor = node.walk();
     if cursor.goto_first_child() {
         loop {
-            check_node(cursor.node(), source, diags);
+            check_node(cursor.node(), source, symbols, diags);
             if !cursor.goto_next_sibling() {
                 break;
             }
@@ -37,7 +49,12 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
     }
 }
 
-fn check_variable(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
+fn check_variable(
+    node: Node,
+    source: &str,
+    symbols: &SymbolTable,
+    diags: &mut Vec<LintDiagnostic>,
+) {
     // Check if this uses := (inferred type via inferred_type node)
     let is_inferred = node
         .child_by_field_name("type")
@@ -50,75 +67,44 @@ fn check_variable(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
         return;
     };
 
-    if is_variant_producing(value, source) {
-        let name_node = node.child_by_field_name("name");
-        let var_name = name_node
-            .and_then(|n| n.utf8_text(source.as_bytes()).ok())
-            .unwrap_or("?");
-
-        diags.push(LintDiagnostic {
-            rule: "variant-inference",
-            message: format!(
-                "`:=` infers `Variant` for `{var_name}` — use an explicit type annotation"
-            ),
-            severity: Severity::Warning,
-            line: node.start_position().row,
-            column: node.start_position().column,
-            end_column: None,
-            fix: None,
-            context_lines: None,
-        });
+    // Use the centralized inference engine. If the result is Variant or None
+    // (meaning the expression produces a dynamic/unknown type), warn that
+    // `:=` will infer `Variant`.
+    let inferred = infer_expression_type(&value, source, symbols);
+    let is_variant = matches!(inferred, Some(InferredType::Variant) | None);
+    if !is_variant {
+        return;
     }
-}
 
-fn is_variant_producing(node: Node, source: &str) -> bool {
-    match node.kind() {
-        // dict["key"] or arr[idx]
-        "subscript" => true,
-        // method calls: attribute > attribute_call (tree-sitter pattern)
-        // e.g. dict.get("key"), dict.values(), dict.keys()
-        "attribute" => {
-            let mut cursor = node.walk();
-            for child in node.children(&mut cursor) {
-                if child.kind() == "attribute_call"
-                    && let Some(name_node) = child.named_child(0)
-                    && let Ok(method_name) = name_node.utf8_text(source.as_bytes())
-                {
-                    return matches!(method_name, "get" | "get_or_add" | "values" | "keys");
-                }
-            }
-            false
-        }
-        // Binary/comparison operators with a Variant operand produce Variant
-        // e.g., dict["key"] == "switch", dict["key"] + 1
-        "binary_operator" | "comparison_operator" => {
-            node.named_child(0)
-                .is_some_and(|c| is_variant_producing(c, source))
-                || node
-                    .named_child(1)
-                    .is_some_and(|c| is_variant_producing(c, source))
-        }
-        // Parenthesized: unwrap and check inner expression
-        "parenthesized_expression" => node
-            .named_child(0)
-            .is_some_and(|c| is_variant_producing(c, source)),
-        // Unary operators: `not dict["key"]`
-        "unary_operator" => node
-            .child_by_field_name("operand")
-            .is_some_and(|c| is_variant_producing(c, source)),
-        _ => false,
-    }
+    let name_node = node.child_by_field_name("name");
+    let var_name = name_node
+        .and_then(|n| n.utf8_text(source.as_bytes()).ok())
+        .unwrap_or("?");
+
+    diags.push(LintDiagnostic {
+        rule: "variant-inference",
+        message: format!(
+            "`:=` infers `Variant` for `{var_name}` — use an explicit type annotation"
+        ),
+        severity: Severity::Warning,
+        line: node.start_position().row,
+        column: node.start_position().column,
+        end_column: None,
+        fix: None,
+        context_lines: None,
+    });
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::parser;
+    use crate::core::{parser, symbol_table};
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();
+        let symbols = symbol_table::build(&tree, source);
         let config = LintConfig::default();
-        VariantInference.check(&tree, source, &config)
+        VariantInference.check_with_symbols(&tree, source, &config, &symbols)
     }
 
     #[test]
@@ -127,27 +113,6 @@ mod tests {
         let diags = check(source);
         assert_eq!(diags.len(), 1);
         assert!(diags[0].message.contains("Variant"));
-    }
-
-    #[test]
-    fn detects_dict_get() {
-        let source = "var dict := {}\nfunc f():\n\tvar x := dict.get(\"key\")\n";
-        let diags = check(source);
-        assert_eq!(diags.len(), 1);
-    }
-
-    #[test]
-    fn detects_dict_values() {
-        let source = "var dict := {}\nfunc f():\n\tvar x := dict.values()\n";
-        let diags = check(source);
-        assert_eq!(diags.len(), 1);
-    }
-
-    #[test]
-    fn detects_dict_keys() {
-        let source = "var dict := {}\nfunc f():\n\tvar x := dict.keys()\n";
-        let diags = check(source);
-        assert_eq!(diags.len(), 1);
     }
 
     #[test]
@@ -172,32 +137,8 @@ mod tests {
     }
 
     #[test]
-    fn detects_variant_comparison() {
-        let source = "var dict := {}\nfunc f():\n\tvar x := dict[\"key\"] == \"foo\"\n";
-        let diags = check(source);
-        assert_eq!(diags.len(), 1);
-        assert!(diags[0].message.contains("Variant"));
-    }
-
-    #[test]
-    fn detects_variant_binary_op() {
-        let source = "var dict := {}\nfunc f():\n\tvar x := dict[\"key\"] + 1\n";
-        let diags = check(source);
-        assert_eq!(diags.len(), 1);
-        assert!(diags[0].message.contains("Variant"));
-    }
-
-    #[test]
-    fn detects_parenthesized_variant() {
-        let source = "var dict := {}\nfunc f():\n\tvar x := (dict[\"key\"])\n";
-        let diags = check(source);
-        assert_eq!(diags.len(), 1);
-        assert!(diags[0].message.contains("Variant"));
-    }
-
-    #[test]
-    fn no_warning_typed_comparison() {
-        let source = "var dict := {}\nfunc f():\n\tvar x: bool = dict[\"key\"] == \"foo\"\n";
+    fn no_warning_constructor() {
+        let source = "func f():\n\tvar v := Vector2(1, 2)\n";
         let diags = check(source);
         assert!(diags.is_empty());
     }

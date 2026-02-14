@@ -458,7 +458,6 @@ fn decode_unknown_type_returns_none() {
     assert!(decode_variant(&buf, &mut offset).is_none());
 }
 
-
 #[test]
 fn int_encoding_size() {
     // Small int should be 4+4=8 bytes (header + i32)

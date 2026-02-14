@@ -259,5 +259,4 @@ mod tests {
         let result = verify_format(source, non_idempotent, &config);
         assert!(result.is_some());
     }
-
 }

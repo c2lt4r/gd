@@ -139,6 +139,23 @@ pub fn class_methods(class: &str) -> Vec<(&'static str, &'static str, &'static s
     result
 }
 
+/// Look up the return type of a method on a class, walking the inheritance chain.
+/// Returns the raw return type string from the class database (e.g. `"void"`, `"int"`,
+/// `"Node"`, `"typedarray::Node"`, `"enum::Error"`).
+pub fn method_return_type(class: &str, method: &str) -> Option<&'static str> {
+    let mut current = class;
+    loop {
+        let key = format!("{current}.{method}");
+        if let Ok(i) = generated::METHODS.binary_search_by_key(&key.as_str(), |&(k, _)| k) {
+            return Some(generated::METHODS[i].1);
+        }
+        match parent_class(current) {
+            Some(parent) => current = parent,
+            None => return None,
+        }
+    }
+}
+
 /// Curated list of methods that require the node to be in the scene tree.
 pub fn is_tree_dependent_method(method: &str) -> bool {
     matches!(
@@ -308,5 +325,35 @@ mod tests {
     fn test_class_methods_unknown_class() {
         let methods = class_methods("NonExistentClass");
         assert!(methods.is_empty());
+    }
+
+    #[test]
+    fn test_method_return_type_direct() {
+        assert_eq!(method_return_type("Node", "add_child"), Some("void"));
+        assert_eq!(method_return_type("Node", "get_child"), Some("Node"));
+        assert_eq!(method_return_type("Node", "get_child_count"), Some("int"));
+    }
+
+    #[test]
+    fn test_method_return_type_inherited() {
+        // Node2D inherits add_child from Node
+        assert_eq!(method_return_type("Node2D", "add_child"), Some("void"));
+        assert_eq!(
+            method_return_type("CharacterBody2D", "get_child"),
+            Some("Node")
+        );
+    }
+
+    #[test]
+    fn test_method_return_type_unknown() {
+        assert_eq!(method_return_type("Node", "nonexistent_method"), None);
+        assert_eq!(method_return_type("FakeClass", "method"), None);
+    }
+
+    #[test]
+    fn test_method_return_type_special_types() {
+        // Verify enum and typedarray return types are returned as-is
+        let ret = method_return_type("AESContext", "start");
+        assert_eq!(ret, Some("enum::Error"));
     }
 }

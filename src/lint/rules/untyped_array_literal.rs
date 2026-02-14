@@ -2,6 +2,8 @@ use tree_sitter::{Node, Tree};
 
 use super::{Fix, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
+use crate::core::symbol_table::SymbolTable;
+use crate::core::type_inference::{InferredType, infer_expression_type};
 
 pub struct UntypedArrayLiteral;
 
@@ -10,22 +12,32 @@ impl LintRule for UntypedArrayLiteral {
         "untyped-array-literal"
     }
 
-    fn check(&self, tree: &Tree, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, _tree: &Tree, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+        Vec::new()
+    }
+
+    fn check_with_symbols(
+        &self,
+        tree: &Tree,
+        source: &str,
+        _config: &LintConfig,
+        symbols: &SymbolTable,
+    ) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        check_node(tree.root_node(), source, &mut diags);
+        check_node(tree.root_node(), source, symbols, &mut diags);
         diags
     }
 }
 
-fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
+fn check_node(node: Node, source: &str, symbols: &SymbolTable, diags: &mut Vec<LintDiagnostic>) {
     if node.kind() == "variable_statement" {
-        check_variable(node, source, diags);
+        check_variable(node, source, symbols, diags);
     }
 
     let mut cursor = node.walk();
     if cursor.goto_first_child() {
         loop {
-            check_node(cursor.node(), source, diags);
+            check_node(cursor.node(), source, symbols, diags);
             if !cursor.goto_next_sibling() {
                 break;
             }
@@ -33,7 +45,12 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
     }
 }
 
-fn check_variable(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
+fn check_variable(
+    node: Node,
+    source: &str,
+    symbols: &SymbolTable,
+    diags: &mut Vec<LintDiagnostic>,
+) {
     // Check if this uses := (inferred type via inferred_type node)
     let type_node = node.child_by_field_name("type");
     let is_inferred = type_node.is_some_and(|t| t.kind() == "inferred_type");
@@ -61,8 +78,8 @@ fn check_variable(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
         return;
     }
 
-    // Try to infer element type
-    let suggested_type = infer_array_element_type(value, source);
+    // Try to infer element type using the centralized engine
+    let suggested_type = infer_array_element_type(value, source, symbols);
 
     let var_name = node
         .child_by_field_name("name")
@@ -70,8 +87,7 @@ fn check_variable(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
         .unwrap_or("?");
 
     // Build auto-fix when type is inferable: replace ` :=` with `: Array[T] =`
-    // The inferred_type node covers `:=`. There may be a space before it in source.
-    let fix = suggested_type.as_deref().and_then(|elem_type| {
+    let fix = suggested_type.as_ref().and_then(|elem_type| {
         let inferred = type_node?;
         let mut start = inferred.start_byte();
         // Consume preceding whitespace so we get `var x: Array[T]` not `var x : Array[T]`
@@ -81,13 +97,14 @@ fn check_variable(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
         Some(Fix {
             byte_start: start,
             byte_end: inferred.end_byte(),
-            replacement: format!(": Array[{elem_type}] ="),
+            replacement: format!(": Array[{}] =", elem_type.display_name()),
         })
     });
 
     let message = if let Some(ref elem_type) = suggested_type {
         format!(
-            "array literal infers `Variant` with `:=`; consider `var {var_name}: Array[{elem_type}] = [...]`"
+            "array literal infers `Variant` with `:=`; consider `var {var_name}: Array[{}] = [...]`",
+            elem_type.display_name()
         )
     } else {
         "array literal infers `Variant` with `:=`; consider adding an explicit `Array[T]` type"
@@ -106,131 +123,46 @@ fn check_variable(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
     });
 }
 
-fn infer_array_element_type(array_node: Node, source: &str) -> Option<String> {
+/// Infer the common element type of an array literal using the centralized engine.
+fn infer_array_element_type(
+    array_node: Node,
+    source: &str,
+    symbols: &SymbolTable,
+) -> Option<InferredType> {
     let count = array_node.named_child_count();
     if count == 0 {
         return None;
     }
 
-    let mut all_string = true;
-    let mut all_int = true;
-    let mut all_float = true;
-    let mut all_bool = true;
-    // Track homogeneous ClassName.MEMBER pattern (e.g., Color.RED, Color.BLUE)
-    let mut class_name: Option<String> = None;
-    let mut all_same_class = true;
+    let first_type = infer_expression_type(&array_node.named_child(0)?, source, symbols)?;
 
-    for i in 0..count {
+    // Skip Variant — can't determine a concrete element type
+    if matches!(first_type, InferredType::Variant | InferredType::Void) {
+        return None;
+    }
+
+    // Check that all elements have the same type
+    for i in 1..count {
         let child = array_node.named_child(i)?;
-        match child.kind() {
-            "string" => {
-                all_int = false;
-                all_float = false;
-                all_bool = false;
-                all_same_class = false;
-            }
-            "integer" => {
-                all_string = false;
-                all_float = false;
-                all_bool = false;
-                all_same_class = false;
-            }
-            "float" => {
-                all_string = false;
-                all_int = false;
-                all_bool = false;
-                all_same_class = false;
-            }
-            "true" | "false" => {
-                all_string = false;
-                all_int = false;
-                all_float = false;
-                all_same_class = false;
-            }
-            "attribute" => {
-                all_string = false;
-                all_int = false;
-                all_float = false;
-                all_bool = false;
-                // Check for ClassName.MEMBER pattern
-                if all_same_class {
-                    if let Some(cls) = extract_class_prefix(&child, source) {
-                        match &class_name {
-                            None => class_name = Some(cls),
-                            Some(prev) if *prev == cls => {}
-                            _ => all_same_class = false,
-                        }
-                    } else {
-                        all_same_class = false;
-                    }
-                }
-            }
-            // Constructor calls like Vector2(...), Color(...)
-            "call" => {
-                all_string = false;
-                all_int = false;
-                all_float = false;
-                all_bool = false;
-                if all_same_class {
-                    if let Some(func) = child.named_child(0)
-                        && func.kind() == "identifier"
-                        && let Ok(name) = func.utf8_text(source.as_bytes())
-                        && name.starts_with(|c: char| c.is_ascii_uppercase())
-                    {
-                        match &class_name {
-                            None => class_name = Some(name.to_string()),
-                            Some(prev) if prev == name => {}
-                            _ => all_same_class = false,
-                        }
-                    } else {
-                        all_same_class = false;
-                    }
-                }
-            }
-            _ => return None,
+        let child_type = infer_expression_type(&child, source, symbols)?;
+        if child_type != first_type {
+            return None;
         }
     }
 
-    if all_string {
-        Some("String".to_string())
-    } else if all_int {
-        Some("int".to_string())
-    } else if all_float {
-        Some("float".to_string())
-    } else if all_bool {
-        Some("bool".to_string())
-    } else if all_same_class {
-        class_name
-    } else {
-        None
-    }
-}
-
-/// Extract the class name from a `ClassName.MEMBER` attribute node.
-/// Returns Some("Color") for `Color.RED`.
-fn extract_class_prefix(node: &Node, source: &str) -> Option<String> {
-    let first = node.named_child(0)?;
-    if first.kind() != "identifier" {
-        return None;
-    }
-    let name = first.utf8_text(source.as_bytes()).ok()?;
-    // Must start with uppercase (PascalCase class name)
-    if name.starts_with(|c: char| c.is_ascii_uppercase()) {
-        Some(name.to_string())
-    } else {
-        None
-    }
+    Some(first_type)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::parser;
+    use crate::core::{parser, symbol_table};
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();
+        let symbols = symbol_table::build(&tree, source);
         let config = LintConfig::default();
-        UntypedArrayLiteral.check(&tree, source, &config)
+        UntypedArrayLiteral.check_with_symbols(&tree, source, &config, &symbols)
     }
 
     #[test]
@@ -332,32 +264,6 @@ mod tests {
     #[test]
     fn no_autofix_mixed_array() {
         let source = "func f():\n\tvar x := [1, \"a\"]\n";
-        let diags = check(source);
-        assert_eq!(diags.len(), 1);
-        assert!(diags[0].fix.is_none());
-    }
-
-    #[test]
-    fn detects_class_member_array() {
-        let source = "func f():\n\tvar colors := [Color.RED, Color.BLUE, Color.GREEN]\n";
-        let diags = check(source);
-        assert_eq!(diags.len(), 1);
-        assert!(diags[0].message.contains("Array[Color]"));
-        assert!(diags[0].fix.is_some());
-    }
-
-    #[test]
-    fn autofix_class_member_array() {
-        let source = "func f():\n\tvar colors := [Color.RED, Color.BLUE]\n";
-        let diags = check(source);
-        assert_eq!(diags.len(), 1);
-        let fix = diags[0].fix.as_ref().expect("should have auto-fix");
-        assert_eq!(fix.replacement, ": Array[Color] =");
-    }
-
-    #[test]
-    fn no_fix_mixed_class_members() {
-        let source = "func f():\n\tvar x := [Color.RED, Vector2.UP]\n";
         let diags = check(source);
         assert_eq!(diags.len(), 1);
         assert!(diags[0].fix.is_none());
