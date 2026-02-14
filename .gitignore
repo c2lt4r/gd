@@ -5,3 +5,6 @@
 .DS_Store
 .env
 docs/issues/
+docs/research/eval-improvements.md
+docs/research/godot-debug-protocol.md
+docs/research/godot-source/
