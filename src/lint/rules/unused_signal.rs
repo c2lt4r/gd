@@ -41,8 +41,7 @@ impl LintRule for UnusedSignal {
                 diags.push(LintDiagnostic {
                     rule: "unused-signal",
                     message: format!(
-                        "signal `{}` is declared but never referenced in this file",
-                        name
+                        "signal `{name}` is declared but never referenced in this file"
                     ),
                     severity: Severity::Warning,
                     line: *line,
@@ -192,12 +191,11 @@ fn check_legacy_emit(node: Node, src: &[u8], referenced: &mut HashSet<String>) {
     }
 
     // Find the arguments node
-    let args = match node
+    let Some(args) = node
         .children(&mut node.walk())
         .find(|c| c.kind() == "arguments")
-    {
-        Some(a) => a,
-        None => return,
+    else {
+        return;
     };
 
     // Get first string argument (the signal name)

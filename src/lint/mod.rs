@@ -48,6 +48,7 @@ impl Default for LintOptions {
 }
 
 /// Entry point for the linter.
+#[allow(clippy::too_many_lines)]
 pub fn run_lint(paths: &[String], opts: &LintOptions) -> Result<()> {
     let cwd =
         std::env::current_dir().map_err(|e| miette!("Failed to get current directory: {e}"))?;
@@ -108,8 +109,8 @@ pub fn run_lint(paths: &[String], opts: &LintOptions) -> Result<()> {
 
     // Post-collection filtering
     let severity_threshold = opts.severity_filter.unwrap_or(Severity::Info);
-    let rule_filter: HashSet<&str> = opts.rule_filter.iter().map(|s| s.as_str()).collect();
-    let exclude_rules: HashSet<&str> = opts.exclude_rules.iter().map(|s| s.as_str()).collect();
+    let rule_filter: HashSet<&str> = opts.rule_filter.iter().map(std::string::String::as_str).collect();
+    let exclude_rules: HashSet<&str> = opts.exclude_rules.iter().map(std::string::String::as_str).collect();
 
     let filtered_results: Vec<(PathBuf, Vec<&LintDiagnostic>)> = file_results
         .iter()
@@ -167,7 +168,7 @@ pub fn run_lint(paths: &[String], opts: &LintOptions) -> Result<()> {
                                         let end = (d.line + ctx + 1).min(source_lines.len());
                                         source_lines[start..end]
                                             .iter()
-                                            .map(|s| s.to_string())
+                                            .map(std::string::ToString::to_string)
                                             .collect::<Vec<_>>()
                                     });
                                     LintDiagnostic {
@@ -230,7 +231,7 @@ pub fn run_lint(paths: &[String], opts: &LintOptions) -> Result<()> {
             eprintln!(
                 "\n{}: {} ({} {}, {} {}, {} {})",
                 "lint result".bold(),
-                format!("{} problems", total).bold(),
+                format!("{total} problems").bold(),
                 total_errors,
                 "errors".red(),
                 total_warnings,
@@ -273,13 +274,13 @@ fn print_summary(results: &[(PathBuf, Vec<&LintDiagnostic>)]) {
 
             let breakdown: Vec<String> = sorted
                 .iter()
-                .map(|(rule, count)| format!("{}({})", rule, count))
+                .map(|(rule, count)| format!("{rule}({count})"))
                 .collect();
 
             let label = match severity {
-                Severity::Error => format!("{} errors", total).red().bold().to_string(),
-                Severity::Warning => format!("{} warnings", total).yellow().bold().to_string(),
-                Severity::Info => format!("{} info", total).cyan().bold().to_string(),
+                Severity::Error => format!("{total} errors").red().bold().to_string(),
+                Severity::Warning => format!("{total} warnings").yellow().bold().to_string(),
+                Severity::Info => format!("{total} info").cyan().bold().to_string(),
             };
 
             eprintln!("{}: {}", label, breakdown.join(", "));
@@ -439,17 +440,17 @@ pub fn matches_ignore_pattern(path: &Path, base: &Path, patterns: &[String]) -> 
     // Try plain strip_prefix first (works when both paths share the same root).
     // Only fall back to canonicalize for symlink edge cases (e.g., macOS /var -> /private/var).
     // Avoids Windows canonicalize returning \\?\C:\... extended-length paths that break strip_prefix.
-    let relative = path
-        .strip_prefix(base)
-        .map(|r| r.to_path_buf())
-        .unwrap_or_else(|_| {
+    let relative = path.strip_prefix(base).map_or_else(
+        |_| {
             let canon_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
             let canon_base = base.canonicalize().unwrap_or_else(|_| base.to_path_buf());
             canon_path
                 .strip_prefix(&canon_base)
                 .unwrap_or(&canon_path)
                 .to_path_buf()
-        });
+        },
+        std::path::Path::to_path_buf,
+    );
     // Normalize to forward slashes so patterns work on Windows
     let rel_str = path_slash::PathExt::to_slash_lossy(relative.as_path());
 

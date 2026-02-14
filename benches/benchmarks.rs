@@ -3,7 +3,7 @@ use std::fs;
 use std::process::Command;
 use tempfile::TempDir;
 
-/// Generate realistic GDScript source with the given number of functions.
+/// Generate realistic `GDScript` source with the given number of functions.
 /// Also includes variables, signals, enums, and class structures.
 fn generate_gdscript(num_functions: usize) -> String {
     let mut lines = Vec::new();
@@ -26,7 +26,7 @@ fn generate_gdscript(num_functions: usize) -> String {
     for i in 0..num_functions.min(20) {
         match i % 4 {
             0 => lines.push(format!("var counter_{i}: int = {i}")),
-            1 => lines.push(format!("@export var speed_{i}: float = {}.5", i)),
+            1 => lines.push(format!("@export var speed_{i}: float = {i}.5")),
             2 => lines.push(format!("var label_{i}: String = \"item_{i}\"")),
             _ => lines.push(format!("@onready var node_{i} = $Node{i}")),
         }

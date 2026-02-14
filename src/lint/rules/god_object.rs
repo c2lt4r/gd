@@ -28,16 +28,15 @@ impl LintRule for GodObject {
         let mut reasons = Vec::new();
 
         if funcs > max_functions {
-            reasons.push(format!("{} functions (max {})", funcs, max_functions));
+            reasons.push(format!("{funcs} functions (max {max_functions})"));
         }
         if members > max_members {
             reasons.push(format!(
-                "{} member variables (max {})",
-                members, max_members
+                "{members} member variables (max {max_members})"
             ));
         }
         if lines > max_lines {
-            reasons.push(format!("{} lines (max {})", lines, max_lines));
+            reasons.push(format!("{lines} lines (max {max_lines})"));
         }
 
         if !reasons.is_empty() {
@@ -115,8 +114,7 @@ fn check_classes(
             if child.kind() == "class_definition" {
                 let class_name = child
                     .child_by_field_name("name")
-                    .map(|n| &source[n.byte_range()])
-                    .unwrap_or("<unknown>");
+                    .map_or("<unknown>", |n| &source[n.byte_range()]);
 
                 if let Some(body) = child.child_by_field_name("body") {
                     let (funcs, members) = count_definitions(body, source);
@@ -124,16 +122,15 @@ fn check_classes(
                     let mut reasons = Vec::new();
 
                     if funcs > max_functions {
-                        reasons.push(format!("{} functions (max {})", funcs, max_functions));
+                        reasons.push(format!("{funcs} functions (max {max_functions})"));
                     }
                     if members > max_members {
                         reasons.push(format!(
-                            "{} member variables (max {})",
-                            members, max_members
+                            "{members} member variables (max {max_members})"
                         ));
                     }
                     if class_lines > max_lines {
-                        reasons.push(format!("{} lines (max {})", class_lines, max_lines));
+                        reasons.push(format!("{class_lines} lines (max {max_lines})"));
                     }
 
                     if !reasons.is_empty() {
@@ -176,17 +173,19 @@ mod tests {
     }
 
     fn make_functions(count: usize) -> String {
+        use std::fmt::Write;
         let mut s = String::new();
         for i in 0..count {
-            s.push_str(&format!("func f_{}():\n\tpass\n\n", i));
+            write!(s, "func f_{i}():\n\tpass\n\n").unwrap();
         }
         s
     }
 
     fn make_members(count: usize) -> String {
+        use std::fmt::Write;
         let mut s = String::new();
         for i in 0..count {
-            s.push_str(&format!("var m_{}: int\n", i));
+            writeln!(s, "var m_{i}: int").unwrap();
         }
         s
     }

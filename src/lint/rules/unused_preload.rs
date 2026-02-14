@@ -37,7 +37,7 @@ impl LintRule for UnusedPreload {
             if !references.contains(name.as_str()) {
                 diags.push(LintDiagnostic {
                     rule: "unused-preload",
-                    message: format!("preloaded variable `{}` is never used", name),
+                    message: format!("preloaded variable `{name}` is never used"),
                     severity: Severity::Warning,
                     line: *line,
                     column: *col,

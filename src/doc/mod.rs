@@ -1,6 +1,7 @@
 use miette::{Result, miette};
 use owo_colors::OwoColorize;
 use serde::Serialize;
+use std::fmt::Write;
 use std::fs;
 use std::path::{Path, PathBuf};
 use tree_sitter::{Node, Tree};
@@ -55,7 +56,8 @@ pub struct DocClass {
     pub methods: Vec<DocMethod>,
 }
 
-/// Extract documentation from a GDScript file.
+/// Extract documentation from a `GDScript` file.
+#[allow(clippy::too_many_lines)]
 pub fn extract_docs(source: &str, tree: &Tree, file_path: &Path) -> DocClass {
     let root = tree.root_node();
     let mut class_name = file_path
@@ -104,7 +106,7 @@ pub fn extract_docs(source: &str, tree: &Tree, file_path: &Path) -> DocClass {
                         .to_string();
                 }
                 if !accumulated_doc.is_empty() {
-                    class_description = accumulated_doc.clone();
+                    class_description.clone_from(&accumulated_doc);
                 }
             }
             "extends_statement" => {
@@ -247,26 +249,26 @@ pub fn render_markdown(doc: &DocClass) -> String {
     let mut output = String::new();
 
     // Title
-    output.push_str(&format!("# {}\n\n", doc.name));
+    let _ = writeln!(output, "# {}\n", doc.name);
 
     // Metadata
     if !doc.extends.is_empty() {
-        output.push_str(&format!("**Extends:** {}\n", doc.extends));
+        let _ = writeln!(output, "**Extends:** {}", doc.extends);
     }
-    output.push_str(&format!("**File:** `{}`\n\n", doc.file.display()));
+    let _ = writeln!(output, "**File:** `{}`\n", doc.file.display());
 
     // Description
     if !doc.description.is_empty() {
-        output.push_str(&format!("{}\n\n", doc.description));
+        let _ = writeln!(output, "{}\n", doc.description);
     }
 
     // Signals
     if !doc.signals.is_empty() {
         output.push_str("## Signals\n\n");
         for signal in &doc.signals {
-            output.push_str(&format!("### {}{}\n\n", signal.name, signal.params));
+            let _ = writeln!(output, "### {}{}\n", signal.name, signal.params);
             if !signal.description.is_empty() {
-                output.push_str(&format!("{}\n\n", signal.description));
+                let _ = writeln!(output, "{}\n", signal.description);
             }
         }
     }
@@ -278,10 +280,11 @@ pub fn render_markdown(doc: &DocClass) -> String {
         output.push_str("|------|------|--------|-------------|\n");
         for prop in &doc.properties {
             let export = if prop.is_exported { "yes" } else { "no" };
-            output.push_str(&format!(
-                "| {} | {} | {} | {} |\n",
+            let _ = writeln!(
+                output,
+                "| {} | {} | {} | {} |",
                 prop.name, prop.type_hint, export, prop.description
-            ));
+            );
         }
         output.push('\n');
     }
@@ -290,14 +293,14 @@ pub fn render_markdown(doc: &DocClass) -> String {
     if !doc.methods.is_empty() {
         output.push_str("## Methods\n\n");
         for method in &doc.methods {
-            let signature = if !method.return_type.is_empty() {
-                format!("{}{} -> {}", method.name, method.params, method.return_type)
-            } else {
+            let signature = if method.return_type.is_empty() {
                 format!("{}{}", method.name, method.params)
+            } else {
+                format!("{}{} -> {}", method.name, method.params, method.return_type)
             };
-            output.push_str(&format!("### {}\n\n", signature));
+            let _ = writeln!(output, "### {signature}\n");
             if !method.description.is_empty() {
-                output.push_str(&format!("{}\n\n", method.description));
+                let _ = writeln!(output, "{}\n", method.description);
             }
         }
     }
@@ -305,7 +308,7 @@ pub fn render_markdown(doc: &DocClass) -> String {
     output
 }
 
-/// Generate documentation for GDScript files.
+/// Generate documentation for `GDScript` files.
 pub fn run_doc(paths: &[String], output_dir: &str, stdout: bool) -> Result<()> {
     let paths_to_process = if paths.is_empty() {
         vec![".".to_string()]
@@ -341,7 +344,7 @@ pub fn run_doc(paths: &[String], output_dir: &str, stdout: bool) -> Result<()> {
         let markdown = render_markdown(&doc);
 
         if stdout {
-            println!("{}", markdown);
+            println!("{markdown}");
         } else {
             let output_file_name = format!("{}.md", doc.name);
             let output_path = Path::new(output_dir).join(output_file_name);
@@ -463,8 +466,7 @@ pub fn run_doc_check(paths: &[String]) -> Result<()> {
             println!("{} {file}: {method}() missing doc comment", "✗".red());
         }
         println!(
-            "\n{}/{} public methods documented",
-            documented_methods, total_methods
+            "\n{documented_methods}/{total_methods} public methods documented"
         );
         std::process::exit(1);
     }
@@ -477,7 +479,7 @@ mod tests {
 
     #[test]
     fn test_extract_basic_class_doc() {
-        let source = r#"
+        let source = r"
 ## A player character.
 class_name Player
 extends CharacterBody2D
@@ -489,7 +491,7 @@ extends CharacterBody2D
 func take_damage(amount: int) -> int:
     health -= amount
     return health
-"#;
+";
 
         let tree = parse(source).unwrap();
         let path = Path::new("player.gd");
@@ -514,10 +516,10 @@ func take_damage(amount: int) -> int:
 
     #[test]
     fn test_extract_signal_doc() {
-        let source = r#"
+        let source = r"
 ## Emitted when health changes.
 signal health_changed(new_health: int)
-"#;
+";
 
         let tree = parse(source).unwrap();
         let path = Path::new("test.gd");
@@ -530,13 +532,13 @@ signal health_changed(new_health: int)
 
     #[test]
     fn test_multiline_doc_comment() {
-        let source = r#"
+        let source = r"
 ## This is a multi-line
 ## documentation comment
 ## for a function.
 func test_func():
     pass
-"#;
+";
 
         let tree = parse(source).unwrap();
         let path = Path::new("test.gd");
@@ -551,7 +553,7 @@ func test_func():
 
     #[test]
     fn test_doc_json_serialization() {
-        let source = r#"
+        let source = r"
 ## A player.
 class_name Player
 extends Node2D
@@ -562,7 +564,7 @@ func move(direction: Vector2) -> void:
 
 func _ready():
     pass
-"#;
+";
         let tree = parse(source).unwrap();
         let path = Path::new("player.gd");
         let doc = extract_docs(source, &tree, path);

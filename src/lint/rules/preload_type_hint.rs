@@ -43,8 +43,7 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
                     diags.push(LintDiagnostic {
                         rule: "preload-type-hint",
                         message: format!(
-                            "variable `{}` uses preload/load but has no type hint; consider adding a type annotation",
-                            var_name
+                            "variable `{var_name}` uses preload/load but has no type hint; consider adding a type annotation"
                         ),
                         severity: Severity::Warning,
                         line: node.start_position().row,

@@ -1,6 +1,6 @@
 [package]
 name = "gd"
-version = "0.1.30"
+version = "0.1.32-dev.1"
 edition = "2024"
 description = "A comprehensive Godot toolchain - format, lint, build, run, and manage Godot projects"
 license = "MIT"
@@ -75,6 +75,30 @@ tempfile = "3"
 [[bench]]
 name = "benchmarks"
 harness = false
+
+[lints.clippy]
+pedantic = { level = "deny", priority = -1 }
+
+# Casts — Godot binary protocol uses specific widths (u32, i32, i64, f64);
+# safe truncation is intentional and unavoidable throughout debug/variant code
+cast_possible_truncation = "allow"
+cast_sign_loss           = "allow"
+cast_precision_loss      = "allow"
+cast_possible_wrap       = "allow"
+cast_lossless            = "allow"
+
+# Docs — CLI tool, not a library
+missing_errors_doc      = "allow"
+missing_panics_doc      = "allow"
+doc_markdown            = "allow"
+
+# Names — vector/color components (x, y, z, w, r, g, b, a) and similar math vars
+similar_names           = "allow"
+many_single_char_names  = "allow"
+module_name_repetitions = "allow"
+
+# Struct booleans — clap Args structs legitimately have many bool flags
+struct_excessive_bools  = "allow"
 
 [profile.release]
 opt-level = 3

@@ -1,4 +1,4 @@
-use tower_lsp::lsp_types::*;
+use tower_lsp::lsp_types::{Hover, HoverContents, MarkupContent, MarkupKind, Position};
 
 use super::util::{matches_name, node_range, node_text};
 

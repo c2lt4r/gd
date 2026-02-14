@@ -73,7 +73,7 @@ fn check_param_name(name_node: Node, source: &str, diags: &mut Vec<LintDiagnosti
         let fixed = to_snake_case(name);
         diags.push(LintDiagnostic {
             rule: "parameter-naming",
-            message: format!("parameter `{}` should use snake_case: `{}`", name, fixed),
+            message: format!("parameter `{name}` should use snake_case: `{fixed}`"),
             severity: Severity::Warning,
             line: name_node.start_position().row,
             column: name_node.start_position().column,

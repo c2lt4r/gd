@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::fmt::Write as _;
 use std::path::Path;
 
 use miette::Result;
@@ -16,6 +17,7 @@ struct CapturedVar {
     is_used_after: bool,
 }
 
+#[allow(clippy::too_many_lines)]
 pub fn extract_method(
     file: &Path,
     start_line: usize, // 1-based inclusive
@@ -156,7 +158,7 @@ pub fn extract_method(
         call_site_line = cl;
         returns_field = return_var.map(|v| v.name);
         return_vars_field = Vec::new();
-    };
+    }
 
     let relative_file = crate::core::fs::relative_slash(file, project_root);
 
@@ -209,11 +211,11 @@ pub fn extract_method(
 }
 
 /// Collect direct children of `body` that are fully within [start_line, end_line] (0-based).
-fn collect_statements_in_range<'a>(
-    body: Node<'a>,
+fn collect_statements_in_range(
+    body: Node<'_>,
     start_line: usize,
     end_line: usize,
-) -> Result<Vec<Node<'a>>> {
+) -> Result<Vec<Node<'_>>> {
     let mut statements = Vec::new();
     let mut cursor = body.walk();
     for child in body.children(&mut cursor) {
@@ -340,7 +342,7 @@ fn find_captured_variables(
                             let type_hint = child
                                 .child_by_field_name("type")
                                 .and_then(|t| t.utf8_text(source.as_bytes()).ok())
-                                .map(|s| s.to_string());
+                                .map(std::string::ToString::to_string);
                             pre_decls.insert(name, type_hint);
                         }
                     }
@@ -374,7 +376,7 @@ fn find_captured_variables(
             let type_hint = child
                 .child_by_field_name("type")
                 .and_then(|t| t.utf8_text(source.as_bytes()).ok())
-                .map(|s| s.to_string());
+                .map(std::string::ToString::to_string);
             pre_decls.insert(var_name.to_string(), type_hint);
         }
     }
@@ -492,7 +494,7 @@ fn generate_extracted_function(
     // Add return statement if needed
     let mut func_body = re_indented;
     if let Some(ret) = return_var {
-        func_body.push_str(&format!("\n\treturn {}", ret.name));
+        let _ = write!(func_body, "\n\treturn {}", ret.name);
     }
 
     let func_text = format!("{signature}\n{func_body}");
@@ -606,10 +608,11 @@ fn generate_call_site_multi_return(
 
     let mut lines = format!("{indent}var {result_name} = {name}({args})\n");
     for v in return_vars {
-        lines.push_str(&format!(
-            "{indent}{} = {result_name}[\"{}\"]\n",
+        let _ = writeln!(
+            lines,
+            "{indent}{} = {result_name}[\"{}\"]",
             v.name, v.name
-        ));
+        );
     }
     lines
 }

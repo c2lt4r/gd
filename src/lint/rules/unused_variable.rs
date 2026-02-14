@@ -57,7 +57,7 @@ fn check_function_body(body: Node, source: &str, diags: &mut Vec<LintDiagnostic>
         if !references.contains(name.as_str()) {
             diags.push(LintDiagnostic {
                 rule: "unused-variable",
-                message: format!("variable `{}` is assigned but never used", name),
+                message: format!("variable `{name}` is assigned but never used"),
                 severity: Severity::Warning,
                 line: *line,
                 column: *col,

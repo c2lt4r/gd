@@ -117,13 +117,11 @@ fn test_stats_output() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains("Files:"),
-        "Stats output should contain 'Files:', got: {}",
-        stdout
+        "Stats output should contain 'Files:', got: {stdout}"
     );
     assert!(
         stdout.contains("Functions:"),
-        "Stats output should contain 'Functions:', got: {}",
-        stdout
+        "Stats output should contain 'Functions:', got: {stdout}"
     );
 }
 
@@ -367,13 +365,11 @@ fn test_man_page_output() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains(".TH"),
-        "man page should contain roff .TH header, got: {}",
-        stdout
+        "man page should contain roff .TH header, got: {stdout}"
     );
     assert!(
         stdout.contains("gd"),
-        "man page should mention 'gd', got: {}",
-        stdout
+        "man page should mention 'gd', got: {stdout}"
     );
 }
 
@@ -394,8 +390,7 @@ fn test_man_subcommand() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains("fmt"),
-        "man page for fmt should contain 'fmt', got: {}",
-        stdout
+        "man page for fmt should contain 'fmt', got: {stdout}"
     );
 }
 
@@ -428,8 +423,7 @@ fn test_config_validation_unknown_key() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains("unknown key"),
-        "Should warn about unknown key in gd.toml, stderr: {}",
-        stderr
+        "Should warn about unknown key in gd.toml, stderr: {stderr}"
     );
 }
 

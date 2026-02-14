@@ -2,8 +2,9 @@ use miette::Result;
 
 /// Print a compressed, AI-readable reference of all gd commands.
 /// Designed for LLM context windows — like llms.txt for websites.
+#[allow(clippy::unnecessary_wraps)]
 pub fn exec() -> Result<()> {
-    print!("{}", LLM_TXT);
+    print!("{LLM_TXT}");
     Ok(())
 }
 

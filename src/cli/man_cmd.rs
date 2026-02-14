@@ -11,7 +11,7 @@ pub struct ManArgs {
     pub output: Option<PathBuf>,
 }
 
-pub fn exec(args: ManArgs) -> Result<()> {
+pub fn exec(args: &ManArgs) -> Result<()> {
     use clap::CommandFactory;
 
     let cmd = super::Cli::command();

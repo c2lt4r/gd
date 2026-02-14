@@ -252,8 +252,7 @@ fn test_lint_disable_rule_in_config() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         !stderr.contains("naming-convention"),
-        "naming-convention should be disabled via gd.toml, stderr: {}",
-        stderr
+        "naming-convention should be disabled via gd.toml, stderr: {stderr}"
     );
 }
 
@@ -281,22 +280,19 @@ fn test_lint_fix_does_not_crash() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains("fix"),
-        "gd lint --fix should report applying fixes, stderr: {}",
-        stderr
+        "gd lint --fix should report applying fixes, stderr: {stderr}"
     );
 
     let fixed = fs::read_to_string(&file_path).unwrap();
     // naming-convention should be fixed
     assert!(
         fixed.contains("bad_name"),
-        "BadName should be renamed to bad_name, got: {}",
-        fixed
+        "BadName should be renamed to bad_name, got: {fixed}"
     );
     // self-assignment should be fixed with self. prefix
     assert!(
         fixed.contains("self.x = x"),
-        "Self-assignment `x = x` should become `self.x = x`, got: {}",
-        fixed
+        "Self-assignment `x = x` should become `self.x = x`, got: {fixed}"
     );
 }
 
@@ -321,8 +317,7 @@ fn test_lint_fix_self_assignment() {
     let fixed = fs::read_to_string(&file_path).unwrap();
     assert!(
         fixed.contains("self.x = x"),
-        "Self-assignment `x = x` should become `self.x = x` after --fix, got: {}",
-        fixed
+        "Self-assignment `x = x` should become `self.x = x` after --fix, got: {fixed}"
     );
     // The rest of the code should still be there
     assert!(
@@ -400,8 +395,7 @@ fn test_lint_severity_override() {
     // With severity override to "error", the output should contain "error"
     assert!(
         stderr.contains("error"),
-        "Severity override to 'error' should produce 'error' in output, stderr: {}",
-        stderr
+        "Severity override to 'error' should produce 'error' in output, stderr: {stderr}"
     );
 
     // Should fail (exit non-zero) because errors > 0
@@ -449,8 +443,7 @@ fn test_lint_ignore_pattern() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         !stderr.contains("naming-convention"),
-        "addons/ files should be ignored by ignore_patterns, stderr: {}",
-        stderr
+        "addons/ files should be ignored by ignore_patterns, stderr: {stderr}"
     );
     assert_eq!(
         output.status.code(),
@@ -489,13 +482,11 @@ fn test_lint_rule_repeatable() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains("naming-convention"),
-        "Should show naming-convention with --rule repeatable, stderr: {}",
-        stderr
+        "Should show naming-convention with --rule repeatable, stderr: {stderr}"
     );
     assert!(
         stderr.contains("duplicate-signal"),
-        "Should show duplicate-signal with --rule repeatable, stderr: {}",
-        stderr
+        "Should show duplicate-signal with --rule repeatable, stderr: {stderr}"
     );
 }
 
@@ -569,8 +560,7 @@ fn test_lint_overrides_exclude_rules_for_path() {
     // main.gd should still have naming-convention flagged
     assert!(
         stderr.contains("naming-convention"),
-        "main.gd should still have naming-convention, stderr: {}",
-        stderr
+        "main.gd should still have naming-convention, stderr: {stderr}"
     );
     // test file should NOT have naming-convention (excluded by override),
     // though it may still have other warnings like empty-function
@@ -580,8 +570,7 @@ fn test_lint_overrides_exclude_rules_for_path() {
         .collect();
     assert!(
         test_naming_lines.is_empty(),
-        "tests/test_thing.gd should not have naming-convention due to override, stderr: {}",
-        stderr
+        "tests/test_thing.gd should not have naming-convention due to override, stderr: {stderr}"
     );
 }
 
@@ -601,13 +590,11 @@ fn test_lint_json_no_stderr_summary() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         !stderr.contains("lint result"),
-        "JSON format should not have stderr summary, stderr: {}",
-        stderr
+        "JSON format should not have stderr summary, stderr: {stderr}"
     );
     assert!(
         !stderr.contains("problems"),
-        "JSON format should not have stderr summary, stderr: {}",
-        stderr
+        "JSON format should not have stderr summary, stderr: {stderr}"
     );
 }
 
@@ -627,8 +614,7 @@ fn test_lint_sarif_no_stderr_summary() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         !stderr.contains("lint result"),
-        "SARIF format should not have stderr summary, stderr: {}",
-        stderr
+        "SARIF format should not have stderr summary, stderr: {stderr}"
     );
 }
 
@@ -653,8 +639,7 @@ fn test_lint_fix_comparison_boolean() {
     let fixed = fs::read_to_string(&file_path).unwrap();
     assert!(
         !fixed.contains("== true"),
-        "`== true` should be removed by --fix, got: {}",
-        fixed
+        "`== true` should be removed by --fix, got: {fixed}"
     );
 }
 
@@ -678,8 +663,7 @@ fn test_lint_float_comparison_detected() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains("float-comparison"),
-        "Should detect float-comparison issue, stderr: {}",
-        stderr
+        "Should detect float-comparison issue, stderr: {stderr}"
     );
 }
 

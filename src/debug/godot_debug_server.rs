@@ -2,6 +2,7 @@
 
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
@@ -90,6 +91,8 @@ struct Inbox {
     notify: Condvar,
 }
 
+const INBOX_MAX: usize = 1000;
+
 impl Inbox {
     fn new() -> Self {
         Self {
@@ -100,6 +103,9 @@ impl Inbox {
 
     fn push(&self, msg: Vec<GodotVariant>) {
         let mut msgs = self.messages.lock().unwrap();
+        if msgs.len() >= INBOX_MAX {
+            msgs.remove(0);
+        }
         msgs.push(msg);
         self.notify.notify_all();
     }
@@ -156,11 +162,13 @@ pub struct GodotDebugServer {
     inbox: Arc<Inbox>,
     /// Set to false when we want the reader thread to stop.
     running: Arc<Mutex<bool>>,
+    /// Tracks whether the game is paused at a breakpoint (debug_enter/debug_exit).
+    at_breakpoint: Arc<AtomicBool>,
 }
 
 impl GodotDebugServer {
     /// Default port for the gd binary debug protocol.
-    /// Godot uses 6005 (LSP) and 6006 (DAP), so we use 6008.
+    /// Godot uses 6005 (LSP) and 6006 (debugger), so we use 6008.
     pub const DEFAULT_PORT: u16 = 6008;
 
     /// Create a new server listening on the given port on all interfaces.
@@ -175,6 +183,7 @@ impl GodotDebugServer {
             port,
             inbox: Arc::new(Inbox::new()),
             running: Arc::new(Mutex::new(true)),
+            at_breakpoint: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -198,9 +207,8 @@ impl GodotDebugServer {
                 Ok((tcp_stream, _addr)) => {
                     let _ = tcp_stream.set_nonblocking(false);
                     // Clone for the reader thread
-                    let reader_stream = match tcp_stream.try_clone() {
-                        Ok(s) => s,
-                        Err(_) => return false,
+                    let Ok(reader_stream) = tcp_stream.try_clone() else {
+                        return false;
                     };
                     *self.stream.lock().unwrap() = Some(tcp_stream);
                     self.spawn_reader(reader_stream);
@@ -220,6 +228,13 @@ impl GodotDebugServer {
     /// Check if connected.
     pub fn is_connected(&self) -> bool {
         self.stream.lock().unwrap().is_some()
+    }
+
+    /// Check if the game is currently paused at a breakpoint.
+    /// This is tracked by the reader thread from debug_enter/debug_exit messages,
+    /// so it returns instantly without any network round-trip.
+    pub fn is_at_breakpoint(&self) -> bool {
+        self.at_breakpoint.load(Ordering::Relaxed)
     }
 
     /// Send a command to the game.
@@ -386,8 +401,12 @@ impl GodotDebugServer {
 
     // ── Script reloading ──
 
-    pub fn cmd_reload_scripts(&self) -> bool {
-        self.send_command("reload_scripts", &[])
+    pub fn cmd_reload_scripts(&self, paths: &[String]) -> bool {
+        let args: Vec<GodotVariant> = paths
+            .iter()
+            .map(|p| GodotVariant::String(p.clone()))
+            .collect();
+        self.send_command("reload_scripts", &args)
     }
 
     pub fn cmd_reload_all_scripts(&self) -> bool {
@@ -471,6 +490,7 @@ impl GodotDebugServer {
     /// Inspect multiple objects by issuing individual inspect commands.
     /// More reliable than sending all IDs in one batch — each object gets
     /// its own send/receive cycle so a missing object doesn't break the rest.
+    #[allow(clippy::unnecessary_wraps)]
     pub fn cmd_inspect_objects(&self, ids: &[u64], _selection: bool) -> Option<Vec<ObjectInfo>> {
         let mut results = Vec::new();
         for &id in ids {
@@ -888,9 +908,10 @@ impl GodotDebugServer {
     fn spawn_reader(&self, stream: TcpStream) {
         let inbox = Arc::clone(&self.inbox);
         let running = Arc::clone(&self.running);
+        let at_breakpoint = Arc::clone(&self.at_breakpoint);
 
         std::thread::spawn(move || {
-            reader_loop(stream, &inbox, &running);
+            reader_loop(stream, &inbox, &running, &at_breakpoint);
         });
     }
 }
@@ -905,7 +926,12 @@ impl Drop for GodotDebugServer {
 // Reader thread
 // ---------------------------------------------------------------------------
 
-fn reader_loop(mut stream: TcpStream, inbox: &Inbox, running: &Mutex<bool>) {
+fn reader_loop(
+    mut stream: TcpStream,
+    inbox: &Inbox,
+    running: &Mutex<bool>,
+    at_breakpoint: &AtomicBool,
+) {
     // Set a short read timeout so we can check the `running` flag periodically
     let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
 
@@ -944,6 +970,16 @@ fn reader_loop(mut stream: TcpStream, inbox: &Inbox, running: &Mutex<bool>) {
             // Normalize from wire format [cmd, thread_id, Array(data)]
             // to flat [cmd, data_items...] for downstream parsing
             let items = normalize_message(items);
+
+            // Track breakpoint state from debug_enter/debug_exit messages
+            if let Some(GodotVariant::String(cmd)) = items.first() {
+                match cmd.as_str() {
+                    "debug_enter" => at_breakpoint.store(true, Ordering::Relaxed),
+                    "debug_exit" => at_breakpoint.store(false, Ordering::Relaxed),
+                    _ => {}
+                }
+            }
+
             inbox.push(items);
         } else {
             // Diagnostic: try to find where decoding fails
@@ -1185,7 +1221,7 @@ fn parse_object_info(msg: &[GodotVariant]) -> Option<ObjectInfo> {
         args = &owned;
     } else {
         args = after_cmd;
-    };
+    }
 
     if args.len() < 2 {
         return None;
@@ -1441,7 +1477,7 @@ mod tests {
                     GodotVariant::String("position".into()),
                     GodotVariant::Int(5), // TYPE_VECTOR2
                     GodotVariant::Int(0),
-                    GodotVariant::String("".into()),
+                    GodotVariant::String(String::new()),
                     GodotVariant::Int(6),
                     GodotVariant::Vector2(10.0, 20.0),
                 ])]),
@@ -1465,7 +1501,7 @@ mod tests {
             GodotVariant::String("position".into()),
             GodotVariant::Int(5),
             GodotVariant::Int(0),
-            GodotVariant::String("".into()),
+            GodotVariant::String(String::new()),
             GodotVariant::Int(6),
             GodotVariant::Vector2(10.0, 20.0),
         ];
@@ -1656,7 +1692,7 @@ mod tests {
             GodotVariant::String("root".into()),   // name
             GodotVariant::String("Window".into()), // class
             GodotVariant::Int(1234),               // object_id
-            GodotVariant::String("".into()),       // scene_file_path
+            GodotVariant::String(String::new()),       // scene_file_path
             GodotVariant::Int(0),                  // view_flags
             // Child node
             GodotVariant::Int(0),                             // child_count

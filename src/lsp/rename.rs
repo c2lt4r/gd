@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use tower_lsp::lsp_types::*;
+use tower_lsp::lsp_types::{Position, PrepareRenameResponse, Range, TextEdit, Url, WorkspaceEdit};
 
 /// Prepare rename: verify the symbol at position is renameable and return its range.
 pub fn prepare_rename(source: &str, position: Position) -> Option<PrepareRenameResponse> {

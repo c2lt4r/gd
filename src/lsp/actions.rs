@@ -1,4 +1,7 @@
-use tower_lsp::lsp_types::*;
+use tower_lsp::lsp_types::{
+    CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionResponse, Diagnostic,
+    DiagnosticSeverity, NumberOrString, Position, Range, TextEdit, Url, WorkspaceEdit,
+};
 
 /// Provide code actions (quick fixes) for diagnostics in the given range.
 pub fn provide_code_actions(uri: &Url, source: &str, range: &Range) -> Option<CodeActionResponse> {

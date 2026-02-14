@@ -14,6 +14,6 @@ pub struct BuildArgs {
     pub release: bool,
 }
 
-pub fn exec(args: BuildArgs) -> Result<()> {
+pub fn exec(args: &BuildArgs) -> Result<()> {
     crate::build::export_project(args.preset.as_deref(), args.output.as_deref(), args.release)
 }

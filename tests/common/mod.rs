@@ -10,7 +10,7 @@ pub fn gd_bin() -> Command {
 }
 
 /// Create a temp Godot project with the given .gd files.
-/// Returns the TempDir (must stay alive for the duration of the test).
+/// Returns the `TempDir` (must stay alive for the duration of the test).
 pub fn setup_gd_project(files: &[(&str, &str)]) -> TempDir {
     let temp = tempfile::Builder::new()
         .prefix("gdtest")

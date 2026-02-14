@@ -10,6 +10,7 @@ use super::{
     get_declaration_name, normalize_blank_lines, re_indent_to_depth,
 };
 
+#[allow(clippy::too_many_lines)]
 pub fn move_symbol(
     name: &str,
     from_file: &Path,
@@ -614,8 +615,7 @@ mod tests {
         // Functions should have 2 blank lines before them
         assert!(
             target.contains("\n\n\nfunc moved()"),
-            "should have 2 blank lines before function, got: {:?}",
-            target
+            "should have 2 blank lines before function, got: {target:?}"
         );
     }
 

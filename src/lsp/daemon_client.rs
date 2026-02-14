@@ -15,6 +15,7 @@ enum SendResult {
 
 /// Send a daemon request and return the result (or None on failure).
 /// Automatically spawns the daemon if it's not running.
+#[allow(clippy::needless_pass_by_value)]
 pub fn query_daemon(
     method: &str,
     params: serde_json::Value,
@@ -22,13 +23,13 @@ pub fn query_daemon(
 ) -> Option<serde_json::Value> {
     let cwd = std::env::current_dir().ok()?;
     let project_root = crate::core::config::find_project_root(&cwd)?;
-    query_daemon_with_root(&project_root, method, params, timeout)
+    query_daemon_with_root(&project_root, method, &params, timeout)
 }
 
 fn query_daemon_with_root(
     project_root: &Path,
     method: &str,
-    params: serde_json::Value,
+    params: &serde_json::Value,
     timeout: Option<Duration>,
 ) -> Option<serde_json::Value> {
     let timeout = timeout.unwrap_or(Duration::from_secs(5));
@@ -42,7 +43,7 @@ fn query_daemon_with_root(
         if !state.build_id.is_empty() && state.build_id != current_id {
             kill_daemon(state.pid, state.port, project_root);
         } else {
-            match send_query(state.port, method, &params, timeout) {
+            match send_query(state.port, method, params, timeout) {
                 SendResult::Ok(result) => return Some(result),
                 SendResult::DaemonError(msg) => {
                     // Daemon is alive but returned an error — don't delete state file
@@ -71,7 +72,7 @@ fn query_daemon_with_root(
         if let Some(state) = super::daemon::read_state_file(project_root)
             && is_pid_alive(state.pid)
         {
-            match send_query(state.port, method, &params, timeout) {
+            match send_query(state.port, method, params, timeout) {
                 SendResult::Ok(result) => return Some(result),
                 SendResult::DaemonError(_) | SendResult::ConnectionFailed => return None,
             }

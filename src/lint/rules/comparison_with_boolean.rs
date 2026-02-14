@@ -95,10 +95,8 @@ fn generate_fix(
     let other_text = source[other_node.byte_range()].to_string();
 
     let replacement = match (op, bool_text) {
-        ("==", "true") => other_text,
-        ("==", "false") => format!("not {}", other_text),
-        ("!=", "true") => format!("not {}", other_text),
-        ("!=", "false") => other_text,
+        ("==", "true") | ("!=", "false") => other_text,
+        ("==", "false") | ("!=", "true") => format!("not {other_text}"),
         _ => return None,
     };
 

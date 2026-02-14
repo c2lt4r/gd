@@ -7,7 +7,8 @@ pub struct CompletionsArgs {
     pub shell: clap_complete::Shell,
 }
 
-pub fn exec(args: CompletionsArgs) -> Result<()> {
+#[allow(clippy::unnecessary_wraps)]
+pub fn exec(args: &CompletionsArgs) -> Result<()> {
     use clap::CommandFactory;
 
     let mut cmd = super::Cli::command();

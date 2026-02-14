@@ -38,9 +38,8 @@ fn check_functions(node: Node, src: &[u8], diags: &mut Vec<LintDiagnostic>) {
 }
 
 fn check_function_body(func: Node, src: &[u8], diags: &mut Vec<LintDiagnostic>) {
-    let body = match func.child_by_field_name("body") {
-        Some(b) => b,
-        None => return,
+    let Some(body) = func.child_by_field_name("body") else {
+        return;
     };
 
     // First pass: collect identifiers that have .is_valid() checks
@@ -241,8 +240,7 @@ fn check_callable_call(
         diags.push(LintDiagnostic {
             rule: "callable-null-check",
             message: format!(
-                "`{}.{}()` called without `{}.is_valid()` check",
-                obj_name, method, obj_name
+                "`{obj_name}.{method}()` called without `{obj_name}.is_valid()` check"
             ),
             severity: Severity::Warning,
             line: obj_node.start_position().row,

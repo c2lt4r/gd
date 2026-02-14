@@ -50,7 +50,7 @@ impl GodotClient {
             "rootUri": null,
             "capabilities": {},
         });
-        let result = self.send_request("initialize", params)?;
+        let result = self.send_request("initialize", &params)?;
 
         // Send initialized notification (no response expected)
         let notification = serde_json::json!({
@@ -101,7 +101,7 @@ impl GodotClient {
 
         let local_slash = local_root.to_slash_lossy();
         let local_uri_prefix = format!("file:///{}", local_slash.trim_start_matches('/'));
-        *self.local_prefix.lock().unwrap() = local_uri_prefix.clone();
+        (*self.local_prefix.lock().unwrap()).clone_from(&local_uri_prefix);
 
         // If godot_prefix was already set from a changeWorkspace notification
         // during read_response, keep it. Otherwise drain remaining init
@@ -171,7 +171,7 @@ impl GodotClient {
             "textDocument": { "uri": uri },
             "position": { "line": line, "character": character }
         });
-        self.send_request("textDocument/hover", params)
+        self.send_request("textDocument/hover", &params)
     }
 
     /// Request completions from Godot.
@@ -181,7 +181,7 @@ impl GodotClient {
             "position": { "line": line, "character": character },
             "context": { "triggerKind": 1 }
         });
-        self.send_request("textDocument/completion", params)
+        self.send_request("textDocument/completion", &params)
     }
 
     /// Request go-to-definition from Godot.
@@ -190,7 +190,7 @@ impl GodotClient {
             "textDocument": { "uri": uri },
             "position": { "line": line, "character": character }
         });
-        self.send_request("textDocument/definition", params)
+        self.send_request("textDocument/definition", &params)
     }
 
     // ── Internal ──────────────────────────────────────────────────────
@@ -202,7 +202,7 @@ impl GodotClient {
         current
     }
 
-    fn send_request(&self, method: &str, params: Value) -> Option<Value> {
+    fn send_request(&self, method: &str, params: &Value) -> Option<Value> {
         let id = self.next_id();
         let msg = serde_json::json!({
             "jsonrpc": "2.0",

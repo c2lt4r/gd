@@ -21,6 +21,7 @@ impl LintRule for NamingConvention {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn check_node(
     node: tree_sitter::Node,
     source: &str,
@@ -36,7 +37,7 @@ fn check_node(
                     let fixed = to_snake_case(name);
                     diags.push(LintDiagnostic {
                         rule: "naming-convention",
-                        message: format!("function `{}` should use snake_case: `{}`", name, fixed),
+                        message: format!("function `{name}` should use snake_case: `{fixed}`"),
                         severity: Severity::Warning,
                         line: name_node.start_position().row,
                         column: name_node.start_position().column,
@@ -59,8 +60,7 @@ fn check_node(
                     diags.push(LintDiagnostic {
                         rule: "naming-convention",
                         message: format!(
-                            "constant `{}` should use UPPER_SNAKE_CASE: `{}`",
-                            name, fixed
+                            "constant `{name}` should use UPPER_SNAKE_CASE: `{fixed}`"
                         ),
                         severity: Severity::Warning,
                         line: name_node.start_position().row,
@@ -84,7 +84,7 @@ fn check_node(
                     let fixed = to_snake_case(name);
                     diags.push(LintDiagnostic {
                         rule: "naming-convention",
-                        message: format!("variable `{}` should use snake_case: `{}`", name, fixed),
+                        message: format!("variable `{name}` should use snake_case: `{fixed}`"),
                         severity: Severity::Warning,
                         line: name_node.start_position().row,
                         column: name_node.start_position().column,
@@ -107,8 +107,7 @@ fn check_node(
                     diags.push(LintDiagnostic {
                         rule: "naming-convention",
                         message: format!(
-                            "class_name `{}` should use PascalCase: `{}`",
-                            name, fixed
+                            "class_name `{name}` should use PascalCase: `{fixed}`"
                         ),
                         severity: Severity::Warning,
                         line: name_node.start_position().row,
@@ -132,7 +131,7 @@ fn check_node(
                     let fixed = to_pascal_case(name);
                     diags.push(LintDiagnostic {
                         rule: "naming-convention",
-                        message: format!("class `{}` should use PascalCase: `{}`", name, fixed),
+                        message: format!("class `{name}` should use PascalCase: `{fixed}`"),
                         severity: Severity::Warning,
                         line: name_node.start_position().row,
                         column: name_node.start_position().column,

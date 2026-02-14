@@ -29,8 +29,7 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
             diags.push(LintDiagnostic {
                 rule: "loop-variable-name",
                 message: format!(
-                    "loop variable `{}` should use snake_case: `{}`",
-                    name, fixed
+                    "loop variable `{name}` should use snake_case: `{fixed}`"
                 ),
                 severity: Severity::Warning,
                 line: iter_node.start_position().row,

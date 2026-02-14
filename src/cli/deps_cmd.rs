@@ -30,7 +30,7 @@ struct DepsOutput {
     dependencies: HashMap<String, Vec<String>>,
 }
 
-pub fn exec(args: DepsArgs) -> Result<()> {
+pub fn exec(args: &DepsArgs) -> Result<()> {
     let root = if args.paths.is_empty() {
         std::env::current_dir().map_err(|e| miette!("Failed to get current directory: {e}"))?
     } else {
@@ -76,7 +76,7 @@ pub fn exec(args: DepsArgs) -> Result<()> {
                 println!("  rankdir=LR;");
                 println!("  node [shape=box];");
                 for dep in &dependents {
-                    println!("  \"{}\" -> \"{}\";", dep, target);
+                    println!("  \"{dep}\" -> \"{target}\";");
                 }
                 println!("}}");
             }
@@ -195,9 +195,8 @@ fn collect_deps(node: Node, source: &[u8], deps: &mut Vec<String>) {
 
 /// Extract dependencies from a .tscn/.tres file (ext_resource paths).
 fn extract_resource_dependencies(path: &Path) -> Vec<String> {
-    let source = match std::fs::read_to_string(path) {
-        Ok(s) => s,
-        Err(_) => return Vec::new(),
+    let Ok(source) = std::fs::read_to_string(path) else {
+        return Vec::new();
     };
 
     let ext = path.extension().and_then(|e| e.to_str());
@@ -236,7 +235,7 @@ fn extract_resource_dependencies(path: &Path) -> Vec<String> {
 /// Detect cycles using DFS with white/gray/black coloring.
 fn detect_cycles(dep_map: &HashMap<String, Vec<String>>) -> Vec<Vec<String>> {
     let mut cycles = Vec::new();
-    let mut white: HashSet<&str> = dep_map.keys().map(|s| s.as_str()).collect();
+    let mut white: HashSet<&str> = dep_map.keys().map(std::string::String::as_str).collect();
     let mut gray: HashSet<&str> = HashSet::new();
     let mut black: HashSet<&str> = HashSet::new();
     let mut path: Vec<&str> = Vec::new();
@@ -283,7 +282,7 @@ fn dfs_cycle<'a>(
                 // Found a cycle - extract it from path
                 let cycle_start = path.iter().position(|&n| n == dep_str).unwrap();
                 let mut cycle: Vec<String> =
-                    path[cycle_start..].iter().map(|s| s.to_string()).collect();
+                    path[cycle_start..].iter().map(std::string::ToString::to_string).collect();
                 cycle.push(dep.clone());
                 cycles.push(cycle);
             } else if white.contains(dep_str) {
@@ -337,7 +336,7 @@ fn output_dot(dep_map: &HashMap<String, Vec<String>>) {
     for file in &files {
         let deps = &dep_map[*file];
         for dep in deps {
-            println!("  \"{}\" -> \"{}\";", file, dep);
+            println!("  \"{file}\" -> \"{dep}\";");
         }
     }
 

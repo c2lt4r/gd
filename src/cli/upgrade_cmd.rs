@@ -24,7 +24,7 @@ pub struct UpgradeArgs {
     pub version: Option<String>,
 }
 
-pub fn exec(args: UpgradeArgs) -> Result<()> {
+pub fn exec(args: &UpgradeArgs) -> Result<()> {
     let current_version = env!("CARGO_PKG_VERSION");
 
     println!("Checking for updates...");
@@ -51,13 +51,13 @@ pub fn exec(args: UpgradeArgs) -> Result<()> {
                 "(update available)".green()
             );
         } else {
-            println!("Already up to date (v{})", current_version);
+            println!("Already up to date (v{current_version})");
         }
         return Ok(());
     }
 
     if !args.force && !is_newer(latest_clean, current_version) {
-        println!("Already up to date (v{})", current_version);
+        println!("Already up to date (v{current_version})");
         return Ok(());
     }
 

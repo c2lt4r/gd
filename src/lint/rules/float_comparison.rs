@@ -71,9 +71,9 @@ fn generate_fix(
     let right_text = &source[right?.byte_range()];
 
     let replacement = if op == "==" {
-        format!("is_equal_approx({}, {})", left_text, right_text)
+        format!("is_equal_approx({left_text}, {right_text})")
     } else {
-        format!("!is_equal_approx({}, {})", left_text, right_text)
+        format!("!is_equal_approx({left_text}, {right_text})")
     };
 
     Some(Fix {

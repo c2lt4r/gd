@@ -46,7 +46,8 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
     }
 }
 
-fn check_void_returns(node: Node, _source: &str, diags: &mut Vec<LintDiagnostic>) {
+#[allow(clippy::only_used_in_recursion)]
+fn check_void_returns(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
     if node.kind() == "return_statement" {
         // Check if return statement has a child (return value)
         let mut cursor = node.walk();
@@ -72,7 +73,7 @@ fn check_void_returns(node: Node, _source: &str, diags: &mut Vec<LintDiagnostic>
     let mut cursor = node.walk();
     if cursor.goto_first_child() {
         loop {
-            check_void_returns(cursor.node(), _source, diags);
+            check_void_returns(cursor.node(), source, diags);
             if !cursor.goto_next_sibling() {
                 break;
             }
@@ -80,7 +81,8 @@ fn check_void_returns(node: Node, _source: &str, diags: &mut Vec<LintDiagnostic>
     }
 }
 
-fn check_bare_returns(node: Node, _source: &str, diags: &mut Vec<LintDiagnostic>) {
+#[allow(clippy::only_used_in_recursion)]
+fn check_bare_returns(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
     if node.kind() == "return_statement" {
         // Check if return statement has no named children (bare return)
         let mut has_value = false;
@@ -114,7 +116,7 @@ fn check_bare_returns(node: Node, _source: &str, diags: &mut Vec<LintDiagnostic>
     let mut cursor = node.walk();
     if cursor.goto_first_child() {
         loop {
-            check_bare_returns(cursor.node(), _source, diags);
+            check_bare_returns(cursor.node(), source, diags);
             if !cursor.goto_next_sibling() {
                 break;
             }

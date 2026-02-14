@@ -41,7 +41,7 @@ struct TreeOutput {
     classes: Vec<ClassInfo>,
 }
 
-pub fn exec(args: TreeArgs) -> Result<()> {
+pub fn exec(args: &TreeArgs) -> Result<()> {
     // Scene hierarchy mode
     if let Some(ref scene_path) = args.scene {
         return exec_scene(scene_path, &args.format);
@@ -78,7 +78,7 @@ pub fn exec(args: TreeArgs) -> Result<()> {
         };
         let json = serde_json::to_string_pretty(&output)
             .map_err(|e| miette!("Failed to serialize JSON: {e}"))?;
-        println!("{}", json);
+        println!("{json}");
     } else {
         render_tree(&root, files.len(), &classes, args.classes_only);
     }
@@ -143,8 +143,7 @@ fn extract_class_info(path: &Path) -> Result<ClassInfo> {
     let final_class_name = class_name.unwrap_or_else(|| {
         path.file_stem()
             .and_then(|s| s.to_str())
-            .map(to_pascal_case)
-            .unwrap_or_else(|| "Unknown".to_string())
+            .map_or_else(|| "Unknown".to_string(), to_pascal_case)
     });
 
     let file_name = path
@@ -378,7 +377,7 @@ fn build_scene_tree(data: &scene::SceneData) -> SceneTreeNode {
     let mut root = SceneTreeNode {
         name: root_node.name.clone(),
         r#type: root_node.type_name.clone(),
-        script: script_display(&root_node.script),
+        script: script_display(root_node.script.as_ref()),
         children: Vec::new(),
     };
 
@@ -407,7 +406,7 @@ fn add_children(parent: &mut SceneTreeNode, parent_path: &str, remaining: &[scen
             let mut child = SceneTreeNode {
                 name: node.name.clone(),
                 r#type: node.type_name.clone(),
-                script: script_display(&node.script),
+                script: script_display(node.script.as_ref()),
                 children: Vec::new(),
             };
             add_children(&mut child, &child_path, remaining);
@@ -417,8 +416,8 @@ fn add_children(parent: &mut SceneTreeNode, parent_path: &str, remaining: &[scen
 }
 
 /// Extract a human-readable script path from the script property value.
-fn script_display(script: &Option<String>) -> Option<String> {
-    script.clone()
+fn script_display(script: Option<&String>) -> Option<String> {
+    script.cloned()
 }
 
 fn render_scene_node(node: &SceneTreeNode, prefix: &str, is_last: bool) {
@@ -452,9 +451,9 @@ fn render_scene_node(node: &SceneTreeNode, prefix: &str, is_last: bool) {
     let child_prefix = if prefix.is_empty() {
         "  ".to_string()
     } else if is_last {
-        format!("{}    ", prefix)
+        format!("{prefix}    ")
     } else {
-        format!("{}│   ", prefix)
+        format!("{prefix}│   ")
     };
 
     for (i, child) in node.children.iter().enumerate() {

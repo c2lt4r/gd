@@ -31,7 +31,7 @@ pub fn create_project(name: &str, template: &str) -> miette::Result<()> {
 
     fs::create_dir_all(project_dir)
         .into_diagnostic()
-        .wrap_err_with(|| format!("Failed to create directory '{}'", name))?;
+        .wrap_err_with(|| format!("Failed to create directory '{name}'"))?;
 
     let files: &[(&str, String)] = &[
         (
@@ -48,7 +48,7 @@ pub fn create_project(name: &str, template: &str) -> miette::Result<()> {
         let path = project_dir.join(filename);
         fs::write(&path, content)
             .into_diagnostic()
-            .wrap_err_with(|| format!("Failed to write {}", filename))?;
+            .wrap_err_with(|| format!("Failed to write {filename}"))?;
     }
 
     // Initialize git repo
@@ -90,6 +90,7 @@ pub fn create_project(name: &str, template: &str) -> miette::Result<()> {
 ///
 /// Accepts `owner/repo` or `owner/repo@ref` format. Downloads the repo as a zip,
 /// finds `project.godot` to determine the Godot project root, and extracts from there.
+#[allow(clippy::too_many_lines)]
 pub fn create_from_github(name: &str, from: &str) -> miette::Result<()> {
     // Parse owner/repo[@ref], stripping any GitHub URL prefix
     let from = from
@@ -134,8 +135,7 @@ pub fn create_from_github(name: &str, from: &str) -> miette::Result<()> {
 
     // Download zip archive from GitHub
     let url = format!(
-        "https://github.com/{}/{}/archive/{}.zip",
-        owner, repo, git_ref
+        "https://github.com/{owner}/{repo}/archive/{git_ref}.zip"
     );
     let response = ureq::get(&url)
         .call()
@@ -156,7 +156,7 @@ pub fn create_from_github(name: &str, from: &str) -> miette::Result<()> {
 
     fs::create_dir_all(project_dir)
         .into_diagnostic()
-        .wrap_err_with(|| format!("Failed to create directory '{}'", name))?;
+        .wrap_err_with(|| format!("Failed to create directory '{name}'"))?;
 
     // Extract files
     let mut file_count = 0usize;
@@ -168,9 +168,8 @@ pub fn create_from_github(name: &str, from: &str) -> miette::Result<()> {
         let file_path = file.name().to_string();
 
         // Strip the prefix to get the relative path within the project
-        let relative = match file_path.strip_prefix(&project_root_prefix) {
-            Some(r) => r,
-            None => continue,
+        let Some(relative) = file_path.strip_prefix(&project_root_prefix) else {
+            continue;
         };
 
         if relative.is_empty() {
@@ -281,7 +280,7 @@ fn find_project_root_in_archive(archive: &mut zip::ZipArchive<io::Cursor<Vec<u8>
 /// Query the GitHub API to find a repository's default branch.
 /// Falls back to "main" if the API call fails (e.g., rate-limited).
 fn resolve_default_branch(owner: &str, repo: &str) -> miette::Result<String> {
-    let url = format!("https://api.github.com/repos/{}/{}", owner, repo);
+    let url = format!("https://api.github.com/repos/{owner}/{repo}");
     match ureq::get(&url).header("User-Agent", "gd-cli").call() {
         Ok(mut resp) => {
             let info: serde_json::Value = resp

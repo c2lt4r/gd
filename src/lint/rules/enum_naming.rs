@@ -27,7 +27,7 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
                 let fixed = to_pascal_case(name);
                 diags.push(LintDiagnostic {
                     rule: "enum-naming",
-                    message: format!("enum `{}` should use PascalCase: `{}`", name, fixed),
+                    message: format!("enum `{name}` should use PascalCase: `{fixed}`"),
                     severity: Severity::Warning,
                     line: name_node.start_position().row,
                     column: name_node.start_position().column,
@@ -78,8 +78,7 @@ fn check_enum_values(enum_node: Node, source: &str, diags: &mut Vec<LintDiagnost
                                 diags.push(LintDiagnostic {
                                     rule: "enum-naming",
                                     message: format!(
-                                        "enum value `{}` should use UPPER_SNAKE_CASE: `{}`",
-                                        name, fixed
+                                        "enum value `{name}` should use UPPER_SNAKE_CASE: `{fixed}`"
                                     ),
                                     severity: Severity::Warning,
                                     line: name_node.start_position().row,

@@ -3,6 +3,7 @@ use std::path::Path;
 
 use clap::Args;
 use miette::Result;
+use owo_colors::OwoColorize;
 use serde::Serialize;
 use tree_sitter::Node;
 
@@ -37,7 +38,8 @@ struct ParseError {
     message: String,
 }
 
-pub fn exec(args: CheckArgs) -> Result<()> {
+#[allow(clippy::too_many_lines)]
+pub fn exec(args: &CheckArgs) -> Result<()> {
     let cwd = env::current_dir().unwrap_or_default();
     let config = Config::load(&cwd)?;
     let ignore_base = find_project_root(&cwd).unwrap_or_else(|| cwd.clone());
@@ -187,7 +189,6 @@ pub fn exec(args: CheckArgs) -> Result<()> {
         std::process::exit(1);
     }
 
-    use owo_colors::OwoColorize;
     println!("{} {} files checked", "✓".green(), checked);
     Ok(())
 }
@@ -318,8 +319,7 @@ fn friendly_kind(kind: &str) -> &str {
         "break_statement" => "break statement",
         "continue_statement" => "continue statement",
         "pass_statement" => "pass statement",
-        "assignment_statement" => "assignment",
-        "augmented_assignment_statement" => "assignment",
+        "assignment_statement" | "augmented_assignment_statement" => "assignment",
         other => other,
     }
 }

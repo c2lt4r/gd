@@ -34,13 +34,11 @@ fn collect_functions(
         if complexity > max_complexity {
             let func_name = node
                 .child_by_field_name("name")
-                .map(|n| &source[n.byte_range()])
-                .unwrap_or("<unknown>");
+                .map_or("<unknown>", |n| &source[n.byte_range()]);
             diags.push(LintDiagnostic {
                 rule: "cyclomatic-complexity",
                 message: format!(
-                    "function `{}` has cyclomatic complexity of {} (max {})",
-                    func_name, complexity, max_complexity
+                    "function `{func_name}` has cyclomatic complexity of {complexity} (max {max_complexity})"
                 ),
                 severity: Severity::Warning,
                 line: node.start_position().row,
@@ -101,10 +99,7 @@ fn count_branches(node: Node, source: &str, complexity: &mut usize, in_guard: bo
                 return;
             }
         }
-        "elif_clause" | "for_statement" | "while_statement" => {
-            *complexity += 1;
-        }
-        "pattern_section" => {
+        "elif_clause" | "for_statement" | "while_statement" | "pattern_section" => {
             *complexity += 1;
         }
         "binary_operator" => {

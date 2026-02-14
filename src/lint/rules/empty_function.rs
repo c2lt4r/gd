@@ -67,8 +67,7 @@ fn check_scope(scope: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
         if has_virtual_stubs && param_count(func) == 0 {
             let name = func
                 .child_by_field_name("name")
-                .map(|n| &source[n.byte_range()])
-                .unwrap_or("");
+                .map_or("", |n| &source[n.byte_range()]);
             if name.starts_with('_') {
                 continue;
             }
@@ -76,11 +75,10 @@ fn check_scope(scope: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
 
         let func_name = func
             .child_by_field_name("name")
-            .map(|n| &source[n.byte_range()])
-            .unwrap_or("<unknown>");
+            .map_or("<unknown>", |n| &source[n.byte_range()]);
         diags.push(LintDiagnostic {
             rule: "empty-function",
-            message: format!("function `{}` has an empty body (only `pass`)", func_name),
+            message: format!("function `{func_name}` has an empty body (only `pass`)"),
             severity: Severity::Warning,
             line: func.start_position().row,
             column: func.start_position().column,

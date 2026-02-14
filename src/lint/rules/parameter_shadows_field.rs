@@ -123,7 +123,7 @@ fn check_params(
             {
                 diags.push(LintDiagnostic {
                     rule: "parameter-shadows-field",
-                    message: format!("parameter `{}` shadows an instance variable", name),
+                    message: format!("parameter `{name}` shadows an instance variable"),
                     severity: Severity::Warning,
                     line: name_node.start_position().row,
                     column: name_node.start_position().column,

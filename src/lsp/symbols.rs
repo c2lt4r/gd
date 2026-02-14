@@ -1,4 +1,4 @@
-use tower_lsp::lsp_types::*;
+use tower_lsp::lsp_types::{DocumentSymbol, DocumentSymbolResponse, SymbolKind};
 
 use super::util::{node_range, node_text};
 
@@ -18,7 +18,7 @@ pub fn document_symbols(source: &str) -> Option<DocumentSymbolResponse> {
     Some(DocumentSymbolResponse::Nested(symbols))
 }
 
-#[allow(deprecated)]
+#[allow(deprecated, clippy::too_many_lines)]
 fn collect_symbols(node: tree_sitter::Node, source: &str, symbols: &mut Vec<DocumentSymbol>) {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {

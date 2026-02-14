@@ -3,7 +3,6 @@ use miette::{Result, miette};
 use owo_colors::OwoColorize;
 use std::fs;
 use std::io;
-use std::path::PathBuf;
 use std::process::Command as ProcessCommand;
 
 #[derive(Args)]
@@ -70,9 +69,9 @@ pub fn exec(args: AddonsArgs) -> Result<()> {
     match args.command {
         AddonsCommand::List => list_addons(),
         AddonsCommand::Install(install_args) => install_addon(install_args),
-        AddonsCommand::Remove(remove_args) => remove_addon(remove_args),
-        AddonsCommand::Search(search_args) => search_addons(search_args),
-        AddonsCommand::Update(update_args) => update_addons(update_args),
+        AddonsCommand::Remove(ref remove_args) => remove_addon(remove_args),
+        AddonsCommand::Search(ref search_args) => search_addons(search_args),
+        AddonsCommand::Update(ref update_args) => update_addons(update_args),
         AddonsCommand::Lock => lock_addons(),
     }
 }
@@ -245,7 +244,7 @@ fn install_from_git(
     // Find addon subdirectories (ones with plugin.cfg)
     let addon_entries: Vec<_> = fs::read_dir(&cloned_addons)
         .map_err(|e| miette!("Failed to read addons directory: {e}"))?
-        .filter_map(|e| e.ok())
+        .filter_map(std::result::Result::ok)
         .filter(|e| e.path().is_dir() && e.path().join("plugin.cfg").exists())
         .collect();
 
@@ -259,7 +258,7 @@ fn install_from_git(
     for entry in &addon_entries {
         let dir_name = entry.file_name();
         let target_name = if addon_entries.len() == 1 {
-            custom_name.map(std::ffi::OsStr::new).unwrap_or(&dir_name)
+            custom_name.map_or(dir_name.as_ref(), std::ffi::OsStr::new)
         } else {
             &dir_name
         };
@@ -297,7 +296,7 @@ fn install_from_git(
             }
             println!();
             if let Some(author) = &info.author {
-                println!("  Author: {}", author);
+                println!("  Author: {author}");
             }
             if let Some(desc) = &info.description {
                 println!("  {}", desc.dimmed());
@@ -326,6 +325,7 @@ fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Result<()
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)]
 fn install_from_asset_library(
     asset_id: &str,
     custom_name: Option<&str>,
@@ -338,7 +338,7 @@ fn install_from_asset_library(
     );
 
     // Get asset details
-    let url = format!("{}/{}", ASSET_API, asset_id);
+    let url = format!("{ASSET_API}/{asset_id}");
     let mut response = ureq::get(&url)
         .call()
         .map_err(|e| miette!("Failed to fetch asset details: {e}"))?;
@@ -513,7 +513,7 @@ fn install_from_asset_library_by_name(
     addons_dir: &std::path::Path,
     godot_version: &str,
 ) -> Result<()> {
-    println!("Searching Asset Library for '{}'...", name);
+    println!("Searching Asset Library for '{name}'...");
 
     let search_url = asset_search_url(name);
 
@@ -533,7 +533,7 @@ fn install_from_asset_library_by_name(
     install_from_asset_library(&asset.asset_id, custom_name, addons_dir, godot_version)
 }
 
-fn remove_addon(args: RemoveArgs) -> Result<()> {
+fn remove_addon(args: &RemoveArgs) -> Result<()> {
     let cwd =
         std::env::current_dir().map_err(|e| miette!("Failed to get current directory: {e}"))?;
     let project = crate::core::project::GodotProject::discover(&cwd)?;
@@ -574,7 +574,7 @@ struct PluginInfo {
     version: Option<String>,
 }
 
-fn parse_plugin_cfg(path: &PathBuf) -> Result<PluginInfo> {
+fn parse_plugin_cfg(path: &std::path::Path) -> Result<PluginInfo> {
     let content =
         fs::read_to_string(path).map_err(|e| miette!("Failed to read plugin.cfg: {e}"))?;
 
@@ -604,7 +604,7 @@ fn parse_plugin_cfg(path: &PathBuf) -> Result<PluginInfo> {
     Ok(info)
 }
 
-fn search_addons(args: SearchArgs) -> Result<()> {
+fn search_addons(args: &SearchArgs) -> Result<()> {
     println!("Searching Asset Library for '{}'...\n", args.query);
 
     let search_url = asset_search_url(&args.query);
@@ -663,7 +663,8 @@ struct UpdateInfo {
     asset_id: String,
 }
 
-fn update_addons(args: UpdateArgs) -> Result<()> {
+#[allow(clippy::too_many_lines)]
+fn update_addons(args: &UpdateArgs) -> Result<()> {
     let cwd =
         std::env::current_dir().map_err(|e| miette!("Failed to get current directory: {e}"))?;
     let project = crate::core::project::GodotProject::discover(&cwd)?;

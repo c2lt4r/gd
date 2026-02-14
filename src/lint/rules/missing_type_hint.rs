@@ -37,8 +37,7 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
                         diags.push(LintDiagnostic {
                             rule: "missing-type-hint",
                             message: format!(
-                                "parameter `{}` in function `{}` has no type hint",
-                                param_name, func_name
+                                "parameter `{param_name}` in function `{func_name}` has no type hint"
                             ),
                             severity: Severity::Warning,
                             line: child.start_position().row,
@@ -58,8 +57,7 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
                             diags.push(LintDiagnostic {
                                 rule: "missing-type-hint",
                                 message: format!(
-                                    "parameter `{}` in function `{}` has no type hint",
-                                    param_name, func_name
+                                    "parameter `{param_name}` in function `{func_name}` has no type hint"
                                 ),
                                 severity: Severity::Warning,
                                 line: name_node.start_position().row,
@@ -83,7 +81,7 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
             if let Some(name_node) = name_node {
                 diags.push(LintDiagnostic {
                     rule: "missing-type-hint",
-                    message: format!("function `{}` has no return type hint", func_name),
+                    message: format!("function `{func_name}` has no return type hint"),
                     severity: Severity::Warning,
                     line: name_node.start_position().row,
                     column: name_node.start_position().column,

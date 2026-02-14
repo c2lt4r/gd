@@ -18,7 +18,18 @@ mod workspace;
 
 use dashmap::DashMap;
 use tower_lsp::jsonrpc::Result;
-use tower_lsp::lsp_types::*;
+use tower_lsp::lsp_types::{
+    CodeActionParams, CodeActionResponse, CompletionItem, CompletionItemKind, CompletionParams,
+    CompletionResponse, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
+    DidOpenTextDocumentParams, DidSaveTextDocumentParams, DocumentFormattingParams,
+    DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse,
+    Hover, HoverContents, HoverParams, InitializeParams, InitializeResult, InitializedParams,
+    Location, MarkupContent, MarkupKind, MessageType, OneOf, Position, PrepareRenameResponse,
+    Range, ReferenceParams, RenameOptions, RenameParams, ServerCapabilities, ServerInfo, TextEdit,
+    TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind, Url,
+    WorkDoneProgressOptions, WorkspaceEdit,
+    CodeActionProviderCapability, CompletionOptions, HoverProviderCapability,
+};
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
 /// In-memory state for a single open document.
@@ -106,7 +117,7 @@ impl LanguageServer for Backend {
                 references_provider: Some(OneOf::Left(true)),
                 rename_provider: Some(OneOf::Right(RenameOptions {
                     prepare_provider: Some(true),
-                    work_done_progress_options: Default::default(),
+                    work_done_progress_options: WorkDoneProgressOptions::default(),
                 })),
                 ..Default::default()
             },
@@ -319,8 +330,8 @@ impl LanguageServer for Backend {
             .ok()
             .flatten()
                 && let Some(def_file) = result.get("file").and_then(|f| f.as_str())
-                && let Some(def_line) = result.get("line").and_then(|l| l.as_u64())
-                && let Some(def_col) = result.get("column").and_then(|c| c.as_u64())
+                && let Some(def_line) = result.get("line").and_then(serde_json::Value::as_u64)
+                && let Some(def_col) = result.get("column").and_then(serde_json::Value::as_u64)
             {
                 // Convert back to LSP 0-based positions
                 let def_line = def_line.saturating_sub(1) as u32;
@@ -336,9 +347,8 @@ impl LanguageServer for Backend {
                 if let Ok(def_uri) = Url::from_file_path(&def_path) {
                     let end_col = result
                         .get("end_column")
-                        .and_then(|c| c.as_u64())
-                        .map(|c| c.saturating_sub(1) as u32)
-                        .unwrap_or(def_col);
+                        .and_then(serde_json::Value::as_u64)
+                        .map_or(def_col, |c| c.saturating_sub(1) as u32);
                     return Ok(Some(GotoDefinitionResponse::Scalar(Location {
                         uri: def_uri,
                         range: Range {
@@ -486,7 +496,7 @@ impl LanguageServer for Backend {
                         let detail = item
                             .get("detail")
                             .and_then(|d| d.as_str())
-                            .map(|s| s.to_string());
+                            .map(std::string::ToString::to_string);
                         Some(CompletionItem {
                             label,
                             kind,

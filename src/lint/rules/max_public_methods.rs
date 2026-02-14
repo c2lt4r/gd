@@ -25,8 +25,7 @@ impl LintRule for MaxPublicMethods {
             diags.push(LintDiagnostic {
                 rule: "max-public-methods",
                 message: format!(
-                    "script has {} public methods (max {})",
-                    top_level_count, max_methods
+                    "script has {top_level_count} public methods (max {max_methods})"
                 ),
                 severity: Severity::Warning,
                 line: 0,
@@ -76,8 +75,7 @@ fn check_classes(node: Node, source: &str, max_methods: usize, diags: &mut Vec<L
             if child.kind() == "class_definition" {
                 let class_name = child
                     .child_by_field_name("name")
-                    .map(|n| &source[n.byte_range()])
-                    .unwrap_or("<unknown>");
+                    .map_or("<unknown>", |n| &source[n.byte_range()]);
 
                 // Count public methods in the class body
                 if let Some(body) = child.child_by_field_name("body") {
@@ -86,8 +84,7 @@ fn check_classes(node: Node, source: &str, max_methods: usize, diags: &mut Vec<L
                         diags.push(LintDiagnostic {
                             rule: "max-public-methods",
                             message: format!(
-                                "class `{}` has {} public methods (max {})",
-                                class_name, count, max_methods
+                                "class `{class_name}` has {count} public methods (max {max_methods})"
                             ),
                             severity: Severity::Warning,
                             line: child.start_position().row,
@@ -125,23 +122,25 @@ mod tests {
     }
 
     fn make_methods(public: usize, private: usize) -> String {
+        use std::fmt::Write;
         let mut s = String::new();
         for i in 0..public {
-            s.push_str(&format!("func method_{}():\n\tpass\n\n", i));
+            write!(s, "func method_{i}():\n\tpass\n\n").unwrap();
         }
         for i in 0..private {
-            s.push_str(&format!("func _private_{}():\n\tpass\n\n", i));
+            write!(s, "func _private_{i}():\n\tpass\n\n").unwrap();
         }
         s
     }
 
     fn make_class_methods(class_name: &str, public: usize, private: usize) -> String {
+        use std::fmt::Write;
         let mut s = format!("class {class_name}:\n");
         for i in 0..public {
-            s.push_str(&format!("\tfunc method_{}():\n\t\tpass\n\n", i));
+            write!(s, "\tfunc method_{i}():\n\t\tpass\n\n").unwrap();
         }
         for i in 0..private {
-            s.push_str(&format!("\tfunc _private_{}():\n\t\tpass\n\n", i));
+            write!(s, "\tfunc _private_{i}():\n\t\tpass\n\n").unwrap();
         }
         s
     }

@@ -39,8 +39,7 @@ impl LintRule for SignalNotConnected {
                 diags.push(LintDiagnostic {
                     rule: "signal-not-connected",
                     message: format!(
-                        "signal `{}` is emitted but never connected in this file",
-                        name
+                        "signal `{name}` is emitted but never connected in this file"
                     ),
                     severity: Severity::Info,
                     line: *line,
@@ -179,12 +178,11 @@ fn check_legacy_call(
         return;
     }
 
-    let args = match node
+    let Some(args) = node
         .children(&mut node.walk())
         .find(|c| c.kind() == "arguments")
-    {
-        Some(a) => a,
-        None => return,
+    else {
+        return;
     };
 
     // First string argument is the signal name

@@ -29,13 +29,11 @@ fn check_node(node: Node, source: &str, max_params: usize, diags: &mut Vec<LintD
         if count > max_params {
             let func_name = node
                 .child_by_field_name("name")
-                .map(|n| &source[n.byte_range()])
-                .unwrap_or("<unknown>");
+                .map_or("<unknown>", |n| &source[n.byte_range()]);
             diags.push(LintDiagnostic {
                 rule: "too-many-parameters",
                 message: format!(
-                    "function `{}` has {} parameters (max {})",
-                    func_name, count, max_params
+                    "function `{func_name}` has {count} parameters (max {max_params})"
                 ),
                 severity: Severity::Warning,
                 line: node.start_position().row,

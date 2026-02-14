@@ -44,7 +44,7 @@ pub fn exec(args: LintArgs) -> Result<()> {
     let severity_filter = args
         .severity
         .as_deref()
-        .map(|s| s.parse::<Severity>())
+        .map(str::parse::<Severity>)
         .transpose()
         .map_err(|e| miette::miette!("{e}"))?;
 

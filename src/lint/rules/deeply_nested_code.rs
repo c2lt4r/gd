@@ -29,8 +29,7 @@ fn collect_functions(node: Node, source: &str, max_depth: usize, diags: &mut Vec
     {
         let func_name = node
             .child_by_field_name("name")
-            .map(|n| &source[n.byte_range()])
-            .unwrap_or("<unknown>");
+            .map_or("<unknown>", |n| &source[n.byte_range()]);
         let _ = check_depth(body, source, func_name, 0, max_depth, diags);
     }
 
@@ -93,8 +92,7 @@ fn check_depth(
                 diags.push(LintDiagnostic {
                     rule: "deeply-nested-code",
                     message: format!(
-                        "function `{}` has code nested {} levels deep (max {})",
-                        func_name, new_depth, max_depth
+                        "function `{func_name}` has code nested {new_depth} levels deep (max {max_depth})"
                     ),
                     severity: Severity::Warning,
                     line: child.start_position().row,

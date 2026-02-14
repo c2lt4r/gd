@@ -88,8 +88,7 @@ script = ExtResource("1_abc")
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains("broken resource path"),
-        "should report broken resource path in JSON output: {}",
-        stdout
+        "should report broken resource path in JSON output: {stdout}"
     );
 }
 
@@ -127,8 +126,7 @@ fn test_check_tscn_orphaned_ext_resource() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains("orphaned"),
-        "should report orphaned ext_resource: {}",
-        stdout
+        "should report orphaned ext_resource: {stdout}"
     );
 }
 
@@ -203,7 +201,9 @@ fn test_deps_include_resources() {
     assert!(deps.is_some(), "should have dependencies object");
 
     let deps = deps.unwrap();
-    let has_tscn_entry = deps.keys().any(|k| k.ends_with(".tscn"));
+    let has_tscn_entry = deps
+        .keys()
+        .any(|k| std::path::Path::new(k).extension().is_some_and(|e| e.eq_ignore_ascii_case("tscn")));
     assert!(has_tscn_entry, "dependency map should include .tscn files");
 
     // The .tscn should depend on player.gd

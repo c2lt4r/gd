@@ -11,7 +11,7 @@ pub struct CleanArgs {
     pub keep_cache: bool,
 }
 
-pub fn exec(args: CleanArgs) -> Result<()> {
+pub fn exec(args: &CleanArgs) -> Result<()> {
     let cwd = env::current_dir().unwrap_or_default();
     let project = crate::core::project::GodotProject::discover(&cwd)?;
 
@@ -31,10 +31,10 @@ pub fn exec(args: CleanArgs) -> Result<()> {
         }
     }
 
-    if !removed {
-        println!("{} Nothing to clean", "✓".green());
-    } else {
+    if removed {
         println!("{} Clean complete", "✓".green());
+    } else {
+        println!("{} Nothing to clean", "✓".green());
     }
     Ok(())
 }

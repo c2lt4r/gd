@@ -516,6 +516,7 @@ fn read_content(input_file: Option<&str>) -> Result<String> {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 pub fn exec(args: LspArgs) -> Result<()> {
     let Some(command) = args.command else {
         // No subcommand — start the LSP server (backward compatible)
@@ -686,7 +687,7 @@ pub fn exec(args: LspArgs) -> Result<()> {
             let mut result = crate::lsp::query::query_symbols(&file)?;
             let kind_filter: Vec<String> = kind
                 .iter()
-                .flat_map(|s| s.split(',').map(|k| k.trim().to_lowercase().to_string()))
+                .flat_map(|s| s.split(',').map(|k| k.trim().to_lowercase()))
                 // "field" and "property" are aliases for "variable" + "field"
                 .flat_map(|k| match k.as_str() {
                     "field" | "property" => vec!["variable".to_string(), "field".to_string()],
@@ -728,7 +729,7 @@ pub fn exec(args: LspArgs) -> Result<()> {
                 };
                 for (i, line) in result.content.lines().enumerate() {
                     let line_num = result.start_line as usize + i;
-                    println!("{line_num:>width$}\t{line}", width = width);
+                    println!("{line_num:>width$}\t{line}");
                 }
             }
             Ok(())

@@ -50,7 +50,7 @@ fn check_dict(dict_node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
                 if !seen.insert(key_text.clone()) {
                     diags.push(LintDiagnostic {
                         rule: "duplicate-key",
-                        message: format!("duplicate dictionary key {}", key_text),
+                        message: format!("duplicate dictionary key {key_text}"),
                         severity: Severity::Warning,
                         line: key_node.start_position().row,
                         column: key_node.start_position().column,

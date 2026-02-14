@@ -18,7 +18,8 @@ impl LintRule for UnnecessaryPass {
     }
 }
 
-fn check_node(node: Node, source_bytes: &[u8], _source: &str, diags: &mut Vec<LintDiagnostic>) {
+#[allow(clippy::only_used_in_recursion)]
+fn check_node(node: Node, source_bytes: &[u8], source: &str, diags: &mut Vec<LintDiagnostic>) {
     // Check body nodes: if they have more than one non-comment named child and one is pass_statement
     if node.kind() == "body" || node.kind() == "block" {
         let named_count = node.named_child_count();
@@ -53,7 +54,7 @@ fn check_node(node: Node, source_bytes: &[u8], _source: &str, diags: &mut Vec<Li
     let mut cursor = node.walk();
     if cursor.goto_first_child() {
         loop {
-            check_node(cursor.node(), source_bytes, _source, diags);
+            check_node(cursor.node(), source_bytes, source, diags);
             if !cursor.goto_next_sibling() {
                 break;
             }

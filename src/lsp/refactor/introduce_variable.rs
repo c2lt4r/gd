@@ -107,11 +107,11 @@ pub fn introduce_variable(
 }
 
 /// Walk up from the deepest node at the given range to find the first expression node.
-fn find_expression_at<'a>(
-    root: Node<'a>,
+fn find_expression_at(
+    root: Node<'_>,
     start: tree_sitter::Point,
     end: tree_sitter::Point,
-) -> Option<Node<'a>> {
+) -> Option<Node<'_>> {
     let node = root.descendant_for_point_range(start, end)?;
     let mut current = node;
     loop {

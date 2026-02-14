@@ -54,9 +54,8 @@ fn check_function(func: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
     };
 
     // Get body
-    let body = match func.child_by_field_name("body") {
-        Some(b) => b,
-        None => return,
+    let Some(body) = func.child_by_field_name("body") else {
+        return;
     };
 
     // Body must have exactly one named non-comment child
@@ -75,22 +74,18 @@ fn check_function(func: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
     // - return_statement containing a call
     // - expression_statement containing a call
     let call_node = match stmt.kind() {
-        "return_statement" => find_call_child(stmt),
-        "expression_statement" => find_call_child(stmt),
+        "return_statement" | "expression_statement" => find_call_child(stmt),
         _ => None,
     };
 
-    let call_node = match call_node {
-        Some(c) => c,
-        None => return,
+    let Some(call_node) = call_node else {
+        return;
     };
 
     // The call must be a method call on self.something (attribute > attribute_call)
     // Pattern: self.ref.method(args) or ref.method(args)
-    let target = extract_delegate_target(call_node, src);
-    let target = match target {
-        Some(t) => t,
-        None => return,
+    let Some(target) = extract_delegate_target(call_node, src) else {
+        return;
     };
 
     // Check that the call arguments exactly match the function parameters
@@ -101,8 +96,7 @@ fn check_function(func: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
     diags.push(LintDiagnostic {
         rule: "duplicate-delegate",
         message: format!(
-            "`{}` is a pure delegate to `{}`; consider inlining or removing",
-            func_name, target
+            "`{func_name}` is a pure delegate to `{target}`; consider inlining or removing"
         ),
         severity: Severity::Info,
         line: func.start_position().row,
@@ -224,15 +218,14 @@ fn args_match_params(call_node: Node, src: &[u8], params: &[&str]) -> bool {
             .find(|c| c.kind() == "arguments")
     };
 
-    let args_node = match args_node {
-        Some(a) => a,
-        None => return params.is_empty(),
+    let Some(args_node) = args_node else {
+        return params.is_empty();
     };
 
     // Collect argument identifiers
     let args: Vec<&str> = args_node
         .children(&mut args_node.walk())
-        .filter(|c| c.is_named())
+        .filter(tree_sitter::Node::is_named)
         .filter_map(|c| {
             if c.kind() == "identifier" {
                 c.utf8_text(src).ok()

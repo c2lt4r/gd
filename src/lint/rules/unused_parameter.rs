@@ -43,9 +43,8 @@ fn check_function(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
     let src = source.as_bytes();
 
     // Collect parameter names
-    let params_node = match node.child_by_field_name("parameters") {
-        Some(p) => p,
-        None => return,
+    let Some(params_node) = node.child_by_field_name("parameters") else {
+        return;
     };
 
     let mut params: HashMap<String, (usize, usize, usize)> = HashMap::new();
@@ -56,9 +55,8 @@ fn check_function(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
     }
 
     // Collect all identifier references in the function body
-    let body = match node.child_by_field_name("body") {
-        Some(b) => b,
-        None => return,
+    let Some(body) = node.child_by_field_name("body") else {
+        return;
     };
 
     let mut references: HashSet<String> = HashSet::new();
@@ -76,8 +74,7 @@ fn check_function(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
         diags.push(LintDiagnostic {
             rule: "unused-parameter",
             message: format!(
-                "parameter `{}` is never used; prefix with `_` if intentional",
-                name
+                "parameter `{name}` is never used; prefix with `_` if intentional"
             ),
             severity: Severity::Warning,
             line: *line,
@@ -116,8 +113,6 @@ fn collect_parameters(
                     );
                 }
             }
-            // Variadic rest parameter (...args): skip, always implicitly used
-            "variadic_parameter" => {}
             // Typed, default, or typed+default: name is first child (identifier)
             "typed_parameter" | "default_parameter" | "typed_default_parameter" => {
                 if let Some(name_node) = child.child(0)

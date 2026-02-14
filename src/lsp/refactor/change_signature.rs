@@ -4,6 +4,8 @@ use std::path::Path;
 use miette::Result;
 use serde::Serialize;
 
+use std::fmt::Write;
+
 use super::inline_method::{
     ParamInfo, extract_call_arguments, extract_function_params, find_call_at,
 };
@@ -23,7 +25,7 @@ pub struct ChangeSignatureOutput {
     pub warnings: Vec<String>,
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 pub fn change_signature(
     file: &Path,
     name: &str,
@@ -65,10 +67,10 @@ pub fn change_signature(
         .map(|p| {
             let mut s = p.name.clone();
             if let Some(ref t) = p.type_hint {
-                s.push_str(&format!(": {t}"));
+                let _ = write!(s, ": {t}");
             }
             if let Some(ref d) = p.default {
-                s.push_str(&format!(" = {d}"));
+                let _ = write!(s, " = {d}");
             }
             s
         })
@@ -126,7 +128,7 @@ pub fn change_signature(
 
     // Apply reorder
     if let Some(order_str) = reorder {
-        let order: Vec<&str> = order_str.split(',').map(|s| s.trim()).collect();
+        let order: Vec<&str> = order_str.split(',').map(str::trim).collect();
         let mut reordered = Vec::new();
         for name_ref in &order {
             let idx = existing_params.iter().position(|p| p.name == *name_ref);
@@ -149,10 +151,10 @@ pub fn change_signature(
         .map(|p| {
             let mut s = p.name.clone();
             if let Some(ref t) = p.type_hint {
-                s.push_str(&format!(": {t}"));
+                let _ = write!(s, ": {t}");
             }
             if let Some(ref d) = p.default {
-                s.push_str(&format!(" = {d}"));
+                let _ = write!(s, " = {d}");
             }
             s
         })
@@ -191,7 +193,9 @@ pub fn change_signature(
 
     let mut call_sites_updated = 0u32;
 
-    if !dry_run {
+    if dry_run {
+        call_sites_updated = call_sites.len() as u32;
+    } else {
         // 1. Update function definition (signature + body renames)
         let mut new_source = source.clone();
         if let Some(pn) = params_node {
@@ -275,8 +279,6 @@ pub fn change_signature(
                     .map_err(|e| miette::miette!("cannot write {}: {e}", call_file.display()))?;
             }
         }
-    } else {
-        call_sites_updated = call_sites.len() as u32;
     }
 
     // Check for non-call references (variable references to the function name)
@@ -398,7 +400,7 @@ fn rewrite_call_arguments(
     let mut new_args = Vec::new();
     let mut placeholders = Vec::new();
     let reorder_names: Option<Vec<&str>> =
-        reorder.map(|r| r.split(',').map(|s| s.trim()).collect());
+        reorder.map(|r| r.split(',').map(str::trim).collect());
 
     for param in new_params {
         if let Some(arg) = arg_map.get(&param.name) {

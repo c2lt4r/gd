@@ -33,7 +33,7 @@ pub fn print_diagnostic(
         let start = diag.line.saturating_sub(ctx);
         let end = (diag.line + ctx + 1).min(lines.len());
         let max_line_num = end; // 1-indexed
-        let gutter_width = format!("{}", max_line_num).len();
+        let gutter_width = format!("{max_line_num}").len();
 
         eprintln!("{:>width$} {}", "", "|".cyan(), width = gutter_width);
 
@@ -107,7 +107,7 @@ pub struct FileLintResult {
 /// Print all results as JSON.
 pub fn print_json(results: &[FileLintResult]) {
     let json = serde_json::to_string_pretty(results).unwrap_or_else(|_| "[]".to_string());
-    println!("{}", json);
+    println!("{json}");
 }
 
 /// Get a short description for a lint rule.

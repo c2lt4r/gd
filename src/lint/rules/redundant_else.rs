@@ -36,9 +36,8 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
 
 fn check_if_statement(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
     // Get the body of the if branch (first `body` child)
-    let body = match node.child_by_field_name("body") {
-        Some(b) => b,
-        None => return,
+    let Some(body) = node.child_by_field_name("body") else {
+        return;
     };
 
     // Check if the body always terminates
@@ -164,7 +163,7 @@ fn generate_else_fix(else_node: &Node, source: &str) -> Option<Fix> {
         } else if line.len() >= strip_len
             && line.as_bytes()[..strip_len]
                 .iter()
-                .all(|b| b.is_ascii_whitespace())
+                .all(u8::is_ascii_whitespace)
         {
             result.push_str(&line[strip_len..]);
             result.push('\n');

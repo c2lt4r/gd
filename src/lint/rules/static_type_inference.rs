@@ -27,8 +27,7 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
         {
             let var_name = node
                 .child_by_field_name("name")
-                .map(|n| &source[n.byte_range()])
-                .unwrap_or("variable");
+                .map_or("variable", |n| &source[n.byte_range()]);
             let name_node = node.child_by_field_name("name");
             let (line, col) = if let Some(n) = name_node {
                 (n.start_position().row, n.start_position().column)
@@ -39,8 +38,7 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
             diags.push(LintDiagnostic {
                 rule: "static-type-inference",
                 message: format!(
-                    "variable `{}` could have an explicit type: `{}`",
-                    var_name, inferred
+                    "variable `{var_name}` could have an explicit type: `{inferred}`"
                 ),
                 severity: Severity::Warning,
                 line,
@@ -72,7 +70,6 @@ fn infer_type(node: &Node, source: &str) -> Option<&'static str> {
         "true" | "false" => Some("bool"),
         "array" => Some("Array"),
         "dictionary" => Some("Dictionary"),
-        "null" => None, // null is ambiguous
         // Handle negative literals like -5, -3.14
         "unary_operator" => {
             let text = &source[node.byte_range()];

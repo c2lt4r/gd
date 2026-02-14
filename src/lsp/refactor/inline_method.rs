@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt::Write;
 use std::path::Path;
 
 use miette::Result;
@@ -21,6 +22,7 @@ pub struct InlineMethodOutput {
     pub warnings: Vec<String>,
 }
 
+#[allow(clippy::too_many_lines)]
 pub fn inline_method(
     file: &Path,
     line: usize,   // 1-based
@@ -93,7 +95,7 @@ pub fn inline_method(
         ));
     }
     // If there's a return, it must be the last top-level statement
-    if return_count == 1 && body_stmts.last().map(|s| s.kind()) != Some("return_statement") {
+    if return_count == 1 && body_stmts.last().map(tree_sitter::Node::kind) != Some("return_statement") {
         return Err(miette::miette!(
             "cannot inline function with non-trailing return statement"
         ));
@@ -119,7 +121,7 @@ pub fn inline_method(
     for (i, param) in func_params.iter().enumerate() {
         let arg = call_args
             .get(i)
-            .map(|s| s.as_str())
+            .map(std::string::String::as_str)
             .or(param.default.as_deref())
             .unwrap_or(&param.name);
         param_map.insert(param.name.clone(), arg.to_string());
@@ -168,14 +170,12 @@ pub fn inline_method(
 
     // Check if call is part of an assignment (var x = func() or x = func())
     let call_parent = call_node.parent();
-    let is_assignment = call_parent
-        .map(|p| {
-            matches!(
-                p.kind(),
-                "assignment" | "augmented_assignment" | "variable_statement"
-            )
-        })
-        .unwrap_or(false);
+    let is_assignment = call_parent.is_some_and(|p| {
+        matches!(
+            p.kind(),
+            "assignment" | "augmented_assignment" | "variable_statement"
+        )
+    });
 
     if !inlined_text.is_empty() {
         // Re-indent non-return body statements
@@ -196,28 +196,27 @@ pub fn inline_method(
                         .child_by_field_name("name")
                         .and_then(|n| n.utf8_text(source.as_bytes()).ok())
                         .unwrap_or("x");
-                    inlined_lines_text
-                        .push_str(&format!("{call_indent}var {var_name} = {ret_expr}\n"));
+                    let _ =
+                        writeln!(inlined_lines_text, "{call_indent}var {var_name} = {ret_expr}");
                 } else {
                     // x = func() → body + x = expr
                     let left = parent
                         .child_by_field_name("left")
                         .and_then(|n| n.utf8_text(source.as_bytes()).ok())
                         .unwrap_or("x");
-                    inlined_lines_text.push_str(&format!("{call_indent}{left} = {ret_expr}\n"));
+                    let _ = writeln!(inlined_lines_text, "{call_indent}{left} = {ret_expr}");
                 }
             }
         } else {
             // Standalone call with return → just add the expression (discard return value)
-            if !inlined_text.is_empty() {
-                // Body already added above; the return value is discarded
-            } else {
-                inlined_lines_text.push_str(&format!("{call_indent}{ret_expr}\n"));
+            if inlined_text.is_empty() {
+                let _ = writeln!(inlined_lines_text, "{call_indent}{ret_expr}");
             }
+            // else: Body already added above; the return value is discarded
         }
     } else if inlined_text.is_empty() {
         // Void function, single `pass` → remove the call line entirely
-        inlined_lines_text.push_str(&format!("{call_indent}pass\n"));
+        let _ = writeln!(inlined_lines_text, "{call_indent}pass");
     }
 
     let total_inlined = inlined_lines_text.lines().count() as u32;
@@ -390,7 +389,9 @@ pub fn inline_method_by_name(
 
     let mut inlined_count = 0u32;
 
-    if !dry_run {
+    if dry_run {
+        inlined_count = sites_to_inline.len() as u32;
+    } else {
         // Inline call sites from bottom to top to preserve line numbers
         let mut sorted_sites = sites_to_inline.clone();
         sorted_sites.sort_by(|a, b| b.0.cmp(&a.0));
@@ -399,7 +400,7 @@ pub fn inline_method_by_name(
             // Re-read and re-parse after each inline (source changes)
             match inline_method(file, *line, *column, false, project_root) {
                 Ok(_) => inlined_count += 1,
-                Err(e) => warnings.push(format!("failed to inline at {}:{}: {e}", line, column)),
+                Err(e) => warnings.push(format!("failed to inline at {line}:{column}: {e}")),
             }
         }
 
@@ -419,8 +420,6 @@ pub fn inline_method_by_name(
                     .map_err(|e| miette::miette!("cannot write file: {e}"))?;
             }
         }
-    } else {
-        inlined_count = sites_to_inline.len() as u32;
     }
 
     // Check if function was deleted (either by inline_method for single callsite,
@@ -552,7 +551,7 @@ pub(super) fn extract_function_params(func: Node, source: &str) -> Vec<ParamInfo
                         let type_hint = child
                             .child_by_field_name("type")
                             .and_then(|t| t.utf8_text(source.as_bytes()).ok())
-                            .map(|s| s.to_string());
+                            .map(std::string::ToString::to_string);
                         params.push(ParamInfo {
                             name: source[name_node.byte_range()].to_string(),
                             type_hint,
@@ -565,7 +564,7 @@ pub(super) fn extract_function_params(func: Node, source: &str) -> Vec<ParamInfo
                         let default = child
                             .child_by_field_name("value")
                             .and_then(|v| v.utf8_text(source.as_bytes()).ok())
-                            .map(|s| s.to_string());
+                            .map(std::string::ToString::to_string);
                         params.push(ParamInfo {
                             name: source[name_node.byte_range()].to_string(),
                             type_hint: None,
@@ -578,11 +577,11 @@ pub(super) fn extract_function_params(func: Node, source: &str) -> Vec<ParamInfo
                         let type_hint = child
                             .child_by_field_name("type")
                             .and_then(|t| t.utf8_text(source.as_bytes()).ok())
-                            .map(|s| s.to_string());
+                            .map(std::string::ToString::to_string);
                         let default = child
                             .child_by_field_name("value")
                             .and_then(|v| v.utf8_text(source.as_bytes()).ok())
-                            .map(|s| s.to_string());
+                            .map(std::string::ToString::to_string);
                         params.push(ParamInfo {
                             name: source[name_node.byte_range()].to_string(),
                             type_hint,

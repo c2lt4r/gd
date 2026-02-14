@@ -1,3 +1,5 @@
+#![allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+
 use clap::Args;
 use miette::{Result, miette};
 use owo_colors::OwoColorize;
@@ -61,6 +63,7 @@ struct TestSummary {
     total: usize,
 }
 
+#[allow(clippy::trivially_copy_pass_by_ref)]
 fn is_zero(n: &usize) -> bool {
     *n == 0
 }
@@ -68,6 +71,7 @@ fn is_zero(n: &usize) -> bool {
 // --- CLI Args ---
 
 #[derive(Args)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct TestArgs {
     /// Paths to test files or directories
     pub paths: Vec<PathBuf>,
@@ -136,8 +140,8 @@ fn filter_noise(text: &str) -> String {
 
 /// Extract structured errors from Godot stderr output.
 /// Parses the pattern:
-///   SCRIPT ERROR: <message>
-///    at: <function> (res://path/file.gd:42)
+///   SCRIPT ERROR: \<message\>
+///    at: \<function\> (`res://path/file.gd:42`)
 fn extract_errors(stderr: &str) -> Vec<TestError> {
     let mut errors = Vec::new();
     let lines: Vec<&str> = stderr.lines().collect();
@@ -176,7 +180,7 @@ fn extract_errors(stderr: &str) -> Vec<TestError> {
 }
 
 /// Parse a Godot "at:" line like `   at: test_health (res://tests/test_enemy.gd:42)`
-/// Returns (file_path, line_number).
+/// Returns (`file_path`, `line_number`).
 fn parse_at_line(line: &str) -> (Option<String>, Option<usize>) {
     let trimmed = line.trim();
     let Some(rest) = trimmed.strip_prefix("at:") else {
@@ -218,7 +222,8 @@ fn strip_res_prefix(s: &str) -> &str {
 
 // --- Main Entry Point ---
 
-pub fn exec(args: TestArgs) -> Result<()> {
+#[allow(clippy::too_many_lines)]
+pub fn exec(args: &TestArgs) -> Result<()> {
     let json_mode = match args.format.as_str() {
         "human" => false,
         "json" => true,
@@ -344,13 +349,13 @@ pub fn exec(args: TestArgs) -> Result<()> {
         hprintln!(json_mode, "{} Running tests with GUT", "▶".green());
         (
             "gut",
-            run_gut_tests(&godot, &project, &args, &test_files, json_mode),
+            run_gut_tests(&godot, &project, args, &test_files, json_mode),
         )
     } else if has_gdunit4 {
         hprintln!(json_mode, "{} Running tests with gdUnit4", "▶".green());
         (
             "gdunit4",
-            run_gdunit4_tests(&godot, &project, &args, json_mode),
+            run_gdunit4_tests(&godot, &project, args, json_mode),
         )
     } else {
         hprintln!(
@@ -360,7 +365,7 @@ pub fn exec(args: TestArgs) -> Result<()> {
         );
         (
             "script",
-            run_script_tests(&godot, &project, &args, &test_files, json_mode),
+            run_script_tests(&godot, &project, args, &test_files, json_mode),
         )
     };
 
@@ -513,16 +518,15 @@ fn collect_test_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
 
 /// Check if a file is a test file (test_*.gd or *_test.gd).
 fn is_test_file(path: &Path) -> bool {
-    let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
-        return false;
-    };
     let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
         return false;
     };
-    name.ends_with(".gd") && (stem.starts_with("test_") || stem.ends_with("_test"))
+    path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("gd"))
+        && (stem.starts_with("test_") || stem.ends_with("_test"))
 }
 
 /// Run tests using GUT addon.
+#[allow(clippy::too_many_lines)]
 fn run_gut_tests(
     godot: &Path,
     project: &GodotProject,
@@ -530,7 +534,9 @@ fn run_gut_tests(
     test_files: &[PathBuf],
     json_mode: bool,
 ) -> Result<(Vec<TestResult>, TestSummary)> {
-    let spinner = if !json_mode {
+    let spinner = if json_mode {
+        None
+    } else {
         let sp = indicatif::ProgressBar::new_spinner();
         sp.set_style(
             indicatif::ProgressStyle::default_spinner()
@@ -540,8 +546,6 @@ fn run_gut_tests(
         sp.set_message("Running GUT tests...");
         sp.enable_steady_tick(std::time::Duration::from_millis(100));
         Some(sp)
-    } else {
-        None
     };
 
     let mut cmd = Command::new(godot);
@@ -678,6 +682,7 @@ fn run_gut_tests(
 }
 
 /// Run tests using gdUnit4 framework.
+#[allow(clippy::too_many_lines)]
 fn run_gdunit4_tests(
     godot: &Path,
     project: &GodotProject,
@@ -692,7 +697,9 @@ fn run_gdunit4_tests(
         );
     }
 
-    let spinner = if !json_mode {
+    let spinner = if json_mode {
+        None
+    } else {
         let sp = indicatif::ProgressBar::new_spinner();
         sp.set_style(
             indicatif::ProgressStyle::default_spinner()
@@ -702,8 +709,6 @@ fn run_gdunit4_tests(
         sp.set_message("Running gdUnit4 tests...");
         sp.enable_steady_tick(std::time::Duration::from_millis(100));
         Some(sp)
-    } else {
-        None
     };
 
     // Determine test directories for -a flags
@@ -891,6 +896,7 @@ fn run_gdunit4_tests(
 }
 
 /// Run tests by executing each test script individually with Godot.
+#[allow(clippy::too_many_lines, clippy::unnecessary_wraps)]
 fn run_script_tests(
     godot: &Path,
     project: &GodotProject,
@@ -940,29 +946,27 @@ fn run_script_tests(
         let test_start = Instant::now();
 
         // Kill early on script errors (Godot hangs on assert failure in --script mode)
-        let output = match run_with_timeout(&mut cmd, Duration::from_secs(args.timeout), true) {
-            Ok(output) => output,
-            Err(_) => {
-                if let Some(sp) = spinner {
-                    sp.finish_and_clear();
-                }
-                failed += 1;
-                let test_duration_ms = test_start.elapsed().as_millis() as u64;
-
-                if !json_mode && !args.quiet {
-                    println!("{} {rel} (timed out after {}s)", "✗".red(), args.timeout);
-                }
-
-                results.push(TestResult {
-                    file: Some(rel.clone()),
-                    status: TestStatus::Timeout,
-                    duration_ms: test_duration_ms,
-                    errors: vec![],
-                    stderr: None,
-                    stdout: None,
-                });
-                continue;
+        let Ok(output) = run_with_timeout(&mut cmd, Duration::from_secs(args.timeout), true)
+        else {
+            if let Some(sp) = spinner {
+                sp.finish_and_clear();
             }
+            failed += 1;
+            let test_duration_ms = test_start.elapsed().as_millis() as u64;
+
+            if !json_mode && !args.quiet {
+                println!("{} {rel} (timed out after {}s)", "✗".red(), args.timeout);
+            }
+
+            results.push(TestResult {
+                file: Some(rel.clone()),
+                status: TestStatus::Timeout,
+                duration_ms: test_duration_ms,
+                errors: vec![],
+                stderr: None,
+                stdout: None,
+            });
+            continue;
         };
 
         if let Some(sp) = spinner {
@@ -1107,7 +1111,7 @@ fn run_with_timeout(
                 let mut chunk = [0u8; 4096];
                 loop {
                     match stderr.read(&mut chunk) {
-                        Ok(0) => break,
+                        Ok(0) | Err(_) => break,
                         Ok(n) => {
                             buf.extend_from_slice(&chunk[..n]);
                             if !hit_error_stderr.load(Ordering::Relaxed) {
@@ -1119,7 +1123,6 @@ fn run_with_timeout(
                                 }
                             }
                         }
-                        Err(_) => break,
                     }
                 }
             } else {
@@ -1244,7 +1247,7 @@ fn find_results_xml(report_dir: &Path) -> Option<PathBuf> {
     None
 }
 
-/// Parse gdUnit4 JUnit XML results into test results and summary.
+/// Parse `gdUnit4` `JUnit` XML results into test results and summary.
 fn parse_gdunit4_xml(xml: &str) -> (Vec<TestResult>, TestSummary) {
     let mut results = Vec::new();
     let mut passed = 0usize;
@@ -1259,8 +1262,7 @@ fn parse_gdunit4_xml(xml: &str) -> (Vec<TestResult>, TestSummary) {
         let classname = extract_xml_attr(part, "classname");
         let time_ms = extract_xml_attr(part, "time")
             .and_then(|t| t.parse::<f64>().ok())
-            .map(|t| (t * 1000.0) as u64)
-            .unwrap_or(0);
+            .map_or(0, |t| (t * 1000.0) as u64);
 
         // Only look up to the end of this testcase
         let block = part.split("</testcase>").next().unwrap_or(part);
@@ -1384,11 +1386,11 @@ mod tests {
 
     #[test]
     fn test_parse_gut_counts_9x() {
-        let output = r#"
+        let output = r"
 --- Run Summary ---
 Passing Tests         3
 Failing Tests         1
-"#;
+";
         assert_eq!(parse_gut_counts(output), (3, 1));
     }
 
@@ -1400,10 +1402,10 @@ Failing Tests         1
 
     #[test]
     fn test_parse_gut_counts_no_failures() {
-        let output = r#"
+        let output = r"
 --- Run Summary ---
 Passing Tests         10
-"#;
+";
         assert_eq!(parse_gut_counts(output), (10, 0));
     }
 

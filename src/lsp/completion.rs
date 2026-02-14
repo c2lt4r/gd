@@ -1,4 +1,7 @@
-use tower_lsp::lsp_types::*;
+use tower_lsp::lsp_types::{
+    CompletionItem, CompletionItemKind, Documentation, InsertTextFormat, MarkupContent, MarkupKind,
+    Position,
+};
 
 use super::workspace::WorkspaceIndex;
 
@@ -430,7 +433,7 @@ mod tests {
 
     #[test]
     fn collects_symbols_from_source() {
-        let source = r#"
+        let source = r"
 var health := 100
 const MAX_SPEED = 200
 signal damage_taken
@@ -441,7 +444,7 @@ func _ready():
 
 func attack(target):
     pass
-"#;
+";
         let items = provide_completions(source, Position::new(0, 0), None);
         let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         assert!(labels.contains(&"health"));

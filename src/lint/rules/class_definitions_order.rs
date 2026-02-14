@@ -100,7 +100,7 @@ fn check_member_order(parent: Node, source: &str, diags: &mut Vec<LintDiagnostic
                 let label = if name.is_empty() {
                     category_label(cat).to_string()
                 } else {
-                    format!("`{}`", name)
+                    format!("`{name}`")
                 };
                 diags.push(LintDiagnostic {
                     rule: "class-definitions-order",
@@ -154,9 +154,10 @@ fn check_inner_classes(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>
 /// non-categorizable nodes (comments, blank lines, etc.).
 fn categorize_member(node: &Node, source: &str) -> Option<u8> {
     match node.kind() {
-        "class_name_statement" | "extends_statement" => Some(CAT_HEADER),
         // Standalone annotations at top level (e.g. @tool, @icon)
-        "annotations" | "annotation" => Some(CAT_HEADER),
+        "class_name_statement" | "extends_statement" | "annotations" | "annotation" => {
+            Some(CAT_HEADER)
+        }
         "signal_statement" => Some(CAT_SIGNAL),
         "enum_definition" => Some(CAT_ENUM),
         "const_statement" => Some(CAT_CONST),

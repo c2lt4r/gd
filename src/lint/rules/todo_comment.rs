@@ -37,7 +37,7 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
             if upper.contains(marker) {
                 diags.push(LintDiagnostic {
                     rule: "todo-comment",
-                    message: format!("comment contains {} marker", marker),
+                    message: format!("comment contains {marker} marker"),
                     severity: Severity::Info,
                     line: node.start_position().row,
                     column: node.start_position().column,

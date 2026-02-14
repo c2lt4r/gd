@@ -130,7 +130,7 @@ pub struct RuleConfig {
     /// magic-number: numeric literals that are always allowed (e.g. [0, 1, 0.5, 2.0]).
     #[serde(default)]
     pub allowed: Vec<f64>,
-    /// magic-number: function/constructor calls where numbers are fine (e.g. ["Vector2", "lerp"]).
+    /// magic-number: function/constructor calls where numbers are fine (e.g. `["Vector2", "lerp"]`).
     #[serde(default)]
     pub allowed_contexts: Vec<String>,
     /// magic-number: only flag numbers whose absolute value >= this threshold.

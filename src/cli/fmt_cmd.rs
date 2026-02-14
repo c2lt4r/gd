@@ -13,6 +13,6 @@ pub struct FmtArgs {
     pub diff: bool,
 }
 
-pub fn exec(args: FmtArgs) -> Result<()> {
+pub fn exec(args: &FmtArgs) -> Result<()> {
     crate::fmt::run_fmt(&args.paths, args.check, args.diff)
 }

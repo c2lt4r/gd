@@ -26,11 +26,7 @@ pub struct EditOutput {
 
 /// Count ERROR/MISSING nodes in a tree-sitter tree.
 fn count_error_nodes(node: &tree_sitter::Node) -> usize {
-    let mut count = if node.is_error() || node.is_missing() {
-        1
-    } else {
-        0
-    };
+    let mut count = usize::from(node.is_error() || node.is_missing());
     for i in 0..node.child_count() {
         if let Some(child) = node.child(i) {
             count += count_error_nodes(&child);

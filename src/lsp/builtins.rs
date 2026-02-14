@@ -595,11 +595,12 @@ pub fn godot_docs_url(class_name: &str) -> String {
 
 /// Format a hover string for a built-in type.
 pub fn format_type_hover(doc: &BuiltinDoc) -> String {
+    use std::fmt::Write;
     let mut result = format!("```gdscript\n{}\n```\n{}", doc.brief, doc.description);
     // Add docs link for classes (types that start with uppercase, not primitives)
     let first_char = doc.name.chars().next().unwrap_or('a');
     if first_char.is_uppercase() {
-        result.push_str(&format!("\n\n[Godot docs]({})", godot_docs_url(doc.name)));
+        let _ = write!(result, "\n\n[Godot docs]({})", godot_docs_url(doc.name));
     }
     result
 }

@@ -105,6 +105,7 @@ pub enum GodotVariant {
 // ---------------------------------------------------------------------------
 
 impl fmt::Display for GodotVariant {
+    #[allow(clippy::too_many_lines)]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Nil => write!(f, "null"),
@@ -359,6 +360,7 @@ fn read_f64_array(data: &[u8], offset: &mut usize, count: usize) -> Option<Vec<f
 // ---------------------------------------------------------------------------
 
 /// Encode a `GodotVariant` into the Godot binary variant format (little-endian).
+#[allow(clippy::too_many_lines)]
 pub fn encode_variant(variant: &GodotVariant, buf: &mut Vec<u8>) {
     match variant {
         GodotVariant::Nil => {
@@ -370,7 +372,7 @@ pub fn encode_variant(variant: &GodotVariant, buf: &mut Vec<u8>) {
         }
         GodotVariant::Int(v) => {
             let val = *v;
-            if val >= i64::from(i32::MIN) && val <= i64::from(i32::MAX) {
+            if i32::try_from(val).is_ok() {
                 write_u32(buf, TYPE_INT);
                 write_i32(buf, val as i32);
             } else {
@@ -479,7 +481,7 @@ pub fn encode_variant(variant: &GodotVariant, buf: &mut Vec<u8>) {
             // Format: new-style flag (name_count with bit 31 clear, but we use the
             // simpler total-length encoding for plain string paths)
             // Actually, Godot encodes NodePath specially. For simplicity and
-            // compatibility with the DAP protocol, encode as the sub-name form:
+            // compatibility with the binary debug protocol, encode as the sub-name form:
             // We parse the path into names and subnames.
             encode_node_path(buf, v);
         }
@@ -650,7 +652,7 @@ fn encode_node_path(buf: &mut Vec<u8>, path: &str) {
     // New format: 3 u32 headers [name_count|0x80000000, subname_count, flags]
     write_u32(buf, names.len() as u32 | 0x8000_0000);
     write_u32(buf, subnames.len() as u32);
-    let flags: u32 = if absolute { 1 } else { 0 };
+    let flags: u32 = u32::from(absolute);
     write_u32(buf, flags);
 
     for name in &names {
@@ -668,6 +670,7 @@ fn encode_node_path(buf: &mut Vec<u8>, path: &str) {
 /// Decode a `GodotVariant` from the Godot binary variant format.
 ///
 /// `offset` is advanced past the decoded data. Returns `None` on malformed input.
+#[allow(clippy::too_many_lines)]
 pub fn decode_variant(data: &[u8], offset: &mut usize) -> Option<GodotVariant> {
     let header = read_u32(data, offset)?;
     let type_id = header & TYPE_MASK;
@@ -1180,11 +1183,11 @@ mod tests {
     #[test]
     fn float_needs_f64() {
         // This value cannot be exactly represented as f32
-        let v = GodotVariant::Float(1.0000000000001);
+        let v = GodotVariant::Float(1.000_000_000_000_1);
         let decoded = round_trip(&v);
         match decoded {
             GodotVariant::Float(f) => {
-                assert!((f - 1.0000000000001).abs() < 1e-15);
+                assert!((f - 1.000_000_000_000_1).abs() < 1e-15);
             }
             other => panic!("expected Float, got {other:?}"),
         }
@@ -1488,7 +1491,7 @@ mod tests {
 
     #[test]
     fn packed_string_array() {
-        let v = GodotVariant::PackedStringArray(vec!["hello".into(), "world".into(), "".into()]);
+        let v = GodotVariant::PackedStringArray(vec!["hello".into(), "world".into(), String::new()]);
         assert_eq!(round_trip(&v), v);
     }
 

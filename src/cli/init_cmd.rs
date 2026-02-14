@@ -15,7 +15,7 @@ pub struct InitArgs {
     pub force: bool,
 }
 
-pub fn exec(args: InitArgs) -> Result<()> {
+pub fn exec(args: &InitArgs) -> Result<()> {
     let cwd = env::current_dir().map_err(|e| miette!("Failed to get current directory: {e}"))?;
 
     let project = GodotProject::discover(&cwd)?;
@@ -35,7 +35,7 @@ pub fn exec(args: InitArgs) -> Result<()> {
     if let Some(output_dir) = detect_output_dir(&project.root) {
         template = template.replace(
             "output_dir = \"build\"",
-            &format!("output_dir = \"{}\"", output_dir),
+            &format!("output_dir = \"{output_dir}\""),
         );
     }
 

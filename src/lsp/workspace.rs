@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use dashmap::DashMap;
-use tower_lsp::lsp_types::*;
+use tower_lsp::lsp_types::InitializeParams;
 
 /// Index of all GDScript files in the workspace for cross-file operations.
 pub struct WorkspaceIndex {
@@ -69,7 +69,7 @@ pub fn discover_root(params: &InitializeParams) -> Option<PathBuf> {
     // Try workspace folders first
     if let Some(folders) = &params.workspace_folders
         && let Some(folder) = folders.first()
-        && let Some(root) = root_from_path(folder.uri.to_file_path().ok()?)
+        && let Some(root) = root_from_path(&folder.uri.to_file_path().ok()?)
     {
         return Some(root);
     }
@@ -77,7 +77,7 @@ pub fn discover_root(params: &InitializeParams) -> Option<PathBuf> {
     // Fall back to root_uri
     #[allow(deprecated)]
     if let Some(ref root_uri) = params.root_uri
-        && let Some(root) = root_from_path(root_uri.to_file_path().ok()?)
+        && let Some(root) = root_from_path(&root_uri.to_file_path().ok()?)
     {
         return Some(root);
     }
@@ -85,8 +85,8 @@ pub fn discover_root(params: &InitializeParams) -> Option<PathBuf> {
     None
 }
 
-fn root_from_path(path: PathBuf) -> Option<PathBuf> {
-    crate::core::project::GodotProject::discover(&path)
+fn root_from_path(path: &Path) -> Option<PathBuf> {
+    crate::core::project::GodotProject::discover(path)
         .ok()
         .map(|p| p.root)
 }

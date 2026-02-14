@@ -13,7 +13,7 @@ pub struct NewArgs {
     pub from: Option<String>,
 }
 
-pub fn exec(args: NewArgs) -> Result<()> {
+pub fn exec(args: &NewArgs) -> Result<()> {
     if let Some(from) = &args.from {
         crate::scaffold::create_from_github(&args.name, from)
     } else {

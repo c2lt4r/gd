@@ -1,4 +1,4 @@
-use tower_lsp::lsp_types::*;
+use tower_lsp::lsp_types::{Position, Range};
 
 /// Convert a tree-sitter node's position range to an LSP `Range`.
 pub fn node_range(node: &tree_sitter::Node) -> Range {

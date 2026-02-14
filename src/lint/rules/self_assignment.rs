@@ -39,7 +39,7 @@ fn check_node(node: Node, source_bytes: &[u8], source: &str, diags: &mut Vec<Lin
                         Fix {
                             byte_start: left.start_byte(),
                             byte_end: left.end_byte(),
-                            replacement: format!("self.{}", left_text),
+                            replacement: format!("self.{left_text}"),
                         }
                     } else {
                         generate_fix(&node, source_bytes)
@@ -47,7 +47,7 @@ fn check_node(node: Node, source_bytes: &[u8], source: &str, diags: &mut Vec<Lin
 
                     diags.push(LintDiagnostic {
                         rule: "self-assignment",
-                        message: format!("`{}` is assigned to itself", left_text),
+                        message: format!("`{left_text}` is assigned to itself"),
                         severity: Severity::Warning,
                         line: node.start_position().row,
                         column: node.start_position().column,

@@ -26,6 +26,7 @@ pub struct ExtractedSymbol {
 
 /// Extract multiple symbols from a file into a new (or existing) file,
 /// updating internal cross-references.
+#[allow(clippy::too_many_lines)]
 pub fn extract_class(
     file: &Path,
     names: &[String],

@@ -1,4 +1,4 @@
-use tower_lsp::lsp_types::*;
+use tower_lsp::lsp_types::{FormattingOptions, Position, Range, TextEdit};
 
 /// Format a GDScript document and return a full-document TextEdit.
 pub fn format_document(source: &str, options: &FormattingOptions) -> Option<Vec<TextEdit>> {

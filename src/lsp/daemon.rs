@@ -10,7 +10,6 @@ use std::sync::Arc;
 
 use super::godot_client::GodotClient;
 use super::workspace::WorkspaceIndex;
-use crate::debug::dap_client::DapClient;
 
 /// State file written to `.godot/gd-daemon.json` so CLI clients can find us.
 #[derive(Serialize, Deserialize)]
@@ -34,8 +33,7 @@ pub fn current_build_id() -> String {
         .and_then(|p| std::fs::metadata(p).ok())
         .and_then(|m| m.modified().ok())
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+        .map_or(0, |d| d.as_secs());
     format!("{version}-{mtime}")
 }
 
@@ -60,23 +58,16 @@ struct DaemonResponse {
 struct DaemonServer {
     godot: Mutex<Option<GodotClient>>,
     godot_ready: std::sync::atomic::AtomicBool,
-    dap: Mutex<Option<Arc<DapClient>>>,
-    dap_caps: Mutex<Option<serde_json::Value>>,
-    /// True when a game was launched via DAP and hasn't exited yet.
-    /// Wrapped in Arc so the exit-watcher thread can clear it.
+    /// True when a game is running (for idle timeout).
     game_running: Arc<std::sync::atomic::AtomicBool>,
-    /// Set when a DAP operation fails unexpectedly — triggers reconnect on next use.
-    dap_needs_reconnect: std::sync::atomic::AtomicBool,
     debug_server: Mutex<Option<Arc<crate::debug::godot_debug_server::GodotDebugServer>>>,
     /// PID of the game process launched by `gd run` (for `gd debug stop`).
     game_pid: Mutex<Option<u32>>,
-    /// Cached Godot binary path from DAP process events (Windows path in WSL).
+    /// Cached Godot binary path (Windows path in WSL).
     cached_godot_path: Mutex<Option<String>>,
     workspace: WorkspaceIndex,
     project_root: PathBuf,
     godot_port: u16,
-    dap_host: String,
-    dap_port: u16,
     last_activity: Mutex<Instant>,
 }
 
@@ -84,12 +75,7 @@ const IDLE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const IDLE_CHECK_INTERVAL: Duration = Duration::from_secs(30);
 
 /// Entry point for `gd lsp daemon`. Runs a persistent background server.
-pub fn run(
-    project_root: PathBuf,
-    godot_port: u16,
-    dap_host: String,
-    dap_port: u16,
-) -> miette::Result<()> {
+pub fn run(project_root: &Path, godot_port: u16) -> miette::Result<()> {
     // Bind to a random available port
     let listener = TcpListener::bind("127.0.0.1:0")
         .map_err(|e| miette::miette!("cannot bind TCP listener: {e}"))?;
@@ -99,23 +85,18 @@ pub fn run(
         .port();
 
     // Build workspace index for cross-file resolution
-    let workspace = WorkspaceIndex::new(project_root.clone());
+    let workspace = WorkspaceIndex::new(project_root.to_path_buf());
 
     let server = std::sync::Arc::new(DaemonServer {
         godot: Mutex::new(None),
         godot_ready: std::sync::atomic::AtomicBool::new(false),
-        dap: Mutex::new(None),
-        dap_caps: Mutex::new(None),
         game_running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-        dap_needs_reconnect: std::sync::atomic::AtomicBool::new(false),
         debug_server: Mutex::new(None),
         game_pid: Mutex::new(None),
         cached_godot_path: Mutex::new(None),
         workspace,
-        project_root: project_root.clone(),
+        project_root: project_root.to_path_buf(),
         godot_port,
-        dap_host,
-        dap_port,
         last_activity: Mutex::new(Instant::now()),
     });
 
@@ -123,12 +104,11 @@ pub fn run(
     let state_path = project_root.join(".godot").join("gd-daemon.json");
     write_state_file(&state_path, port, None)?;
 
-    // Connect to Godot LSP + DAP in a background thread (handshake can be slow)
+    // Connect to Godot LSP in a background thread (handshake can be slow)
     {
         let server_init = std::sync::Arc::clone(&server);
-        let root = project_root.clone();
+        let root = project_root.to_path_buf();
         std::thread::spawn(move || {
-            // Connect to Godot's LSP
             if godot_port > 0
                 && let Some(client) = GodotClient::connect("127.0.0.1", godot_port)
             {
@@ -138,54 +118,32 @@ pub fn run(
             server_init
                 .godot_ready
                 .store(true, std::sync::atomic::Ordering::Release);
-
-            // Connect to Godot's DAP
-            let (dap, caps) = try_connect_dap(&server_init.dap_host, server_init.dap_port);
-            if dap.is_some() {
-                *server_init.dap.lock().unwrap() = dap;
-                *server_init.dap_caps.lock().unwrap() = caps;
-            }
         });
     }
 
     // Spawn idle monitor thread
     let state_path_clone = state_path.clone();
     let server_idle = std::sync::Arc::clone(&server);
-    std::thread::spawn(move || idle_monitor(server_idle, &state_path_clone));
+    std::thread::spawn(move || idle_monitor(&server_idle, &state_path_clone));
 
     // Accept connections — spawn threads for blocking requests
-    for stream in listener.incoming() {
-        match stream {
-            Ok(conn) => {
-                *server.last_activity.lock().unwrap() = Instant::now();
-                let srv = std::sync::Arc::clone(&server);
-                let sp = state_path.clone();
-                std::thread::spawn(move || {
-                    if let Some(should_exit) = handle_connection(&srv, conn)
-                        && should_exit
-                    {
-                        let _ = std::fs::remove_file(&sp);
-                        std::process::exit(0);
-                    }
-                });
+    for conn in listener.incoming().flatten() {
+        *server.last_activity.lock().unwrap() = Instant::now();
+        let srv = std::sync::Arc::clone(&server);
+        let sp = state_path.clone();
+        std::thread::spawn(move || {
+            if let Some(should_exit) = handle_connection(&srv, conn)
+                && should_exit
+            {
+                let _ = std::fs::remove_file(&sp);
+                std::process::exit(0);
             }
-            Err(_) => continue,
-        }
+        });
     }
 
     Ok(())
 }
 
-fn try_connect_dap(host: &str, port: u16) -> (Option<Arc<DapClient>>, Option<serde_json::Value>) {
-    if port == 0 {
-        return (None, None);
-    }
-    let Some(client) = DapClient::connect(host, port) else {
-        return (None, None);
-    };
-    let caps = client.handshake();
-    (Some(Arc::new(client)), caps)
-}
 
 fn write_state_file(path: &Path, port: u16, game_pid: Option<u32>) -> miette::Result<()> {
     if let Some(parent) = path.parent() {
@@ -222,10 +180,10 @@ fn update_game_pid_in_state(project_root: &Path, game_pid: Option<u32>) {
     }
 }
 
-fn idle_monitor(server: std::sync::Arc<DaemonServer>, state_path: &Path) {
+fn idle_monitor(server: &DaemonServer, state_path: &Path) {
     loop {
         std::thread::sleep(IDLE_CHECK_INTERVAL);
-        // Never exit while a game is running via DAP
+        // Never exit while a game is running
         if server
             .game_running
             .load(std::sync::atomic::Ordering::Acquire)
@@ -250,16 +208,12 @@ fn handle_connection(server: &DaemonServer, mut stream: TcpStream) -> Option<boo
     let mut reader = BufReader::new(stream.try_clone().ok()?);
     let request = read_request(&mut reader)?;
 
-    // dap_wait_stopped / dap_wait_exited / dap_launch / debug_accept can block — extend timeout
-    if request.method == "dap_wait_stopped"
-        || request.method == "dap_wait_exited"
-        || request.method == "dap_launch"
-        || request.method == "debug_accept"
-    {
+    // debug_accept can block — extend timeout
+    if request.method == "debug_accept" {
         let timeout = request
             .params
             .get("timeout")
-            .and_then(|t| t.as_u64())
+            .and_then(serde_json::Value::as_u64)
             .unwrap_or(30);
         stream
             .set_read_timeout(Some(Duration::from_secs(timeout + 5)))
@@ -275,6 +229,7 @@ fn handle_connection(server: &DaemonServer, mut stream: TcpStream) -> Option<boo
     Some(should_exit)
 }
 
+#[allow(clippy::too_many_lines)]
 fn dispatch(server: &DaemonServer, request: &DaemonRequest) -> DaemonResponse {
     match request.method.as_str() {
         // LSP queries
@@ -285,27 +240,9 @@ fn dispatch(server: &DaemonServer, request: &DaemonRequest) -> DaemonResponse {
         "status" => dispatch_status(server),
         // Project path (from Godot LSP URI mapping)
         "godot_project_path" => dispatch_godot_project_path(server),
-        // DAP queries
-        "dap_status" => dispatch_dap_status(server),
-        "dap_project_path" => dispatch_dap_project_path(server),
-        "dap_set_breakpoints" => dispatch_dap_set_breakpoints(server, &request.params),
-        "dap_continue" => dispatch_dap_simple(server, "continue"),
-        "dap_pause" => dispatch_dap_simple(server, "pause"),
-        "dap_next" => dispatch_dap_simple(server, "next"),
-        "dap_step_in" => dispatch_dap_simple(server, "step_in"),
-        "dap_threads" => dispatch_dap_threads(server),
-        "dap_stack_trace" => dispatch_dap_stack_trace(server, &request.params),
-        "dap_scopes" => dispatch_dap_scopes(server, &request.params),
-        "dap_variables" => dispatch_dap_variables(server, &request.params),
-        "dap_evaluate" => dispatch_dap_evaluate(server, &request.params),
-        "dap_wait_stopped" => dispatch_dap_wait_stopped(server, &request.params),
-        "dap_launch" => dispatch_dap_launch(server, &request.params),
-        "dap_wait_exited" => dispatch_dap_wait_exited(server, &request.params),
-        "dap_terminate" => dispatch_dap_terminate(server),
-        "dap_disconnect" => dispatch_dap_disconnect(server),
-        "dap_reconnect" => dispatch_dap_reconnect(server),
-        "dap_godot_path" => dispatch_dap_godot_path(server),
-        "dap_cache_godot_path" => dispatch_dap_cache_godot_path(server, &request.params),
+        // Godot binary path cache (WSL probe)
+        "cached_godot_path" => dispatch_cached_godot_path(server),
+        "cache_godot_path" => dispatch_cache_godot_path(server, &request.params),
         // Binary debug protocol
         "set_game_pid" => dispatch_set_game_pid(server, &request.params),
         "debug_stop_game" => dispatch_debug_stop_game(server),
@@ -317,8 +254,9 @@ fn dispatch(server: &DaemonServer, request: &DaemonRequest) -> DaemonResponse {
         "debug_suspend" => dispatch_debug_suspend(server, &request.params),
         "debug_next_frame" => dispatch_debug_next_frame(server),
         "debug_time_scale" => dispatch_debug_time_scale(server, &request.params),
-        "debug_reload_scripts" => dispatch_debug_reload_scripts(server),
+        "debug_reload_scripts" => dispatch_debug_reload_scripts(server, &request.params),
         "debug_server_status" => dispatch_debug_server_status(server),
+        "debug_is_at_breakpoint" => dispatch_debug_is_at_breakpoint(server),
         // Core debugger (binary protocol)
         "debug_continue" => dispatch_debug_cmd_simple(server, "continue"),
         "debug_break_exec" => dispatch_debug_cmd_simple(server, "break"),
@@ -425,10 +363,10 @@ fn dispatch_hover(server: &DaemonServer, params: &serde_json::Value) -> DaemonRe
     let Some(file) = params.get("file").and_then(|f| f.as_str()) else {
         return error_response("missing 'file' parameter");
     };
-    let Some(line) = params.get("line").and_then(|l| l.as_u64()) else {
+    let Some(line) = params.get("line").and_then(serde_json::Value::as_u64) else {
         return error_response("missing 'line' parameter");
     };
-    let Some(column) = params.get("column").and_then(|c| c.as_u64()) else {
+    let Some(column) = params.get("column").and_then(serde_json::Value::as_u64) else {
         return error_response("missing 'column' parameter");
     };
 
@@ -449,10 +387,10 @@ fn dispatch_completion(server: &DaemonServer, params: &serde_json::Value) -> Dae
     let Some(file) = params.get("file").and_then(|f| f.as_str()) else {
         return error_response("missing 'file' parameter");
     };
-    let Some(line) = params.get("line").and_then(|l| l.as_u64()) else {
+    let Some(line) = params.get("line").and_then(serde_json::Value::as_u64) else {
         return error_response("missing 'line' parameter");
     };
-    let Some(column) = params.get("column").and_then(|c| c.as_u64()) else {
+    let Some(column) = params.get("column").and_then(serde_json::Value::as_u64) else {
         return error_response("missing 'column' parameter");
     };
 
@@ -473,10 +411,10 @@ fn dispatch_definition(server: &DaemonServer, params: &serde_json::Value) -> Dae
     let Some(file) = params.get("file").and_then(|f| f.as_str()) else {
         return error_response("missing 'file' parameter");
     };
-    let Some(line) = params.get("line").and_then(|l| l.as_u64()) else {
+    let Some(line) = params.get("line").and_then(serde_json::Value::as_u64) else {
         return error_response("missing 'line' parameter");
     };
-    let Some(column) = params.get("column").and_then(|c| c.as_u64()) else {
+    let Some(column) = params.get("column").and_then(serde_json::Value::as_u64) else {
         return error_response("missing 'column' parameter");
     };
 
@@ -498,13 +436,12 @@ fn dispatch_status(server: &DaemonServer) -> DaemonResponse {
     let godot_ready = server
         .godot_ready
         .load(std::sync::atomic::Ordering::Acquire);
-    let dap_connected = server.dap.lock().unwrap().is_some();
     let godot_path = server
         .godot
         .lock()
         .unwrap()
         .as_ref()
-        .and_then(|c| c.godot_project_path());
+        .and_then(super::godot_client::GodotClient::godot_project_path);
     let game_running = server
         .game_running
         .load(std::sync::atomic::Ordering::Acquire);
@@ -512,11 +449,9 @@ fn dispatch_status(server: &DaemonServer) -> DaemonResponse {
         "godot_connected": godot_connected,
         "godot_ready": godot_ready,
         "godot_project_path": godot_path,
-        "dap_connected": dap_connected,
         "game_running": game_running,
         "project_root": server.project_root.to_string_lossy(),
         "godot_port": server.godot_port,
-        "dap_port": server.dap_port,
     }))
 }
 
@@ -531,396 +466,21 @@ fn dispatch_godot_project_path(server: &DaemonServer) -> DaemonResponse {
     }
 }
 
-// ── DAP dispatch ─────────────────────────────────────────────────────────────
+// ── Godot binary path cache ──────────────────────────────────────────────────
 
-/// Ensure DAP is connected, reconnecting if needed. Returns true if connected.
-fn ensure_dap(server: &DaemonServer) -> bool {
-    // If a previous operation flagged the connection as broken, force reconnect
-    if server
-        .dap_needs_reconnect
-        .swap(false, std::sync::atomic::Ordering::AcqRel)
-    {
-        let mut dap = server.dap.lock().unwrap();
-        if let Some(client) = dap.take() {
-            // Spawn disconnect in background to avoid blocking on corrupted stream
-            std::thread::spawn(move || client.disconnect());
-        }
-        drop(dap);
-        std::thread::sleep(Duration::from_millis(100));
-    }
 
-    {
-        let dap = server.dap.lock().unwrap();
-        if dap.is_some() {
-            return true;
-        }
-    }
 
-    // Try reconnecting
-    let (new_dap, caps) = try_connect_dap(&server.dap_host, server.dap_port);
-    if new_dap.is_some() {
-        *server.dap.lock().unwrap() = new_dap;
-        *server.dap_caps.lock().unwrap() = caps;
-        true
-    } else {
-        false
-    }
-}
 
-fn dispatch_dap_status(server: &DaemonServer) -> DaemonResponse {
-    if !ensure_dap(server) {
-        return error_response("DAP not connected — is Godot editor running?");
-    }
-    let dap = server.dap.lock().unwrap();
-    let client = dap.as_ref().unwrap();
-    let caps = server.dap_caps.lock().unwrap().clone();
-    let threads = client.threads();
-    let project_path = client.project_path();
 
-    ok_response(serde_json::json!({
-        "connected": true,
-        "capabilities": caps,
-        "threads": threads.map(|t| t["threads"].clone()),
-        "project_path": project_path,
-    }))
-}
 
-fn dispatch_dap_project_path(server: &DaemonServer) -> DaemonResponse {
-    // Prefer Godot LSP project path (always available, doesn't need the DAP stream)
-    if let Some(path) = server
-        .godot
-        .lock()
-        .unwrap()
-        .as_ref()
-        .and_then(|c| c.godot_project_path())
-    {
-        return ok_response(serde_json::json!({"project_path": path}));
-    }
-    // Fallback: DAP client's discovered path
-    if !ensure_dap(server) {
-        return error_response("DAP not connected");
-    }
-    let dap = server.dap.lock().unwrap();
-    let path = dap.as_ref().unwrap().project_path();
-    ok_response(serde_json::json!({"project_path": path}))
-}
 
-fn dispatch_dap_set_breakpoints(
-    server: &DaemonServer,
-    params: &serde_json::Value,
-) -> DaemonResponse {
-    if !ensure_dap(server) {
-        return error_response("DAP not connected");
-    }
-    let Some(path) = params.get("path").and_then(|p| p.as_str()) else {
-        return error_response("missing 'path' parameter");
-    };
-    let Some(lines_arr) = params.get("lines").and_then(|l| l.as_array()) else {
-        return error_response("missing 'lines' parameter");
-    };
-    let lines: Vec<u32> = lines_arr
-        .iter()
-        .filter_map(|l| l.as_u64().map(|n| n as u32))
-        .collect();
-    let condition = params.get("condition").and_then(|c| c.as_str());
 
-    let dap = server.dap.lock().unwrap();
-    match dap
-        .as_ref()
-        .unwrap()
-        .set_breakpoints(path, &lines, condition)
-    {
-        Some(body) => ok_response(body),
-        None => error_response("setBreakpoints failed"),
-    }
-}
 
-fn dispatch_dap_simple(server: &DaemonServer, action: &str) -> DaemonResponse {
-    if !ensure_dap(server) {
-        return error_response("DAP not connected");
-    }
-    let dap = server.dap.lock().unwrap();
-    let client = dap.as_ref().unwrap();
-    let thread_id = 1; // Godot uses thread 1
 
-    let result = match action {
-        "continue" => client.continue_execution(thread_id),
-        "pause" => client.pause(thread_id),
-        "next" => client.next(thread_id),
-        "step_in" => client.step_in(thread_id),
-        _ => None,
-    };
 
-    match result {
-        Some(body) => ok_response(body),
-        None => {
-            // Basic DAP operations failing suggests a broken connection
-            server
-                .dap_needs_reconnect
-                .store(true, std::sync::atomic::Ordering::Release);
-            error_response(&format!("{action} failed"))
-        }
-    }
-}
 
-fn dispatch_dap_threads(server: &DaemonServer) -> DaemonResponse {
-    if !ensure_dap(server) {
-        return error_response("DAP not connected");
-    }
-    let dap = server.dap.lock().unwrap();
-    match dap.as_ref().unwrap().threads() {
-        Some(body) => ok_response(body),
-        None => {
-            server
-                .dap_needs_reconnect
-                .store(true, std::sync::atomic::Ordering::Release);
-            error_response("threads request failed")
-        }
-    }
-}
 
-fn dispatch_dap_stack_trace(server: &DaemonServer, params: &serde_json::Value) -> DaemonResponse {
-    if !ensure_dap(server) {
-        return error_response("DAP not connected");
-    }
-    let thread_id = params
-        .get("thread_id")
-        .and_then(|t| t.as_i64())
-        .unwrap_or(1);
-    let dap = server.dap.lock().unwrap();
-    match dap.as_ref().unwrap().stack_trace(thread_id) {
-        Some(body) => ok_response(body),
-        None => error_response("stackTrace failed"),
-    }
-}
-
-fn dispatch_dap_scopes(server: &DaemonServer, params: &serde_json::Value) -> DaemonResponse {
-    if !ensure_dap(server) {
-        return error_response("DAP not connected");
-    }
-    let Some(frame_id) = params.get("frame_id").and_then(|f| f.as_i64()) else {
-        return error_response("missing 'frame_id' parameter");
-    };
-    let dap = server.dap.lock().unwrap();
-    match dap.as_ref().unwrap().scopes(frame_id) {
-        Some(body) => ok_response(body),
-        None => error_response("scopes failed"),
-    }
-}
-
-fn dispatch_dap_variables(server: &DaemonServer, params: &serde_json::Value) -> DaemonResponse {
-    if !ensure_dap(server) {
-        return error_response("DAP not connected");
-    }
-    let Some(vref) = params.get("variables_reference").and_then(|v| v.as_i64()) else {
-        return error_response("missing 'variables_reference' parameter");
-    };
-    let dap = server.dap.lock().unwrap();
-    match dap.as_ref().unwrap().variables(vref) {
-        Some(body) => ok_response(body),
-        None => error_response("variables failed"),
-    }
-}
-
-fn dispatch_dap_evaluate(server: &DaemonServer, params: &serde_json::Value) -> DaemonResponse {
-    if !ensure_dap(server) {
-        return error_response("DAP not connected");
-    }
-    let Some(expression) = params.get("expression").and_then(|e| e.as_str()) else {
-        return error_response("missing 'expression' parameter");
-    };
-    let context = params
-        .get("context")
-        .and_then(|c| c.as_str())
-        .unwrap_or("repl");
-    let frame_id = params.get("frame_id").and_then(|f| f.as_i64()).unwrap_or(0);
-    let dap = server.dap.lock().unwrap();
-    match dap
-        .as_ref()
-        .unwrap()
-        .evaluate(expression, context, frame_id)
-    {
-        Some(body) => ok_response(body),
-        None => error_response("evaluate failed"),
-    }
-}
-
-fn dispatch_dap_wait_stopped(server: &DaemonServer, params: &serde_json::Value) -> DaemonResponse {
-    if !ensure_dap(server) {
-        return error_response("DAP not connected");
-    }
-    let timeout = params.get("timeout").and_then(|t| t.as_u64()).unwrap_or(30);
-    // Clone Arc to release mutex before blocking
-    let client = {
-        let dap = server.dap.lock().unwrap();
-        Arc::clone(dap.as_ref().unwrap())
-    };
-    match client.wait_for_stopped(timeout) {
-        Some(body) => ok_response(body),
-        None => error_response("timeout waiting for stopped event"),
-    }
-}
-
-fn dispatch_dap_launch(server: &DaemonServer, params: &serde_json::Value) -> DaemonResponse {
-    // Guard: don't launch if a game is already running
-    if server
-        .game_running
-        .load(std::sync::atomic::Ordering::Acquire)
-    {
-        return error_response("Game is already running — terminate it first");
-    }
-
-    // Disconnect existing DAP session — launch needs a fresh connection
-    {
-        let mut dap = server.dap.lock().unwrap();
-        if let Some(client) = dap.take() {
-            client.disconnect();
-        }
-    }
-
-    // Connect fresh for launch mode
-    let Some(client) = DapClient::connect(&server.dap_host, server.dap_port) else {
-        return error_response("DAP not connected — is Godot editor running?");
-    };
-
-    // Determine project path: from params, or from Godot LSP, or from our project root.
-    // Wait briefly for Godot LSP if it's still initializing (has the correct Windows path).
-    let project = params
-        .get("project")
-        .and_then(|p| p.as_str())
-        .map(|s| s.to_string())
-        .or_else(|| {
-            // Wait up to 2s for Godot LSP to be ready (it discovers the project path)
-            for _ in 0..20 {
-                if server
-                    .godot_ready
-                    .load(std::sync::atomic::Ordering::Acquire)
-                {
-                    break;
-                }
-                std::thread::sleep(Duration::from_millis(100));
-            }
-            server
-                .godot
-                .lock()
-                .unwrap()
-                .as_ref()
-                .and_then(|c| c.godot_project_path())
-        })
-        .unwrap_or_else(|| {
-            // Fallback: convert WSL path to Windows path if applicable
-            let root = server.project_root.to_string_lossy();
-            crate::core::fs::wsl_to_windows_path(&root).unwrap_or_else(|| root.to_string())
-        });
-
-    // Launch — this sends initialize + launch + configurationDone and waits
-    // for the process event (which contains the Godot binary path)
-    let result = client.launch(&project);
-
-    match result {
-        Some(process_body) => {
-            let client = Arc::new(client);
-            *server.dap.lock().unwrap() = Some(Arc::clone(&client));
-            *server.dap_caps.lock().unwrap() = None;
-            server
-                .game_running
-                .store(true, std::sync::atomic::Ordering::Release);
-            // Cache the Godot binary path for future --debug launches
-            if let Some(name) = process_body.get("name").and_then(|n| n.as_str())
-                && !name.is_empty()
-            {
-                *server.cached_godot_path.lock().unwrap() = Some(name.to_string());
-            }
-            // Monitor for game exit in background so game_running is cleared
-            // automatically when the user closes the game window.
-            {
-                let game_flag = Arc::clone(&server.game_running);
-                std::thread::spawn(move || {
-                    // Wait up to 24 hours — effectively indefinite
-                    let _ = client.wait_for_exited(86400);
-                    game_flag.store(false, std::sync::atomic::Ordering::Release);
-                });
-            }
-            ok_response(serde_json::json!({
-                "launched": true,
-                "process": process_body,
-            }))
-        }
-        None => error_response("DAP launch failed"),
-    }
-}
-
-fn dispatch_dap_wait_exited(server: &DaemonServer, params: &serde_json::Value) -> DaemonResponse {
-    let timeout = params
-        .get("timeout")
-        .and_then(|t| t.as_u64())
-        .unwrap_or(3600); // default 1 hour
-
-    // Clone the Arc so we can release the mutex before blocking
-    let client = {
-        let dap = server.dap.lock().unwrap();
-        match dap.as_ref() {
-            Some(c) => Arc::clone(c),
-            None => {
-                server
-                    .game_running
-                    .store(false, std::sync::atomic::Ordering::Release);
-                return error_response("DAP not connected");
-            }
-        }
-    };
-
-    let result = client.wait_for_exited(timeout);
-    server
-        .game_running
-        .store(false, std::sync::atomic::Ordering::Release);
-    match result {
-        Some(body) => ok_response(body),
-        None => error_response("timeout or connection lost waiting for game to exit"),
-    }
-}
-
-fn dispatch_dap_disconnect(server: &DaemonServer) -> DaemonResponse {
-    let mut dap = server.dap.lock().unwrap();
-    if let Some(client) = dap.take() {
-        client.disconnect();
-    }
-    *server.dap_caps.lock().unwrap() = None;
-    ok_response(serde_json::json!({"disconnected": true}))
-}
-
-fn dispatch_dap_terminate(server: &DaemonServer) -> DaemonResponse {
-    let dap = server.dap.lock().unwrap();
-    if let Some(client) = dap.as_ref() {
-        client.terminate();
-    }
-    server
-        .game_running
-        .store(false, std::sync::atomic::Ordering::Release);
-    ok_response(serde_json::json!({"terminated": true}))
-}
-
-fn dispatch_dap_reconnect(server: &DaemonServer) -> DaemonResponse {
-    // Disconnect existing if any
-    {
-        let mut dap = server.dap.lock().unwrap();
-        if let Some(client) = dap.take() {
-            client.disconnect();
-        }
-    }
-    // Reconnect
-    let (new_dap, caps) = try_connect_dap(&server.dap_host, server.dap_port);
-    let connected = new_dap.is_some();
-    *server.dap.lock().unwrap() = new_dap;
-    *server.dap_caps.lock().unwrap() = caps;
-    if connected {
-        ok_response(serde_json::json!({"reconnected": true}))
-    } else {
-        error_response("DAP reconnect failed — is Godot editor running?")
-    }
-}
-
-fn dispatch_dap_godot_path(server: &DaemonServer) -> DaemonResponse {
+fn dispatch_cached_godot_path(server: &DaemonServer) -> DaemonResponse {
     let guard = server.cached_godot_path.lock().unwrap();
     match guard.as_ref() {
         Some(path) => ok_response(serde_json::json!({"godot_path": path})),
@@ -928,7 +488,7 @@ fn dispatch_dap_godot_path(server: &DaemonServer) -> DaemonResponse {
     }
 }
 
-fn dispatch_dap_cache_godot_path(
+fn dispatch_cache_godot_path(
     server: &DaemonServer,
     params: &serde_json::Value,
 ) -> DaemonResponse {
@@ -942,7 +502,7 @@ fn dispatch_dap_cache_godot_path(
 // ── Game process management ──────────────────────────────────────────────────
 
 fn dispatch_set_game_pid(server: &DaemonServer, params: &serde_json::Value) -> DaemonResponse {
-    let Some(pid) = params.get("pid").and_then(|p| p.as_u64()) else {
+    let Some(pid) = params.get("pid").and_then(serde_json::Value::as_u64) else {
         return error_response("missing 'pid' parameter");
     };
     *server.game_pid.lock().unwrap() = Some(pid as u32);
@@ -976,7 +536,7 @@ fn dispatch_debug_start_server(
 ) -> DaemonResponse {
     let port = params
         .get("port")
-        .and_then(|p| p.as_u64())
+        .and_then(serde_json::Value::as_u64)
         .unwrap_or(crate::debug::godot_debug_server::GodotDebugServer::DEFAULT_PORT as u64)
         as u16;
 
@@ -995,9 +555,8 @@ fn dispatch_debug_start_server(
     // Brief pause to let the OS release the port if needed
     std::thread::sleep(Duration::from_millis(50));
 
-    let ds = match crate::debug::godot_debug_server::GodotDebugServer::new(port) {
-        Some(s) => s,
-        None => return error_response("Failed to create debug server (port may be in use)"),
+    let Some(ds) = crate::debug::godot_debug_server::GodotDebugServer::new(port) else {
+        return error_response("Failed to create debug server (port may be in use)");
     };
     let actual_port = ds.port();
     *server.debug_server.lock().unwrap() = Some(Arc::new(ds));
@@ -1005,7 +564,7 @@ fn dispatch_debug_start_server(
 }
 
 fn dispatch_debug_accept(server: &DaemonServer, params: &serde_json::Value) -> DaemonResponse {
-    let timeout = params.get("timeout").and_then(|t| t.as_u64()).unwrap_or(30);
+    let timeout = params.get("timeout").and_then(serde_json::Value::as_u64).unwrap_or(30);
 
     // Clone the Arc so we can release the mutex before blocking on accept.
     // This is critical — accept() can block for up to 30s and we must not
@@ -1049,7 +608,7 @@ fn dispatch_debug_scene_tree(server: &DaemonServer) -> DaemonResponse {
 }
 
 fn dispatch_debug_inspect(server: &DaemonServer, params: &serde_json::Value) -> DaemonResponse {
-    let Some(object_id) = params.get("object_id").and_then(|o| o.as_u64()) else {
+    let Some(object_id) = params.get("object_id").and_then(serde_json::Value::as_u64) else {
         return error_response("missing 'object_id' parameter");
     };
     let Some(ds) = get_debug_server(server) else {
@@ -1067,7 +626,7 @@ fn dispatch_debug_set_property(
     server: &DaemonServer,
     params: &serde_json::Value,
 ) -> DaemonResponse {
-    let Some(object_id) = params.get("object_id").and_then(|o| o.as_u64()) else {
+    let Some(object_id) = params.get("object_id").and_then(serde_json::Value::as_u64) else {
         return error_response("missing 'object_id' parameter");
     };
     let Some(property) = params.get("property").and_then(|p| p.as_str()) else {
@@ -1092,7 +651,7 @@ fn dispatch_debug_set_property(
 fn dispatch_debug_suspend(server: &DaemonServer, params: &serde_json::Value) -> DaemonResponse {
     let suspend = params
         .get("suspend")
-        .and_then(|s| s.as_bool())
+        .and_then(serde_json::Value::as_bool)
         .unwrap_or(true);
     let Some(ds) = get_debug_server(server) else {
         return error_response("No debug server running");
@@ -1116,7 +675,7 @@ fn dispatch_debug_next_frame(server: &DaemonServer) -> DaemonResponse {
 }
 
 fn dispatch_debug_time_scale(server: &DaemonServer, params: &serde_json::Value) -> DaemonResponse {
-    let Some(scale) = params.get("scale").and_then(|s| s.as_f64()) else {
+    let Some(scale) = params.get("scale").and_then(serde_json::Value::as_f64) else {
         return error_response("missing 'scale' parameter");
     };
     let Some(ds) = get_debug_server(server) else {
@@ -1129,12 +688,31 @@ fn dispatch_debug_time_scale(server: &DaemonServer, params: &serde_json::Value) 
     }
 }
 
-fn dispatch_debug_reload_scripts(server: &DaemonServer) -> DaemonResponse {
+fn dispatch_debug_reload_scripts(
+    server: &DaemonServer,
+    params: &serde_json::Value,
+) -> DaemonResponse {
     let Some(ds) = get_debug_server(server) else {
         return error_response("No debug server running");
     };
-    if ds.cmd_reload_scripts() {
-        ok_response(serde_json::json!({"reloaded": true}))
+    let paths: Vec<String> = params
+        .get("paths")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    if paths.is_empty() {
+        // No specific paths → reload all scripts unconditionally
+        if ds.cmd_reload_all_scripts() {
+            ok_response(serde_json::json!({"reloaded": true, "mode": "all"}))
+        } else {
+            error_response("reload_all_scripts command failed")
+        }
+    } else if ds.cmd_reload_scripts(&paths) {
+        ok_response(serde_json::json!({"reloaded": true, "mode": "selective", "paths": paths}))
     } else {
         error_response("reload_scripts command failed")
     }
@@ -1149,6 +727,14 @@ fn dispatch_debug_server_status(server: &DaemonServer) -> DaemonResponse {
         })),
         None => ok_response(serde_json::json!({"running": false})),
     }
+}
+
+/// Fast breakpoint state check — reads an atomic flag, no network round-trip.
+fn dispatch_debug_is_at_breakpoint(server: &DaemonServer) -> DaemonResponse {
+    let Some(ds) = get_debug_server(server) else {
+        return error_response("No debug server running");
+    };
+    ok_response(serde_json::json!({"at_breakpoint": ds.is_at_breakpoint()}))
 }
 
 /// Simple execution control command (continue/break/next/step/out).
@@ -1194,12 +780,12 @@ fn dispatch_debug_breakpoint(server: &DaemonServer, params: &serde_json::Value) 
     let Some(path) = params.get("path").and_then(|p| p.as_str()) else {
         return error_response("missing 'path' parameter");
     };
-    let Some(line) = params.get("line").and_then(|l| l.as_u64()) else {
+    let Some(line) = params.get("line").and_then(serde_json::Value::as_u64) else {
         return error_response("missing 'line' parameter");
     };
     let enabled = params
         .get("enabled")
-        .and_then(|e| e.as_bool())
+        .and_then(serde_json::Value::as_bool)
         .unwrap_or(true);
     let Some(ds) = get_debug_server(server) else {
         return error_response("No debug server running");
@@ -1217,7 +803,7 @@ fn dispatch_debug_bool_cmd(
     label: &str,
     params: &serde_json::Value,
 ) -> DaemonResponse {
-    let Some(value) = params.get("value").and_then(|v| v.as_bool()) else {
+    let Some(value) = params.get("value").and_then(serde_json::Value::as_bool) else {
         return error_response("missing 'value' parameter");
     };
     let Some(ds) = get_debug_server(server) else {
@@ -1249,7 +835,7 @@ fn dispatch_debug_get_stack_frame_vars(
     server: &DaemonServer,
     params: &serde_json::Value,
 ) -> DaemonResponse {
-    let Some(frame) = params.get("frame").and_then(|f| f.as_u64()) else {
+    let Some(frame) = params.get("frame").and_then(serde_json::Value::as_u64) else {
         return error_response("missing 'frame' parameter");
     };
     let Some(ds) = get_debug_server(server) else {
@@ -1265,7 +851,7 @@ fn dispatch_debug_evaluate(server: &DaemonServer, params: &serde_json::Value) ->
     let Some(expression) = params.get("expression").and_then(|e| e.as_str()) else {
         return error_response("missing 'expression' parameter");
     };
-    let frame = params.get("frame").and_then(|f| f.as_u64()).unwrap_or(0);
+    let frame = params.get("frame").and_then(serde_json::Value::as_u64).unwrap_or(0);
     let Some(ds) = get_debug_server(server) else {
         return error_response("No debug server running");
     };
@@ -1282,10 +868,10 @@ fn dispatch_debug_inspect_objects(
     let Some(ids_arr) = params.get("ids").and_then(|i| i.as_array()) else {
         return error_response("missing 'ids' parameter");
     };
-    let ids: Vec<u64> = ids_arr.iter().filter_map(|v| v.as_u64()).collect();
+    let ids: Vec<u64> = ids_arr.iter().filter_map(serde_json::Value::as_u64).collect();
     let selection = params
         .get("selection")
-        .and_then(|s| s.as_bool())
+        .and_then(serde_json::Value::as_bool)
         .unwrap_or(false);
     let Some(ds) = get_debug_server(server) else {
         return error_response("No debug server running");
@@ -1297,7 +883,7 @@ fn dispatch_debug_inspect_objects(
 }
 
 fn dispatch_debug_save_node(server: &DaemonServer, params: &serde_json::Value) -> DaemonResponse {
-    let Some(object_id) = params.get("object_id").and_then(|o| o.as_u64()) else {
+    let Some(object_id) = params.get("object_id").and_then(serde_json::Value::as_u64) else {
         return error_response("missing 'object_id' parameter");
     };
     let Some(path) = params.get("path").and_then(|p| p.as_str()) else {
@@ -1316,7 +902,7 @@ fn dispatch_debug_set_property_field(
     server: &DaemonServer,
     params: &serde_json::Value,
 ) -> DaemonResponse {
-    let Some(object_id) = params.get("object_id").and_then(|o| o.as_u64()) else {
+    let Some(object_id) = params.get("object_id").and_then(serde_json::Value::as_u64) else {
         return error_response("missing 'object_id' parameter");
     };
     let Some(property) = params.get("property").and_then(|p| p.as_str()) else {
@@ -1357,6 +943,7 @@ fn dispatch_debug_set_property_field(
 }
 
 /// Set a named sub-field on a GodotVariant (client-side fieldwise assignment).
+#[allow(clippy::too_many_lines)]
 fn variant_set_field(
     target: &mut crate::debug::variant::GodotVariant,
     field: &str,
@@ -1411,7 +998,7 @@ fn variant_set_field(
                 _ => return false,
             }
         }
-        GodotVariant::Vector4(x, y, z, w) => {
+        GodotVariant::Vector4(x, y, z, w) | GodotVariant::Quaternion(x, y, z, w) => {
             let Some(v) = as_f64 else { return false };
             match field {
                 "x" => *x = v,
@@ -1461,23 +1048,13 @@ fn variant_set_field(
                 _ => return false,
             }
         }
-        GodotVariant::Quaternion(x, y, z, w) => {
-            let Some(v) = as_f64 else { return false };
-            match field {
-                "x" => *x = v,
-                "y" => *y = v,
-                "z" => *z = v,
-                "w" => *w = v,
-                _ => return false,
-            }
-        }
         _ => return false,
     }
     true
 }
 
 fn dispatch_debug_mute_audio(server: &DaemonServer, params: &serde_json::Value) -> DaemonResponse {
-    let Some(mute) = params.get("mute").and_then(|m| m.as_bool()) else {
+    let Some(mute) = params.get("mute").and_then(serde_json::Value::as_bool) else {
         return error_response("missing 'mute' parameter");
     };
     let Some(ds) = get_debug_server(server) else {
@@ -1512,7 +1089,7 @@ fn dispatch_debug_override_cameras(
     server: &DaemonServer,
     params: &serde_json::Value,
 ) -> DaemonResponse {
-    let Some(enable) = params.get("enable").and_then(|e| e.as_bool()) else {
+    let Some(enable) = params.get("enable").and_then(serde_json::Value::as_bool) else {
         return error_response("missing 'enable' parameter");
     };
     let Some(ds) = get_debug_server(server) else {
@@ -1565,15 +1142,15 @@ fn dispatch_debug_transform_camera_3d(
     }
     let perspective = params
         .get("perspective")
-        .and_then(|p| p.as_bool())
+        .and_then(serde_json::Value::as_bool)
         .unwrap_or(true);
-    let Some(fov) = params.get("fov").and_then(|f| f.as_f64()) else {
+    let Some(fov) = params.get("fov").and_then(serde_json::Value::as_f64) else {
         return error_response("missing 'fov' parameter");
     };
-    let Some(near) = params.get("near").and_then(|n| n.as_f64()) else {
+    let Some(near) = params.get("near").and_then(serde_json::Value::as_f64) else {
         return error_response("missing 'near' parameter");
     };
-    let Some(far) = params.get("far").and_then(|f| f.as_f64()) else {
+    let Some(far) = params.get("far").and_then(serde_json::Value::as_f64) else {
         return error_response("missing 'far' parameter");
     };
     let Some(ds) = get_debug_server(server) else {
@@ -1590,7 +1167,7 @@ fn dispatch_debug_request_screenshot(
     server: &DaemonServer,
     params: &serde_json::Value,
 ) -> DaemonResponse {
-    let Some(id) = params.get("id").and_then(|i| i.as_u64()) else {
+    let Some(id) = params.get("id").and_then(serde_json::Value::as_u64) else {
         return error_response("missing 'id' parameter");
     };
     let Some(ds) = get_debug_server(server) else {
@@ -1630,7 +1207,7 @@ fn dispatch_debug_int_cmd(
     params: &serde_json::Value,
     param_name: &str,
 ) -> DaemonResponse {
-    let Some(value) = params.get(param_name).and_then(|v| v.as_i64()) else {
+    let Some(value) = params.get(param_name).and_then(serde_json::Value::as_i64) else {
         return error_response(&format!("missing '{param_name}' parameter"));
     };
     let Some(ds) = get_debug_server(server) else {
@@ -1655,7 +1232,7 @@ fn dispatch_debug_bool_param(
     params: &serde_json::Value,
     param_name: &str,
 ) -> DaemonResponse {
-    let Some(value) = params.get(param_name).and_then(|v| v.as_bool()) else {
+    let Some(value) = params.get(param_name).and_then(serde_json::Value::as_bool) else {
         return error_response(&format!("missing '{param_name}' parameter"));
     };
     let Some(ds) = get_debug_server(server) else {
@@ -1705,7 +1282,7 @@ fn dispatch_debug_live_path(
     let Some(path) = params.get("path").and_then(|p| p.as_str()) else {
         return error_response("missing 'path' parameter");
     };
-    let Some(id) = params.get("id").and_then(|i| i.as_i64()) else {
+    let Some(id) = params.get("id").and_then(serde_json::Value::as_i64) else {
         return error_response("missing 'id' parameter");
     };
     let Some(ds) = get_debug_server(server) else {
@@ -1729,7 +1306,7 @@ fn dispatch_debug_live_prop(
     label: &str,
     params: &serde_json::Value,
 ) -> DaemonResponse {
-    let Some(id) = params.get("id").and_then(|i| i.as_i64()) else {
+    let Some(id) = params.get("id").and_then(serde_json::Value::as_i64) else {
         return error_response("missing 'id' parameter");
     };
     let Some(property) = params.get("property").and_then(|p| p.as_str()) else {
@@ -1761,7 +1338,7 @@ fn dispatch_debug_live_prop_res(
     label: &str,
     params: &serde_json::Value,
 ) -> DaemonResponse {
-    let Some(id) = params.get("id").and_then(|i| i.as_i64()) else {
+    let Some(id) = params.get("id").and_then(serde_json::Value::as_i64) else {
         return error_response("missing 'id' parameter");
     };
     let Some(property) = params.get("property").and_then(|p| p.as_str()) else {
@@ -1791,7 +1368,7 @@ fn dispatch_debug_live_call(
     label: &str,
     params: &serde_json::Value,
 ) -> DaemonResponse {
-    let Some(id) = params.get("id").and_then(|i| i.as_i64()) else {
+    let Some(id) = params.get("id").and_then(serde_json::Value::as_i64) else {
         return error_response("missing 'id' parameter");
     };
     let Some(method) = params.get("method").and_then(|m| m.as_str()) else {
@@ -1893,7 +1470,7 @@ fn dispatch_debug_live_remove_and_keep(
     let Some(path) = params.get("path").and_then(|p| p.as_str()) else {
         return error_response("missing 'path' parameter");
     };
-    let Some(object_id) = params.get("object_id").and_then(|o| o.as_u64()) else {
+    let Some(object_id) = params.get("object_id").and_then(serde_json::Value::as_u64) else {
         return error_response("missing 'object_id' parameter");
     };
     let Some(ds) = get_debug_server(server) else {
@@ -1910,13 +1487,13 @@ fn dispatch_debug_live_restore_node(
     server: &DaemonServer,
     params: &serde_json::Value,
 ) -> DaemonResponse {
-    let Some(object_id) = params.get("object_id").and_then(|o| o.as_u64()) else {
+    let Some(object_id) = params.get("object_id").and_then(serde_json::Value::as_u64) else {
         return error_response("missing 'object_id' parameter");
     };
     let Some(path) = params.get("path").and_then(|p| p.as_str()) else {
         return error_response("missing 'path' parameter");
     };
-    let Some(pos) = params.get("pos").and_then(|p| p.as_i64()) else {
+    let Some(pos) = params.get("pos").and_then(serde_json::Value::as_i64) else {
         return error_response("missing 'pos' parameter");
     };
     let Some(ds) = get_debug_server(server) else {
@@ -1962,7 +1539,7 @@ fn dispatch_debug_live_reparent_node(
     let Some(new_name) = params.get("new_name").and_then(|n| n.as_str()) else {
         return error_response("missing 'new_name' parameter");
     };
-    let Some(pos) = params.get("pos").and_then(|p| p.as_i64()) else {
+    let Some(pos) = params.get("pos").and_then(serde_json::Value::as_i64) else {
         return error_response("missing 'pos' parameter");
     };
     let Some(ds) = get_debug_server(server) else {
@@ -1982,7 +1559,7 @@ fn dispatch_debug_toggle_profiler(
     let Some(profiler) = params.get("profiler").and_then(|p| p.as_str()) else {
         return error_response("missing 'profiler' parameter");
     };
-    let Some(enable) = params.get("enable").and_then(|e| e.as_bool()) else {
+    let Some(enable) = params.get("enable").and_then(serde_json::Value::as_bool) else {
         return error_response("missing 'enable' parameter");
     };
     let Some(ds) = get_debug_server(server) else {
@@ -2023,7 +1600,7 @@ fn json_array_to_variant(arr: &[serde_json::Value]) -> crate::debug::variant::Go
     use crate::debug::variant::GodotVariant;
 
     // Check if all elements are numbers
-    let all_numbers = arr.iter().all(|v| v.is_number());
+    let all_numbers = arr.iter().all(serde_json::Value::is_number);
     if !all_numbers {
         // Generic array — recurse into each element
         return GodotVariant::Array(arr.iter().map(json_to_variant).collect());
@@ -2032,7 +1609,7 @@ fn json_array_to_variant(arr: &[serde_json::Value]) -> crate::debug::variant::Go
     // Check if all elements are integers (no fractional part)
     let all_ints = arr.iter().all(|v| v.as_i64().is_some());
 
-    let floats: Vec<f64> = arr.iter().filter_map(|v| v.as_f64()).collect();
+    let floats: Vec<f64> = arr.iter().filter_map(serde_json::Value::as_f64).collect();
     if floats.len() != arr.len() {
         return GodotVariant::Array(arr.iter().map(json_to_variant).collect());
     }
@@ -2083,7 +1660,7 @@ fn json_object_to_variant(
     if obj.len() == 1 {
         let (key, inner) = obj.iter().next().unwrap();
         if let Some(arr) = inner.as_array() {
-            let floats: Vec<f64> = arr.iter().filter_map(|v| v.as_f64()).collect();
+            let floats: Vec<f64> = arr.iter().filter_map(serde_json::Value::as_f64).collect();
             if floats.len() == arr.len() {
                 match (key.as_str(), floats.len()) {
                     ("Vector2", 2) => return GodotVariant::Vector2(floats[0], floats[1]),
@@ -2308,12 +1885,4 @@ mod tests {
         assert_eq!(req.method, "shutdown");
     }
 
-    #[test]
-    fn test_dap_request_parsing() {
-        let json =
-            r#"{"method":"dap_set_breakpoints","params":{"path":"test.gd","lines":[10,20]}}"#;
-        let req: DaemonRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.method, "dap_set_breakpoints");
-        assert_eq!(req.params["path"], "test.gd");
-    }
 }

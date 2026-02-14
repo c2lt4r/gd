@@ -33,7 +33,7 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
             };
             diags.push(LintDiagnostic {
                 rule: "standalone-expression",
-                message: format!("expression `{}` has no effect as a statement", display,),
+                message: format!("expression `{display}` has no effect as a statement",),
                 severity: Severity::Warning,
                 line: node.start_position().row,
                 column: node.start_position().column,
@@ -62,15 +62,11 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
 #[allow(clippy::only_used_in_recursion)]
 fn is_pure_expression(node: &Node, source: &str) -> bool {
     match node.kind() {
-        // Pure value references and literals
+        // Pure value references, literals, binary/unary operators,
+        // subscript, array/dictionary constructors, ternary expressions
         "identifier" | "integer" | "float" | "string" | "true" | "false" | "null" | "get_node"
-        | "node_path" => true,
-
-        // Binary operators (arithmetic, comparison, bitwise, logical)
-        "binary_operator" => true,
-
-        // Unary operators (not, -, +, ~)
-        "unary_operator" => true,
+        | "node_path" | "binary_operator" | "unary_operator" | "subscript" | "array"
+        | "dictionary" | "conditional_expression" => true,
 
         // Parenthesized expression - check inner
         "parenthesized_expression" => {
@@ -97,17 +93,6 @@ fn is_pure_expression(node: &Node, source: &str) -> bool {
             }
             true
         }
-
-        // Subscript like `arr[0]` with no call
-        "subscript" => true,
-
-        // Array and dictionary constructors (pure, no side effects)
-        "array" | "dictionary" => true,
-
-        // Ternary/conditional expression: `x if cond else y`
-        "conditional_expression" => true,
-
-        // String formatting / concatenation captured as binary_operator already
 
         // Everything else (call, assignment, augmented_assignment, await_expression,
         // yield_expression, etc.) is considered to have side effects
@@ -136,7 +121,7 @@ func foo():
 ";
         let diags = check(source);
         assert_eq!(diags.len(), 1);
-        assert!(diags[0].message.contains("x"));
+        assert!(diags[0].message.contains('x'));
         assert!(diags[0].message.contains("no effect"));
     }
 

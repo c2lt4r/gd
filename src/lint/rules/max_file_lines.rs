@@ -21,7 +21,7 @@ impl LintRule for MaxFileLines {
         if line_count > max_lines {
             vec![LintDiagnostic {
                 rule: "max-file-lines",
-                message: format!("file is {} lines long (max {})", line_count, max_lines),
+                message: format!("file is {line_count} lines long (max {max_lines})"),
                 severity: Severity::Warning,
                 line: 0,
                 column: 0,

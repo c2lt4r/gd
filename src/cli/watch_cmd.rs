@@ -22,7 +22,7 @@ pub struct WatchArgs {
     pub no_lint: bool,
 }
 
-pub fn exec(args: WatchArgs) -> Result<()> {
+pub fn exec(args: &WatchArgs) -> Result<()> {
     let cwd =
         std::env::current_dir().map_err(|e| miette!("Failed to get current directory: {e}"))?;
 
@@ -123,7 +123,7 @@ pub fn exec(args: WatchArgs) -> Result<()> {
 
                 // Run check if requested
                 if args.check {
-                    match crate::cli::check_cmd::exec(crate::cli::check_cmd::CheckArgs {
+                    match crate::cli::check_cmd::exec(&crate::cli::check_cmd::CheckArgs {
                         paths: vec![],
                         format: "human".to_string(),
                     }) {

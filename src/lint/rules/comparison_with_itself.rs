@@ -38,8 +38,7 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
                 diags.push(LintDiagnostic {
                     rule: "comparison-with-itself",
                     message: format!(
-                        "comparing `{}` with itself (`{} {} {}`)",
-                        left_text, left_text, op, right_text,
+                        "comparing `{left_text}` with itself (`{left_text} {op} {right_text}`)",
                     ),
                     severity: Severity::Warning,
                     line: node.start_position().row,

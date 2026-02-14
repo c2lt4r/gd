@@ -9,6 +9,7 @@ use super::{
     line_starts, normalize_blank_lines,
 };
 
+#[allow(clippy::too_many_lines)]
 pub fn delete_symbol(
     file: &Path,
     name: Option<&str>,
@@ -149,6 +150,7 @@ pub fn delete_symbol(
 
 // ── delete-enum-member ──────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_lines)]
 fn delete_enum_member(
     file: &Path,
     enum_name: &str,
@@ -311,7 +313,7 @@ fn compute_enum_member_removal_range(
         let prev = enumerators[idx - 1];
         // Find the comma after prev
         let between = &source[prev.end_byte()..member.end_byte()];
-        let comma_offset = between.find(',').map(|p| p + 1).unwrap_or(0);
+        let comma_offset = between.find(',').map_or(0, |p| p + 1);
         (prev.end_byte() + comma_offset, member.end_byte())
     }
 }

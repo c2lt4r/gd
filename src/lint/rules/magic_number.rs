@@ -92,7 +92,7 @@ impl LintRule for MagicNumber {
         let allowed_contexts: HashSet<&str> = if let Some(rc) = rule_config
             && !rc.allowed_contexts.is_empty()
         {
-            rc.allowed_contexts.iter().map(|s| s.as_str()).collect()
+            rc.allowed_contexts.iter().map(std::string::String::as_str).collect()
         } else {
             DEFAULT_ALLOWED_CONTEXTS.iter().copied().collect()
         };
@@ -170,8 +170,7 @@ fn check_node(
                     diags.push(LintDiagnostic {
                         rule: "magic-number",
                         message: format!(
-                            "consider extracting magic number {} to a named constant",
-                            value_text,
+                            "consider extracting magic number {value_text} to a named constant",
                         ),
                         severity: Severity::Warning,
                         line: node.start_position().row,

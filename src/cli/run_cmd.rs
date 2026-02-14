@@ -16,6 +16,6 @@ pub struct RunArgs {
     pub extra: Vec<String>,
 }
 
-pub fn exec(args: RunArgs) -> Result<()> {
+pub fn exec(args: &RunArgs) -> Result<()> {
     crate::build::run_project(args.scene.as_deref(), args.debug, args.verbose, &args.extra)
 }

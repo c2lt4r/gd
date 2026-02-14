@@ -22,6 +22,7 @@ pub struct InlineDelegateOutput {
 /// Detect that a function is a pure pass-through delegate
 /// (e.g., `func foo(x): return bar.foo(x)` or `func foo(): bar.do_thing()`),
 /// replace all callers with the delegate target, then delete the function.
+#[allow(clippy::too_many_lines)]
 pub fn inline_delegate(
     file: &Path,
     name: &str,

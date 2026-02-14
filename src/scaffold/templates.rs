@@ -21,7 +21,7 @@ config/features=PackedStringArray("{version}", "{renderer_feature}")
 renderer/rendering_method="{renderer}"
 "#;
 
-pub const GITIGNORE_TEMPLATE: &str = r#"# Godot 4+ specific ignores
+pub const GITIGNORE_TEMPLATE: &str = r"# Godot 4+ specific ignores
 .godot/
 build/
 
@@ -31,7 +31,7 @@ gd.toml
 # OS
 .DS_Store
 Thumbs.db
-"#;
+";
 
 pub const GD_TOML_TEMPLATE: &str = r#"# gd toolchain configuration
 # All options shown with their defaults. Uncomment to override.

@@ -2,7 +2,11 @@ use std::path::{Path, PathBuf};
 
 use miette::Result;
 use serde::Serialize;
-use tower_lsp::lsp_types::*;
+use tower_lsp::lsp_types::{
+    CodeActionOrCommand, CompletionItem, CompletionItemKind, DocumentSymbol, DocumentSymbolResponse,
+    GotoDefinitionResponse, HoverContents, Location, MarkedString, Position, Range, SymbolKind,
+    TextEdit, Url, WorkspaceEdit,
+};
 
 // ── Output structs ──────────────────────────────────────────────────────────
 
@@ -160,7 +164,7 @@ pub(super) fn resolve_file(file: &str) -> Result<PathBuf> {
 }
 
 pub(super) fn make_uri(path: &Path) -> Result<Url> {
-    Url::from_file_path(path).map_err(|_| miette::miette!("invalid path: {}", path.display()))
+    Url::from_file_path(path).map_err(|()| miette::miette!("invalid path: {}", path.display()))
 }
 
 pub(super) fn find_root(path: &Path) -> Result<PathBuf> {
@@ -673,12 +677,12 @@ fn extract_godot_completions(val: &serde_json::Value) -> Option<Vec<CompletionIt
         let label = item.get("label")?.as_str()?.to_string();
         let kind = item
             .get("kind")
-            .and_then(|k| k.as_u64())
+            .and_then(serde_json::Value::as_u64)
             .and_then(|k| serde_json::from_value(serde_json::Value::Number(k.into())).ok());
         let detail = item
             .get("detail")
             .and_then(|d| d.as_str())
-            .map(|s| s.to_string());
+            .map(std::string::ToString::to_string);
         result.push(CompletionItem {
             label,
             kind,
@@ -737,7 +741,7 @@ pub fn query_code_actions(file: &str, line: usize, column: usize) -> Result<Vec<
                     edits,
                 })
             }
-            _ => None,
+            CodeActionOrCommand::Command(_) => None,
         })
         .collect())
 }
@@ -1276,10 +1280,11 @@ pub fn query_create_file(
     let content = if let Some(custom) = custom_content {
         custom.to_string()
     } else {
+        use std::fmt::Write;
         let mut buf = String::new();
-        buf.push_str(&format!("extends {extends}\n"));
+        let _ = writeln!(buf, "extends {extends}");
         if let Some(cn) = class_name {
-            buf.push_str(&format!("class_name {cn}\n"));
+            let _ = writeln!(buf, "class_name {cn}");
         }
         buf.push_str("\n\n");
         buf.push_str("func _ready() -> void:\n\tpass\n\n\n");
@@ -1301,7 +1306,7 @@ pub fn query_create_file(
     Ok(CreateFileOutput {
         file: file.to_string(),
         extends: extends.to_string(),
-        class_name: class_name.map(|s| s.to_string()),
+        class_name: class_name.map(std::string::ToString::to_string),
         applied: !dry_run,
         lines,
     })

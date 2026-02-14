@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use tower_lsp::lsp_types::*;
+use tower_lsp::lsp_types::{GotoDefinitionResponse, Location, Position, Range, Url};
 
 use super::util::{FUNCTION_KINDS, matches_name, node_range, node_text};
 
@@ -255,9 +255,8 @@ pub fn goto_definition_cross_file(
             continue;
         }
         if let Ok(tree) = crate::core::parser::parse(&content) {
-            let file_uri = match Url::from_file_path(&path) {
-                Ok(u) => u,
-                Err(_) => continue,
+            let Ok(file_uri) = Url::from_file_path(&path) else {
+                continue;
             };
             if let Some(result) = find_definition(&tree.root_node(), ident, &content, &file_uri) {
                 return Some(result);

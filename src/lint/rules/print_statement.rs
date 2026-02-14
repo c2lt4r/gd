@@ -44,8 +44,7 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
                 diags.push(LintDiagnostic {
                     rule: "print-statement",
                     message: format!(
-                        "found `{}()` call; consider removing before release",
-                        func_name
+                        "found `{func_name}()` call; consider removing before release"
                     ),
                     severity: Severity::Info,
                     line: node.start_position().row,

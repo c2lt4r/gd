@@ -117,8 +117,7 @@ fn make_diagnostic(method: &str, node: Node) -> LintDiagnostic {
     LintDiagnostic {
         rule: "physics-in-process",
         message: format!(
-            "`{}()` should be called in _physics_process(), not _process()",
-            method
+            "`{method}()` should be called in _physics_process(), not _process()"
         ),
         severity: Severity::Warning,
         line: node.start_position().row,

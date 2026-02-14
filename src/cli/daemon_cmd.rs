@@ -24,12 +24,6 @@ pub enum DaemonCommand {
         /// Port for Godot's built-in LSP server (default: 6005)
         #[arg(long, default_value = "6005")]
         godot_port: u16,
-        /// DAP server host (default: localhost)
-        #[arg(long, default_value = "localhost")]
-        dap_host: String,
-        /// DAP server port (default: 6006)
-        #[arg(long, default_value = "6006")]
-        dap_port: u16,
     },
 }
 
@@ -84,14 +78,12 @@ pub fn exec(args: DaemonArgs) -> Result<()> {
         DaemonCommand::Serve {
             project_root,
             godot_port,
-            dap_host,
-            dap_port,
         } => {
             let root = std::path::PathBuf::from(&project_root);
             if !root.join("project.godot").exists() {
                 return Err(miette::miette!("no project.godot found in {project_root}"));
             }
-            crate::lsp::daemon::run(root, godot_port, dap_host, dap_port)
+            crate::lsp::daemon::run(&root, godot_port)
         }
     }
 }

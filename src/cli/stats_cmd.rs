@@ -91,7 +91,7 @@ struct FileStats {
     longest_function: Option<FunctionInfo>,
 }
 
-pub fn exec(args: StatsArgs) -> Result<()> {
+pub fn exec(args: &StatsArgs) -> Result<()> {
     let root = if args.paths.is_empty() {
         std::env::current_dir().map_err(|e| miette!("Failed to get current directory: {e}"))?
     } else {
@@ -100,7 +100,7 @@ pub fn exec(args: StatsArgs) -> Result<()> {
 
     // --diff mode: compare current vs another branch
     if let Some(ref branch) = args.diff {
-        let current = collect_current_stats(&root, &args)?;
+        let current = collect_current_stats(&root, args)?;
         let other = collect_branch_stats(&root, branch)?;
 
         let delta = StatsDelta {
@@ -130,7 +130,7 @@ pub fn exec(args: StatsArgs) -> Result<()> {
         return Ok(());
     }
 
-    let stats = collect_current_stats(&root, &args)?;
+    let stats = collect_current_stats(&root, args)?;
 
     // Output results
     match args.format.as_str() {
@@ -192,12 +192,11 @@ fn collect_current_stats(root: &Path, args: &StatsArgs) -> Result<ProjectStats> 
                 .path
                 .parent()
                 .and_then(|p| p.strip_prefix(root).ok())
-                .map(|p| {
+                .map_or_else(|| ".".to_string(), |p| {
                     use path_slash::PathExt;
                     let s = p.to_slash_lossy().to_string();
                     if s.is_empty() { ".".to_string() } else { s }
-                })
-                .unwrap_or_else(|| ".".to_string());
+                });
             let entry = dir_map.entry(dir).or_insert((0, 0, 0));
             entry.0 += 1;
             entry.1 += fs.lines_code;
@@ -316,7 +315,12 @@ fn collect_branch_stats(root: &Path, branch: &str) -> Result<ProjectStats> {
     let file_list = String::from_utf8_lossy(&output.stdout);
     let gd_files: Vec<&str> = file_list
         .lines()
-        .filter(|f| f.ends_with(".gd") && !f.starts_with('.'))
+        .filter(|f| {
+            Path::new(f)
+                .extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("gd"))
+                && !f.starts_with('.')
+        })
         .collect();
 
     if gd_files.is_empty() {
@@ -515,12 +519,10 @@ fn output_human(stats: &ProjectStats, show_dirs: bool, top_n: Option<usize>) {
 }
 
 fn format_delta(val: i64) -> String {
-    if val > 0 {
-        format!("+{val}")
-    } else if val < 0 {
-        format!("{val}")
-    } else {
-        "0".to_string()
+    match val.cmp(&0) {
+        std::cmp::Ordering::Greater => format!("+{val}"),
+        std::cmp::Ordering::Less => format!("{val}"),
+        std::cmp::Ordering::Equal => "0".to_string(),
     }
 }
 
@@ -575,12 +577,10 @@ fn output_human_diff(diff: &StatsDiff) {
 
     for (label, current, other, delta) in rows {
         let delta_str = format_delta(delta);
-        let delta_colored = if delta > 0 {
-            delta_str.green().to_string()
-        } else if delta < 0 {
-            delta_str.red().to_string()
-        } else {
-            delta_str.dimmed().to_string()
+        let delta_colored = match delta.cmp(&0) {
+            std::cmp::Ordering::Greater => delta_str.green().to_string(),
+            std::cmp::Ordering::Less => delta_str.red().to_string(),
+            std::cmp::Ordering::Equal => delta_str.dimmed().to_string(),
         };
         println!(
             "  {:20} {:>10} {:>10} {:>10}",
@@ -596,7 +596,7 @@ fn output_human_diff(diff: &StatsDiff) {
 fn output_json(stats: &ProjectStats) -> Result<()> {
     let json = serde_json::to_string_pretty(stats)
         .map_err(|e| miette!("Failed to serialize stats to JSON: {e}"))?;
-    println!("{}", json);
+    println!("{json}");
     Ok(())
 }
 

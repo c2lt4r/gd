@@ -48,7 +48,8 @@ fn find_ready_functions(node: Node, source: &str, diags: &mut Vec<LintDiagnostic
     }
 }
 
-fn find_awaits(node: Node, _source: &str, diags: &mut Vec<LintDiagnostic>) {
+#[allow(clippy::only_used_in_recursion)]
+fn find_awaits(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
     if node.kind() == "await" {
         diags.push(LintDiagnostic {
             rule: "await-in-ready",
@@ -69,7 +70,7 @@ fn find_awaits(node: Node, _source: &str, diags: &mut Vec<LintDiagnostic>) {
             // Don't recurse into nested function definitions
             let child = cursor.node();
             if child.kind() != "function_definition" {
-                find_awaits(child, _source, diags);
+                find_awaits(child, source, diags);
             }
             if !cursor.goto_next_sibling() {
                 break;

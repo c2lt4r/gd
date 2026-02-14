@@ -109,7 +109,14 @@ pub fn bulk_delete_symbol(
 
     let mut deleted = Vec::new();
 
-    if !dry_run {
+    if dry_run {
+        for (name, kind, _, _) in &deletions {
+            deleted.push(BulkDeletedEntry {
+                name: name.clone(),
+                kind: kind.clone(),
+            });
+        }
+    } else {
         let mut new_source = source.clone();
         for (name, kind, start_byte, end_byte) in &deletions {
             new_source.replace_range(*start_byte..*end_byte, "");
@@ -120,13 +127,6 @@ pub fn bulk_delete_symbol(
         }
         normalize_blank_lines(&mut new_source);
         std::fs::write(file, &new_source).map_err(|e| miette::miette!("cannot write file: {e}"))?;
-    } else {
-        for (name, kind, _, _) in &deletions {
-            deleted.push(BulkDeletedEntry {
-                name: name.clone(),
-                kind: kind.clone(),
-            });
-        }
     }
 
     // Reverse to report in input order (they were sorted descending)

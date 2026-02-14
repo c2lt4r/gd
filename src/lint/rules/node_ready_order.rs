@@ -67,8 +67,7 @@ fn find_node_access(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
             diags.push(LintDiagnostic {
                 rule: "node-ready-order",
                 message: format!(
-                    "`{}` in _init() may fail; nodes are not ready until _ready()",
-                    text
+                    "`{text}` in _init() may fail; nodes are not ready until _ready()"
                 ),
                 severity: Severity::Warning,
                 line: node.start_position().row,
@@ -89,8 +88,7 @@ fn find_node_access(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
                 diags.push(LintDiagnostic {
                     rule: "node-ready-order",
                     message: format!(
-                        "`{}(...)` in _init() may fail; nodes are not ready until _ready()",
-                        func
+                        "`{func}(...)` in _init() may fail; nodes are not ready until _ready()"
                     ),
                     severity: Severity::Warning,
                     line: node.start_position().row,
@@ -102,7 +100,6 @@ fn find_node_access(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
             }
         }
         // Don't recurse into nested function definitions (separate scope)
-        "function_definition" | "constructor_definition" | "lambda" => {}
         _ => {}
     }
 

@@ -57,8 +57,7 @@ fn find_get_node_calls(node: Node, source: &str, func_name: &str, diags: &mut Ve
         diags.push(LintDiagnostic {
             rule: "get-node-in-process",
             message: format!(
-                "`{}` in {}() is called every frame; cache it in an @onready var",
-                text, func_name
+                "`{text}` in {func_name}() is called every frame; cache it in an @onready var"
             ),
             severity: Severity::Warning,
             line: node.start_position().row,
@@ -80,8 +79,7 @@ fn find_get_node_calls(node: Node, source: &str, func_name: &str, diags: &mut Ve
             diags.push(LintDiagnostic {
                 rule: "get-node-in-process",
                 message: format!(
-                    "`{}()` in {}() is called every frame; cache it in an @onready var",
-                    callee, func_name
+                    "`{callee}()` in {func_name}() is called every frame; cache it in an @onready var"
                 ),
                 severity: Severity::Warning,
                 line: node.start_position().row,
@@ -133,8 +131,7 @@ fn check_attribute_get_node(
                 diags.push(LintDiagnostic {
                     rule: "get-node-in-process",
                     message: format!(
-                        "`{}()` in {}() is called every frame; cache it in an @onready var",
-                        method, func_name
+                        "`{method}()` in {func_name}() is called every frame; cache it in an @onready var"
                     ),
                     severity: Severity::Warning,
                     line: node.start_position().row,

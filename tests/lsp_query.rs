@@ -82,6 +82,7 @@ fn test_lsp_initialize() {
 // ─── LSP formatting ────────────────────────────────────────────────────────
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn test_lsp_formatting() {
     use std::process::Stdio;
 
@@ -201,8 +202,7 @@ fn test_lsp_formatting() {
     let result = &format_resp["result"];
     assert!(
         result.is_array(),
-        "Formatting result should be an array of TextEdit, got: {}",
-        result
+        "Formatting result should be an array of TextEdit, got: {result}"
     );
 
     let edits = result.as_array().unwrap();
@@ -1032,8 +1032,7 @@ fn test_lsp_references_by_name_with_class_filter() {
     assert_eq!(
         refs.len(),
         2,
-        "should only find refs in Player class, got {:?}",
-        refs
+        "should only find refs in Player class, got {refs:?}"
     );
     for r in refs {
         assert_eq!(r["file"], "player.gd");
@@ -1060,8 +1059,7 @@ fn test_lsp_references_by_name_inner_class() {
     assert_eq!(
         refs.len(),
         2,
-        "should only find refs inside inner class Stats, got {:?}",
-        refs
+        "should only find refs inside inner class Stats, got {refs:?}"
     );
 }
 

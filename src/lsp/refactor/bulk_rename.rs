@@ -90,7 +90,7 @@ pub fn bulk_rename(
         );
 
         let uri = tower_lsp::lsp_types::Url::from_file_path(file)
-            .map_err(|_| miette::miette!("invalid path: {}", file.display()))?;
+            .map_err(|()| miette::miette!("invalid path: {}", file.display()))?;
         let workspace = crate::lsp::workspace::WorkspaceIndex::new(project_root.to_path_buf());
 
         let rename_edit =

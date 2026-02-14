@@ -173,9 +173,8 @@ fn format_file(path: &Path, config: &Config, check: bool, show_diff: bool) -> Re
 /// Returns `None` if safe, `Some(reason)` if the formatter may have corrupted the code.
 pub fn verify_format(source: &str, formatted: &str, config: &FmtConfig) -> Option<String> {
     // Re-parse the formatted output
-    let formatted_tree = match parser::parse(formatted) {
-        Ok(t) => t,
-        Err(_) => return Some("formatted output failed to parse".into()),
+    let Ok(formatted_tree) = parser::parse(formatted) else {
+        return Some("formatted output failed to parse".into());
     };
 
     // Check for new ERROR nodes introduced by formatting
@@ -204,11 +203,7 @@ pub fn verify_format(source: &str, formatted: &str, config: &FmtConfig) -> Optio
 
 /// Count ERROR and MISSING nodes in a tree-sitter tree.
 fn count_error_nodes(node: &Node) -> usize {
-    let mut count = if node.is_error() || node.is_missing() {
-        1
-    } else {
-        0
-    };
+    let mut count = usize::from(node.is_error() || node.is_missing());
     for i in 0..node.child_count() {
         if let Some(child) = node.child(i) {
             count += count_error_nodes(&child);

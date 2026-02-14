@@ -45,9 +45,8 @@ fn check_function(func: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
     let src = source.as_bytes();
 
     // Must have a return type annotation
-    let return_type = match func.child_by_field_name("return_type") {
-        Some(rt) => rt,
-        None => return,
+    let Some(return_type) = func.child_by_field_name("return_type") else {
+        return;
     };
 
     let type_text = return_type.utf8_text(src).unwrap_or("");
@@ -56,9 +55,8 @@ fn check_function(func: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
     }
 
     // Get the function body
-    let body = match func.child_by_field_name("body") {
-        Some(b) => b,
-        None => return,
+    let Some(body) = func.child_by_field_name("body") else {
+        return;
     };
 
     if body_always_returns(body, source) {
@@ -70,9 +68,8 @@ fn check_function(func: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
 
 /// Check if a body node always returns on every code path.
 fn body_always_returns(body: Node, source: &str) -> bool {
-    let last = match last_statement(body) {
-        Some(n) => n,
-        None => return false,
+    let Some(last) = last_statement(body) else {
+        return false;
     };
 
     node_always_returns(last, source)
@@ -92,9 +89,8 @@ fn node_always_returns(node: Node, source: &str) -> bool {
 /// and every branch must return).
 fn if_always_returns(node: Node, source: &str) -> bool {
     // The if body
-    let if_body = match node.child_by_field_name("body") {
-        Some(b) => b,
-        None => return false,
+    let Some(if_body) = node.child_by_field_name("body") else {
+        return false;
     };
     if !body_always_returns(if_body, source) {
         return false;
@@ -144,9 +140,8 @@ fn match_always_returns(node: Node, source: &str) -> bool {
     let match_body = node
         .children(&mut node.walk())
         .find(|c| c.kind() == "match_body");
-    let match_body = match match_body {
-        Some(b) => b,
-        None => return false,
+    let Some(match_body) = match_body else {
+        return false;
     };
 
     let mut has_wildcard = false;
@@ -218,14 +213,12 @@ fn last_statement(body: Node) -> Option<Node> {
 fn emit_warning(func: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
     let name = func
         .child_by_field_name("name")
-        .map(|n| n.utf8_text(source.as_bytes()).unwrap_or("?"))
-        .unwrap_or("?");
+        .map_or("?", |n| n.utf8_text(source.as_bytes()).unwrap_or("?"));
 
     diags.push(LintDiagnostic {
         rule: "missing-return",
         message: format!(
-            "function `{}` has a return type but may not return a value",
-            name,
+            "function `{name}` has a return type but may not return a value",
         ),
         severity: Severity::Warning,
         line: func.start_position().row,

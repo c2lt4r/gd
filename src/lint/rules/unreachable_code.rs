@@ -121,7 +121,7 @@ fn check_body_for_unreachable(body: Node, source: &str, diags: &mut Vec<LintDiag
 
         diags.push(LintDiagnostic {
             rule: "unreachable-code",
-            message: format!("unreachable code after `{}`", term),
+            message: format!("unreachable code after `{term}`"),
             severity: Severity::Warning,
             line,
             column: col,

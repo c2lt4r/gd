@@ -72,21 +72,20 @@ fn generate_github(project: &GodotProject, args: &CiPlatformArgs) -> Result<()> 
     runs-on: ubuntu-latest
     needs: lint-and-format
     container:
-      image: barichello/godot-ci:{version}
+      image: barichello/godot-ci:{godot_version}
     steps:
       - uses: actions/checkout@v4
 
       - name: Setup export templates
         run: |
-          mkdir -p ~/.local/share/godot/export_templates/{version}.stable
-          mv /root/.local/share/godot/export_templates/{version}.stable/* ~/.local/share/godot/export_templates/{version}.stable/ || true
+          mkdir -p ~/.local/share/godot/export_templates/{godot_version}.stable
+          mv /root/.local/share/godot/export_templates/{godot_version}.stable/* ~/.local/share/godot/export_templates/{godot_version}.stable/ || true
 
       - name: Export project
         run: |
           mkdir -p build
           godot --headless --export-release "Linux" build/game.x86_64
-"#,
-            version = godot_version
+"#
         )
     } else {
         String::new()
@@ -94,7 +93,7 @@ fn generate_github(project: &GodotProject, args: &CiPlatformArgs) -> Result<()> 
 
     let repo_url = env!("CARGO_PKG_REPOSITORY");
     let content = format!(
-        r#"name: GDScript CI
+        r"name: GDScript CI
 
 on:
   push:
@@ -106,7 +105,7 @@ jobs:
   lint-and-format:
     runs-on: ubuntu-latest
     container:
-      image: barichello/godot-ci:{version}
+      image: barichello/godot-ci:{godot_version}
     steps:
       - uses: actions/checkout@v4
 
@@ -120,10 +119,7 @@ jobs:
 
       - name: Lint
         run: gd lint
-{export_job}"#,
-        version = godot_version,
-        repo_url = repo_url,
-        export_job = export_job
+{export_job}"
     );
 
     // Write the file
@@ -174,7 +170,7 @@ export:
 
     let repo_url = env!("CARGO_PKG_REPOSITORY");
     let content = format!(
-        r#"image: barichello/godot-ci:{version}
+        r"image: barichello/godot-ci:{godot_version}
 
 stages:
   - lint{export_stage}
@@ -185,11 +181,7 @@ lint:
     - curl -L {repo_url}/releases/latest/download/gd-linux-x86_64 -o /usr/local/bin/gd && chmod +x /usr/local/bin/gd
     - gd fmt --check
     - gd lint
-{export_job}"#,
-        version = godot_version,
-        repo_url = repo_url,
-        export_stage = export_stage,
-        export_job = export_job
+{export_job}"
     );
 
     // Write the file

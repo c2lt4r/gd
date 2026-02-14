@@ -32,13 +32,11 @@ fn check_node(node: Node, source: &str, max_lines: usize, diags: &mut Vec<LintDi
         if line_count > max_lines {
             let func_name = node
                 .child_by_field_name("name")
-                .map(|n| &source[n.byte_range()])
-                .unwrap_or("<unknown>");
+                .map_or("<unknown>", |n| &source[n.byte_range()]);
             diags.push(LintDiagnostic {
                 rule: "long-function",
                 message: format!(
-                    "function `{}` is {} lines long (max {})",
-                    func_name, line_count, max_lines
+                    "function `{func_name}` is {line_count} lines long (max {max_lines})"
                 ),
                 severity: Severity::Warning,
                 line: node.start_position().row,

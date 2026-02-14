@@ -29,8 +29,7 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
             diags.push(LintDiagnostic {
                 rule: "signal-name-convention",
                 message: format!(
-                    "signal names shouldn't use \"on_\" prefix, use \"{}\" instead",
-                    fixed,
+                    "signal names shouldn't use \"on_\" prefix, use \"{fixed}\" instead",
                 ),
                 severity: Severity::Warning,
                 line: name_node.start_position().row,

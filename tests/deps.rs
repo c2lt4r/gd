@@ -53,13 +53,11 @@ fn test_deps_tree_output() {
     // child.gd depends on base.gd and helper.gd via extends/preload
     assert!(
         stdout.contains("child.gd"),
-        "deps tree should list child.gd, got: {}",
-        stdout
+        "deps tree should list child.gd, got: {stdout}"
     );
     assert!(
         stdout.contains("res://base.gd") || stdout.contains("base.gd"),
-        "deps tree should show base.gd dependency, got: {}",
-        stdout
+        "deps tree should show base.gd dependency, got: {stdout}"
     );
 }
 
@@ -88,13 +86,11 @@ fn test_deps_dot_output() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains("digraph"),
-        "DOT output should contain 'digraph', got: {}",
-        stdout
+        "DOT output should contain 'digraph', got: {stdout}"
     );
     assert!(
         stdout.contains("->"),
-        "DOT output should contain edges (->), got: {}",
-        stdout
+        "DOT output should contain edges (->), got: {stdout}"
     );
 }
 
@@ -165,8 +161,7 @@ fn test_deps_cycle_detection() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains("circular"),
-        "Should report circular dependency, stderr: {}",
-        stderr
+        "Should report circular dependency, stderr: {stderr}"
     );
 }
 
@@ -203,7 +198,6 @@ fn test_deps_no_cycle_check() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         !stderr.contains("circular"),
-        "Should not report circular dependency with --no-cycle-check, stderr: {}",
-        stderr
+        "Should not report circular dependency with --no-cycle-check, stderr: {stderr}"
     );
 }

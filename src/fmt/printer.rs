@@ -153,23 +153,24 @@ impl Printer {
             "match_statement" => self.print_match_statement(node, source, indent),
             "match_body" => self.print_match_body(node, source, indent),
             "pattern_section" => self.print_pattern_section(node, source, indent),
-            "variable_statement" => self.print_var_or_const(node, source, indent),
-            "const_statement" => self.print_var_or_const(node, source, indent),
+            "variable_statement" | "const_statement" => {
+                self.print_var_or_const(node, source, indent);
+            }
             "expression_statement" => self.print_children(node, source, indent),
             "return_statement" => self.print_return(node, source, indent),
-            "assignment" => self.print_assignment(node, source, indent),
-            "augmented_assignment" => self.print_assignment(node, source, indent),
+            "assignment" | "augmented_assignment" => {
+                self.print_assignment(node, source, indent);
+            }
             "binary_operator" => self.print_binary_op(node, source, indent),
             "signal_statement" => self.print_signal(node, source, indent),
             "enum_definition" => self.print_enum_def(node, source, indent),
             "extends_statement" => self.print_extends(node, source),
             "class_name_statement" => self.print_class_name(node, source),
-            "annotation" => self.emit(node, source),
+            "annotation" | "lambda" => self.emit(node, source),
             "annotations" => self.print_annotations_standalone(node, source, indent),
             "dictionary" => self.print_dictionary(node, source, indent),
             "array" => self.print_array(node, source, indent),
-            "call" => self.print_call(node, source, indent),
-            "attribute_call" => self.print_call(node, source, indent),
+            "call" | "attribute_call" => self.print_call(node, source, indent),
             "arguments" | "parameters" => self.print_paren_list(node, source, indent),
             "pair" => self.print_dict_pair(node, source, indent),
             "typed_parameter" => self.print_typed_param(node, source),
@@ -185,7 +186,6 @@ impl Printer {
             "parenthesized_expression" => self.print_parenthesized(node, source, indent),
             "subscript" => self.print_subscript(node, source, indent),
             "conditional_expression" => self.print_conditional_expr(node, source, indent),
-            "lambda" => self.emit(node, source),
             "line_continuation" => {} // Skip — formatter controls line breaks
             _ => {
                 // Fallback: if leaf, emit text; otherwise emit full source text
@@ -740,16 +740,10 @@ impl Printer {
         let mut cursor = node.walk();
         let children: Vec<Node> = node.children(&mut cursor).collect();
 
-        let mut first = true;
         for child in &children {
             match child.kind() {
-                "{" | "}" => {}
                 "," => self.push_str(", "),
                 "enumerator" => {
-                    if !first {
-                        // comma already added
-                    }
-                    first = false;
                     self.print_enumerator(child, source);
                 }
                 _ => {}

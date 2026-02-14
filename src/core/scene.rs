@@ -179,7 +179,7 @@ fn section_identifier(section: &Node, src: &[u8]) -> Option<String> {
     let mut cursor = section.walk();
     for child in section.named_children(&mut cursor) {
         if child.kind() == "identifier" {
-            return child.utf8_text(src).ok().map(|s| s.to_string());
+            return child.utf8_text(src).ok().map(std::string::ToString::to_string);
         }
     }
     None

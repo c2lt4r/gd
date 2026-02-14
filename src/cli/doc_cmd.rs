@@ -19,7 +19,7 @@ pub struct DocArgs {
     pub check: bool,
 }
 
-pub fn exec(args: DocArgs) -> Result<()> {
+pub fn exec(args: &DocArgs) -> Result<()> {
     if args.check {
         return crate::doc::run_doc_check(&args.paths);
     }

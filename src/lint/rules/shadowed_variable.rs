@@ -90,7 +90,7 @@ fn check_body(body: Node, source: &str, outer: &HashSet<String>, diags: &mut Vec
             if outer.contains(&name) {
                 diags.push(LintDiagnostic {
                     rule: "shadowed-variable",
-                    message: format!("variable `{}` shadows a variable from an outer scope", name),
+                    message: format!("variable `{name}` shadows a variable from an outer scope"),
                     severity: Severity::Warning,
                     line: name_node.start_position().row,
                     column: name_node.start_position().column,

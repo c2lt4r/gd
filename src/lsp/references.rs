@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use tower_lsp::lsp_types::*;
+use tower_lsp::lsp_types::{Location, Position, Url};
 
 use super::util::{FUNCTION_KINDS, node_range};
 
@@ -193,9 +193,8 @@ pub fn find_references_cross_file(
             continue;
         }
         if let Ok(tree) = crate::core::parser::parse(&content) {
-            let file_uri = match Url::from_file_path(&path) {
-                Ok(u) => u,
-                Err(_) => continue,
+            let Ok(file_uri) = Url::from_file_path(&path) else {
+                continue;
             };
             collect_references(
                 tree.root_node(),
@@ -567,9 +566,8 @@ pub fn find_references_by_name(
 
         if let Ok(tree) = crate::core::parser::parse(&content) {
             let root = tree.root_node();
-            let uri = match Url::from_file_path(&path) {
-                Ok(u) => u,
-                Err(_) => continue,
+            let Ok(uri) = Url::from_file_path(&path) else {
+                continue;
             };
 
             if let Some(class_name) = class_filter {

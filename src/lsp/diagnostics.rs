@@ -1,18 +1,17 @@
-use tower_lsp::lsp_types::*;
+use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity, NumberOrString, Position, Range, Url};
 
 /// Lint source code and return LSP diagnostics.
 pub fn lint_source(source: &str, uri: &Url) -> Vec<Diagnostic> {
     // Parse with tree-sitter
-    let tree = match crate::core::parser::parse(source) {
-        Ok(tree) => tree,
-        Err(_) => return vec![],
+    let Ok(tree) = crate::core::parser::parse(source) else {
+        return vec![];
     };
 
     // Load config, searching upward from the file's directory
     let config = uri
         .to_file_path()
         .ok()
-        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+        .and_then(|p| p.parent().map(std::path::Path::to_path_buf))
         .and_then(|dir| crate::core::config::Config::load(&dir).ok())
         .unwrap_or_default();
 

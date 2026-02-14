@@ -16,7 +16,7 @@ const GODOT_BINARY_NAMES: &[&str] = &["godot", "godot4", "godot-4"];
 /// Search order:
 /// 1. `run.godot_path` in gd.toml config
 /// 2. `GODOT_PATH` environment variable
-/// 3. On WSL: daemon cache (populated from DAP launches)
+/// 3. On WSL: daemon cache (populated from debug launches)
 /// 4. PATH search for: godot, godot4, godot-4
 /// 5. On WSL (if no Windows binary found): error with setup instructions
 pub fn find_godot(config: &Config) -> Result<PathBuf> {
@@ -44,7 +44,7 @@ pub fn find_godot(config: &Config) -> Result<PathBuf> {
         ));
     }
 
-    // 3. On WSL: check daemon cache (populated from DAP launches)
+    // 3. On WSL: check daemon cache (populated from debug launches)
     if fs::is_wsl()
         && let Some(path) = find_godot_from_daemon()
     {
@@ -91,11 +91,11 @@ fn resolve_configured_path(path: &Path) -> PathBuf {
     path.to_path_buf()
 }
 
-/// Query the daemon for a cached Godot binary path (from previous DAP launches).
+/// Query the daemon for a cached Godot binary path.
 /// Returns the WSL-converted path if found.
 fn find_godot_from_daemon() -> Option<String> {
     let result =
-        crate::lsp::daemon_client::query_daemon("dap_godot_path", serde_json::json!({}), None)?;
+        crate::lsp::daemon_client::query_daemon("cached_godot_path", serde_json::json!({}), None)?;
     let path = result.get("godot_path").and_then(|p| p.as_str())?;
     if path.is_empty() {
         return None;
@@ -152,7 +152,7 @@ pub fn run_project(
         None,
     ) {
         Some(result) => {
-            let port = result.get("port").and_then(|p| p.as_u64()).unwrap_or(0);
+            let port = result.get("port").and_then(serde_json::Value::as_u64).unwrap_or(0);
             if port > 0 {
                 cmd.arg("--remote-debug")
                     .arg(format!("tcp://127.0.0.1:{port}"));
@@ -237,6 +237,7 @@ pub fn run_project(
 }
 
 /// Export/build the Godot project.
+#[allow(clippy::too_many_lines)]
 pub fn export_project(preset: Option<&str>, output: Option<&str>, release: bool) -> Result<()> {
     let cwd = env::current_dir().unwrap_or_default();
     let config = Config::load(&cwd)?;
@@ -245,40 +246,37 @@ pub fn export_project(preset: Option<&str>, output: Option<&str>, release: bool)
 
     // Determine the export preset
     let available = parse_export_presets(&project.root)?;
-    let preset_name = match preset {
-        Some(name) => {
-            if !available.iter().any(|p| p == name) {
-                if available.is_empty() {
-                    return Err(miette!(
-                        "Export preset '{}' not found.\n\
-                         No export presets are configured. \
-                         Create them in Godot: Project > Export...",
-                        name
-                    ));
-                }
-                return Err(miette!(
-                    "Export preset '{}' not found.\nAvailable presets: {}",
-                    name,
-                    available.join(", ")
-                ));
-            }
-            name.to_string()
-        }
-        None => {
+    let preset_name = if let Some(name) = preset {
+        if !available.iter().any(|p| p == name) {
             if available.is_empty() {
                 return Err(miette!(
-                    "No export presets configured.\n\
-                     Create them in Godot: Project > Export...\n\
-                     Then run: gd build --preset <name>"
+                    "Export preset '{}' not found.\n\
+                     No export presets are configured. \
+                     Create them in Godot: Project > Export...",
+                    name
                 ));
             }
             return Err(miette!(
-                "No export preset specified.\n\
-                 Available presets: {}\n\n\
-                 Usage: gd build --preset <name>",
+                "Export preset '{}' not found.\nAvailable presets: {}",
+                name,
                 available.join(", ")
             ));
         }
+        name.to_string()
+    } else {
+        if available.is_empty() {
+            return Err(miette!(
+                "No export presets configured.\n\
+                 Create them in Godot: Project > Export...\n\
+                 Then run: gd build --preset <name>"
+            ));
+        }
+        return Err(miette!(
+            "No export preset specified.\n\
+             Available presets: {}\n\n\
+             Usage: gd build --preset <name>",
+            available.join(", ")
+        ));
     };
 
     // Determine output path
