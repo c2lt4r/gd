@@ -17,6 +17,9 @@ use crate::debug::dap_client::DapClient;
 pub struct DaemonState {
     pub pid: u32,
     pub port: u16,
+    /// PID of the game process launched by `gd run` (persisted for `gd stop`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub game_pid: Option<u32>,
     /// Build fingerprint so clients can detect stale daemons after recompilation.
     #[serde(default)]
     pub build_id: String,
@@ -65,6 +68,8 @@ struct DaemonServer {
     /// Set when a DAP operation fails unexpectedly — triggers reconnect on next use.
     dap_needs_reconnect: std::sync::atomic::AtomicBool,
     debug_server: Mutex<Option<crate::debug::godot_debug_server::GodotDebugServer>>,
+    /// PID of the game process launched by `gd run` (for `gd debug stop`).
+    game_pid: Mutex<Option<u32>>,
     /// Cached Godot binary path from DAP process events (Windows path in WSL).
     cached_godot_path: Mutex<Option<String>>,
     workspace: WorkspaceIndex,
@@ -104,6 +109,7 @@ pub fn run(
         game_running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         dap_needs_reconnect: std::sync::atomic::AtomicBool::new(false),
         debug_server: Mutex::new(None),
+        game_pid: Mutex::new(None),
         cached_godot_path: Mutex::new(None),
         workspace,
         project_root: project_root.clone(),
@@ -115,7 +121,7 @@ pub fn run(
 
     // Write state file immediately so clients can connect
     let state_path = project_root.join(".godot").join("gd-daemon.json");
-    write_state_file(&state_path, port)?;
+    write_state_file(&state_path, port, None)?;
 
     // Connect to Godot LSP + DAP in a background thread (handshake can be slow)
     {
@@ -181,7 +187,7 @@ fn try_connect_dap(host: &str, port: u16) -> (Option<Arc<DapClient>>, Option<ser
     (Some(Arc::new(client)), caps)
 }
 
-fn write_state_file(path: &Path, port: u16) -> miette::Result<()> {
+fn write_state_file(path: &Path, port: u16, game_pid: Option<u32>) -> miette::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| miette::miette!("cannot create state directory: {e}"))?;
@@ -189,12 +195,31 @@ fn write_state_file(path: &Path, port: u16) -> miette::Result<()> {
     let state = DaemonState {
         pid: std::process::id(),
         port,
+        game_pid,
         build_id: current_build_id(),
     };
     let json =
         serde_json::to_string_pretty(&state).map_err(|e| miette::miette!("serialize: {e}"))?;
     std::fs::write(path, json).map_err(|e| miette::miette!("cannot write state file: {e}"))?;
     Ok(())
+}
+
+/// Clear the game_pid field in the state file (public for `gd stop` fallback).
+pub fn clear_game_pid_in_state(project_root: &Path) {
+    update_game_pid_in_state(project_root, None);
+}
+
+/// Update just the game_pid field in the state file without touching other fields.
+fn update_game_pid_in_state(project_root: &Path, game_pid: Option<u32>) {
+    let path = project_root.join(".godot").join("gd-daemon.json");
+    if let Ok(data) = std::fs::read_to_string(&path)
+        && let Ok(mut state) = serde_json::from_str::<DaemonState>(&data)
+    {
+        state.game_pid = game_pid;
+        if let Ok(json) = serde_json::to_string_pretty(&state) {
+            let _ = std::fs::write(&path, json);
+        }
+    }
 }
 
 fn idle_monitor(server: std::sync::Arc<DaemonServer>, state_path: &Path) {
@@ -282,6 +307,8 @@ fn dispatch(server: &DaemonServer, request: &DaemonRequest) -> DaemonResponse {
         "dap_godot_path" => dispatch_dap_godot_path(server),
         "dap_cache_godot_path" => dispatch_dap_cache_godot_path(server, &request.params),
         // Binary debug protocol
+        "set_game_pid" => dispatch_set_game_pid(server, &request.params),
+        "debug_stop_game" => dispatch_debug_stop_game(server),
         "debug_start_server" => dispatch_debug_start_server(server, &request.params),
         "debug_accept" => dispatch_debug_accept(server, &request.params),
         "debug_scene_tree" => dispatch_debug_scene_tree(server),
@@ -912,6 +939,35 @@ fn dispatch_dap_cache_godot_path(
     ok_response(serde_json::json!({"cached": true}))
 }
 
+// ── Game process management ──────────────────────────────────────────────────
+
+fn dispatch_set_game_pid(server: &DaemonServer, params: &serde_json::Value) -> DaemonResponse {
+    let Some(pid) = params.get("pid").and_then(|p| p.as_u64()) else {
+        return error_response("missing 'pid' parameter");
+    };
+    *server.game_pid.lock().unwrap() = Some(pid as u32);
+    update_game_pid_in_state(&server.project_root, Some(pid as u32));
+    ok_response(serde_json::json!({"pid": pid}))
+}
+
+fn dispatch_debug_stop_game(server: &DaemonServer) -> DaemonResponse {
+    let pid = server.game_pid.lock().unwrap().take();
+    let Some(pid) = pid else {
+        return error_response("No game process tracked — was the game launched with `gd run`?");
+    };
+
+    crate::cli::stop_cmd::kill_game_process(pid);
+
+    // Clear debug server connection, game_running flag, and persisted PID
+    *server.debug_server.lock().unwrap() = None;
+    server
+        .game_running
+        .store(false, std::sync::atomic::Ordering::Release);
+    update_game_pid_in_state(&server.project_root, None);
+
+    ok_response(serde_json::json!({"stopped": true, "pid": pid}))
+}
+
 // ── Binary debug protocol dispatch ───────────────────────────────────────────
 
 fn dispatch_debug_start_server(
@@ -939,6 +995,11 @@ fn dispatch_debug_accept(server: &DaemonServer, params: &serde_json::Value) -> D
         return error_response("No debug server running — call debug_start_server first");
     };
     let connected = ds.accept(Duration::from_secs(timeout));
+    if connected {
+        server
+            .game_running
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
     ok_response(serde_json::json!({"connected": connected}))
 }
 
@@ -1896,6 +1957,7 @@ mod tests {
         let state = DaemonState {
             pid: 12345,
             port: 54321,
+            game_pid: None,
             build_id: "0.1.0-123456".to_string(),
         };
         let json = serde_json::to_string(&state).unwrap();

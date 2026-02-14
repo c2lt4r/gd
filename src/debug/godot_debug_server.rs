@@ -1215,7 +1215,8 @@ fn parse_object_info(msg: &[GodotVariant]) -> Option<ObjectInfo> {
             if let GodotVariant::Array(fields) = prop_arr
                 && fields.len() >= 6
             {
-                let name = variant_as_string(&fields[0]).unwrap_or_default();
+                let raw_name = variant_as_string(&fields[0]).unwrap_or_default();
+                let name = strip_property_prefix(&raw_name);
                 let type_id = variant_as_u32(&fields[1]).unwrap_or(0);
                 let hint = variant_as_u32(&fields[2]).unwrap_or(0);
                 let hint_string = variant_as_string(&fields[3]).unwrap_or_default();
@@ -1238,7 +1239,8 @@ fn parse_object_info(msg: &[GodotVariant]) -> Option<ObjectInfo> {
             if chunk.len() < 6 {
                 break;
             }
-            let name = variant_as_string(&chunk[0]).unwrap_or_default();
+            let raw_name = variant_as_string(&chunk[0]).unwrap_or_default();
+            let name = strip_property_prefix(&raw_name);
             let type_id = variant_as_u32(&chunk[1]).unwrap_or(0);
             let hint = variant_as_u32(&chunk[2]).unwrap_or(0);
             let hint_string = variant_as_string(&chunk[3]).unwrap_or_default();
@@ -1260,6 +1262,18 @@ fn parse_object_info(msg: &[GodotVariant]) -> Option<ObjectInfo> {
         class_name,
         properties,
     })
+}
+
+/// Strip Godot section prefixes from property names.
+/// Godot's binary protocol sends names like "Members/position", "Constants/STATE_IDLE".
+/// These prefixes are for categorization only — `set-prop` doesn't use them.
+fn strip_property_prefix(name: &str) -> String {
+    for prefix in &["Members/", "Constants/"] {
+        if let Some(stripped) = name.strip_prefix(prefix) {
+            return stripped.to_string();
+        }
+    }
+    name.to_string()
 }
 
 // ---------------------------------------------------------------------------

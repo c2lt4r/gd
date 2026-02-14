@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.1.28] - 2026-02-14
+
+### Added
+- **`gd stop`** — top-level command to terminate the running game (mirrors `gd run`)
+  - `gd debug stop` also works as an alias
+  - WSL-aware: uses PowerShell + taskkill.exe to find and kill the Windows Godot process
+  - Game PID persisted in daemon state file — `gd stop` works even if daemon has died
+- **`gd debug inspect --brief`** — stripped-down output for AI: just `{name: value}` pairs, no Godot internals (hint, hint_string, type_id, usage)
+- **`gd debug breakpoint --name <func>`** — resolve function name to file:line automatically (searches project .gd files)
+- **`gd debug breakpoint --condition <expr>`** — condition metadata stored with breakpoint (server-side enforcement coming later)
+- **`gd debug next` aliased as `gd debug step-over`** — symmetry with `step-in`/`step-out`
+
+### Changed
+- `gd debug suspend --resume` → `gd debug suspend --off` — consistent with `mute-audio --off`, `skip-breakpoints --off`, etc.
+- `gd debug inspect` strips `Members/` and `Constants/` prefixes from property names — property names now match what `set-prop` expects
+- `gd run` now always wires `--remote-debug` silently (no user-facing port args) — enables `gd debug` without manual setup
+- `gd run` output cleaned up — single status line instead of raw JSON dump
+
+### Fixed
+- `gd daemon status` now correctly shows `game_running: true` when a game is connected via binary debug protocol (was only set for DAP launches)
+- `gd stop` / `gd debug stop` clears the `game_running` flag in daemon state
+
 ## [0.1.27] - 2026-02-14
 
 ### Added
@@ -29,7 +51,7 @@
 - `gd debug scene-tree` — show the running game's live scene tree (node names, classes, object IDs)
 - `gd debug inspect --id <N>` — inspect a scene node's properties by object ID
 - `gd debug set-prop --id <N> --property <name> --value <val>` — set a property on a scene node at runtime
-- `gd debug suspend [--resume]` — freeze/resume the game loop
+- `gd debug suspend [--off]` — freeze/resume the game loop
 - `gd debug next-frame` — advance one physics frame while suspended
 - `gd debug time-scale --scale <N>` — set Engine.time_scale (slow-mo, fast-forward)
 - `gd debug reload-scripts` — hot-reload all GDScript files in the running game

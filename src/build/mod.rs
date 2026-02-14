@@ -140,45 +140,33 @@ pub fn run_project(
     let godot = find_godot(&config)?;
 
     let project_name = project.name().unwrap_or_else(|_| "project".into());
-    println!(
-        "{} Running {} with {}",
-        "▶".green(),
-        project_name.bold(),
-        godot.display()
-    );
 
     let mut cmd = Command::new(&godot);
     cmd.arg("--path")
         .arg(project_path_for_godot(&godot, &project.root));
 
-    // If --debug, start our binary debug server and wire --remote-debug
-    let debug_port = if debug {
-        cmd.arg("--debug");
-        match crate::lsp::daemon_client::query_daemon(
-            "debug_start_server",
-            serde_json::json!({}),
-            None,
-        ) {
-            Some(result) => {
-                let port = result.get("port").and_then(|p| p.as_u64()).unwrap_or(0);
-                if port > 0 {
-                    cmd.arg("--remote-debug")
-                        .arg(format!("tcp://127.0.0.1:{port}"));
-                    println!(
-                        "  {} Debug server on port {port} — use {} to interact",
-                        "*".dimmed(),
-                        "gd debug".cyan()
-                    );
-                    Some(port)
-                } else {
-                    None
-                }
+    // Always wire up remote debug via daemon (silent — no user-facing port args)
+    let debug_port = match crate::lsp::daemon_client::query_daemon(
+        "debug_start_server",
+        serde_json::json!({}),
+        None,
+    ) {
+        Some(result) => {
+            let port = result.get("port").and_then(|p| p.as_u64()).unwrap_or(0);
+            if port > 0 {
+                cmd.arg("--remote-debug")
+                    .arg(format!("tcp://127.0.0.1:{port}"));
+                Some(port)
+            } else {
+                None
             }
-            None => None,
         }
-    } else {
-        None
+        None => None,
     };
+
+    if debug {
+        cmd.arg("--debug");
+    }
     if verbose {
         cmd.arg("--verbose");
     }
@@ -202,11 +190,25 @@ pub fn run_project(
         .stderr(Stdio::null())
         .stdin(Stdio::null());
 
-    let _child = cmd
+    let mut child = cmd
         .spawn()
         .map_err(|e| miette!("Failed to start Godot: {e}"))?;
 
-    // If we started a debug server, tell the daemon to accept (fire-and-forget)
+    let pid = child.id();
+
+    // Report PID to daemon so `gd debug stop` can kill the game
+    let _ = crate::lsp::daemon_client::query_daemon(
+        "set_game_pid",
+        serde_json::json!({"pid": pid}),
+        None,
+    );
+
+    // Reap the child in a background thread to avoid zombies
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+
+    // Tell the daemon to accept the debug connection (fire-and-forget)
     if debug_port.is_some() {
         std::thread::spawn(|| {
             let _ = crate::lsp::daemon_client::query_daemon(
@@ -218,6 +220,18 @@ pub fn run_project(
         // Give the daemon query time to send before process exit
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
+
+    // Print clean status line
+    let debug_info = if let Some(port) = debug_port {
+        format!(" (debug on port {port})")
+    } else {
+        String::new()
+    };
+    println!(
+        "{} Running {}{debug_info}",
+        "▶".green(),
+        project_name.bold(),
+    );
 
     Ok(())
 }

@@ -85,12 +85,16 @@ pub enum DebugCommand {
     #[command(name = "live-node-call")]
     LiveNodeCall(LiveNodeCallArgs),
 
+    /// Stop the running game (alias for `gd stop`)
+    Stop,
+
     // ── Execution control ──
     /// Resume execution from breakpoint
     Continue(StepArgs),
     /// Pause/break execution
     Pause(StepArgs),
     /// Step over (next line)
+    #[command(visible_alias = "step-over")]
     Next(StepArgs),
     /// Step into function
     #[command(name = "step-in")]
@@ -260,6 +264,9 @@ pub struct InspectArgs {
     /// Object ID to inspect (from scene-tree output)
     #[arg(long)]
     pub id: u64,
+    /// Brief output: just name=value pairs, no Godot internals
+    #[arg(long)]
+    pub brief: bool,
     /// Output format
     #[arg(long, default_value = "human")]
     pub format: OutputFormat,
@@ -285,7 +292,7 @@ pub struct SetPropArgs {
 pub struct SuspendArgs {
     /// Resume instead of suspend
     #[arg(long)]
-    pub resume: bool,
+    pub off: bool,
     /// Output format
     #[arg(long, default_value = "human")]
     pub format: OutputFormat,
@@ -509,10 +516,16 @@ pub struct LiveNodeCallArgs {
 pub struct BreakpointBinArgs {
     /// Script file path (e.g. res://scripts/kart.gd)
     #[arg(long)]
-    pub path: String,
+    pub path: Option<String>,
     /// Line number
     #[arg(long)]
-    pub line: u32,
+    pub line: Option<u32>,
+    /// Function name — resolves to file:line automatically (e.g. "_process", "take_damage")
+    #[arg(long)]
+    pub name: Option<String>,
+    /// Condition expression — breakpoint only triggers when this evaluates to true
+    #[arg(long)]
+    pub condition: Option<String>,
     /// Disable (clear) this breakpoint
     #[arg(long)]
     pub off: bool,
@@ -728,6 +741,7 @@ impl std::fmt::Display for OutputFormat {
 
 pub fn exec(args: DebugArgs) -> Result<()> {
     match args.command {
+        DebugCommand::Stop => crate::cli::stop_cmd::exec(),
         DebugCommand::SceneTree(a) => cmd_scene_tree(a),
         DebugCommand::Inspect(a) => cmd_inspect(a),
         DebugCommand::SetProp(a) => cmd_set_prop(a),
@@ -2250,6 +2264,10 @@ fn cmd_inspect(args: InspectArgs) -> Result<()> {
             )
         })?;
 
+    if args.brief {
+        return print_inspect_brief(&result, args.id, &args.format);
+    }
+
     match args.format {
         OutputFormat::Json => {
             println!("{}", serde_json::to_string_pretty(&result).unwrap());
@@ -2273,6 +2291,69 @@ fn cmd_inspect(args: InspectArgs) -> Result<()> {
                 }
             } else {
                 println!("  {}", "(no properties returned)".dimmed());
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Properties to hide in --brief mode (Godot internals, not useful for debugging).
+/// Uses usage flags: bit 1 (PROPERTY_USAGE_EDITOR) = 2, bit 13 (PROPERTY_USAGE_INTERNAL) = 8192
+const BRIEF_HIDDEN_PROPS: &[&str] = &[
+    "script",
+    "owner",
+    "multiplayer",
+    "process_mode",
+    "process_priority",
+    "process_physics_priority",
+    "process_thread_group",
+    "process_thread_group_order",
+    "process_thread_messages",
+    "physics_interpolation_mode",
+    "auto_translate_mode",
+    "editor_description",
+    "unique_name_in_owner",
+];
+
+/// Print inspect output in brief mode: just {name: value} pairs, no Godot internals.
+fn print_inspect_brief(result: &serde_json::Value, id: u64, format: &OutputFormat) -> Result<()> {
+    let props = result["properties"].as_array();
+    match format {
+        OutputFormat::Json => {
+            let mut brief = serde_json::Map::new();
+            brief.insert(
+                "object_id".to_string(),
+                serde_json::Value::Number(id.into()),
+            );
+            brief.insert("class_name".to_string(), result["class_name"].clone());
+            let mut members = serde_json::Map::new();
+            if let Some(props) = props {
+                for p in props {
+                    let name = p["name"].as_str().unwrap_or("?");
+                    if BRIEF_HIDDEN_PROPS.contains(&name) {
+                        continue;
+                    }
+                    members.insert(name.to_string(), p["value"].clone());
+                }
+            }
+            brief.insert("properties".to_string(), serde_json::Value::Object(members));
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::Value::Object(brief)).unwrap()
+            );
+        }
+        OutputFormat::Human => {
+            let class = result["class_name"].as_str().unwrap_or("Object");
+            println!("{} {}", class.cyan().bold(), format!("(id: {id})").dimmed(),);
+            if let Some(props) = props {
+                for p in props {
+                    let pname = p["name"].as_str().unwrap_or("?");
+                    if BRIEF_HIDDEN_PROPS.contains(&pname) {
+                        continue;
+                    }
+                    let pval = format_variant_display(&p["value"]);
+                    println!("  {} = {}", pname.cyan(), pval.green());
+                }
             }
         }
     }
@@ -2323,7 +2404,7 @@ fn cmd_set_prop(args: SetPropArgs) -> Result<()> {
 
 fn cmd_suspend(args: SuspendArgs) -> Result<()> {
     ensure_binary_debug()?;
-    let suspend = !args.resume;
+    let suspend = !args.off;
     let result =
         daemon_dap("debug_suspend", serde_json::json!({"suspend": suspend})).ok_or_else(|| {
             miette!(
@@ -3014,42 +3095,114 @@ fn cmd_exec_step_out(args: StepArgs) -> Result<()> {
 fn cmd_breakpoint(args: BreakpointBinArgs) -> Result<()> {
     ensure_binary_debug()?;
     let enabled = !args.off;
-    daemon_dap(
-        "debug_breakpoint",
-        serde_json::json!({"path": args.path, "line": args.line, "enabled": enabled}),
-    )
-    .ok_or_else(|| miette!("Failed — is a game running?"))?;
+
+    // Resolve --name to path:line if provided
+    let (path, line) = if let Some(ref func_name) = args.name {
+        let (p, l) = resolve_function_to_location(func_name)?;
+        // --path/--line override --name if both given
+        let path = args.path.unwrap_or(p);
+        let line = args.line.unwrap_or(l);
+        (path, line)
+    } else {
+        let path = args
+            .path
+            .ok_or_else(|| miette!("--path is required (or use --name to resolve by function)"))?;
+        let line = args
+            .line
+            .ok_or_else(|| miette!("--line is required (or use --name to resolve by function)"))?;
+        (path, line)
+    };
+
+    let mut bp_params = serde_json::json!({"path": path, "line": line, "enabled": enabled});
+    if let Some(ref condition) = args.condition {
+        bp_params["condition"] = serde_json::Value::String(condition.clone());
+    }
+    daemon_dap("debug_breakpoint", bp_params)
+        .ok_or_else(|| miette!("Failed — is a game running?"))?;
+
     match args.format {
         OutputFormat::Json => {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&serde_json::json!({
-                    "path": args.path,
-                    "line": args.line,
-                    "enabled": enabled,
-                }))
-                .unwrap()
-            );
+            let mut out = serde_json::json!({
+                "path": path,
+                "line": line,
+                "enabled": enabled,
+            });
+            if let Some(ref condition) = args.condition {
+                out["condition"] = serde_json::Value::String(condition.clone());
+            }
+            if let Some(ref name) = args.name {
+                out["name"] = serde_json::Value::String(name.clone());
+            }
+            println!("{}", serde_json::to_string_pretty(&out).unwrap());
         }
         OutputFormat::Human => {
+            let cond_info = args
+                .condition
+                .as_ref()
+                .map(|c| format!(" when {c}"))
+                .unwrap_or_default();
             if enabled {
                 println!(
-                    "{} at {}:{}",
+                    "{} at {}:{}{}",
                     "Breakpoint set".green(),
-                    args.path.cyan(),
-                    args.line,
+                    path.cyan(),
+                    line,
+                    cond_info.dimmed(),
                 );
             } else {
                 println!(
                     "{} at {}:{}",
                     "Breakpoint cleared".green(),
-                    args.path.cyan(),
-                    args.line,
+                    path.cyan(),
+                    line,
                 );
             }
         }
     }
     Ok(())
+}
+
+/// Resolve a function name to a res:// path and line number by searching project GDScript files.
+fn resolve_function_to_location(func_name: &str) -> Result<(String, u32)> {
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let project = crate::core::project::GodotProject::discover(&cwd)?;
+    let files = crate::core::fs::collect_gdscript_files(&project.root)?;
+
+    for file in &files {
+        let Ok(source) = std::fs::read_to_string(file) else {
+            continue;
+        };
+        // Search for "func <name>" pattern
+        for (i, line_text) in source.lines().enumerate() {
+            let trimmed = line_text.trim();
+            if trimmed.starts_with("func ")
+                && trimmed[5..].trim_start().starts_with(func_name)
+                && trimmed[5..]
+                    .trim_start()
+                    .get(func_name.len()..)
+                    .is_some_and(|rest| {
+                        rest.starts_with('(')
+                            || rest.starts_with(':')
+                            || rest.starts_with(' ')
+                            || rest.is_empty()
+                    })
+            {
+                // Convert to res:// path
+                let rel = file
+                    .strip_prefix(&project.root)
+                    .unwrap_or(file)
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                let res_path = format!("res://{rel}");
+                return Ok((res_path, (i + 1) as u32));
+            }
+        }
+    }
+
+    Err(miette!(
+        "Function '{}' not found in any .gd file in the project",
+        func_name
+    ))
 }
 
 fn cmd_stack(args: StepArgs) -> Result<()> {

@@ -16,6 +16,7 @@ pub mod man_cmd;
 pub mod new_cmd;
 pub mod run_cmd;
 pub mod stats_cmd;
+pub mod stop_cmd;
 pub mod test_cmd;
 pub mod tree_cmd;
 pub mod upgrade_cmd;
@@ -43,6 +44,8 @@ pub enum Command {
     Lint(lint_cmd::LintArgs),
     /// Run the Godot project
     Run(run_cmd::RunArgs),
+    /// Stop the running Godot game
+    Stop,
     /// Build/export the Godot project
     Build(build_cmd::BuildArgs),
     /// Check project for errors without building
@@ -86,6 +89,7 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Fmt(args) => fmt_cmd::exec(args),
         Command::Lint(args) => lint_cmd::exec(args),
         Command::Run(args) => run_cmd::exec(args),
+        Command::Stop => stop_cmd::exec(),
         Command::Build(args) => build_cmd::exec(args),
         Command::Check(args) => check_cmd::exec(args),
         Command::Clean(args) => clean_cmd::exec(args),

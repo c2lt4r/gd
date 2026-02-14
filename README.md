@@ -63,7 +63,8 @@ gd run
 | `gd init` | Initialize gd toolchain in an existing project (detects export paths) |
 | `gd fmt` | Format GDScript files |
 | `gd lint` | Lint GDScript files |
-| `gd run` | Run the Godot project (non-blocking, returns immediately) |
+| `gd run` | Run the Godot project (non-blocking, auto-wires debug) |
+| `gd stop` | Stop the running Godot game |
 | `gd build` | Build/export the Godot project |
 | `gd check` | Check project for errors (parse, structural, semantic, `.tscn`/`.tres` validation) (`--format json`) |
 | `gd clean` | Clean build artifacts |
@@ -258,54 +259,50 @@ godot_path = "C:/path/to/godot.exe"
 Debug a running Godot game via DAP and Godot's native binary debug protocol. The background daemon maintains persistent connections, so CLI queries are instant.
 
 ```sh
-# Run the project (returns immediately)
+# Run the project (auto-wires debug connection)
 gd run
 
-# Check DAP connection and threads
-gd debug status
+# Stop the running game
+gd stop
 
-# Set breakpoint, wait for hit, dump stack + variables, then resume
-gd debug break --file scripts/player.gd --line 42
+# Set breakpoint by file:line
+gd debug breakpoint --path res://scripts/player.gd --line 42
 
-# Break on function entry by name (no line number needed)
-gd debug break --name apply_input
+# Break on function entry by name (resolves to file:line automatically)
+gd debug breakpoint --name apply_input
 
-# Conditional breakpoint (only triggers when expression is true)
-gd debug break --file scripts/player.gd --line 42 --condition "speed > 20.0"
+# Conditional breakpoint
+gd debug breakpoint --path res://scripts/player.gd --line 42 --condition "speed > 20.0"
 
-# Evaluate expression while paused at breakpoint
-gd debug eval --expr "self.speed"
-
-# Modify variables while paused (uses self.set() under the hood)
-gd debug set-var --name speed --value 100.0
-
-# For complex mutations, use eval with method calls directly:
-gd debug eval --expr "self.set('max_speed', 100.0)"
-gd debug eval --expr "body_mesh.set_scale(Vector3(3, 3, 3))"
-
-# Execution control (non-interactive)
+# Execution control
 gd debug continue
-gd debug next      # step over
-gd debug step      # step into
-gd debug step-out  # step out of current function
+gd debug next        # step over (alias: step-over)
+gd debug step-in     # step into
+gd debug step-out    # step out of function
 gd debug pause
 
-# Terminate the running game
-gd debug stop
+# Stack and variables at breakpoint
+gd debug stack
+gd debug vars --frame 0
 
-# Live scene tree (via binary debug protocol)
+# Evaluate expression while paused
+gd debug eval --expr "self.speed"
+
+# Live scene tree
 gd debug scene-tree
 
 # Inspect a node by object ID (from scene-tree output)
 gd debug inspect --id 456
+gd debug inspect --id 456 --brief   # stripped-down output for AI
 
-# Set a property on a node at runtime
+# Set properties on a node at runtime
 gd debug set-prop --id 456 --property speed --value 100.0
+gd debug set-prop-field --id 456 --property position --field x --value 5.0
 
 # Game loop control
 gd debug suspend             # freeze the game loop
 gd debug next-frame          # advance one frame while suspended
-gd debug suspend --resume    # resume the game loop
+gd debug suspend --off       # resume the game loop
 gd debug time-scale --scale 0.5   # slow-mo (0.5x speed)
 gd debug time-scale --scale 2.0   # fast-forward (2x speed)
 
@@ -316,8 +313,8 @@ gd debug reload-scripts
 gd debug attach
 
 # JSON output for scripting
-gd debug break --file scripts/player.gd --line 42 --format json
-gd debug next --format json   # returns stack frames + variables after step
+gd debug breakpoint --path res://scripts/player.gd --line 42 --format json
+gd debug next --format json
 gd debug scene-tree --format json
 gd debug inspect --id 456 --format json
 ```
