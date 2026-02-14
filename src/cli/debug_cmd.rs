@@ -267,6 +267,9 @@ pub struct InspectArgs {
     /// Brief output: just name=value pairs, no Godot internals
     #[arg(long)]
     pub brief: bool,
+    /// Enrich output with ClassDB docs (property descriptions, class info)
+    #[arg(long)]
+    pub rich: bool,
     /// Output format
     #[arg(long, default_value = "human")]
     pub format: OutputFormat,
@@ -2268,6 +2271,13 @@ fn cmd_inspect(args: InspectArgs) -> Result<()> {
         return print_inspect_brief(&result, args.id, &args.format);
     }
 
+    // Optionally enrich with ClassDB docs
+    let result = if args.rich {
+        crate::debug::enrich::enrich_inspect(&result)
+    } else {
+        result
+    };
+
     match args.format {
         OutputFormat::Json => {
             println!("{}", serde_json::to_string_pretty(&result).unwrap());
@@ -2279,6 +2289,15 @@ fn cmd_inspect(args: InspectArgs) -> Result<()> {
                 class.cyan().bold(),
                 format!("(id: {})", args.id).dimmed(),
             );
+            // Show class docs if enriched
+            if let Some(class_docs) = result.get("class_docs") {
+                if let Some(brief) = class_docs["brief"].as_str() {
+                    println!("  {}", brief.dimmed());
+                }
+                if let Some(url) = class_docs["docs_url"].as_str() {
+                    println!("  {}", url.dimmed());
+                }
+            }
             println!("{}", "Properties:".bold());
             if let Some(props) = result["properties"].as_array() {
                 if props.is_empty() {
@@ -2287,7 +2306,17 @@ fn cmd_inspect(args: InspectArgs) -> Result<()> {
                 for p in props {
                     let pname = p["name"].as_str().unwrap_or("?");
                     let pval = format_variant_display(&p["value"]);
-                    println!("  {} = {}", pname.cyan(), pval.green());
+                    if let Some(docs) = p.get("docs") {
+                        let doc_brief = docs["brief"].as_str().unwrap_or("");
+                        println!(
+                            "  {} = {}  {}",
+                            pname.cyan(),
+                            pval.green(),
+                            doc_brief.dimmed()
+                        );
+                    } else {
+                        println!("  {} = {}", pname.cyan(), pval.green());
+                    }
                 }
             } else {
                 println!("  {}", "(no properties returned)".dimmed());

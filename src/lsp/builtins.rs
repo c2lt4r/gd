@@ -1965,6 +1965,13 @@ pub fn lookup_member(name: &str) -> Option<&'static BuiltinMember> {
     BUILTIN_MEMBER_DOCS.iter().find(|m| m.name == name)
 }
 
+/// Look up a built-in member by class and name (exact class match).
+pub fn lookup_member_for(class: &str, name: &str) -> Option<&'static BuiltinMember> {
+    BUILTIN_MEMBER_DOCS
+        .iter()
+        .find(|m| m.class == class && m.name == name)
+}
+
 /// Format a hover string for a built-in member.
 pub fn format_member_hover(doc: &BuiltinMember) -> String {
     let kind_label = match doc.kind {

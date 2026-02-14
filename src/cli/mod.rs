@@ -11,6 +11,7 @@ pub mod doc_cmd;
 pub mod fmt_cmd;
 pub mod init_cmd;
 pub mod lint_cmd;
+pub mod llm_cmd;
 pub mod lsp_cmd;
 pub mod man_cmd;
 pub mod new_cmd;
@@ -80,6 +81,8 @@ pub enum Command {
     Man(man_cmd::ManArgs),
     /// Upgrade gd to the latest version
     Upgrade(upgrade_cmd::UpgradeArgs),
+    /// Print AI-readable command reference (like llms.txt)
+    Llm,
 }
 
 pub fn run(cli: Cli) -> Result<()> {
@@ -107,5 +110,6 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Deps(args) => deps_cmd::exec(args),
         Command::Man(args) => man_cmd::exec(args),
         Command::Upgrade(args) => upgrade_cmd::exec(args),
+        Command::Llm => llm_cmd::exec(),
     }
 }

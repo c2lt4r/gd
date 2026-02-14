@@ -1,5 +1,5 @@
 mod actions;
-mod builtins;
+pub(crate) mod builtins;
 mod completion;
 pub mod daemon;
 pub mod daemon_client;

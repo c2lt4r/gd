@@ -82,6 +82,7 @@ gd run
 | `gd deps` | Show script dependency graph (`--include-resources` for `.tscn`/`.tres`) |
 | `gd man` | Generate man page |
 | `gd upgrade` | Self-update to latest release |
+| `gd llm` | Print AI-readable command reference (like llms.txt) |
 
 ### Formatter
 

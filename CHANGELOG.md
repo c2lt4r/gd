@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.29] - 2026-02-14
+
+### Added
+- **`gd llm`** — AI-readable command reference (like llms.txt for websites). Prints the full command tree in a compressed format for LLM context windows — 204 lines covering every command, flag, and pattern.
+- **`gd debug inspect --rich`** — enrich inspect output with ClassDB documentation (class descriptions, property docs, Godot docs URLs). Walks the inheritance chain (e.g. CharacterBody3D → Node3D → Node → Object).
+- `src/debug/enrich.rs` — loosely coupled enrichment module (JSON in → JSON out, easy to remove)
+
 ## [0.1.28] - 2026-02-14
 
 ### Added
