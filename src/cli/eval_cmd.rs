@@ -33,6 +33,9 @@ pub struct EvalArgs {
     /// Show Godot engine output
     #[arg(short, long)]
     pub verbose: bool,
+    /// Skip sandbox checks (allow dangerous APIs like OS.execute)
+    #[arg(long, alias = "no-sandbox")]
+    pub r#unsafe: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -129,6 +132,58 @@ fn pre_check(source: &str) -> Result<()> {
         return Err(miette!("Script has syntax errors"));
     }
     Ok(())
+}
+
+/// APIs blocked by the sandbox. These are system-level escapes that can cause
+/// damage outside the game process.
+const SANDBOX_BLOCKED: &[&str] = &[
+    // Process execution
+    "OS.execute",
+    "OS.create_process",
+    "OS.kill",
+    "OS.shell_open",
+    "OS.crash",
+    // Network
+    "HTTPRequest",
+    "HTTPClient",
+    // Native code loading
+    "GDExtension",
+    "GDExtensionManager",
+    // Threading (could bypass sandbox)
+    "Thread",
+];
+
+/// Check if a script contains blocked API calls or unsafe file access.
+/// Returns a list of violations found.
+fn sandbox_check(source: &str) -> Vec<String> {
+    let mut violations = Vec::new();
+    for &pattern in SANDBOX_BLOCKED {
+        if source.contains(pattern) {
+            violations.push(pattern.to_string());
+        }
+    }
+    // Check FileAccess/DirAccess paths — only res:// and user:// are allowed
+    for api in &["FileAccess.open(", "DirAccess.open("] {
+        let mut search_from = 0;
+        while let Some(pos) = source[search_from..].find(api) {
+            let after = search_from + pos + api.len();
+            search_from = after;
+            let rest = source[after..].trim_start();
+            let Some(quote @ ('"' | '\'')) = rest.chars().next() else {
+                continue; // variable path — can't check statically
+            };
+            if let Some(end) = rest[1..].find(quote) {
+                let path = &rest[1..=end];
+                if !path.starts_with("res://") && !path.starts_with("user://") {
+                    violations.push(format!(
+                        "{} with path \"{path}\" — only res:// and user:// paths are allowed",
+                        &api[..api.len() - 1], // strip trailing '('
+                    ));
+                }
+            }
+        }
+    }
+    violations
 }
 
 /// Validate that a .gd file extends SceneTree or MainLoop (required for --script).
@@ -303,19 +358,45 @@ fn try_live_eval(
     project_root: &Path,
     timeout: Duration,
     json_mode: bool,
+    sandbox: bool,
 ) -> Option<Result<()>> {
-    let godot_dir = project_root.join(".godot");
-    let ready_file = godot_dir.join("gd-eval-ready");
+    // 1. Generate the request script (instant)
+    let script = generate_live_eval_script(input);
 
-    // Check if eval server is running
-    if !ready_file.is_file() {
+    // 2. Sandbox check — fail fast before waiting for daemon
+    if sandbox {
+        let violations = sandbox_check(&script);
+        if !violations.is_empty() {
+            return Some(Err(miette!(
+                "Sandbox blocked: {}\n\
+                 Use {} to bypass sandbox checks",
+                violations.join(", "),
+                "--unsafe".bold(),
+            )));
+        }
+    }
+
+    // 3. Syntax check — catch parse errors before waiting for daemon
+    if let Err(e) = pre_check(&script) {
+        return Some(Err(e));
+    }
+
+    // 4. Ask daemon if eval server is ready (may block until game starts)
+    let eval_ready = crate::lsp::daemon_client::query_daemon(
+        "eval_status",
+        serde_json::json!({"timeout": timeout.as_secs()}),
+        Some(timeout + Duration::from_secs(5)),
+    )
+    .and_then(|r| r.get("ready").and_then(serde_json::Value::as_bool))
+    .unwrap_or(false);
+
+    if !eval_ready {
         return None;
     }
 
-    // Generate and write the request script
-    let script = generate_live_eval_script(input);
+    let godot_dir = project_root.join(".godot");
 
-    // Show the script being sent with numbered lines and syntax highlighting
+    // 5. Show the script being sent with numbered lines and syntax highlighting
     if !json_mode {
         print_highlighted_script(&script);
     }
@@ -365,7 +446,7 @@ fn try_live_eval(
         }
 
         // Check if the eval server is still alive
-        if !ready_file.is_file() {
+        if !godot_dir.join("gd-eval-ready").is_file() {
             // Clean up the request file if server died
             let _ = std::fs::remove_file(&request_path);
             return Some(Err(miette!("Eval server exited before returning a result")));
@@ -403,15 +484,7 @@ pub fn exec(args: &EvalArgs) -> Result<()> {
     let mode = detect_input_mode(&args.input, &project.root);
 
     // Try live eval first for expressions/stdin (if a game is running with `gd run --eval`)
-    // Ask the daemon — it polls for the ready file so we don't have to
-    let eval_ready = crate::lsp::daemon_client::query_daemon(
-        "eval_status",
-        serde_json::json!({"timeout": args.timeout}),
-        Some(Duration::from_secs(args.timeout + 5)),
-    )
-    .and_then(|r| r.get("ready").and_then(serde_json::Value::as_bool))
-    .unwrap_or(false);
-    if eval_ready && mode != InputMode::File {
+    if mode != InputMode::File {
         let input_text = if mode == InputMode::Stdin {
             let mut buf = String::new();
             std::io::stdin()
@@ -426,10 +499,11 @@ pub fn exec(args: &EvalArgs) -> Result<()> {
             &project.root,
             Duration::from_secs(args.timeout),
             json_mode,
+            !args.r#unsafe,
         ) {
             return result;
         }
-        // Eval server disappeared between check and attempt — fall through to offline
+        // No eval server running — fall through to offline
     }
 
     let godot = find_godot(&config)?;
@@ -462,14 +536,27 @@ pub fn exec(args: &EvalArgs) -> Result<()> {
         }
     };
 
-    // Optional pre-check: parse-validate the script
-    if args.check {
-        let source = std::fs::read_to_string(&script_path)
-            .map_err(|e| miette!("Failed to read {}: {e}", script_path.display()))?;
-        if let Err(e) = pre_check(&source) {
+    // Sandbox + optional pre-check
+    let source = std::fs::read_to_string(&script_path)
+        .map_err(|e| miette!("Failed to read {}: {e}", script_path.display()))?;
+
+    if !args.r#unsafe {
+        let violations = sandbox_check(&source);
+        if !violations.is_empty() {
             cleanup_temp(temp_file.as_ref());
-            return Err(e);
+            return Err(miette!(
+                "Sandbox blocked: {}\n\
+                 Use {} to bypass sandbox checks",
+                violations.join(", "),
+                "--unsafe".bold(),
+            ));
         }
+    }
+
+    // Always syntax-check — catches parse errors before launching Godot
+    if let Err(e) = pre_check(&source) {
+        cleanup_temp(temp_file.as_ref());
+        return Err(e);
     }
 
     let mut cmd = Command::new(&godot);
@@ -766,32 +853,87 @@ mod tests {
     fn try_live_eval_no_server() {
         let tmp = tempfile::tempdir().unwrap();
         // No ready file — should return None
-        let result = try_live_eval("1+1", tmp.path(), Duration::from_secs(1), false);
+        let result = try_live_eval("1+1", tmp.path(), Duration::from_secs(1), false, true);
         assert!(result.is_none());
     }
 
     #[test]
-    fn try_live_eval_with_ready_file() {
+    fn try_live_eval_no_daemon() {
+        // Without a daemon running, try_live_eval returns None (fall back to offline)
         let tmp = tempfile::tempdir().unwrap();
-        let godot_dir = tmp.path().join(".godot");
-        std::fs::create_dir_all(&godot_dir).unwrap();
+        let result = try_live_eval("21 * 2", tmp.path(), Duration::from_secs(1), false, true);
+        assert!(result.is_none());
+    }
 
-        // Create ready file
-        std::fs::write(godot_dir.join("gd-eval-ready"), "12345").unwrap();
-
-        // Pre-create a result file to simulate the server responding
-        std::fs::write(
-            godot_dir.join("gd-eval-result.json"),
-            r#"{"result":"42","error":""}"#,
-        )
-        .unwrap();
-
-        let result = try_live_eval("21 * 2", tmp.path(), Duration::from_secs(5), false);
+    #[test]
+    fn try_live_eval_sandbox_blocks() {
+        // Sandbox blocks before reaching daemon, returns Some(Err)
+        let tmp = tempfile::tempdir().unwrap();
+        let result =
+            try_live_eval("OS.execute('cmd', [])", tmp.path(), Duration::from_secs(1), false, true);
         assert!(result.is_some());
-        assert!(result.unwrap().is_ok());
+        assert!(result.unwrap().is_err());
+    }
 
-        // Request file should have been written (and server would have consumed it)
-        // Result file should have been cleaned up
-        assert!(!godot_dir.join("gd-eval-result.json").exists());
+    #[test]
+    fn sandbox_blocks_os_execute() {
+        let violations = sandbox_check("OS.execute('rm', ['-rf', '/'])");
+        assert!(violations.iter().any(|v| v.contains("OS.execute")));
+    }
+
+    #[test]
+    fn sandbox_blocks_http() {
+        let violations = sandbox_check("var client = HTTPClient.new()");
+        assert!(violations.iter().any(|v| v.contains("HTTPClient")));
+    }
+
+    #[test]
+    fn sandbox_allows_safe_code() {
+        let violations = sandbox_check("get_tree().get_root().get_child_count()");
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn sandbox_allows_res_path() {
+        let violations = sandbox_check("FileAccess.open('res://data.json', FileAccess.READ)");
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn sandbox_allows_user_path() {
+        let violations = sandbox_check("FileAccess.open(\"user://saves/game.dat\", FileAccess.READ)");
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn sandbox_blocks_absolute_path() {
+        let violations = sandbox_check("FileAccess.open('/home/user/.env', FileAccess.READ)");
+        assert!(violations.iter().any(|v| v.contains(".env")));
+    }
+
+    #[test]
+    fn sandbox_blocks_dotenv() {
+        let violations = sandbox_check("FileAccess.open(\".env\", FileAccess.READ)");
+        assert!(violations.iter().any(|v| v.contains("FileAccess.open")));
+    }
+
+    #[test]
+    fn sandbox_blocks_dir_access_absolute() {
+        let violations = sandbox_check("DirAccess.open(\"/etc\")");
+        assert!(violations.iter().any(|v| v.contains("DirAccess.open")));
+    }
+
+    #[test]
+    fn sandbox_allows_variable_path() {
+        // Can't statically check variable paths — allow through
+        let violations = sandbox_check("var p = get_path(); FileAccess.open(p, FileAccess.READ)");
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn sandbox_blocks_multiple() {
+        let violations = sandbox_check("OS.execute('cmd'); var t = Thread.new()");
+        assert!(violations.iter().any(|v| v.contains("OS.execute")));
+        assert!(violations.iter().any(|v| v.contains("Thread")));
     }
 }

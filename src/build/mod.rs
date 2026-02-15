@@ -287,32 +287,73 @@ pub fn run_project(
 
     cmd.stdin(Stdio::null());
 
-    // Always redirect stdout/stderr directly to the log file.
-    // This avoids broken-pipe freezes when the CLI process exits.
-    let stdout_file = std::fs::File::create(&log_path)
-        .map_err(|e| miette!("Failed to create log file: {e}"))?;
-    let stderr_file = stdout_file
-        .try_clone()
-        .map_err(|e| miette!("Failed to clone log file handle: {e}"))?;
-
-    cmd.stdout(Stdio::from(stdout_file))
-        .stderr(Stdio::from(stderr_file));
-
-    let child = cmd
-        .spawn()
-        .map_err(|e| miette!("Failed to start Godot: {e}"))?;
-
-    report_game_to_daemon(&child, eval);
-
-    // Reap the child in the background to avoid zombies
-    std::thread::spawn(move || {
-        let _ = child.wait_with_output();
-    });
-
-    print_status_line(&project_name, debug_port, eval);
-
     if log {
+        // Pipe stdout/stderr so we can write to log file AND print to terminal.
+        // The tail loop keeps the main process alive, so pipes stay open.
+        let log_file = std::fs::File::create(&log_path)
+            .map_err(|e| miette!("Failed to create log file: {e}"))?;
+        let log_file = Arc::new(std::sync::Mutex::new(std::io::BufWriter::new(log_file)));
+
+        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| miette!("Failed to start Godot: {e}"))?;
+
+        report_game_to_daemon(&child, eval);
+
+        let stdout = child.stdout.take().expect("stdout was piped");
+        let stderr = child.stderr.take().expect("stderr was piped");
+
+        // Pump stdout/stderr to log file in background threads
+        let log1 = Arc::clone(&log_file);
+        std::thread::spawn(move || {
+            use std::io::{BufRead, Write};
+            let reader = BufReader::new(stdout);
+            for line in reader.lines().map_while(Result::ok) {
+                if let Ok(mut f) = log1.lock() {
+                    let _ = writeln!(f, "{line}");
+                }
+            }
+        });
+
+        let log2 = Arc::clone(&log_file);
+        std::thread::spawn(move || {
+            use std::io::{BufRead, Write};
+            let reader = BufReader::new(stderr);
+            for line in reader.lines().map_while(Result::ok) {
+                if let Ok(mut f) = log2.lock() {
+                    let _ = writeln!(f, "{line}");
+                }
+            }
+        });
+
+        // Reap the child in the background
+        std::thread::spawn(move || {
+            let _ = child.wait();
+        });
+
+        print_status_line(&project_name, debug_port, eval);
+
+        // Tail the log file (blocks until game exits or Ctrl+C)
         tail_log_file(&log_path);
+    } else {
+        // Discard stdout/stderr — avoids WSL↔Windows handle translation issues
+        // that cause Godot to freeze. Use --log if you need game output.
+        cmd.stdout(Stdio::null()).stderr(Stdio::null());
+
+        let child = cmd
+            .spawn()
+            .map_err(|e| miette!("Failed to start Godot: {e}"))?;
+
+        report_game_to_daemon(&child, eval);
+
+        // Reap the child in the background to avoid zombies
+        std::thread::spawn(move || {
+            let _ = child.wait_with_output();
+        });
+
+        print_status_line(&project_name, debug_port, eval);
     }
 
     // Tell the daemon to accept the debug connection (fire-and-forget)
