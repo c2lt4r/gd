@@ -94,6 +94,31 @@ pub(crate) fn format_variant_display(v: &serde_json::Value) -> String {
             }
         }
         "ObjectId" => val.map(|v| format!("Object#{v}")).unwrap_or_default(),
+        "Array" => {
+            if let Some(arr) = val.and_then(|v| v.as_array()) {
+                let parts: Vec<String> = arr.iter().map(format_variant_display).collect();
+                format!("[{}]", parts.join(", "))
+            } else {
+                "[]".to_string()
+            }
+        }
+        "Dictionary" => {
+            // Wire format: [[key_variant, val_variant], ...]
+            if let Some(pairs) = val.and_then(|v| v.as_array()) {
+                let parts: Vec<String> = pairs
+                    .iter()
+                    .filter_map(|pair| {
+                        let arr = pair.as_array()?;
+                        let k = format_variant_display(arr.first()?);
+                        let v = format_variant_display(arr.get(1)?);
+                        Some(format!("{k}: {v}"))
+                    })
+                    .collect();
+                format!("{{{}}}", parts.join(", "))
+            } else {
+                "{}".to_string()
+            }
+        }
         _ => val.map_or_else(|| typ.to_string(), std::string::ToString::to_string),
     }
 }

@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.2.8] - 2026-02-15
+
+### Fixed
+- **`gd debug eval` now works without a manual breakpoint** — previously always failed because the `break` command pauses the engine without entering the GDScript debug loop. Now automatically sets a temporary breakpoint on a `_process` function, evaluates, then cleans up. Assignments, node paths, builtins, and multi-expression all work.
+- **Eval human output** — fixed raw JSON leaking into display for all types; Array and Dictionary values now render as `[1, true, null]` and `{key: value}` instead of nested variant JSON.
+
 ## [0.2.7] - 2026-02-14
 
 ### Added

@@ -296,18 +296,17 @@ pub(crate) fn cmd_evaluate(args: &EvalBinArgs) -> Result<()> {
         eprintln!("  {} {}", "Rewritten:".dimmed(), expr.dimmed());
     }
 
-    // Auto-break: send "break" to pause the script debugger, evaluate, then continue.
-    // The binary protocol's evaluate only works inside Godot's debug() loop.
-    let auto_broke = debug_break_for_eval();
+    // Auto-break: set a temporary breakpoint on _process so we get a real
+    // GDScript context. The binary protocol's evaluate only works inside
+    // Godot's debug() loop with an active script stack frame.
+    let break_ctx = debug_break_for_eval();
 
     let result = daemon_cmd(
         "debug_evaluate",
         serde_json::json!({"expression": expr, "frame": args.frame}),
     );
 
-    if auto_broke {
-        daemon_cmd("debug_continue", serde_json::json!({}));
-    }
+    break_ctx.cleanup();
 
     let result = result.ok_or_else(|| miette!("Evaluate failed — is a game running?"))?;
 
@@ -321,7 +320,8 @@ pub(crate) fn cmd_evaluate(args: &EvalBinArgs) -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&json).unwrap());
         }
         OutputFormat::Human => {
-            let display = format_variant_display(&result);
+            let variant = result.get("value").unwrap_or(&result);
+            let display = format_variant_display(variant);
             if type_name_from_variant(&result).is_empty() {
                 println!("{} = {}", input.cyan(), display.green());
             } else {

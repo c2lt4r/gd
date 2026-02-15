@@ -11,6 +11,7 @@ mod selection;
 pub use args::*;
 
 use miette::{Result, miette};
+use path_slash::PathExt as _;
 
 pub fn exec(args: &DebugArgs) -> Result<()> {
     match args.command {
@@ -193,27 +194,122 @@ fn is_at_breakpoint() -> bool {
         == Some(true)
 }
 
+/// Context from auto-breaking for eval. Caller must call `cleanup()` after eval.
+struct EvalBreakContext {
+    auto_broke: bool,
+    temp_breakpoint: Option<(String, u32)>,
+}
+
+impl EvalBreakContext {
+    fn cleanup(&self) {
+        if let Some((ref path, line)) = self.temp_breakpoint {
+            daemon_cmd(
+                "debug_breakpoint",
+                serde_json::json!({"path": path, "line": line, "enabled": false}),
+            );
+        }
+        if self.auto_broke {
+            daemon_cmd("debug_continue", serde_json::json!({}));
+        }
+    }
+}
+
 /// Try to enter the debug loop so evaluate works.
-/// If already at a breakpoint, returns false (no action needed).
-/// Otherwise sends `break` and waits for the game to pause.
-/// Returns true if we auto-broke (caller should auto-continue after eval).
-///
-/// NOTE: `break` pauses the engine but may not provide GDScript context.
-/// Breakpoints set on script lines provide full context for evaluate.
-fn debug_break_for_eval() -> bool {
+/// If already at a breakpoint, returns immediately (no cleanup needed).
+/// Otherwise sets a temporary breakpoint on a `_process` function so the game
+/// pauses with a real GDScript context (the raw `break` command pauses the
+/// engine but does NOT provide a script stack frame, so evaluate fails).
+fn debug_break_for_eval() -> EvalBreakContext {
     if is_at_breakpoint() {
-        return false;
+        return EvalBreakContext {
+            auto_broke: false,
+            temp_breakpoint: None,
+        };
     }
-    let break_ok = daemon_cmd("debug_break_exec", serde_json::json!({}));
-    if break_ok.is_none() {
-        return false;
+
+    // Set a temporary breakpoint on a _process/_physics_process body line.
+    // These run every frame so the breakpoint triggers within ~16ms.
+    if let Some((res_path, line)) = find_process_breakpoint_target() {
+        daemon_cmd(
+            "debug_breakpoint",
+            serde_json::json!({"path": res_path, "line": line, "enabled": true}),
+        );
+
+        // Wait up to 2 seconds for the breakpoint to hit
+        for _ in 0..20 {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            if is_at_breakpoint() {
+                return EvalBreakContext {
+                    auto_broke: true,
+                    temp_breakpoint: Some((res_path, line)),
+                };
+            }
+        }
+
+        // Didn't trigger — remove the breakpoint
+        daemon_cmd(
+            "debug_breakpoint",
+            serde_json::json!({"path": res_path, "line": line, "enabled": false}),
+        );
     }
+
+    // Fallback: try raw break command (may not provide GDScript context)
+    let _ = daemon_cmd("debug_break_exec", serde_json::json!({}));
     for _ in 0..10 {
         std::thread::sleep(std::time::Duration::from_millis(100));
         if is_at_breakpoint() {
-            return true;
+            return EvalBreakContext {
+                auto_broke: true,
+                temp_breakpoint: None,
+            };
         }
     }
-    // Break didn't pause within 1s — still return true so caller tries to continue
-    true
+
+    EvalBreakContext {
+        auto_broke: true,
+        temp_breakpoint: None,
+    }
+}
+
+/// Scan project .gd files for a `_process` or `_physics_process` function
+/// and return a `(res://path, body_line)` pair suitable for a breakpoint.
+fn find_process_breakpoint_target() -> Option<(String, u32)> {
+    let cwd = std::env::current_dir().ok()?;
+    let root = crate::core::config::find_project_root(&cwd)?;
+    let files = crate::core::fs::collect_gdscript_files(&root).ok()?;
+
+    for file in &files {
+        let Ok(content) = std::fs::read_to_string(file) else {
+            continue;
+        };
+        for (i, line) in content.lines().enumerate() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("func _process(")
+                || trimmed.starts_with("func _physics_process(")
+            {
+                // Find first non-empty, non-comment body line after declaration
+                let body_line = content
+                    .lines()
+                    .skip(i + 1)
+                    .enumerate()
+                    .find_map(|(j, l)| {
+                        let t = l.trim();
+                        if !t.is_empty() && !t.starts_with('#') {
+                            Some((i + j + 2) as u32) // 1-based
+                        } else {
+                            None
+                        }
+                    });
+
+                if let Some(body_line) = body_line {
+                    let Some(rel) = file.strip_prefix(&root).ok() else {
+                        continue;
+                    };
+                    let res_path = format!("res://{}", rel.to_slash_lossy());
+                    return Some((res_path, body_line));
+                }
+            }
+        }
+    }
+    None
 }
