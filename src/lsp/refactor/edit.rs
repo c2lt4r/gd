@@ -276,7 +276,13 @@ pub fn replace_symbol(
             .ok_or_else(|| miette::miette!("symbol '{name}' not found in {rel}"))?
     };
 
-    let (full_start, full_end) = declaration_full_range(decl, &source);
+    // When the target is a class_name_statement the whole file IS that class,
+    // so replace the entire file content rather than just the one-line statement.
+    let (full_start, full_end) = if decl.kind() == "class_name_statement" {
+        (0, source.len())
+    } else {
+        declaration_full_range(decl, &source)
+    };
 
     // Build new source
     let mut result = String::with_capacity(source.len());
@@ -734,6 +740,33 @@ mod tests {
         assert!(content.contains("func new_func():"));
         assert!(content.contains("print(\"replaced\")"));
         assert!(!content.contains("old_func"));
+    }
+
+    #[test]
+    fn replace_symbol_class_name_replaces_whole_file() {
+        let temp = setup(&[(
+            "npc.gd",
+            "class_name Npc\nextends Node\n\n\nvar speed = 100\n\n\nfunc _ready():\n\tpass\n",
+        )]);
+        let file = temp.path().join("npc.gd");
+        let result = replace_symbol(
+            &file,
+            "Npc",
+            None,
+            "class_name Npc\nextends Node\n\n\nvar speed = 200\n\n\nfunc _ready():\n\tprint(1)\n",
+            true,
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+
+        let content = fs::read_to_string(&file).unwrap();
+        assert!(content.contains("var speed = 200"));
+        assert!(content.contains("print(1)"));
+        // Old content must be gone
+        assert!(!content.contains("var speed = 100"));
+        assert!(!content.contains("\tpass"));
     }
 
     #[test]

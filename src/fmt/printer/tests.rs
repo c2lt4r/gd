@@ -85,6 +85,13 @@ fn test_enum() {
 }
 
 #[test]
+fn test_enum_multiline_preserved() {
+    let input = "enum State {\n\tIDLE,\n\tRUNNING,\n\tJUMPING,\n}\n";
+    let output = format_source(input);
+    assert_eq!(output, "enum State {\n\tIDLE,\n\tRUNNING,\n\tJUMPING,\n}\n");
+}
+
+#[test]
 fn test_for_loop() {
     let input = "func f():\n\tfor i in range(10):\n\t\tprint(i)\n";
     let output = format_source(input);

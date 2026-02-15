@@ -184,7 +184,7 @@ impl Printer {
             "pair" => self.print_dict_pair(node, source, indent),
             "typed_parameter" => self.print_typed_param(node, source),
             "attribute" => self.print_attribute(node, source, indent),
-            "enumerator_list" => self.print_enumerator_list(node, source),
+            "enumerator_list" => self.print_enumerator_list(node, source, indent),
             "inferred_type" => self.push_str(":="),
             "type" => self.print_type(node, source),
             "pass_statement" => self.push_str("pass"),

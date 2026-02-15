@@ -189,27 +189,36 @@ fn is_godot_builtin(name: &str) -> bool {
 }
 
 /// Check if a name is valid UPPER_SNAKE_CASE.
+/// Allows leading underscores for private constants (e.g. `_MAX_HP`).
 fn is_upper_snake_case(name: &str) -> bool {
     if name.is_empty() {
         return true;
     }
-    name.chars()
+    let trimmed = name.trim_start_matches('_');
+    if trimmed.is_empty() {
+        return true;
+    }
+    trimmed
+        .chars()
         .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
-        && !name.contains("__")
-        && !name.starts_with('_')
-        && !name.ends_with('_')
+        && !trimmed.contains("__")
+        && !trimmed.ends_with('_')
 }
 
 /// Convert a name to UPPER_SNAKE_CASE.
+/// Preserves leading underscores for private constants.
 fn to_upper_snake_case(name: &str) -> String {
-    let mut result = String::new();
+    let prefix_underscores: String = name.chars().take_while(|&c| c == '_').collect();
+    let rest = &name[prefix_underscores.len()..];
+
+    let mut result = prefix_underscores;
     let mut prev_was_upper = false;
-    for (i, ch) in name.chars().enumerate() {
+    for (i, ch) in rest.chars().enumerate() {
         if ch == '_' {
             result.push('_');
             prev_was_upper = false;
         } else if ch.is_ascii_uppercase() {
-            if i > 0 && !prev_was_upper && name.as_bytes()[i - 1] != b'_' {
+            if i > 0 && !prev_was_upper && rest.as_bytes()[i - 1] != b'_' {
                 result.push('_');
             }
             result.push(ch);
@@ -286,4 +295,45 @@ fn to_pascal_case(name: &str) -> String {
         }
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn upper_snake_case_valid() {
+        assert!(is_upper_snake_case("MAX_SPEED"));
+        assert!(is_upper_snake_case("X"));
+        assert!(is_upper_snake_case("A1"));
+    }
+
+    #[test]
+    fn upper_snake_case_leading_underscore() {
+        assert!(is_upper_snake_case("_DIALOG_BOX_SCRIPT"));
+        assert!(is_upper_snake_case("_MAX_HP"));
+        assert!(is_upper_snake_case("_X"));
+    }
+
+    #[test]
+    fn upper_snake_case_invalid() {
+        assert!(!is_upper_snake_case("maxSpeed"));
+        assert!(!is_upper_snake_case("MAX__SPEED"));
+        assert!(!is_upper_snake_case("MAX_SPEED_"));
+    }
+
+    #[test]
+    fn to_upper_snake_preserves_leading_underscore() {
+        assert_eq!(
+            to_upper_snake_case("_dialogBoxScript"),
+            "_DIALOG_BOX_SCRIPT"
+        );
+    }
+
+    #[test]
+    fn snake_case_allows_leading_underscore() {
+        assert!(is_snake_case("_ready"));
+        assert!(is_snake_case("__init"));
+        assert!(is_snake_case("my_var"));
+    }
 }

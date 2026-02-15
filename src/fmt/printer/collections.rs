@@ -7,7 +7,7 @@ use super::{Printer, collect_multiline_entries};
 impl Printer {
     // ── Enum definition ────────────────────────────────────────────────
 
-    pub(crate) fn print_enum_def(&mut self, node: &Node, source: &str, _indent: usize) {
+    pub(crate) fn print_enum_def(&mut self, node: &Node, source: &str, indent: usize) {
         let mut cursor = node.walk();
         let children: Vec<Node> = node.children(&mut cursor).collect();
 
@@ -20,28 +20,62 @@ impl Printer {
                 }
                 "enumerator_list" => {
                     self.push_str(" ");
-                    self.print_enumerator_list(child, source);
+                    self.print_enumerator_list(child, source, indent);
                 }
                 _ => {}
             }
         }
     }
 
-    pub(crate) fn print_enumerator_list(&mut self, node: &Node, source: &str) {
-        self.push_str("{ ");
+    pub(crate) fn print_enumerator_list(&mut self, node: &Node, source: &str, indent: usize) {
         let mut cursor = node.walk();
         let children: Vec<Node> = node.children(&mut cursor).collect();
 
-        for child in &children {
+        let is_multiline = node.start_position().row != node.end_position().row;
+        let has_comment = children.iter().any(|c| c.kind() == "comment");
+
+        if is_multiline || has_comment {
+            self.print_enumerator_list_multiline(&children, source, indent);
+        } else {
+            self.print_enumerator_list_inline(&children, source);
+        }
+    }
+
+    fn print_enumerator_list_inline(&mut self, children: &[Node], source: &str) {
+        self.push_str("{ ");
+        for child in children {
             match child.kind() {
                 "," => self.push_str(", "),
-                "enumerator" => {
-                    self.print_enumerator(child, source);
-                }
+                "enumerator" => self.print_enumerator(child, source),
                 _ => {}
             }
         }
         self.push_str(" }");
+    }
+
+    fn print_enumerator_list_multiline(&mut self, children: &[Node], source: &str, indent: usize) {
+        let inner = indent + 1;
+        self.push_str("{");
+        let entries = collect_multiline_entries(children, |k| matches!(k, "{" | "}"));
+        for entry in &entries {
+            self.push_str("\n");
+            self.write_indent(inner);
+            if entry.node.kind() == "comment" {
+                self.emit(&entry.node, source);
+                continue;
+            }
+            self.print_enumerator(&entry.node, source);
+            self.push_str(",");
+            if let Some(ref c) = entry.trailing_comment {
+                self.push_str("  ");
+                self.emit(c, source);
+            }
+        }
+        if !entries.is_empty() {
+            self.push_str("\n");
+            self.write_indent(indent);
+        }
+        self.push_str("}");
     }
 
     fn print_enumerator(&mut self, node: &Node, source: &str) {
