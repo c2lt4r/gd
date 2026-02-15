@@ -14,10 +14,13 @@ use crate::core::symbol_table::{self, FuncDecl, SymbolTable, VarDecl};
 
 /// Summary of a function declaration (no AST references).
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct FuncSummary {
     pub name: String,
     pub return_type: Option<String>,
     pub is_static: bool,
+    /// `##` doc comment text, if any.
+    pub doc: Option<String>,
 }
 
 /// Summary of a variable declaration (no AST references).
@@ -28,6 +31,8 @@ pub struct VarSummary {
     pub type_name: Option<String>,
     pub is_static: bool,
     pub is_constant: bool,
+    /// `##` doc comment text, if any.
+    pub doc: Option<String>,
 }
 
 /// All symbols extracted from a single `.gd` file.
@@ -298,6 +303,7 @@ fn func_summary(f: &FuncDecl) -> FuncSummary {
         name: f.name.clone(),
         return_type: f.return_type.as_ref().map(|t| t.name.clone()),
         is_static: f.is_static,
+        doc: f.doc.clone(),
     }
 }
 
@@ -311,6 +317,7 @@ fn var_summary(v: &VarDecl) -> VarSummary {
             .map(|t| t.name.clone()),
         is_static: v.is_static,
         is_constant: v.is_constant,
+        doc: v.doc.clone(),
     }
 }
 

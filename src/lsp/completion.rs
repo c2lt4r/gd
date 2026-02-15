@@ -264,6 +264,40 @@ fn collect_class_db_methods(class: &str, items: &mut Vec<CompletionItem>) {
     }
 }
 
+/// Extract `##` doc comment lines preceding a declaration node.
+fn extract_doc_comment(node: &tree_sitter::Node, source: &str) -> Option<Documentation> {
+    let bytes = source.as_bytes();
+    let mut lines = Vec::new();
+    let mut current = node.prev_named_sibling();
+
+    while let Some(prev) = current {
+        match prev.kind() {
+            "comment" => {
+                if let Ok(text) = prev.utf8_text(bytes) {
+                    if let Some(stripped) = text.strip_prefix("##") {
+                        lines.push(stripped.trim().to_string());
+                    } else {
+                        break;
+                    }
+                }
+            }
+            "annotation" | "annotations" => {}
+            _ => break,
+        }
+        current = prev.prev_named_sibling();
+    }
+
+    if lines.is_empty() {
+        None
+    } else {
+        lines.reverse();
+        Some(Documentation::MarkupContent(MarkupContent {
+            kind: MarkupKind::Markdown,
+            value: lines.join("\n"),
+        }))
+    }
+}
+
 /// Collect symbols from a file's AST as completion items.
 fn collect_file_symbols(node: tree_sitter::Node, source: &str, items: &mut Vec<CompletionItem>) {
     let mut cursor = node.walk();
@@ -275,6 +309,7 @@ fn collect_file_symbols(node: tree_sitter::Node, source: &str, items: &mut Vec<C
                         label: name.to_string(),
                         kind: Some(CompletionItemKind::FUNCTION),
                         detail: Some(build_function_detail(&child, source)),
+                        documentation: extract_doc_comment(&child, source),
                         ..Default::default()
                     });
                 }
@@ -284,6 +319,7 @@ fn collect_file_symbols(node: tree_sitter::Node, source: &str, items: &mut Vec<C
                     items.push(CompletionItem {
                         label: name.to_string(),
                         kind: Some(CompletionItemKind::VARIABLE),
+                        documentation: extract_doc_comment(&child, source),
                         ..Default::default()
                     });
                 }
@@ -293,6 +329,7 @@ fn collect_file_symbols(node: tree_sitter::Node, source: &str, items: &mut Vec<C
                     items.push(CompletionItem {
                         label: name.to_string(),
                         kind: Some(CompletionItemKind::CONSTANT),
+                        documentation: extract_doc_comment(&child, source),
                         ..Default::default()
                     });
                 }
@@ -302,6 +339,7 @@ fn collect_file_symbols(node: tree_sitter::Node, source: &str, items: &mut Vec<C
                     items.push(CompletionItem {
                         label: name.to_string(),
                         kind: Some(CompletionItemKind::EVENT),
+                        documentation: extract_doc_comment(&child, source),
                         ..Default::default()
                     });
                 }
@@ -311,6 +349,7 @@ fn collect_file_symbols(node: tree_sitter::Node, source: &str, items: &mut Vec<C
                     items.push(CompletionItem {
                         label: name.to_string(),
                         kind: Some(CompletionItemKind::CLASS),
+                        documentation: extract_doc_comment(&child, source),
                         ..Default::default()
                     });
                 }
@@ -320,6 +359,7 @@ fn collect_file_symbols(node: tree_sitter::Node, source: &str, items: &mut Vec<C
                     items.push(CompletionItem {
                         label: name.to_string(),
                         kind: Some(CompletionItemKind::ENUM),
+                        documentation: extract_doc_comment(&child, source),
                         ..Default::default()
                     });
                 }
@@ -345,6 +385,7 @@ fn collect_workspace_symbols(
                         label: name.to_string(),
                         kind: Some(CompletionItemKind::FUNCTION),
                         detail: Some(file_name.to_string()),
+                        documentation: extract_doc_comment(&child, source),
                         ..Default::default()
                     });
                 }
@@ -355,6 +396,7 @@ fn collect_workspace_symbols(
                         label: name.to_string(),
                         kind: Some(CompletionItemKind::CLASS),
                         detail: Some(file_name.to_string()),
+                        documentation: extract_doc_comment(&child, source),
                         ..Default::default()
                     });
                 }
@@ -365,6 +407,7 @@ fn collect_workspace_symbols(
                         label: name.to_string(),
                         kind: Some(CompletionItemKind::EVENT),
                         detail: Some(file_name.to_string()),
+                        documentation: extract_doc_comment(&child, source),
                         ..Default::default()
                     });
                 }
@@ -503,5 +546,43 @@ func attack(target):
             })
             .collect();
         assert!(engine_methods.is_empty());
+    }
+
+    #[test]
+    fn completion_includes_doc_comment() {
+        let source = "## Move the player forward.\nfunc move():\n\tpass\n";
+        let items = provide_completions(source, Position::new(0, 0), None);
+        let move_item = items
+            .iter()
+            .find(|i| i.label == "move" && i.kind == Some(CompletionItemKind::FUNCTION))
+            .unwrap();
+        match &move_item.documentation {
+            Some(Documentation::MarkupContent(mc)) => {
+                assert_eq!(mc.value, "Move the player forward.");
+            }
+            _ => panic!("Expected MarkupContent documentation"),
+        }
+    }
+
+    #[test]
+    fn completion_no_doc_comment() {
+        let source = "func idle():\n\tpass\n";
+        let items = provide_completions(source, Position::new(0, 0), None);
+        let idle_item = items
+            .iter()
+            .find(|i| i.label == "idle" && i.kind == Some(CompletionItemKind::FUNCTION))
+            .unwrap();
+        assert!(idle_item.documentation.is_none());
+    }
+
+    #[test]
+    fn completion_var_doc_comment() {
+        let source = "## The player's health.\nvar health: int = 100\n";
+        let items = provide_completions(source, Position::new(0, 0), None);
+        let health_item = items
+            .iter()
+            .find(|i| i.label == "health" && i.kind == Some(CompletionItemKind::VARIABLE))
+            .unwrap();
+        assert!(health_item.documentation.is_some());
     }
 }

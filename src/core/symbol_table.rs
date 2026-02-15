@@ -25,6 +25,8 @@ pub struct VarDecl {
     pub annotations: Vec<String>,
     pub has_default: bool,
     pub line: usize,
+    /// `##` doc comment text, if any.
+    pub doc: Option<String>,
 }
 
 /// A function/method parameter.
@@ -46,6 +48,8 @@ pub struct FuncDecl {
     pub is_static: bool,
     pub annotations: Vec<String>,
     pub line: usize,
+    /// `##` doc comment text, if any.
+    pub doc: Option<String>,
 }
 
 /// A signal declaration.
@@ -55,6 +59,8 @@ pub struct SignalDecl {
     pub name: String,
     pub params: Vec<ParamDecl>,
     pub line: usize,
+    /// `##` doc comment text, if any.
+    pub doc: Option<String>,
 }
 
 /// An enum declaration.
@@ -64,6 +70,8 @@ pub struct EnumDecl {
     pub name: String,
     pub members: Vec<String>,
     pub line: usize,
+    /// `##` doc comment text, if any.
+    pub doc: Option<String>,
 }
 
 /// Per-file symbol table with all top-level declarations.
@@ -119,34 +127,39 @@ fn build_from_node(root: Node, source: &str) -> SymbolTable {
             }
             "variable_statement" => {
                 if let Some(mut var) = extract_var_decl(child, bytes) {
-                    // Collect preceding standalone annotation nodes
                     collect_preceding_annotations(&children, idx, bytes, &mut var.annotations);
+                    var.doc = collect_preceding_doc_comment(&children, idx, bytes);
                     table.variables.push(var);
                 }
             }
             "const_statement" => {
-                if let Some(var) = extract_const_decl(child, bytes) {
+                if let Some(mut var) = extract_const_decl(child, bytes) {
+                    var.doc = collect_preceding_doc_comment(&children, idx, bytes);
                     table.variables.push(var);
                 }
             }
             "function_definition" => {
                 if let Some(mut func) = extract_func_decl(child, bytes) {
                     collect_preceding_annotations(&children, idx, bytes, &mut func.annotations);
+                    func.doc = collect_preceding_doc_comment(&children, idx, bytes);
                     table.functions.push(func);
                 }
             }
             "constructor_definition" => {
-                if let Some(func) = extract_constructor_decl(child, bytes) {
+                if let Some(mut func) = extract_constructor_decl(child, bytes) {
+                    func.doc = collect_preceding_doc_comment(&children, idx, bytes);
                     table.functions.push(func);
                 }
             }
             "signal_statement" => {
-                if let Some(sig) = extract_signal_decl(child, bytes) {
+                if let Some(mut sig) = extract_signal_decl(child, bytes) {
+                    sig.doc = collect_preceding_doc_comment(&children, idx, bytes);
                     table.signals.push(sig);
                 }
             }
             "enum_definition" => {
-                if let Some(e) = extract_enum_decl(child, bytes) {
+                if let Some(mut e) = extract_enum_decl(child, bytes) {
+                    e.doc = collect_preceding_doc_comment(&children, idx, bytes);
                     table.enums.push(e);
                 }
             }
@@ -164,6 +177,39 @@ fn build_from_node(root: Node, source: &str) -> SymbolTable {
     }
 
     table
+}
+
+/// Walk backward from `idx` collecting consecutive `##` doc comment lines.
+/// Skips `annotation` nodes (which may sit between doc comments and declarations).
+/// Returns the joined doc text or `None`.
+fn collect_preceding_doc_comment(children: &[Node], idx: usize, source: &[u8]) -> Option<String> {
+    let mut lines = Vec::new();
+    let mut i = idx;
+    while i > 0 {
+        i -= 1;
+        let prev = &children[i];
+        match prev.kind() {
+            "comment" => {
+                if let Ok(text) = prev.utf8_text(source) {
+                    if let Some(stripped) = text.strip_prefix("##") {
+                        lines.push(stripped.trim().to_string());
+                    } else {
+                        break; // Regular `#` comment breaks the chain
+                    }
+                }
+            }
+            "annotation" | "annotations" => {
+                // Annotations can appear between doc comments and declarations
+            }
+            _ => break,
+        }
+    }
+    if lines.is_empty() {
+        None
+    } else {
+        lines.reverse();
+        Some(lines.join("\n"))
+    }
 }
 
 /// Walk backward from `idx` collecting standalone `annotation` nodes that
@@ -274,6 +320,7 @@ fn extract_var_decl(node: &Node, source: &[u8]) -> Option<VarDecl> {
         annotations,
         has_default,
         line: node.start_position().row,
+        doc: None,
     })
 }
 
@@ -295,6 +342,7 @@ fn extract_const_decl(node: &Node, source: &[u8]) -> Option<VarDecl> {
         annotations: Vec::new(),
         has_default,
         line: node.start_position().row,
+        doc: None,
     })
 }
 
@@ -332,6 +380,7 @@ fn extract_func_decl(node: &Node, source: &[u8]) -> Option<FuncDecl> {
         is_static,
         annotations,
         line: node.start_position().row,
+        doc: None,
     })
 }
 
@@ -347,6 +396,7 @@ fn extract_constructor_decl(node: &Node, source: &[u8]) -> Option<FuncDecl> {
         is_static: false,
         annotations: Vec::new(),
         line: node.start_position().row,
+        doc: None,
     })
 }
 
@@ -484,6 +534,7 @@ fn extract_signal_decl(node: &Node, source: &[u8]) -> Option<SignalDecl> {
         name,
         params,
         line: node.start_position().row,
+        doc: None,
     })
 }
 
@@ -514,6 +565,7 @@ fn extract_enum_decl(node: &Node, source: &[u8]) -> Option<EnumDecl> {
         name,
         members,
         line: node.start_position().row,
+        doc: None,
     })
 }
 
@@ -848,5 +900,80 @@ static func get_count() -> int:
         let table = build_table(source);
         assert_eq!(table.functions.len(), 1);
         assert!(table.functions[0].annotations.contains(&"rpc".to_string()));
+    }
+
+    #[test]
+    fn doc_comment_on_function() {
+        let source = "## Move the player forward.\nfunc move() -> void:\n\tpass\n";
+        let table = build_table(source);
+        assert_eq!(
+            table.functions[0].doc.as_deref(),
+            Some("Move the player forward.")
+        );
+    }
+
+    #[test]
+    fn doc_comment_multiline() {
+        let source = "## Line one.\n## Line two.\nfunc f():\n\tpass\n";
+        let table = build_table(source);
+        assert_eq!(
+            table.functions[0].doc.as_deref(),
+            Some("Line one.\nLine two.")
+        );
+    }
+
+    #[test]
+    fn regular_comment_not_doc() {
+        let source = "# Just a comment\nfunc f():\n\tpass\n";
+        let table = build_table(source);
+        assert!(table.functions[0].doc.is_none());
+    }
+
+    #[test]
+    fn doc_comment_on_var() {
+        let source = "## The player's health.\nvar health: int = 100\n";
+        let table = build_table(source);
+        assert_eq!(
+            table.variables[0].doc.as_deref(),
+            Some("The player's health.")
+        );
+    }
+
+    #[test]
+    fn doc_comment_on_const() {
+        let source = "## Maximum speed.\nconst MAX_SPEED = 300\n";
+        let table = build_table(source);
+        assert_eq!(table.variables[0].doc.as_deref(), Some("Maximum speed."));
+    }
+
+    #[test]
+    fn doc_comment_on_signal() {
+        let source = "## Emitted when health changes.\nsignal health_changed(val: int)\n";
+        let table = build_table(source);
+        assert_eq!(
+            table.signals[0].doc.as_deref(),
+            Some("Emitted when health changes.")
+        );
+    }
+
+    #[test]
+    fn doc_comment_on_enum() {
+        let source = "## Player states.\nenum State { IDLE, RUN }\n";
+        let table = build_table(source);
+        assert_eq!(table.enums[0].doc.as_deref(), Some("Player states."));
+    }
+
+    #[test]
+    fn doc_comment_skips_annotations() {
+        let source = "## Exported health.\n@export\nvar health: int = 100\n";
+        let table = build_table(source);
+        assert_eq!(table.variables[0].doc.as_deref(), Some("Exported health."));
+    }
+
+    #[test]
+    fn no_doc_comment() {
+        let source = "var x: int\n";
+        let table = build_table(source);
+        assert!(table.variables[0].doc.is_none());
     }
 }

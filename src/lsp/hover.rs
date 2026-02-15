@@ -160,6 +160,40 @@ fn try_member_hover(
     None
 }
 
+/// Extract `##` doc comment lines preceding a declaration node.
+/// Walks backward through named siblings, skipping annotation nodes.
+fn extract_doc_comment(decl_node: &tree_sitter::Node, source: &str) -> Option<String> {
+    let bytes = source.as_bytes();
+    let mut lines = Vec::new();
+    let mut current = decl_node.prev_named_sibling();
+
+    while let Some(prev) = current {
+        match prev.kind() {
+            "comment" => {
+                if let Ok(text) = prev.utf8_text(bytes) {
+                    if let Some(stripped) = text.strip_prefix("##") {
+                        lines.push(stripped.trim().to_string());
+                    } else {
+                        break; // Regular `#` comment breaks the chain
+                    }
+                }
+            }
+            "annotation" | "annotations" => {
+                // Annotations can appear between doc comments and declarations
+            }
+            _ => break,
+        }
+        current = prev.prev_named_sibling();
+    }
+
+    if lines.is_empty() {
+        None
+    } else {
+        lines.reverse();
+        Some(lines.join("\n"))
+    }
+}
+
 fn hover_function(node: &tree_sitter::Node, source: &str) -> Option<Hover> {
     let name = node_text(&node.child_by_field_name("name")?, source);
 
@@ -177,42 +211,49 @@ fn hover_function(node: &tree_sitter::Node, source: &str) -> Option<Hover> {
         sig.push_str(node_text(&ret, source));
     }
 
-    Some(make_hover(&sig, node))
+    let doc = extract_doc_comment(node, source);
+    Some(make_hover(&sig, node, doc.as_deref()))
 }
 
 fn hover_variable(node: &tree_sitter::Node, source: &str) -> Hover {
     let text = node_text(node, source);
     let decl = text.lines().next().unwrap_or(text).trim_end();
-    make_hover(decl, node)
+    let doc = extract_doc_comment(node, source);
+    make_hover(decl, node, doc.as_deref())
 }
 
 fn hover_const(node: &tree_sitter::Node, source: &str) -> Hover {
     let text = node_text(node, source);
     let decl = text.lines().next().unwrap_or(text).trim_end();
-    make_hover(decl, node)
+    let doc = extract_doc_comment(node, source);
+    make_hover(decl, node, doc.as_deref())
 }
 
 fn hover_signal(node: &tree_sitter::Node, source: &str) -> Hover {
     let text = node_text(node, source);
     let decl = text.lines().next().unwrap_or(text).trim_end();
-    make_hover(decl, node)
+    let doc = extract_doc_comment(node, source);
+    make_hover(decl, node, doc.as_deref())
 }
 
 fn hover_class_name(node: &tree_sitter::Node, source: &str) -> Hover {
     let text = node_text(node, source);
-    make_hover(text.trim(), node)
+    let doc = extract_doc_comment(node, source);
+    make_hover(text.trim(), node, doc.as_deref())
 }
 
 fn hover_class(node: &tree_sitter::Node, source: &str) -> Option<Hover> {
     let name = node_text(&node.child_by_field_name("name")?, source);
     let decl = format!("class {name}");
-    Some(make_hover(&decl, node))
+    let doc = extract_doc_comment(node, source);
+    Some(make_hover(&decl, node, doc.as_deref()))
 }
 
 fn hover_enum(node: &tree_sitter::Node, source: &str) -> Option<Hover> {
     let name_node = node.child_by_field_name("name")?;
     let text = node_text(node, source);
-    Some(make_hover(text.trim(), &name_node))
+    let doc = extract_doc_comment(node, source);
+    Some(make_hover(text.trim(), &name_node, doc.as_deref()))
 }
 
 /// Try to resolve an identifier to a top-level declaration in the file.
@@ -256,12 +297,73 @@ fn resolve_identifier(root: &tree_sitter::Node, name: &str, source: &str) -> Opt
     None
 }
 
-fn make_hover(code: &str, node: &tree_sitter::Node) -> Hover {
+fn make_hover(code: &str, node: &tree_sitter::Node, doc: Option<&str>) -> Hover {
+    let value = match doc {
+        Some(d) => format!("```gdscript\n{code}\n```\n\n{d}"),
+        None => format!("```gdscript\n{code}\n```"),
+    };
     Hover {
         contents: HoverContents::Markup(MarkupContent {
             kind: MarkupKind::Markdown,
-            value: format!("```gdscript\n{code}\n```"),
+            value,
         }),
         range: Some(node_range(node)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn hover_value(source: &str, line: u32, character: u32) -> Option<String> {
+        hover_at(source, Position::new(line, character)).map(|h| match h.contents {
+            HoverContents::Markup(m) => m.value,
+            _ => String::new(),
+        })
+    }
+
+    #[test]
+    fn hover_documented_function() {
+        let source = "## Move the player.\nfunc move() -> void:\n\tpass\n";
+        let val = hover_value(source, 1, 5).unwrap();
+        assert!(val.contains("func move() -> void"));
+        assert!(val.contains("Move the player."));
+    }
+
+    #[test]
+    fn hover_undocumented_function() {
+        let source = "func move() -> void:\n\tpass\n";
+        let val = hover_value(source, 0, 5).unwrap();
+        assert!(val.contains("func move() -> void"));
+        assert!(!val.contains("\n\n"));
+    }
+
+    #[test]
+    fn hover_documented_variable() {
+        let source = "## The player's health.\nvar health: int = 100\n";
+        let val = hover_value(source, 1, 4).unwrap();
+        assert!(val.contains("var health: int = 100"));
+        assert!(val.contains("The player's health."));
+    }
+
+    #[test]
+    fn hover_multiline_doc() {
+        let source = "## Line one.\n## Line two.\nfunc f():\n\tpass\n";
+        let val = hover_value(source, 2, 5).unwrap();
+        assert!(val.contains("Line one.\nLine two."));
+    }
+
+    #[test]
+    fn hover_doc_with_annotation() {
+        let source = "## Exported health.\n@export\nvar health: int = 100\n";
+        let val = hover_value(source, 2, 4).unwrap();
+        assert!(val.contains("Exported health."));
+    }
+
+    #[test]
+    fn hover_resolved_identifier_with_doc() {
+        let source = "## The speed value.\nvar speed: float = 5.0\n\nfunc f():\n\tprint(speed)\n";
+        let val = hover_value(source, 4, 7).unwrap();
+        assert!(val.contains("The speed value."));
     }
 }
