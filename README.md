@@ -63,13 +63,14 @@ gd run
 | `gd init` | Initialize gd toolchain in an existing project (detects export paths) |
 | `gd fmt` | Format GDScript files |
 | `gd lint` | Lint GDScript files |
-| `gd run` | Run the Godot project (non-blocking, auto-wires debug, always captures to `.godot/gd-game.log`, `--log` to tee to terminal) |
+| `gd run` | Run the Godot project (non-blocking, auto-wires debug, `--log` to tee to terminal, `--eval` for live eval server) |
 | `gd stop` | Stop the running Godot game |
 | `gd log` | View game output from last run (`--tail N`, `--follow`, `--clear`) |
 | `gd build` | Build/export the Godot project |
 | `gd check` | Check project for errors (parse, structural, semantic, `.tscn`/`.tres` validation) (`--format json`) |
 | `gd clean` | Clean build artifacts |
-| `gd test` | Run GDScript tests with GUT, gdUnit4, or raw scripts (`--format json`) |
+| `gd eval` | Evaluate GDScript expressions or scripts — live against a running game or offline headless |
+| `gd test` | Run GDScript tests with GUT, gdUnit4, or raw scripts (`--runner`, `--format json`) |
 | `gd completions` | Generate shell completions (bash, zsh, fish, etc.) |
 | `gd tree` | Show project class hierarchy (`--scene` for scene node trees) |
 | `gd doc` | Generate documentation from doc comments (`--format json`, `--check`) |

@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.2.10] - 2026-02-15
+
+### Added
+- **`gd eval`** — evaluate GDScript expressions, statements, or full scripts. Supports inline (`gd eval "1+1"`), file (`gd eval script.gd`), and stdin (`cat file.gd | gd eval -`). Offline mode launches headless Godot; live mode evaluates against a running game.
+- **`gd run --eval`** — start the game with an embedded eval server. Enables `gd eval` to run arbitrary GDScript against the live game (query state, mutate objects, add nodes in real-time).
+- **`gd test --runner`** — explicitly select test framework (`gut`, `gdunit4`, or `script`) instead of relying on auto-detection.
+- **Eval sandbox** — blocks dangerous APIs (`OS.execute`, `HTTPClient`, `Thread`, etc.) and restricts `FileAccess`/`DirAccess` to `res://` and `user://` paths. Use `--unsafe` to bypass.
+- **Escape sanitization** — auto-strips invalid GDScript escape sequences (e.g. `\!` → `!`) before sending to Godot, preventing silent crashes.
+- **Syntax-highlighted eval output** — scripts sent via live eval are printed with line numbers and keyword/string/number coloring.
+
+### Fixed
+- **Stdin consumed twice in `gd eval -`** — piped input was read by the live eval path, then the offline fallback tried to re-read empty stdin. Now reads once and reuses.
+- **Daemon state lost after rebuild** — rebuilding `gd` auto-restarted the daemon (build ID mismatch), losing eval server tracking. Now falls back to checking the `gd-eval-ready` file directly.
+- **Eval timer killed by cleanup scripts** — the polling timer was auto-named `@Timer@2` and caught by `@`-prefix cleanup. Now named `GdEvalTimer`.
+
 ## [0.2.9] - 2026-02-15
 
 ### Fixed
