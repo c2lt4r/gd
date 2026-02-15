@@ -563,3 +563,46 @@ fn test_addons_install_locked_requires_lockfile() {
         "should mention lock file, stderr: {stderr}"
     );
 }
+
+// ── eval command ─────────────────────────────────────────────────────────────
+
+#[test]
+fn test_eval_check_valid_expression() {
+    let temp = setup_gd_project(&[]);
+
+    let output = gd_bin()
+        .args(["eval", "--check", "1 + 1"])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd eval --check");
+
+    // --check only validates the wrapper script parses; doesn't need Godot
+    // It will fail at the Godot execution step (no Godot in CI), but the
+    // pre-check itself should pass, so look for non-syntax errors
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("syntax error"),
+        "Valid expression should pass --check, stderr: {stderr}"
+    );
+}
+
+#[test]
+fn test_eval_check_invalid_expression() {
+    let temp = setup_gd_project(&[]);
+
+    let output = gd_bin()
+        .args(["eval", "--check", "if if if"])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd eval --check");
+
+    assert!(
+        !output.status.success(),
+        "Invalid expression should fail --check"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("syntax error"),
+        "Should report syntax errors, stderr: {stderr}"
+    );
+}
