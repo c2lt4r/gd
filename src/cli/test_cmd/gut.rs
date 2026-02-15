@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use crate::core::project::GodotProject;
 
 use super::{
-    TestArgs, TestResult, TestStatus, TestSummary, extract_errors, filter_noise, run_with_timeout,
+    RunArgs, TestResult, TestStatus, TestSummary, extract_errors, filter_noise, run_with_timeout,
 };
 
 /// Run tests using GUT addon.
@@ -16,7 +16,7 @@ use super::{
 pub fn run_gut_tests(
     godot: &Path,
     project: &GodotProject,
-    args: &TestArgs,
+    args: &RunArgs,
     test_files: &[std::path::PathBuf],
     json_mode: bool,
 ) -> Result<(Vec<TestResult>, TestSummary)> {

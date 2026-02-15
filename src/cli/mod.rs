@@ -57,7 +57,7 @@ pub enum Command {
     Check(check_cmd::CheckArgs),
     /// Clean build artifacts
     Clean(clean_cmd::CleanArgs),
-    /// Run GDScript tests
+    /// Test runner and automation
     Test(test_cmd::TestArgs),
     /// Generate shell completions
     Completions(completions_cmd::CompletionsArgs),

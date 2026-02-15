@@ -6,7 +6,7 @@ mod script;
 #[cfg(test)]
 mod tests;
 
-use clap::Args;
+use clap::{Args, Subcommand};
 use miette::{Result, miette};
 use owo_colors::OwoColorize;
 use serde::Serialize;
@@ -76,11 +76,31 @@ fn is_zero(n: &usize) -> bool {
     *n == 0
 }
 
+fn runner_label(runner: Runner) -> &'static str {
+    match runner {
+        Runner::Gut => "gut",
+        Runner::GdUnit4 => "gdunit4",
+        Runner::Script => "script",
+    }
+}
+
 // --- CLI Args ---
 
 #[derive(Args)]
-#[allow(clippy::struct_excessive_bools)]
 pub struct TestArgs {
+    #[command(subcommand)]
+    pub command: TestCommand,
+}
+
+#[derive(Subcommand)]
+pub enum TestCommand {
+    /// Run GDScript tests (GUT, gdUnit4, or raw scripts)
+    Run(RunArgs),
+}
+
+#[derive(Args)]
+#[allow(clippy::struct_excessive_bools)]
+pub struct RunArgs {
     /// Paths to test files or directories
     pub paths: Vec<PathBuf>,
     /// Only run tests matching this pattern
@@ -104,9 +124,30 @@ pub struct TestArgs {
     /// Filter Godot engine noise from output
     #[arg(long)]
     pub clean: bool,
+    /// Test runner: gut, gdunit4, or script (default: auto-detect)
+    #[arg(long, value_parser = parse_runner)]
+    pub runner: Option<Runner>,
     /// Extra args to pass to Godot
     #[arg(last = true)]
     pub extra: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Runner {
+    Gut,
+    GdUnit4,
+    Script,
+}
+
+fn parse_runner(s: &str) -> std::result::Result<Runner, String> {
+    match s.to_lowercase().as_str() {
+        "gut" => Ok(Runner::Gut),
+        "gdunit4" | "gdunit" => Ok(Runner::GdUnit4),
+        "script" => Ok(Runner::Script),
+        _ => Err(format!(
+            "unknown runner '{s}' (expected: gut, gdunit4, script)"
+        )),
+    }
 }
 
 // --- Utilities ---
@@ -235,6 +276,13 @@ pub fn strip_res_prefix(s: &str) -> &str {
 
 #[allow(clippy::too_many_lines)]
 pub fn exec(args: &TestArgs) -> Result<()> {
+    match &args.command {
+        TestCommand::Run(run_args) => exec_run(run_args),
+    }
+}
+
+#[allow(clippy::too_many_lines)]
+fn exec_run(args: &RunArgs) -> Result<()> {
     let json_mode = match args.format.as_str() {
         "text" => false,
         "json" => true,
@@ -283,8 +331,19 @@ pub fn exec(args: &TestArgs) -> Result<()> {
         }
     };
 
-    let has_gut = project.root.join("addons/gut").is_dir();
-    let has_gdunit4 = !has_gut && project.root.join("addons/gdUnit4").is_dir();
+    let runner = match args.runner {
+        Some(r) => r,
+        None => {
+            // Auto-detect: GUT > gdUnit4 > script
+            if project.root.join("addons/gut").is_dir() {
+                Runner::Gut
+            } else if project.root.join("addons/gdUnit4").is_dir() {
+                Runner::GdUnit4
+            } else {
+                Runner::Script
+            }
+        }
+    };
     let test_files = match discover_test_files(&project.root, &args.paths) {
         Ok(f) => f,
         Err(e) => {
@@ -308,9 +367,9 @@ pub fn exec(args: &TestArgs) -> Result<()> {
         None => test_files,
     };
 
-    if test_files.is_empty() && !has_gdunit4 {
+    if test_files.is_empty() && runner != Runner::GdUnit4 {
         if json_mode {
-            let mode = if has_gut { "gut" } else { "script" };
+            let mode = runner_label(runner);
             let report = TestReport {
                 mode,
                 results: vec![],
@@ -356,28 +415,24 @@ pub fn exec(args: &TestArgs) -> Result<()> {
 
     let start = Instant::now();
 
-    let (mode, result) = if has_gut {
-        hprintln!(json_mode, "{} Running tests with GUT", "▶".green());
-        (
-            "gut",
-            gut::run_gut_tests(&godot, &project, args, &test_files, json_mode),
-        )
-    } else if has_gdunit4 {
-        hprintln!(json_mode, "{} Running tests with gdUnit4", "▶".green());
-        (
-            "gdunit4",
-            gdunit::run_gdunit4_tests(&godot, &project, args, json_mode),
-        )
-    } else {
-        hprintln!(
-            json_mode,
-            "{} Running tests with Godot (no GUT addon)",
-            "▶".green()
-        );
-        (
-            "script",
-            script::run_script_tests(&godot, &project, args, &test_files, json_mode),
-        )
+    let mode = runner_label(runner);
+    let result = match runner {
+        Runner::Gut => {
+            hprintln!(json_mode, "{} Running tests with GUT", "▶".green());
+            gut::run_gut_tests(&godot, &project, args, &test_files, json_mode)
+        }
+        Runner::GdUnit4 => {
+            hprintln!(json_mode, "{} Running tests with gdUnit4", "▶".green());
+            gdunit::run_gdunit4_tests(&godot, &project, args, json_mode)
+        }
+        Runner::Script => {
+            hprintln!(
+                json_mode,
+                "{} Running tests with script runner",
+                "▶".green()
+            );
+            script::run_script_tests(&godot, &project, args, &test_files, json_mode)
+        }
     };
 
     let elapsed = start.elapsed();

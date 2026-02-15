@@ -596,7 +596,10 @@ fn test_eval_file_rejects_non_scene_tree() {
         .output()
         .expect("Failed to run gd eval");
 
-    assert!(!output.status.success(), "Should reject non-SceneTree script");
+    assert!(
+        !output.status.success(),
+        "Should reject non-SceneTree script"
+    );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains("extends SceneTree") || stderr.contains("extends 'Node'"),
