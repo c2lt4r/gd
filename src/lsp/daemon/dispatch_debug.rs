@@ -9,6 +9,9 @@ pub fn dispatch_set_game_pid(server: &DaemonServer, params: &serde_json::Value) 
         return error_response("missing 'pid' parameter");
     };
     *server.game_pid.lock().unwrap() = Some(pid as u32);
+    server
+        .game_running
+        .store(true, std::sync::atomic::Ordering::Release);
     update_game_pid_in_state(&server.project_root, Some(pid as u32));
     ok_response(serde_json::json!({"pid": pid}))
 }
