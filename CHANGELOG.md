@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.2.9] - 2026-02-15
+
+### Fixed
+- **`class-definitions-order` false positives** — `@rpc` annotations and `@export_group`/`@export_category`/`@export_subgroup` are no longer miscategorized as file-level headers. Only `@tool`, `@icon`, `@static_unload` are treated as headers; export grouping annotations are treated as export vars; `@rpc` and others are skipped.
+- **`gd fmt` preserves inline `# gd:ignore` comments** — trailing comments on `signal`, `var`, `const`, `extends`, `class_name`, `return`, and assignment statements are no longer moved to a separate line, which previously broke lint suppression.
+
 ## [0.2.8] - 2026-02-15
 
 ### Added

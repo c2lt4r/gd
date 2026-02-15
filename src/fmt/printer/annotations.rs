@@ -131,4 +131,13 @@ impl Printer {
         self.write_indent(indent);
         self.emit(node, source);
     }
+
+    /// Emit a trailing comment on the same line as the parent statement.
+    /// Used for `# gd:ignore[rule]` and other inline comments on signals, vars, etc.
+    pub(crate) fn print_trailing_comment(&mut self, comment: &Node, source: &str, parent: &Node) {
+        if comment.start_position().row == parent.start_position().row {
+            self.push_str("  ");
+            self.emit(comment, source);
+        }
+    }
 }

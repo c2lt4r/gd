@@ -158,10 +158,11 @@ fn check_inner_classes(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>
 /// non-categorizable nodes (comments, blank lines, etc.).
 fn categorize_member(node: &Node, source: &str) -> Option<u8> {
     match node.kind() {
-        // Standalone annotations at top level (e.g. @tool, @icon)
-        "class_name_statement" | "extends_statement" | "annotations" | "annotation" => {
-            Some(CAT_HEADER)
-        }
+        "class_name_statement" | "extends_statement" => Some(CAT_HEADER),
+        // Standalone annotations: only @tool, @icon, @static_unload are headers.
+        // @export_group/@export_category/@export_subgroup group exports.
+        // @rpc and others are function attributes (skip).
+        "annotations" | "annotation" => categorize_standalone_annotation(node, source),
         "signal_statement" => Some(CAT_SIGNAL),
         "enum_definition" => Some(CAT_ENUM),
         "const_statement" => Some(CAT_CONST),
@@ -194,6 +195,36 @@ fn categorize_member(node: &Node, source: &str) -> Option<u8> {
         "class_definition" => Some(CAT_INNER_CLASS),
         _ => None,
     }
+}
+
+/// Categorize a standalone annotation node. Only `@tool`, `@icon`, `@static_unload`
+/// are file-level headers. `@export_group` and friends group exports.
+/// Everything else (`@rpc`, etc.) is a function attribute — skip it.
+fn categorize_standalone_annotation(node: &Node, source: &str) -> Option<u8> {
+    let name = standalone_annotation_name(node, source)?;
+    match name {
+        "tool" | "icon" | "static_unload" => Some(CAT_HEADER),
+        "export_group" | "export_category" | "export_subgroup" => Some(CAT_EXPORT_VAR),
+        _ => None,
+    }
+}
+
+/// Extract the identifier name from a standalone `annotations` or `annotation` node.
+fn standalone_annotation_name<'a>(node: &Node, source: &'a str) -> Option<&'a str> {
+    // An `annotations` node wraps one or more `annotation` children.
+    // An `annotation` node contains an `identifier` child.
+    let annotation = if node.kind() == "annotations" {
+        let mut cursor = node.walk();
+        node.children(&mut cursor)
+            .find(|c| c.kind() == "annotation")?
+    } else {
+        *node
+    };
+    let mut cursor = annotation.walk();
+    annotation
+        .children(&mut cursor)
+        .find(|c| c.kind() == "identifier")
+        .and_then(|id| id.utf8_text(source.as_bytes()).ok())
 }
 
 /// Check if a node has a specific annotation (e.g. "export", "onready").
@@ -478,5 +509,55 @@ class_name MyClass
 ";
         // Both are category 0, no violation
         assert!(check(source).is_empty());
+    }
+
+    // ── Standalone annotations ───────────────────────────────────────
+
+    #[test]
+    fn rpc_before_function_not_flagged() {
+        let source = "\
+var speed = 10
+
+@rpc
+func sync_position():
+\tpass
+";
+        assert!(check(source).is_empty());
+    }
+
+    #[test]
+    fn export_group_between_exports_not_flagged() {
+        let source = "\
+@export var health: int = 100
+
+@export_group(\"Movement\")
+@export var speed: float = 10.0
+
+@export_subgroup(\"Advanced\")
+@export var acceleration: float = 5.0
+";
+        assert!(check(source).is_empty());
+    }
+
+    #[test]
+    fn export_category_with_exports() {
+        let source = "\
+@export_category(\"Stats\")
+@export var health: int = 100
+";
+        assert!(check(source).is_empty());
+    }
+
+    #[test]
+    fn tool_annotation_is_header() {
+        // @tool after a signal should be flagged (header before signal)
+        let source = "\
+signal my_signal
+
+@tool
+";
+        let diags = check(source);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("header"));
     }
 }

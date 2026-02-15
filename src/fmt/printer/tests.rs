@@ -536,3 +536,61 @@ fn test_paren_expr_with_comments() {
         "formatted output has parse errors:\n{output}"
     );
 }
+
+// ── Trailing inline comment preservation ─────────────────────────
+
+#[test]
+fn test_signal_trailing_comment_preserved() {
+    let input = "signal player_left  # gd:ignore[unused-signal]\n";
+    let output = format_source(input);
+    assert_eq!(output, "signal player_left  # gd:ignore[unused-signal]\n");
+}
+
+#[test]
+fn test_signal_with_params_trailing_comment() {
+    let input = "signal hit(damage: int)  # gd:ignore[unused-signal]\n";
+    let output = format_source(input);
+    assert_eq!(
+        output,
+        "signal hit(damage: int)  # gd:ignore[unused-signal]\n"
+    );
+}
+
+#[test]
+fn test_var_trailing_comment_preserved() {
+    let input = "var x = 10  # gd:ignore[untyped-declaration]\n";
+    let output = format_source(input);
+    assert_eq!(output, "var x = 10  # gd:ignore[untyped-declaration]\n");
+}
+
+#[test]
+fn test_const_trailing_comment_preserved() {
+    let input = "const MAX = 100  # gd:ignore[some-rule]\n";
+    let output = format_source(input);
+    assert_eq!(output, "const MAX = 100  # gd:ignore[some-rule]\n");
+}
+
+#[test]
+fn test_extends_trailing_comment_preserved() {
+    let input = "extends Node2D  # base class\n";
+    let output = format_source(input);
+    assert_eq!(output, "extends Node2D  # base class\n");
+}
+
+#[test]
+fn test_class_name_trailing_comment_preserved() {
+    let input = "class_name MyClass  # main class\n";
+    let output = format_source(input);
+    assert_eq!(output, "class_name MyClass  # main class\n");
+}
+
+#[test]
+fn test_trailing_comment_idempotent() {
+    let input = "signal player_left  # gd:ignore[unused-signal]\n";
+    let pass1 = format_source(input);
+    let pass2 = format_source(&pass1);
+    assert_eq!(
+        pass1, pass2,
+        "not idempotent:\npass1: {pass1}\npass2: {pass2}"
+    );
+}

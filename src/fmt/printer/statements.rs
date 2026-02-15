@@ -178,6 +178,7 @@ impl Printer {
                     self.push_str(" := ");
                 }
                 "=" => self.push_str(" = "),
+                "comment" => self.print_trailing_comment(child, source, node),
                 _ if child.is_named() => self.print_node(child, source, indent),
                 _ => {}
             }
@@ -198,6 +199,7 @@ impl Printer {
                     self.emit(child, source);
                 }
                 "parameters" => self.print_paren_list(child, source, indent),
+                "comment" => self.print_trailing_comment(child, source, node),
                 _ => {}
             }
         }
@@ -212,6 +214,7 @@ impl Printer {
         for child in &children {
             match child.kind() {
                 "extends" => self.push_str("extends"),
+                "comment" => self.print_trailing_comment(child, source, node),
                 // type (extends Node2D) or string (extends "res://path.gd")
                 _ if child.is_named() => {
                     self.push_str(" ");
@@ -233,6 +236,7 @@ impl Printer {
                     self.push_str(" ");
                     self.emit(child, source);
                 }
+                "comment" => self.print_trailing_comment(child, source, node),
                 _ => {}
             }
         }
@@ -244,9 +248,13 @@ impl Printer {
         self.push_str("return");
         let mut cursor = node.walk();
         let children: Vec<Node> = node.named_children(&mut cursor).collect();
-        if !children.is_empty() {
-            self.push_str(" ");
-            self.print_node(&children[0], source, indent);
+        for child in &children {
+            if child.kind() == "comment" {
+                self.print_trailing_comment(child, source, node);
+            } else {
+                self.push_str(" ");
+                self.print_node(child, source, indent);
+            }
         }
     }
 
@@ -259,6 +267,10 @@ impl Printer {
         let mut first = true;
         for child in &children {
             if child.kind() == "line_continuation" {
+                continue;
+            }
+            if child.kind() == "comment" {
+                self.print_trailing_comment(child, source, node);
                 continue;
             }
             if child.is_named() {

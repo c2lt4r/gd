@@ -215,6 +215,15 @@ impl Printer {
             .collect();
 
         for (i, child) in children.iter().enumerate() {
+            // Trailing comment on same line as previous statement
+            if child.kind() == "comment"
+                && i > 0
+                && child.start_position().row == children[i - 1].start_position().row
+            {
+                self.push_str("  ");
+                self.emit(child, source);
+                continue;
+            }
             if i > 0 {
                 let prev = children[i - 1];
                 let blank_lines = rules::spacing_between(
@@ -251,6 +260,15 @@ impl Printer {
             .collect();
 
         for (i, child) in children.iter().enumerate() {
+            // Trailing comment on same line as previous statement
+            if child.kind() == "comment"
+                && i > 0
+                && child.start_position().row == children[i - 1].start_position().row
+            {
+                self.push_str("  ");
+                self.emit(child, source);
+                continue;
+            }
             if i > 0 && is_class_body {
                 let prev = children[i - 1];
                 let blank_lines = rules::spacing_between(
