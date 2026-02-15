@@ -13,7 +13,7 @@ pub struct StatsArgs {
     /// Paths to analyze (defaults to current directory)
     pub paths: Vec<String>,
     /// Output format
-    #[arg(long, default_value = "human")]
+    #[arg(long, default_value = "text")]
     pub format: String,
     /// Show per-directory breakdown
     #[arg(long)]
@@ -124,7 +124,7 @@ pub fn exec(args: &StatsArgs) -> Result<()> {
                     .map_err(|e| miette!("Failed to serialize: {e}"))?;
                 println!("{json}");
             }
-            "human" => output_human_diff(&diff),
+            "text" => output_human_diff(&diff),
             _ => return Err(miette!("Invalid format: {}", args.format)),
         }
         return Ok(());
@@ -135,7 +135,7 @@ pub fn exec(args: &StatsArgs) -> Result<()> {
     // Output results
     match args.format.as_str() {
         "json" => output_json(&stats)?,
-        "human" => output_human(&stats, args.by_dir, args.top),
+        "text" => output_human(&stats, args.by_dir, args.top),
         _ => return Err(miette!("Invalid format: {}", args.format)),
     }
 

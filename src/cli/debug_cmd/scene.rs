@@ -15,7 +15,7 @@ pub(crate) fn cmd_scene_tree(args: &SceneTreeArgs) -> Result<()> {
         OutputFormat::Json => {
             println!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
-        OutputFormat::Human => {
+        OutputFormat::Text => {
             println!("{}", "Scene tree:".bold());
             if let Some(nodes) = result.get("nodes").and_then(|n| n.as_array()) {
                 for node in nodes {
@@ -150,7 +150,7 @@ pub(crate) fn cmd_inspect(args: &InspectArgs) -> Result<()> {
         OutputFormat::Json => {
             println!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
-        OutputFormat::Human => {
+        OutputFormat::Text => {
             let class = result["class_name"].as_str().unwrap_or("Object");
             println!(
                 "{} {}",
@@ -240,7 +240,7 @@ fn print_inspect_brief(result: &serde_json::Value, id: u64, format: &OutputForma
                 serde_json::to_string_pretty(&serde_json::Value::Object(brief)).unwrap()
             );
         }
-        OutputFormat::Human => {
+        OutputFormat::Text => {
             let class = result["class_name"].as_str().unwrap_or("Object");
             println!("{} {}", class.cyan().bold(), format!("(id: {id})").dimmed(),);
             if let Some(props) = props {
@@ -271,7 +271,7 @@ pub(crate) fn cmd_inspect_objects(args: &InspectObjectsArgs) -> Result<()> {
         OutputFormat::Json => {
             println!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
-        OutputFormat::Human => {
+        OutputFormat::Text => {
             let objects = result.as_array().map_or(&[][..], std::vec::Vec::as_slice);
             for obj in objects {
                 let class = obj["class_name"].as_str().unwrap_or("Object");
@@ -479,7 +479,7 @@ pub(crate) fn cmd_camera_view(args: &CameraViewArgs) -> Result<()> {
         OutputFormat::Json => {
             println!("{}", serde_json::to_string_pretty(&output).unwrap());
         }
-        OutputFormat::Human => {
+        OutputFormat::Text => {
             if let Some(cam) = &camera_out {
                 let cam_name = cam["name"].as_str().unwrap_or("?");
                 let cam_class = cam["class"].as_str().unwrap_or("?");

@@ -82,6 +82,7 @@ gd run
 | `gd scene` | Manage `.tscn` scene files (attach scripts to nodes) |
 | `gd lsp` | Start the LSP server, or run one-shot queries (see below) |
 | `gd deps` | Show script dependency graph (`--include-resources` for `.tscn`/`.tres`) |
+| `gd env` | Show environment info (gd version, Godot version/path, OS, project root) |
 | `gd man` | Generate man page |
 | `gd upgrade` | Self-update to latest release |
 | `gd llm` | Print AI-readable command reference (like llms.txt) |

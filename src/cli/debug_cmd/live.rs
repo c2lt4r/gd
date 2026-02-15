@@ -28,7 +28,7 @@ pub(crate) fn cmd_live_set_root(args: &LiveSetRootArgs) -> Result<()> {
                 .unwrap()
             );
         }
-        OutputFormat::Human => {
+        OutputFormat::Text => {
             println!(
                 "{} live root to {} {}",
                 "Set".green(),
@@ -64,7 +64,7 @@ pub(crate) fn cmd_live_create_node(args: &LiveCreateNodeArgs) -> Result<()> {
                 .unwrap()
             );
         }
-        OutputFormat::Human => {
+        OutputFormat::Text => {
             println!(
                 "{} {} {}",
                 "Created".green(),
@@ -100,7 +100,7 @@ pub(crate) fn cmd_live_instantiate(args: &LiveInstantiateArgs) -> Result<()> {
                 .unwrap()
             );
         }
-        OutputFormat::Human => {
+        OutputFormat::Text => {
             println!(
                 "{} {} {}",
                 "Instantiated".green(),
@@ -130,7 +130,7 @@ pub(crate) fn cmd_live_remove_node(args: &LiveRemoveNodeArgs) -> Result<()> {
                 .unwrap()
             );
         }
-        OutputFormat::Human => {
+        OutputFormat::Text => {
             println!("{} {}", "Removed".green(), args.path.cyan());
         }
     }
@@ -156,7 +156,7 @@ pub(crate) fn cmd_live_duplicate(args: &LiveDuplicateArgs) -> Result<()> {
                 .unwrap()
             );
         }
-        OutputFormat::Human => {
+        OutputFormat::Text => {
             println!(
                 "{} {} as {}",
                 "Duplicated".green(),
@@ -192,7 +192,7 @@ pub(crate) fn cmd_live_reparent(args: &LiveReparentArgs) -> Result<()> {
                 .unwrap()
             );
         }
-        OutputFormat::Human => {
+        OutputFormat::Text => {
             println!(
                 "{} {} to {}",
                 "Reparented".green(),
@@ -230,7 +230,7 @@ pub(crate) fn cmd_live_node_prop(args: &LiveNodePropArgs) -> Result<()> {
                 .unwrap()
             );
         }
-        OutputFormat::Human => {
+        OutputFormat::Text => {
             println!(
                 "{} {}.{} = {}",
                 "Set".green(),
@@ -269,7 +269,7 @@ pub(crate) fn cmd_live_node_call(args: &LiveNodeCallArgs) -> Result<()> {
                 .unwrap()
             );
         }
-        OutputFormat::Human => {
+        OutputFormat::Text => {
             println!(
                 "{} {}.{}({})",
                 "Called".green(),
@@ -303,7 +303,7 @@ pub(crate) fn cmd_live_node_path(args: &LivePathArgs) -> Result<()> {
                 .unwrap()
             );
         }
-        OutputFormat::Human => {
+        OutputFormat::Text => {
             println!(
                 "{} for {}",
                 "Live node path set".green(),
@@ -333,7 +333,7 @@ pub(crate) fn cmd_live_res_path(args: &LivePathArgs) -> Result<()> {
                 .unwrap()
             );
         }
-        OutputFormat::Human => {
+        OutputFormat::Text => {
             println!(
                 "{} for {}",
                 "Live resource path set".green(),
@@ -370,7 +370,7 @@ pub(crate) fn cmd_live_res_prop(args: &LiveNodePropArgs) -> Result<()> {
                 .unwrap()
             );
         }
-        OutputFormat::Human => {
+        OutputFormat::Text => {
             println!(
                 "{} {}.{} = {}",
                 "Set".green(),
@@ -406,7 +406,7 @@ pub(crate) fn cmd_live_node_prop_res(args: &LivePropResArgs) -> Result<()> {
                 .unwrap()
             );
         }
-        OutputFormat::Human => {
+        OutputFormat::Text => {
             println!(
                 "{} {}.{} = {}",
                 "Set".green(),
@@ -442,7 +442,7 @@ pub(crate) fn cmd_live_res_prop_res(args: &LivePropResArgs) -> Result<()> {
                 .unwrap()
             );
         }
-        OutputFormat::Human => {
+        OutputFormat::Text => {
             println!(
                 "{} {}.{} = {}",
                 "Set".green(),
@@ -481,7 +481,7 @@ pub(crate) fn cmd_live_res_call(args: &LiveNodeCallArgs) -> Result<()> {
                 .unwrap()
             );
         }
-        OutputFormat::Human => {
+        OutputFormat::Text => {
             println!(
                 "{} {}.{}({})",
                 "Called".green(),
@@ -515,7 +515,7 @@ pub(crate) fn cmd_live_remove_keep(args: &LiveRemoveKeepArgs) -> Result<()> {
                 .unwrap()
             );
         }
-        OutputFormat::Human => {
+        OutputFormat::Text => {
             println!("{} {}", "Removed (kept)".green(), args.path.cyan(),);
         }
     }
@@ -545,7 +545,7 @@ pub(crate) fn cmd_live_restore(args: &LiveRestoreArgs) -> Result<()> {
                 .unwrap()
             );
         }
-        OutputFormat::Human => {
+        OutputFormat::Text => {
             println!("{} at {}", "Restored node".green(), args.path.cyan(),);
         }
     }

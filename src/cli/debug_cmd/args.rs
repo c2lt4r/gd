@@ -236,7 +236,7 @@ pub enum SelectCommand {
 #[derive(Args)]
 pub struct StepArgs {
     /// Output format
-    #[arg(long, default_value = "human")]
+    #[arg(long, default_value = "text")]
     pub format: OutputFormat,
 }
 
@@ -246,14 +246,14 @@ pub struct ReloadScriptsArgs {
     #[arg(long = "path")]
     pub paths: Vec<String>,
     /// Output format
-    #[arg(long, default_value = "human")]
+    #[arg(long, default_value = "text")]
     pub format: OutputFormat,
 }
 
 #[derive(Args)]
 pub struct SceneTreeArgs {
     /// Output format
-    #[arg(long, default_value = "human")]
+    #[arg(long, default_value = "text")]
     pub format: OutputFormat,
 }
 
@@ -269,7 +269,7 @@ pub struct InspectArgs {
     #[arg(long)]
     pub rich: bool,
     /// Output format
-    #[arg(long, default_value = "human")]
+    #[arg(long, default_value = "text")]
     pub format: OutputFormat,
 }
 
@@ -288,7 +288,7 @@ pub struct SetPropArgs {
     #[arg(long)]
     pub screenshot: bool,
     /// Output format
-    #[arg(long, default_value = "human")]
+    #[arg(long, default_value = "text")]
     pub format: OutputFormat,
 }
 
@@ -298,7 +298,7 @@ pub struct SuspendArgs {
     #[arg(long)]
     pub off: bool,
     /// Output format
-    #[arg(long, default_value = "human")]
+    #[arg(long, default_value = "text")]
     pub format: OutputFormat,
 }
 
@@ -308,7 +308,7 @@ pub struct TimeScaleArgs {
     #[arg(long)]
     pub scale: f64,
     /// Output format
-    #[arg(long, default_value = "human")]
+    #[arg(long, default_value = "text")]
     pub format: OutputFormat,
 }
 
@@ -318,7 +318,7 @@ pub struct SkipBreakpointsArgs {
     #[arg(long)]
     pub off: bool,
     /// Output format
-    #[arg(long, default_value = "human")]
+    #[arg(long, default_value = "text")]
     pub format: OutputFormat,
 }
 
@@ -328,7 +328,7 @@ pub struct IgnoreErrorsArgs {
     #[arg(long)]
     pub off: bool,
     /// Output format
-    #[arg(long, default_value = "human")]
+    #[arg(long, default_value = "text")]
     pub format: OutputFormat,
 }
 
@@ -338,7 +338,7 @@ pub struct MuteAudioArgs {
     #[arg(long)]
     pub off: bool,
     /// Output format
-    #[arg(long, default_value = "human")]
+    #[arg(long, default_value = "text")]
     pub format: OutputFormat,
 }
 
@@ -348,7 +348,7 @@ pub struct OverrideCameraArgs {
     #[arg(long)]
     pub off: bool,
     /// Output format
-    #[arg(long, default_value = "human")]
+    #[arg(long, default_value = "text")]
     pub format: OutputFormat,
 }
 
@@ -361,7 +361,7 @@ pub struct SaveNodeArgs {
     #[arg(long)]
     pub path: String,
     /// Output format
-    #[arg(long, default_value = "human")]
+    #[arg(long, default_value = "text")]
     pub format: OutputFormat,
 }
 
@@ -383,7 +383,7 @@ pub struct SetPropFieldArgs {
     #[arg(long)]
     pub screenshot: bool,
     /// Output format
-    #[arg(long, default_value = "human")]
+    #[arg(long, default_value = "text")]
     pub format: OutputFormat,
 }
 
@@ -396,7 +396,7 @@ pub struct ProfilerArgs {
     #[arg(long)]
     pub off: bool,
     /// Output format
-    #[arg(long, default_value = "human")]
+    #[arg(long, default_value = "text")]
     pub format: OutputFormat,
 }
 
@@ -409,7 +409,7 @@ pub struct LiveSetRootArgs {
     #[arg(long)]
     pub file: String,
     /// Output format
-    #[arg(long, default_value = "human")]
+    #[arg(long, default_value = "text")]
     pub format: OutputFormat,
 }
 
@@ -425,7 +425,7 @@ pub struct LiveCreateNodeArgs {
     #[arg(long)]
     pub name: String,
     /// Output format
-    #[arg(long, default_value = "human")]
+    #[arg(long, default_value = "text")]
     pub format: OutputFormat,
 }
 
@@ -441,7 +441,7 @@ pub struct LiveInstantiateArgs {
     #[arg(long)]
     pub name: String,
     /// Output format
-    #[arg(long, default_value = "human")]
+    #[arg(long, default_value = "text")]
     pub format: OutputFormat,
 }
 
@@ -451,7 +451,7 @@ pub struct LiveRemoveNodeArgs {
     #[arg(long)]
     pub path: String,
     /// Output format
-    #[arg(long, default_value = "human")]
+    #[arg(long, default_value = "text")]
     pub format: OutputFormat,
 }
 
@@ -464,7 +464,7 @@ pub struct LiveDuplicateArgs {
     #[arg(long)]
     pub name: String,
     /// Output format
-    #[arg(long, default_value = "human")]
+    #[arg(long, default_value = "text")]
     pub format: OutputFormat,
 }
 
@@ -483,7 +483,7 @@ pub struct LiveReparentArgs {
     #[arg(long, default_value = "-1")]
     pub pos: i32,
     /// Output format
-    #[arg(long, default_value = "human")]
+    #[arg(long, default_value = "text")]
     pub format: OutputFormat,
 }
 
@@ -499,7 +499,7 @@ pub struct LiveNodePropArgs {
     #[arg(long)]
     pub value: String,
     /// Output format
-    #[arg(long, default_value = "human")]
+    #[arg(long, default_value = "text")]
     pub format: OutputFormat,
 }
 
@@ -515,7 +515,7 @@ pub struct LiveNodeCallArgs {
     #[arg(long, default_value = "[]")]
     pub args: String,
     /// Output format
-    #[arg(long, default_value = "human")]
+    #[arg(long, default_value = "text")]
     pub format: OutputFormat,
 }
 
@@ -537,7 +537,7 @@ pub struct BreakpointBinArgs {
     #[arg(long)]
     pub off: bool,
     /// Output format
-    #[arg(long, default_value = "human")]
+    #[arg(long, default_value = "text")]
     pub format: OutputFormat,
 }
 
@@ -547,7 +547,7 @@ pub struct VarsArgs {
     #[arg(long, default_value = "0")]
     pub frame: u32,
     /// Output format
-    #[arg(long, default_value = "human")]
+    #[arg(long, default_value = "text")]
     pub format: OutputFormat,
 }
 
@@ -560,7 +560,7 @@ pub struct EvalBinArgs {
     #[arg(long, default_value = "0")]
     pub frame: u32,
     /// Output format
-    #[arg(long, default_value = "human")]
+    #[arg(long, default_value = "text")]
     pub format: OutputFormat,
 }
 
@@ -573,14 +573,14 @@ pub struct InspectObjectsArgs {
     #[arg(long)]
     pub selection: bool,
     /// Output format
-    #[arg(long, default_value = "human")]
+    #[arg(long, default_value = "text")]
     pub format: OutputFormat,
 }
 
 #[derive(Args)]
 pub struct CameraViewArgs {
     /// Output format
-    #[arg(long, default_value = "human")]
+    #[arg(long, default_value = "text")]
     pub format: OutputFormat,
 }
 
@@ -590,7 +590,7 @@ pub struct TransformCamera2dArgs {
     #[arg(long)]
     pub transform: String,
     /// Output format
-    #[arg(long, default_value = "human")]
+    #[arg(long, default_value = "text")]
     pub format: OutputFormat,
 }
 
@@ -612,7 +612,7 @@ pub struct TransformCamera3dArgs {
     #[arg(long)]
     pub far: f64,
     /// Output format
-    #[arg(long, default_value = "human")]
+    #[arg(long, default_value = "text")]
     pub format: OutputFormat,
 }
 
@@ -622,7 +622,7 @@ pub struct ScreenshotArgs {
     #[arg(long, short)]
     pub output: Option<String>,
     /// Output format
-    #[arg(long, default_value = "human")]
+    #[arg(long, default_value = "text")]
     pub format: OutputFormat,
 }
 
@@ -632,7 +632,7 @@ pub struct ReloadCachedArgs {
     #[arg(long, num_args = 1..)]
     pub file: Vec<String>,
     /// Output format
-    #[arg(long, default_value = "human")]
+    #[arg(long, default_value = "text")]
     pub format: OutputFormat,
 }
 
@@ -642,7 +642,7 @@ pub struct NodeSelectIntArgs {
     #[arg(long)]
     pub value: i32,
     /// Output format
-    #[arg(long, default_value = "human")]
+    #[arg(long, default_value = "text")]
     pub format: OutputFormat,
 }
 
@@ -652,7 +652,7 @@ pub struct ToggleFmtArgs {
     #[arg(long)]
     pub off: bool,
     /// Output format
-    #[arg(long, default_value = "human")]
+    #[arg(long, default_value = "text")]
     pub format: OutputFormat,
 }
 
@@ -665,7 +665,7 @@ pub struct LivePathArgs {
     #[arg(long)]
     pub id: i32,
     /// Output format
-    #[arg(long, default_value = "human")]
+    #[arg(long, default_value = "text")]
     pub format: OutputFormat,
 }
 
@@ -681,7 +681,7 @@ pub struct LivePropResArgs {
     #[arg(long)]
     pub res_path: String,
     /// Output format
-    #[arg(long, default_value = "human")]
+    #[arg(long, default_value = "text")]
     pub format: OutputFormat,
 }
 
@@ -694,7 +694,7 @@ pub struct LiveRemoveKeepArgs {
     #[arg(long)]
     pub object_id: u64,
     /// Output format
-    #[arg(long, default_value = "human")]
+    #[arg(long, default_value = "text")]
     pub format: OutputFormat,
 }
 
@@ -710,7 +710,7 @@ pub struct LiveRestoreArgs {
     #[arg(long, default_value = "-1")]
     pub pos: i32,
     /// Output format
-    #[arg(long, default_value = "human")]
+    #[arg(long, default_value = "text")]
     pub format: OutputFormat,
 }
 
@@ -729,7 +729,7 @@ pub struct ServerArgs {
 
 #[derive(Clone, Debug)]
 pub enum OutputFormat {
-    Human,
+    Text,
     Json,
 }
 
@@ -737,7 +737,7 @@ impl std::str::FromStr for OutputFormat {
     type Err = String;
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "human" => Ok(Self::Human),
+            "text" => Ok(Self::Text),
             "json" => Ok(Self::Json),
             other => Err(format!("unknown format: {other}")),
         }
@@ -747,7 +747,7 @@ impl std::str::FromStr for OutputFormat {
 impl std::fmt::Display for OutputFormat {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Human => write!(f, "human"),
+            Self::Text => write!(f, "text"),
             Self::Json => write!(f, "json"),
         }
     }

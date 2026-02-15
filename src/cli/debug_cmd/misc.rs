@@ -21,7 +21,7 @@ pub(crate) fn cmd_mute_audio(args: &MuteAudioArgs) -> Result<()> {
                 serde_json::to_string_pretty(&serde_json::json!({"muted": mute})).unwrap()
             );
         }
-        OutputFormat::Human => {
+        OutputFormat::Text => {
             if mute {
                 println!("{}", "Audio muted".green());
             } else {
@@ -49,7 +49,7 @@ pub(crate) fn cmd_override_camera(args: &OverrideCameraArgs) -> Result<()> {
                 serde_json::to_string_pretty(&serde_json::json!({"override": enable})).unwrap()
             );
         }
-        OutputFormat::Human => {
+        OutputFormat::Text => {
             if enable {
                 println!("{}", "Camera override enabled".green());
             } else {
@@ -81,7 +81,7 @@ pub(crate) fn cmd_save_node(args: &SaveNodeArgs) -> Result<()> {
                 .unwrap()
             );
         }
-        OutputFormat::Human => {
+        OutputFormat::Text => {
             println!(
                 "{} node {} to {}",
                 "Saved".green(),
@@ -114,7 +114,7 @@ pub(crate) fn cmd_profiler(args: &ProfilerArgs) -> Result<()> {
                 .unwrap()
             );
         }
-        OutputFormat::Human => {
+        OutputFormat::Text => {
             if enable {
                 println!("{} profiler {}", "Enabled".green(), args.name.cyan());
             } else {
@@ -143,7 +143,7 @@ pub(crate) fn cmd_reload_cached(args: &ReloadCachedArgs) -> Result<()> {
                     .unwrap()
             );
         }
-        OutputFormat::Human => {
+        OutputFormat::Text => {
             println!("{}", format!("Reloaded {count} cached files").green());
         }
     }

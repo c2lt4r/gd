@@ -34,7 +34,7 @@ pub(crate) fn cmd_transform_camera_2d(args: &TransformCamera2dArgs) -> Result<()
                 serde_json::to_string_pretty(&serde_json::json!({"ok": true})).unwrap()
             );
         }
-        OutputFormat::Human => println!("{}", "2D camera transformed".green()),
+        OutputFormat::Text => println!("{}", "2D camera transformed".green()),
     }
     Ok(())
 }
@@ -71,7 +71,7 @@ pub(crate) fn cmd_transform_camera_3d(args: &TransformCamera3dArgs) -> Result<()
                 serde_json::to_string_pretty(&serde_json::json!({"ok": true})).unwrap()
             );
         }
-        OutputFormat::Human => println!("{}", "3D camera transformed".green()),
+        OutputFormat::Text => println!("{}", "3D camera transformed".green()),
     }
     Ok(())
 }
@@ -126,7 +126,7 @@ pub(crate) fn cmd_screenshot(args: &ScreenshotArgs) -> Result<()> {
                 .unwrap()
             );
         }
-        OutputFormat::Human => {
+        OutputFormat::Text => {
             let size_kb = size / 1024;
             println!(
                 "{} {}x{} ({size_kb} KB) → {}",

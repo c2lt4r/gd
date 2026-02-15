@@ -44,7 +44,7 @@ pub(crate) fn cmd_set_prop(args: &SetPropArgs) -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&result).unwrap());
             }
         }
-        OutputFormat::Human => {
+        OutputFormat::Text => {
             println!(
                 "{} {}.{} = {}",
                 "Set".green(),
@@ -78,7 +78,7 @@ pub(crate) fn cmd_suspend(args: &SuspendArgs) -> Result<()> {
         OutputFormat::Json => {
             println!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
-        OutputFormat::Human => {
+        OutputFormat::Text => {
             if suspend {
                 println!("{}", "Game suspended".green());
             } else {
@@ -100,7 +100,7 @@ pub(crate) fn cmd_next_frame(args: &StepArgs) -> Result<()> {
         OutputFormat::Json => {
             println!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
-        OutputFormat::Human => {
+        OutputFormat::Text => {
             println!("{}", "Advanced one frame".green());
         }
     }
@@ -120,7 +120,7 @@ pub(crate) fn cmd_time_scale(args: &TimeScaleArgs) -> Result<()> {
         OutputFormat::Json => {
             println!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
-        OutputFormat::Human => {
+        OutputFormat::Text => {
             println!("{}", format!("Time scale set to {}x", args.scale).green());
         }
     }
@@ -144,7 +144,7 @@ pub(crate) fn cmd_reload_scripts(args: &ReloadScriptsArgs) -> Result<()> {
         OutputFormat::Json => {
             println!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
-        OutputFormat::Human => {
+        OutputFormat::Text => {
             if args.paths.is_empty() {
                 println!("{}", "All scripts reloaded".green());
             } else {
@@ -168,7 +168,7 @@ pub(crate) fn cmd_reload_all_scripts(args: &StepArgs) -> Result<()> {
                 serde_json::to_string_pretty(&serde_json::json!({"reloaded": true})).unwrap()
             );
         }
-        OutputFormat::Human => println!("{}", "All scripts reloaded".green()),
+        OutputFormat::Text => println!("{}", "All scripts reloaded".green()),
     }
     Ok(())
 }
@@ -190,7 +190,7 @@ pub(crate) fn cmd_skip_breakpoints(args: &SkipBreakpointsArgs) -> Result<()> {
                 serde_json::to_string_pretty(&serde_json::json!({"skip": skip})).unwrap()
             );
         }
-        OutputFormat::Human => {
+        OutputFormat::Text => {
             if skip {
                 println!("{}", "Breakpoints skipped".green());
             } else {
@@ -218,7 +218,7 @@ pub(crate) fn cmd_ignore_errors(args: &IgnoreErrorsArgs) -> Result<()> {
                 serde_json::to_string_pretty(&serde_json::json!({"ignore": ignore})).unwrap()
             );
         }
-        OutputFormat::Human => {
+        OutputFormat::Text => {
             if ignore {
                 println!("{}", "Error breaks ignored".green());
             } else {
@@ -269,7 +269,7 @@ pub(crate) fn cmd_set_prop_field(args: &SetPropFieldArgs) -> Result<()> {
             }
             println!("{}", serde_json::to_string_pretty(&out).unwrap());
         }
-        OutputFormat::Human => {
+        OutputFormat::Text => {
             println!(
                 "{} {}.{}.{} = {}",
                 "Set".green(),

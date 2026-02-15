@@ -8,6 +8,7 @@ pub mod daemon_cmd;
 pub mod debug_cmd;
 pub mod deps_cmd;
 pub mod doc_cmd;
+pub mod env_cmd;
 pub mod fmt_cmd;
 pub mod init_cmd;
 pub mod lint_cmd;
@@ -81,6 +82,8 @@ pub enum Command {
     Log(log_cmd::LogArgs),
     /// Start the Language Server Protocol server
     Lsp(lsp_cmd::LspArgs),
+    /// Show environment info (gd version, Godot version, paths)
+    Env(env_cmd::EnvArgs),
     /// Show script dependency graph
     Deps(deps_cmd::DepsArgs),
     /// Generate man pages
@@ -115,6 +118,7 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Ci(args) => ci_cmd::exec(args),
         Command::Log(ref args) => log_cmd::exec(args),
         Command::Lsp(args) => lsp_cmd::exec(args),
+        Command::Env(ref args) => env_cmd::exec(args),
         Command::Deps(ref args) => deps_cmd::exec(args),
         Command::Man(ref args) => man_cmd::exec(args),
         Command::Upgrade(ref args) => upgrade_cmd::exec(args),

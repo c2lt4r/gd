@@ -21,7 +21,7 @@ pub(crate) fn cmd_node_select_type(args: &NodeSelectIntArgs) -> Result<()> {
                     .unwrap()
             );
         }
-        OutputFormat::Human => {
+        OutputFormat::Text => {
             println!(
                 "{}",
                 format!("Node select type set to {}", args.value).green()
@@ -46,7 +46,7 @@ pub(crate) fn cmd_node_select_mode(args: &NodeSelectIntArgs) -> Result<()> {
                     .unwrap()
             );
         }
-        OutputFormat::Human => {
+        OutputFormat::Text => {
             println!(
                 "{}",
                 format!("Node select mode set to {}", args.value).green()
@@ -72,7 +72,7 @@ pub(crate) fn cmd_node_select_visible(args: &ToggleFmtArgs) -> Result<()> {
                     .unwrap()
             );
         }
-        OutputFormat::Human => {
+        OutputFormat::Text => {
             if visible {
                 println!("{}", "Node visibility filter enabled".green());
             } else {
@@ -99,7 +99,7 @@ pub(crate) fn cmd_node_select_avoid_locked(args: &ToggleFmtArgs) -> Result<()> {
                     .unwrap()
             );
         }
-        OutputFormat::Human => {
+        OutputFormat::Text => {
             if avoid {
                 println!("{}", "Avoid locked nodes enabled".green());
             } else {
@@ -126,7 +126,7 @@ pub(crate) fn cmd_node_select_prefer_group(args: &ToggleFmtArgs) -> Result<()> {
                     .unwrap()
             );
         }
-        OutputFormat::Human => {
+        OutputFormat::Text => {
             if prefer {
                 println!("{}", "Prefer group enabled".green());
             } else {
@@ -148,7 +148,7 @@ pub(crate) fn cmd_node_select_reset_cam_2d(args: &StepArgs) -> Result<()> {
                 serde_json::to_string_pretty(&serde_json::json!({"ok": true})).unwrap()
             );
         }
-        OutputFormat::Human => println!("{}", "2D selection camera reset".green()),
+        OutputFormat::Text => println!("{}", "2D selection camera reset".green()),
     }
     Ok(())
 }
@@ -164,7 +164,7 @@ pub(crate) fn cmd_node_select_reset_cam_3d(args: &StepArgs) -> Result<()> {
                 serde_json::to_string_pretty(&serde_json::json!({"ok": true})).unwrap()
             );
         }
-        OutputFormat::Human => println!("{}", "3D selection camera reset".green()),
+        OutputFormat::Text => println!("{}", "3D selection camera reset".green()),
     }
     Ok(())
 }
@@ -180,7 +180,7 @@ pub(crate) fn cmd_clear_selection(args: &StepArgs) -> Result<()> {
                 serde_json::to_string_pretty(&serde_json::json!({"ok": true})).unwrap()
             );
         }
-        OutputFormat::Human => println!("{}", "Selection cleared".green()),
+        OutputFormat::Text => println!("{}", "Selection cleared".green()),
     }
     Ok(())
 }

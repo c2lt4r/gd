@@ -2,9 +2,13 @@
 
 ## [0.2.8] - 2026-02-15
 
+### Added
+- **`gd env`** — show environment info (gd version, Godot version/path, OS, arch, WSL, project root, config path). Supports `--json`.
+- **Updated `gd llm`** — command reference now covers all 30 commands including debug, scene, log, env, and lint categories.
+
 ### Fixed
 - **`gd debug eval` now works without a manual breakpoint** — previously always failed because the `break` command pauses the engine without entering the GDScript debug loop. Now automatically sets a temporary breakpoint on a `_process` function, evaluates, then cleans up. Assignments, node paths, builtins, and multi-expression all work.
-- **Eval human output** — fixed raw JSON leaking into display for all types; Array and Dictionary values now render as `[1, true, null]` and `{key: value}` instead of nested variant JSON.
+- **Eval text output** — fixed raw JSON leaking into display for all types; Array and Dictionary values now render as `[1, true, null]` and `{key: value}` instead of nested variant JSON.
 
 ## [0.2.7] - 2026-02-14
 
@@ -246,7 +250,7 @@
 - `.tscn`/`.tres` scene and resource file support:
   - `gd check` validates scene files — detects broken `res://` paths, orphaned `ext_resource` declarations, and parse errors
   - `gd deps --include-resources` includes `.tscn`/`.tres` files in the dependency graph
-  - `gd tree --scene <file.tscn>` displays scene node hierarchy (human tree or `--format json`)
+  - `gd tree --scene <file.tscn>` displays scene node hierarchy (text tree or `--format json`)
   - `gd tree --scene <directory>` lists all scenes in a directory
   - `gd lsp scene-info --file <scene.tscn>` returns structured JSON (nodes, ext_resources, connections)
   - `gd lsp scene-info --nodes-only` for compact node-only output
@@ -367,7 +371,7 @@
 ## [0.1.10] - 2026-02-12
 
 ### Added
-- `gd lint --context N` — show N surrounding lines per diagnostic (human + JSON output)
+- `gd lint --context N` — show N surrounding lines per diagnostic (text + JSON output)
 - `gd lsp replace-body` — AST-aware function body replacement (reads from stdin)
 - `gd lsp insert` — insert code before/after a named symbol (reads from stdin)
 - `gd lsp replace-symbol` — replace entire symbol declaration (reads from stdin)
@@ -502,7 +506,7 @@
 - `gd new` - Create new Godot projects (templates: `default`, `2d`, `3d`)
 - `gd init` - Initialize gd in existing projects
 - `gd fmt` - Format GDScript files (`--check`, `--diff`)
-- `gd lint` - Lint GDScript with 25 built-in rules (`--fix`, `--format json/sarif/human`)
+- `gd lint` - Lint GDScript with 25 built-in rules (`--fix`, `--format json/sarif/text`)
 - `gd run` - Run Godot project
 - `gd build` - Export Godot project
 - `gd check` - Validate project without building

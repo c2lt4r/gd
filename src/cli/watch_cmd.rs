@@ -125,7 +125,7 @@ pub fn exec(args: &WatchArgs) -> Result<()> {
                 if args.check {
                     match crate::cli::check_cmd::exec(&crate::cli::check_cmd::CheckArgs {
                         paths: vec![],
-                        format: "human".to_string(),
+                        format: "text".to_string(),
                     }) {
                         Ok(()) => {}
                         Err(e) => {

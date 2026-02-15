@@ -96,7 +96,7 @@ pub struct TestArgs {
     #[arg(short, long, default_value_t = 60)]
     pub timeout: u64,
     /// Output format
-    #[arg(long, default_value = "human")]
+    #[arg(long, default_value = "text")]
     pub format: String,
     /// Suppress per-test output when all pass (human mode only)
     #[arg(long)]
@@ -236,7 +236,7 @@ pub fn strip_res_prefix(s: &str) -> &str {
 #[allow(clippy::too_many_lines)]
 pub fn exec(args: &TestArgs) -> Result<()> {
     let json_mode = match args.format.as_str() {
-        "human" => false,
+        "text" => false,
         "json" => true,
         _ => {
             // Exit code 2 for infrastructure errors

@@ -17,8 +17,8 @@ use crate::lint::matches_ignore_pattern;
 pub struct CheckArgs {
     /// Files or directories to check (defaults to current directory)
     pub paths: Vec<String>,
-    /// Output format (human or json)
-    #[arg(long, default_value = "human")]
+    /// Output format (text or json)
+    #[arg(long, default_value = "text")]
     pub format: String,
 }
 

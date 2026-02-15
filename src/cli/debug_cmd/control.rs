@@ -23,7 +23,7 @@ pub(crate) fn cmd_exec_continue(args: &StepArgs) -> Result<()> {
                 serde_json::to_string_pretty(&serde_json::json!({"ok": true})).unwrap()
             );
         }
-        OutputFormat::Human => println!("{}", "Continued".green()),
+        OutputFormat::Text => println!("{}", "Continued".green()),
     }
     Ok(())
 }
@@ -41,7 +41,7 @@ pub(crate) fn cmd_exec_pause(args: &StepArgs) -> Result<()> {
                 serde_json::to_string_pretty(&serde_json::json!({"ok": true})).unwrap()
             );
         }
-        OutputFormat::Human => println!("{}", "Paused".green()),
+        OutputFormat::Text => println!("{}", "Paused".green()),
     }
     Ok(())
 }
@@ -57,7 +57,7 @@ pub(crate) fn cmd_exec_next(args: &StepArgs) -> Result<()> {
                 serde_json::to_string_pretty(&serde_json::json!({"ok": true})).unwrap()
             );
         }
-        OutputFormat::Human => println!("{}", "Stepped over".green()),
+        OutputFormat::Text => println!("{}", "Stepped over".green()),
     }
     Ok(())
 }
@@ -73,7 +73,7 @@ pub(crate) fn cmd_exec_step_in(args: &StepArgs) -> Result<()> {
                 serde_json::to_string_pretty(&serde_json::json!({"ok": true})).unwrap()
             );
         }
-        OutputFormat::Human => println!("{}", "Stepped in".green()),
+        OutputFormat::Text => println!("{}", "Stepped in".green()),
     }
     Ok(())
 }
@@ -89,7 +89,7 @@ pub(crate) fn cmd_exec_step_out(args: &StepArgs) -> Result<()> {
                 serde_json::to_string_pretty(&serde_json::json!({"ok": true})).unwrap()
             );
         }
-        OutputFormat::Human => println!("{}", "Stepped out".green()),
+        OutputFormat::Text => println!("{}", "Stepped out".green()),
     }
     Ok(())
 }
@@ -140,7 +140,7 @@ pub(crate) fn cmd_breakpoint(args: &BreakpointBinArgs) -> Result<()> {
             }
             println!("{}", serde_json::to_string_pretty(&out).unwrap());
         }
-        OutputFormat::Human => {
+        OutputFormat::Text => {
             let cond_info = args
                 .condition
                 .as_ref()
@@ -218,7 +218,7 @@ pub(crate) fn cmd_stack(args: &StepArgs) -> Result<()> {
         OutputFormat::Json => {
             println!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
-        OutputFormat::Human => {
+        OutputFormat::Text => {
             if let Some(frames) = result.as_array() {
                 if frames.is_empty() {
                     println!("{}", "(no stack frames)".dimmed());
@@ -257,7 +257,7 @@ pub(crate) fn cmd_vars(args: &VarsArgs) -> Result<()> {
         OutputFormat::Json => {
             println!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
-        OutputFormat::Human => {
+        OutputFormat::Text => {
             if let Some(vars) = result.as_array() {
                 if vars.is_empty() {
                     println!("{}", "(no variables)".dimmed());
@@ -319,7 +319,7 @@ pub(crate) fn cmd_evaluate(args: &EvalBinArgs) -> Result<()> {
             }
             println!("{}", serde_json::to_string_pretty(&json).unwrap());
         }
-        OutputFormat::Human => {
+        OutputFormat::Text => {
             let variant = result.get("value").unwrap_or(&result);
             let display = format_variant_display(variant);
             if type_name_from_variant(&result).is_empty() {

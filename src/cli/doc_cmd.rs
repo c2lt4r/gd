@@ -12,7 +12,7 @@ pub struct DocArgs {
     #[arg(long)]
     pub stdout: bool,
     /// Output format
-    #[arg(long, default_value = "human")]
+    #[arg(long, default_value = "text")]
     pub format: String,
     /// Check that all public methods have doc comments (exit 1 if not)
     #[arg(long)]
@@ -24,10 +24,10 @@ pub fn exec(args: &DocArgs) -> Result<()> {
         return crate::doc::run_doc_check(&args.paths);
     }
     match args.format.as_str() {
-        "human" => crate::doc::run_doc(&args.paths, &args.output_dir, args.stdout),
+        "text" => crate::doc::run_doc(&args.paths, &args.output_dir, args.stdout),
         "json" => crate::doc::run_doc_json(&args.paths),
         _ => Err(miette::miette!(
-            "invalid format '{}' (expected 'human' or 'json')",
+            "invalid format '{}' (expected 'text' or 'json')",
             args.format
         )),
     }

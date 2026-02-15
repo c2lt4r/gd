@@ -21,21 +21,31 @@ gd init                                # Init gd in existing Godot project
 gd fmt [files...]                      # Format GDScript (AST-based)
 gd fmt --check                         # Check formatting (CI mode, exit 1 if unformatted)
 gd fmt --diff                          # Show formatting diff
-gd lint [files...]                     # Lint GDScript (58 rules)
+gd lint [files...]                     # Lint GDScript (76 rules, 8 categories)
 gd lint --fix                          # Auto-fix fixable lint issues
-gd lint --format json|human|sarif      # Output format
+gd lint --format json|text|sarif       # Output format
 gd check                               # Parse + structural + semantic + .tscn/.tres validation
 gd check --format json                 # Machine-readable diagnostics
 
 ## Run & Build
-gd run                                 # Run project (non-blocking, auto-wires debug)
+gd run                                 # Run project (non-blocking, auto-wires debug, captures to .godot/gd-game.log)
 gd run --scene <path>                  # Run specific scene
+gd run --log                           # Also stream Godot's stdout/stderr to terminal
 gd stop                                # Stop the running game
+gd log                                 # View game output from last run (cat -n style)
+gd log --tail <N>                      # Last N lines
+gd log --follow                        # Real-time tail (like tail -f)
+gd log --clear                         # Truncate log file
 gd build --preset <name>               # Export project
 gd build --preset <name> --release     # Export release build
 gd clean                               # Remove build artifacts
 gd test                                # Run tests (auto-detects GUT/gdUnit4/script)
 gd test --format json                  # Machine-readable test results
+
+## Scene
+gd scene attach-script --scene <f.tscn> --script <f.gd>          # Attach script to root node
+gd scene attach-script --scene <f.tscn> --script <f.gd> --node <name>  # Attach to named node
+gd scene attach-script --dry-run       # Preview without writing
 
 ## Debug (requires running game via `gd run`)
 # Scene inspection (gd debug scene <cmd>)
@@ -68,7 +78,11 @@ gd debug ignore-errors [--off]         # Ignore/stop-on error breaks
 # Stack & variables (at breakpoint)
 gd debug stack                         # Call stack
 gd debug vars --frame <N>              # Variables for stack frame
-gd debug eval --expr <expr>            # Evaluate expression
+
+# Evaluate expressions (auto-breaks into _process, no manual breakpoint needed)
+gd debug eval --expr <expr>            # Evaluate GDScript expression in game context
+gd debug eval --expr <expr> --format json  # JSON result with type info
+# Rewrites: $Node → get_node(), x = val → set(), x += val → set(), multi; expr → [array]
 
 # Game loop control
 gd debug suspend                       # Freeze game loop
@@ -198,6 +212,8 @@ gd addons lock                         # Generate lock file
 gd addons install --locked             # Install from lock file
 
 ## Other
+gd env                                 # Show environment info (gd version, Godot version, paths)
+gd env --json                          # Machine-readable environment info
 gd watch                               # Watch files, run fmt/lint on change
 gd ci --platform github|gitlab         # Generate CI config
 gd completions --shell bash|zsh|fish   # Shell completions
@@ -207,6 +223,7 @@ gd upgrade [--check]                   # Self-update
 ## Config (gd.toml)
 # [fmt] use_tabs, indent_size, max_line_length, blank_lines_around_functions/classes
 # [lint] disabled_rules, enabled_rules, ignore_patterns
+# [lint] category levels: correctness = "error", type_safety = "warning", maintenance = "off"
 # [run] godot_path, extra_args
 # [build] output_dir
 

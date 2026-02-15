@@ -9,7 +9,7 @@ pub struct LintArgs {
     /// Files or directories to lint (defaults to current directory)
     pub paths: Vec<String>,
     /// Output format
-    #[arg(long, default_value = "human")]
+    #[arg(long, default_value = "text")]
     pub format: String,
     /// Fix auto-fixable issues
     #[arg(long)]

@@ -35,7 +35,7 @@ pub struct LintOptions {
 impl Default for LintOptions {
     fn default() -> Self {
         Self {
-            format: "human".to_string(),
+            format: "text".to_string(),
             fix: false,
             dry_run: false,
             severity_filter: None,
