@@ -3,13 +3,13 @@ use std::fmt::Write;
 use clap::Args;
 use miette::{Result, miette};
 use owo_colors::OwoColorize;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-use crate::build::find_godot;
+use crate::build::{find_godot, path_for_godot};
 use crate::cli::test_cmd::{extract_errors, filter_noise, run_with_timeout};
 use crate::core::config::Config;
 use crate::core::project::GodotProject;
@@ -157,6 +157,140 @@ fn validate_script_base_class(path: &Path) -> Result<()> {
     ))
 }
 
+/// JSON result from the eval server.
+#[derive(Debug, Deserialize)]
+struct LiveEvalResult {
+    result: Option<String>,
+    error: String,
+}
+
+/// Generate a GDScript that the eval server will load and execute.
+/// The script extends Node so `get_node()` with absolute paths works.
+fn generate_live_eval_script(input: &str) -> String {
+    // Check if it looks like multi-statement (contains ; or newlines)
+    let statements: Vec<&str> = if input.contains(';') {
+        input
+            .split(';')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .collect()
+    } else if input.contains('\n') {
+        input.lines().collect()
+    } else {
+        // Single expression — wrap with return
+        return format!(
+            "extends Node\n\
+             \n\
+             func run():\n\
+             \treturn {input}\n"
+        );
+    };
+
+    let mut body = String::new();
+    for stmt in &statements {
+        let _ = writeln!(body, "\t{stmt}");
+    }
+
+    format!(
+        "extends Node\n\
+         \n\
+         func run():\n\
+         {body}"
+    )
+}
+
+/// Try live eval against a running game (started with `gd run --eval`).
+/// Returns `None` if no eval-ready game is running (caller falls back to offline).
+fn try_live_eval(
+    input: &str,
+    project_root: &Path,
+    timeout: Duration,
+    json_mode: bool,
+) -> Option<Result<()>> {
+    let godot_dir = project_root.join(".godot");
+    let ready_file = godot_dir.join("gd-eval-ready");
+
+    // Check if eval server is running
+    if !ready_file.is_file() {
+        return None;
+    }
+
+    // Generate and write the request script
+    let script = generate_live_eval_script(input);
+
+    // Show the script being sent (cat -n style)
+    if !json_mode {
+        eprintln!("{}", "Sending to running game:".dimmed());
+        for (i, line) in script.lines().enumerate() {
+            eprintln!("  {} {}", format!("{:>3}", i + 1).dimmed(), line);
+        }
+    }
+
+    let request_path = godot_dir.join("gd-eval-request.gd");
+    if let Err(e) = std::fs::write(&request_path, &script) {
+        return Some(Err(miette!("Failed to write eval request: {e}")));
+    }
+
+    // Poll for the result file
+    let result_path = godot_dir.join("gd-eval-result.json");
+    let poll_interval = Duration::from_millis(50);
+    let start = std::time::Instant::now();
+
+    loop {
+        if result_path.is_file() {
+            // Read and delete the result
+            let data = match std::fs::read_to_string(&result_path) {
+                Ok(d) => d,
+                Err(e) => return Some(Err(miette!("Failed to read eval result: {e}"))),
+            };
+            let _ = std::fs::remove_file(&result_path);
+
+            match serde_json::from_str::<LiveEvalResult>(&data) {
+                Ok(eval_result) => {
+                    if json_mode {
+                        let out = EvalOutput {
+                            stdout: eval_result.result.clone().unwrap_or_default(),
+                            stderr: eval_result.error.clone(),
+                            exit_code: i32::from(!eval_result.error.is_empty()),
+                            errors: vec![],
+                        };
+                        println!("{}", serde_json::to_string_pretty(&out).unwrap());
+                        if !eval_result.error.is_empty() {
+                            std::process::exit(1);
+                        }
+                    } else if !eval_result.error.is_empty() {
+                        eprintln!("{} {}", "error:".red().bold(), eval_result.error);
+                        std::process::exit(1);
+                    } else if let Some(ref result) = eval_result.result {
+                        println!("{result}");
+                    }
+                    return Some(Ok(()));
+                }
+                Err(e) => return Some(Err(miette!("Failed to parse eval result: {e}"))),
+            }
+        }
+
+        // Check if the eval server is still alive
+        if !ready_file.is_file() {
+            // Clean up the request file if server died
+            let _ = std::fs::remove_file(&request_path);
+            return Some(Err(miette!("Eval server exited before returning a result")));
+        }
+
+        if start.elapsed() >= timeout {
+            // Clean up the request file on timeout
+            let _ = std::fs::remove_file(&request_path);
+            return Some(Err(miette!(
+                "Timed out waiting for eval result ({}s)",
+                timeout.as_secs()
+            )));
+        }
+
+        std::thread::sleep(poll_interval);
+    }
+}
+
+#[allow(clippy::too_many_lines)]
 pub fn exec(args: &EvalArgs) -> Result<()> {
     let json_mode = match args.format.as_str() {
         "text" => false,
@@ -171,9 +305,33 @@ pub fn exec(args: &EvalArgs) -> Result<()> {
     let cwd = std::env::current_dir().unwrap_or_default();
     let config = Config::load(&cwd)?;
     let project = GodotProject::discover(&cwd)?;
-    let godot = find_godot(&config)?;
 
     let mode = detect_input_mode(&args.input, &project.root);
+
+    // Try live eval first for expressions/stdin (if a game is running with `gd run --eval`)
+    let eval_ready = project.root.join(".godot").join("gd-eval-ready").is_file();
+    if eval_ready && mode != InputMode::File {
+        let input_text = if mode == InputMode::Stdin {
+            let mut buf = String::new();
+            std::io::stdin()
+                .read_to_string(&mut buf)
+                .map_err(|e| miette!("Failed to read stdin: {e}"))?;
+            buf
+        } else {
+            args.input.clone()
+        };
+        if let Some(result) = try_live_eval(
+            &input_text,
+            &project.root,
+            Duration::from_secs(args.timeout),
+            json_mode,
+        ) {
+            return result;
+        }
+        // Eval server disappeared between check and attempt — fall through to offline
+    }
+
+    let godot = find_godot(&config)?;
 
     // Determine the script path and content
     let (script_path, temp_file) = match mode {
@@ -213,20 +371,15 @@ pub fn exec(args: &EvalArgs) -> Result<()> {
         }
     }
 
-    // Build Godot command — use relative path from project root
-    let rel_script = script_path
-        .strip_prefix(&project.root)
-        .unwrap_or(&script_path);
-
     let mut cmd = Command::new(&godot);
     if args.headless {
         cmd.arg("--headless");
     }
     cmd.arg("--no-header")
         .arg("--path")
-        .arg(&project.root)
+        .arg(path_for_godot(&godot, &project.root))
         .arg("--script")
-        .arg(rel_script);
+        .arg(path_for_godot(&godot, &script_path));
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
     let result = run_with_timeout(&mut cmd, Duration::from_secs(args.timeout), true);
@@ -463,5 +616,81 @@ mod tests {
         let path = tmp.path().join("tool.gd");
         std::fs::write(&path, "@tool\nextends SceneTree\nfunc _init():\n\tquit()\n").unwrap();
         assert!(validate_script_base_class(&path).is_ok());
+    }
+
+    #[test]
+    fn live_script_single_expression() {
+        let script = generate_live_eval_script("1 + 1");
+        assert!(script.contains("extends Node"));
+        assert!(script.contains("func run():"));
+        assert!(script.contains("return 1 + 1"));
+    }
+
+    #[test]
+    fn live_script_multi_statement() {
+        let script = generate_live_eval_script("var x = 1; print(x)");
+        assert!(script.contains("extends Node"));
+        assert!(script.contains("func run():"));
+        assert!(script.contains("var x = 1"));
+        assert!(script.contains("print(x)"));
+        assert!(!script.contains("return"));
+    }
+
+    #[test]
+    fn live_script_multi_line() {
+        let script = generate_live_eval_script("var x = 1\nprint(x)");
+        assert!(script.contains("extends Node"));
+        assert!(script.contains("var x = 1"));
+        assert!(script.contains("print(x)"));
+    }
+
+    #[test]
+    fn live_script_parses_cleanly() {
+        let cases = [
+            "1 + 1",
+            "get_tree().get_root().get_child_count()",
+            "var x = 1; print(x)",
+        ];
+        for input in cases {
+            let script = generate_live_eval_script(input);
+            let tree = crate::core::parser::parse(&script).unwrap();
+            assert!(
+                !tree.root_node().has_error(),
+                "Live script for '{input}' should parse cleanly, got:\n{script}"
+            );
+        }
+    }
+
+    #[test]
+    fn try_live_eval_no_server() {
+        let tmp = tempfile::tempdir().unwrap();
+        // No ready file — should return None
+        let result = try_live_eval("1+1", tmp.path(), Duration::from_secs(1), false);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn try_live_eval_with_ready_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let godot_dir = tmp.path().join(".godot");
+        std::fs::create_dir_all(&godot_dir).unwrap();
+
+        // Create ready file
+        std::fs::write(godot_dir.join("gd-eval-ready"), "12345").unwrap();
+
+        // Pre-create a result file to simulate the server responding
+        std::fs::write(
+            godot_dir.join("gd-eval-result.json"),
+            r#"{"result":"42","error":""}"#,
+        )
+        .unwrap();
+
+        let result = try_live_eval("21 * 2", tmp.path(), Duration::from_secs(5), false);
+        assert!(result.is_some());
+        assert!(result.unwrap().is_ok());
+
+        // Request file should have been written (and server would have consumed it)
+        // Result file should have been cleaned up
+        assert!(!godot_dir.join("gd-eval-result.json").exists());
     }
 }

@@ -105,13 +105,13 @@ fn find_godot_from_daemon() -> Option<String> {
     Some(fs::windows_to_wsl_path(path))
 }
 
-/// Get the `--path` argument for Godot, translating WSL paths for Windows binaries.
-fn project_path_for_godot(godot: &Path, project_root: &Path) -> String {
+/// Get a path argument for Godot, translating WSL paths for Windows binaries.
+pub fn path_for_godot(godot: &Path, path: &Path) -> String {
     if fs::is_windows_binary(godot) {
-        let s = project_root.to_string_lossy();
+        let s = path.to_string_lossy();
         fs::wsl_to_windows_path(&s).unwrap_or_else(|| s.to_string())
     } else {
-        project_root.to_string_lossy().to_string()
+        path.to_string_lossy().to_string()
     }
 }
 
@@ -129,13 +129,71 @@ fn search_path() -> Option<PathBuf> {
     None
 }
 
+/// Generate the GDScript eval server that polls for eval requests.
+/// `scene_path` is the `res://...` path to the main scene to load.
+///
+/// Uses `_initialize()` + `process_frame` signal instead of overriding `_process()`
+/// to avoid breaking SceneTree's built-in frame processing.
+pub fn generate_eval_server(scene_path: &str) -> String {
+    format!(
+        r#"extends SceneTree
+
+var _root: String
+
+func _initialize():
+	_root = ProjectSettings.globalize_path("res://")
+	var f = FileAccess.open(_root.path_join(".godot/gd-eval-ready"), FileAccess.WRITE)
+	if f:
+		f.store_string(str(OS.get_process_id()))
+	change_scene_to_file("{scene_path}")
+	process_frame.connect(_poll)
+
+func _poll():
+	var req = _root.path_join(".godot/gd-eval-request.gd")
+	if FileAccess.file_exists(req):
+		call_deferred("_execute", req)
+
+func _execute(path: String):
+	var source = FileAccess.open(path, FileAccess.READ).get_as_text()
+	DirAccess.remove_absolute(path)
+	var script = GDScript.new()
+	script.source_code = source
+	var err = script.reload()
+	if err != OK:
+		_write_result('{{"result":null,"error":"Script compilation failed"}}')
+		return
+	var runner = Node.new()
+	runner.name = "GdEvalRunner"
+	runner.set_script(script)
+	get_root().add_child(runner)
+	if not runner.has_method("run"):
+		runner.queue_free()
+		_write_result('{{"result":null,"error":"Script has no run() method"}}')
+		return
+	var result = runner.call("run")
+	runner.queue_free()
+	var result_str = str(result) if result != null else ""
+	_write_result(JSON.stringify({{"result": result_str, "error": ""}}))
+
+func _write_result(json_str: String):
+	var f = FileAccess.open(_root.path_join(".godot/gd-eval-result.json"), FileAccess.WRITE)
+	if f:
+		f.store_string(json_str)
+
+func _finalize():
+	DirAccess.remove_absolute(_root.path_join(".godot/gd-eval-ready"))
+"#
+    )
+}
+
 /// Run the Godot project.
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines, clippy::fn_params_excessive_bools)]
 pub fn run_project(
     scene: Option<&str>,
     debug: bool,
     verbose: bool,
     log: bool,
+    eval: bool,
     extra: &[String],
 ) -> Result<()> {
     let cwd = env::current_dir().unwrap_or_default();
@@ -146,8 +204,7 @@ pub fn run_project(
     let project_name = project.name().unwrap_or_else(|_| "project".into());
 
     let mut cmd = Command::new(&godot);
-    cmd.arg("--path")
-        .arg(project_path_for_godot(&godot, &project.root));
+    cmd.arg("--path").arg(path_for_godot(&godot, &project.root));
 
     // Always wire up remote debug via daemon (silent — no user-facing port args)
     let debug_port = match crate::lsp::daemon_client::query_daemon(
@@ -183,9 +240,38 @@ pub fn run_project(
         cmd.arg(arg);
     }
 
-    // Scene path (positional, must come after flags)
-    if let Some(scene) = scene {
-        cmd.arg(scene);
+    // Eval server mode: inject --script with eval server, bake in the scene
+    if eval {
+        let scene_path = if let Some(s) = scene {
+            // User passed an explicit scene — use it as-is (res:// path or relative)
+            if s.starts_with("res://") {
+                s.to_string()
+            } else {
+                format!("res://{s}")
+            }
+        } else {
+            project.main_scene()?.ok_or_else(|| {
+                miette!(
+                    "No main scene configured and no scene argument provided.\n\
+                     Set run/main_scene in project.godot or pass a scene: gd run --eval <scene>"
+                )
+            })?
+        };
+
+        let server_script = generate_eval_server(&scene_path);
+        let server_path = project.root.join(".godot").join("gd-eval-server.gd");
+        std::fs::create_dir_all(project.root.join(".godot"))
+            .map_err(|e| miette!("Failed to create .godot directory: {e}"))?;
+        std::fs::write(&server_path, &server_script)
+            .map_err(|e| miette!("Failed to write eval server script: {e}"))?;
+
+        cmd.arg("--script")
+            .arg(path_for_godot(&godot, &server_path));
+    } else {
+        // Scene path (positional, must come after flags)
+        if let Some(scene) = scene {
+            cmd.arg(scene);
+        }
     }
 
     // Extra args from CLI (after --)
@@ -285,6 +371,33 @@ pub fn run_project(
         "▶".green(),
         project_name.bold(),
     );
+
+    // If eval mode, poll for the ready file
+    if eval {
+        let ready_path = project.root.join(".godot").join("gd-eval-ready");
+        let poll_start = std::time::Instant::now();
+        let poll_timeout = std::time::Duration::from_secs(30);
+        let poll_interval = std::time::Duration::from_millis(200);
+        loop {
+            if ready_path.is_file() {
+                println!(
+                    "{} Eval server ready — run {} to evaluate against the game",
+                    "✓".green(),
+                    "gd eval <expr>".bold(),
+                );
+                break;
+            }
+            if poll_start.elapsed() >= poll_timeout {
+                eprintln!(
+                    "{} Eval server did not start within {}s",
+                    "✗".red().bold(),
+                    poll_timeout.as_secs()
+                );
+                break;
+            }
+            std::thread::sleep(poll_interval);
+        }
+    }
 
     Ok(())
 }
@@ -390,7 +503,7 @@ pub fn export_project(preset: Option<&str>, output: Option<&str>, release: bool)
     let mut cmd = Command::new(&godot);
     cmd.arg("--headless")
         .arg("--path")
-        .arg(project_path_for_godot(&godot, &project.root))
+        .arg(path_for_godot(&godot, &project.root))
         .arg(export_flag)
         .arg(&preset_name)
         .arg(&output_file);
@@ -443,4 +556,31 @@ fn parse_export_presets(project_root: &Path) -> Result<Vec<String>> {
     }
 
     Ok(presets)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn eval_server_contains_scene_load() {
+        let script = generate_eval_server("res://main.tscn");
+        assert!(script.contains(r#"change_scene_to_file("res://main.tscn")"#));
+        assert!(script.contains("extends SceneTree"));
+    }
+
+    #[test]
+    fn eval_server_contains_poll_logic() {
+        let script = generate_eval_server("res://main.tscn");
+        assert!(script.contains("gd-eval-request.gd"));
+        assert!(script.contains("gd-eval-result.json"));
+        assert!(script.contains("gd-eval-ready"));
+    }
+
+    #[test]
+    fn eval_server_contains_cleanup() {
+        let script = generate_eval_server("res://main.tscn");
+        assert!(script.contains("_finalize"));
+        assert!(script.contains("gd-eval-ready"));
+    }
 }
