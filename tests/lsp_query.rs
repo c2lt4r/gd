@@ -234,7 +234,7 @@ fn test_lsp_symbols_lists_all_declarations() {
     )]);
 
     let output = gd_bin()
-        .args(["lsp", "symbols", "--file", "player.gd"])
+        .args(["lsp", "symbols", "--file", "player.gd", "--format", "json"])
         .current_dir(temp.path())
         .output()
         .expect("Failed to run gd lsp symbols");
@@ -281,6 +281,8 @@ fn test_lsp_hover_shows_function_signature() {
             "1",
             "--column",
             "6",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -318,6 +320,8 @@ fn test_lsp_hover_attribute_member_shows_builtin_docs() {
             "4",
             "--column",
             "15",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -355,6 +359,8 @@ fn test_lsp_hover_self_member_resolves_to_declaration() {
             "4",
             "--column",
             "7",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -418,6 +424,8 @@ fn test_lsp_hover_on_function_name_still_works() {
             "1",
             "--column",
             "6",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -449,6 +457,8 @@ fn test_lsp_references_finds_all_usages() {
             "1",
             "--column",
             "5",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -485,6 +495,8 @@ fn test_lsp_definition_jumps_to_declaration() {
             "5",
             "--column",
             "8",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -645,6 +657,8 @@ fn test_lsp_completions_includes_keywords_and_symbols() {
             "5",
             "--column",
             "1",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -695,6 +709,8 @@ fn test_lsp_completions_limit_caps_results() {
             "1",
             "--limit",
             "3",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -889,6 +905,8 @@ fn test_lsp_references_local_variable_scoped() {
             "2", // print(speed) in foo
             "--column",
             "8", // on `speed`
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -929,6 +947,8 @@ fn test_lsp_definition_local_variable() {
             "6", // print(speed) in foo
             "--column",
             "8", // on `speed`
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -956,7 +976,7 @@ fn test_lsp_references_by_name() {
     ]);
 
     let output = gd_bin()
-        .args(["lsp", "references", "--name", "speed"])
+        .args(["lsp", "references", "--name", "speed", "--format", "json"])
         .current_dir(temp.path())
         .output()
         .expect("Failed to run gd lsp references --name");
@@ -991,6 +1011,8 @@ fn test_lsp_references_by_name_with_file_filter() {
             "speed",
             "--file",
             "player.gd",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -1020,7 +1042,16 @@ fn test_lsp_references_by_name_with_class_filter() {
     ]);
 
     let output = gd_bin()
-        .args(["lsp", "references", "--name", "speed", "--class", "Player"])
+        .args([
+            "lsp",
+            "references",
+            "--name",
+            "speed",
+            "--class",
+            "Player",
+            "--format",
+            "json",
+        ])
         .current_dir(temp.path())
         .output()
         .expect("Failed to run gd lsp references --name --class");
@@ -1047,7 +1078,16 @@ fn test_lsp_references_by_name_inner_class() {
     )]);
 
     let output = gd_bin()
-        .args(["lsp", "references", "--name", "speed", "--class", "Stats"])
+        .args([
+            "lsp",
+            "references",
+            "--name",
+            "speed",
+            "--class",
+            "Stats",
+            "--format",
+            "json",
+        ])
         .current_dir(temp.path())
         .output()
         .expect("Failed to run gd lsp references --name --class inner");
@@ -1089,6 +1129,8 @@ fn test_lsp_references_by_name_class_finds_autoload_callers() {
             "submit_vote",
             "--class",
             "GameManager",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -1139,6 +1181,8 @@ fn test_lsp_references_by_name_class_finds_property_access() {
             "score",
             "--class",
             "GameManager",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -1163,7 +1207,14 @@ fn test_lsp_references_by_name_no_match() {
     )]);
 
     let output = gd_bin()
-        .args(["lsp", "references", "--name", "nonexistent_symbol"])
+        .args([
+            "lsp",
+            "references",
+            "--name",
+            "nonexistent_symbol",
+            "--format",
+            "json",
+        ])
         .current_dir(temp.path())
         .output()
         .expect("Failed to run gd lsp references --name nonexistent");
@@ -1192,6 +1243,8 @@ fn test_lsp_references_position_mode_still_works() {
             "1",
             "--column",
             "5",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -1220,6 +1273,8 @@ fn test_lsp_symbols_kind_filter() {
             "player.gd",
             "--kind",
             "function",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -1249,6 +1304,8 @@ fn test_lsp_symbols_kind_filter_multiple() {
             "player.gd",
             "--kind",
             "function,constant",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -1281,6 +1338,8 @@ fn test_lsp_symbols_kind_filter_repeatable() {
             "function",
             "--kind",
             "variable",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -1304,7 +1363,16 @@ fn test_lsp_symbols_kind_field_alias() {
 
     // "field" should match both "variable" and "field" (onready)
     let output = gd_bin()
-        .args(["lsp", "symbols", "--file", "player.gd", "--kind", "field"])
+        .args([
+            "lsp",
+            "symbols",
+            "--file",
+            "player.gd",
+            "--kind",
+            "field",
+            "--format",
+            "json",
+        ])
         .current_dir(temp.path())
         .output()
         .expect("Failed to run gd lsp symbols --kind field");

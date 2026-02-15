@@ -1,5 +1,6 @@
 pub mod config;
 pub mod fs;
+pub mod live_eval;
 pub mod parser;
 pub mod project;
 pub mod resource_parser;

@@ -139,6 +139,37 @@ pub fn class_methods(class: &str) -> Vec<(&'static str, &'static str, &'static s
     result
 }
 
+/// Return all properties for a class, walking the inheritance chain.
+/// Each entry is `(property_name, type, defining_class)`.
+pub fn class_properties(class: &str) -> Vec<(&'static str, &'static str, &'static str)> {
+    let Some(start) = generated::CLASSES
+        .binary_search_by_key(&class, |c| c.name)
+        .ok()
+        .map(|i| generated::CLASSES[i].name)
+    else {
+        return Vec::new();
+    };
+
+    let mut result = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut current: &'static str = start;
+    loop {
+        let prefix = format!("{current}.");
+        for &(key, prop_type) in generated::PROPERTIES {
+            if let Some(prop_name) = key.strip_prefix(&prefix)
+                && seen.insert(prop_name)
+            {
+                result.push((prop_name, prop_type, current));
+            }
+        }
+        match parent_class(current) {
+            Some(parent) => current = parent,
+            None => break,
+        }
+    }
+    result
+}
+
 /// Look up the return type of a method on a class, walking the inheritance chain.
 /// Returns the raw return type string from the class database (e.g. `"void"`, `"int"`,
 /// `"Node"`, `"typedarray::Node"`, `"enum::Error"`).
@@ -355,5 +386,34 @@ mod tests {
         // Verify enum and typedarray return types are returned as-is
         let ret = method_return_type("AESContext", "start");
         assert_eq!(ret, Some("enum::Error"));
+    }
+
+    #[test]
+    fn test_class_properties_node2d() {
+        let props = class_properties("Node2D");
+        let names: Vec<&str> = props.iter().map(|(name, _, _)| *name).collect();
+        assert!(names.contains(&"position"));
+        assert!(names.contains(&"rotation"));
+        assert!(names.contains(&"global_position"));
+        // Check type
+        let pos = props.iter().find(|(n, _, _)| *n == "position").unwrap();
+        assert_eq!(pos.1, "Vector2");
+        assert_eq!(pos.2, "Node2D");
+    }
+
+    #[test]
+    fn test_class_properties_inherited() {
+        let props = class_properties("CharacterBody2D");
+        let names: Vec<&str> = props.iter().map(|(name, _, _)| *name).collect();
+        // Own property
+        assert!(names.contains(&"velocity"));
+        // Inherited from Node2D
+        assert!(names.contains(&"position"));
+    }
+
+    #[test]
+    fn test_class_properties_unknown_class() {
+        let props = class_properties("NonExistentClass");
+        assert!(props.is_empty());
     }
 }

@@ -3,7 +3,7 @@ use std::fmt::Write;
 use clap::Args;
 use miette::{Result, miette};
 use owo_colors::OwoColorize;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -126,7 +126,7 @@ fn write_temp_script(project_root: &Path, content: &str) -> Result<PathBuf> {
 }
 
 /// Parse-validate a script without running Godot.
-fn pre_check(source: &str) -> Result<String> {
+pub fn pre_check(source: &str) -> Result<String> {
     let tree = crate::core::parser::parse(source)?;
     if tree.root_node().has_error() {
         return Err(miette!("Script has syntax errors"));
@@ -262,13 +262,6 @@ fn validate_script_base_class(path: &Path) -> Result<()> {
     Err(miette!(
         "Script has no 'extends' declaration. --script requires 'extends SceneTree' or 'extends MainLoop'"
     ))
-}
-
-/// JSON result from the eval server.
-#[derive(Debug, Deserialize)]
-struct LiveEvalResult {
-    result: Option<String>,
-    error: String,
 }
 
 /// Generate a GDScript that the eval server will load and execute.
@@ -467,13 +460,7 @@ fn try_live_eval(
         }
     }
 
-    // 3. Syntax check + sanitize escape sequences
-    let script = match pre_check(&script) {
-        Ok(sanitized) => sanitized,
-        Err(e) => return Some(Err(e)),
-    };
-
-    // 4. Check if eval server is ready — try daemon first, fall back to ready file
+    // 3. Check if eval server is ready (quick check before showing script)
     let godot_dir = project_root.join(".godot");
     let ready_path = godot_dir.join("gd-eval-ready");
 
@@ -491,82 +478,41 @@ fn try_live_eval(
         return None;
     }
 
-    // 5. Show the script being sent with numbered lines and syntax highlighting
+    // 4. Show the script being sent with syntax highlighting
     if !json_mode {
         print_highlighted_script(&script);
     }
 
-    // Generate a unique request ID to avoid stale result issues on WSL
-    let eval_id = format!(
-        "{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis()
-    );
-    let tagged_script = format!("# eval-id: {eval_id}\n{script}");
-
-    let request_path = godot_dir.join("gd-eval-request.gd");
-    if let Err(e) = std::fs::write(&request_path, &tagged_script) {
-        return Some(Err(miette!("Failed to write eval request: {e}")));
-    }
-
-    // Poll for the ID-specific result file
-    let result_path = godot_dir.join(format!("gd-eval-result-{eval_id}.json"));
-    let poll_interval = Duration::from_millis(50);
-    let start = std::time::Instant::now();
-
-    loop {
-        if result_path.is_file() {
-            // Read and delete the result
-            let data = match std::fs::read_to_string(&result_path) {
-                Ok(d) => d,
-                Err(e) => return Some(Err(miette!("Failed to read eval result: {e}"))),
-            };
-            let _ = std::fs::remove_file(&result_path);
-
-            match serde_json::from_str::<LiveEvalResult>(&data) {
-                Ok(eval_result) => {
-                    if json_mode {
-                        let out = EvalOutput {
-                            stdout: eval_result.result.clone().unwrap_or_default(),
-                            stderr: eval_result.error.clone(),
-                            exit_code: i32::from(!eval_result.error.is_empty()),
-                            errors: vec![],
-                        };
-                        println!("{}", serde_json::to_string_pretty(&out).unwrap());
-                        if !eval_result.error.is_empty() {
-                            std::process::exit(1);
-                        }
-                    } else if !eval_result.error.is_empty() {
-                        eprintln!("{} {}", "error:".red().bold(), eval_result.error);
-                        std::process::exit(1);
-                    } else if let Some(ref result) = eval_result.result {
-                        println!("{result}");
-                    }
-                    return Some(Ok(()));
-                }
-                Err(e) => return Some(Err(miette!("Failed to parse eval result: {e}"))),
+    // 5. Delegate to shared send_eval
+    match crate::core::live_eval::send_eval(&script, project_root, timeout) {
+        Ok(result) => {
+            if json_mode {
+                let out = EvalOutput {
+                    stdout: result,
+                    stderr: String::new(),
+                    exit_code: 0,
+                    errors: vec![],
+                };
+                println!("{}", serde_json::to_string_pretty(&out).unwrap());
+            } else if !result.is_empty() {
+                println!("{result}");
+            }
+            Some(Ok(()))
+        }
+        Err(e) => {
+            if json_mode {
+                let out = EvalOutput {
+                    stdout: String::new(),
+                    stderr: e.to_string(),
+                    exit_code: 1,
+                    errors: vec![],
+                };
+                println!("{}", serde_json::to_string_pretty(&out).unwrap());
+                std::process::exit(1);
+            } else {
+                Some(Err(e))
             }
         }
-
-        // Check if the eval server is still alive
-        if !godot_dir.join("gd-eval-ready").is_file() {
-            // Clean up the request file if server died
-            let _ = std::fs::remove_file(&request_path);
-            return Some(Err(miette!("Eval server exited before returning a result")));
-        }
-
-        if start.elapsed() >= timeout {
-            // Clean up the request file on timeout
-            let _ = std::fs::remove_file(&request_path);
-            return Some(Err(miette!(
-                "Timed out waiting for eval result ({}s)",
-                timeout.as_secs()
-            )));
-        }
-
-        std::thread::sleep(poll_interval);
     }
 }
 

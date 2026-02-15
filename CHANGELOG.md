@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.13] - 2026-02-15
+
+### Added
+- **Context-aware dot-completions** — typing `self.`, `sprite.`, or `Vector2.` now returns only members of the receiver type instead of the full 500+ global list. Resolves `self`/`super`, typed variables (top-level and local), function parameters, engine classes, builtin types, and workspace class names.
+- **ClassDB properties** — extracted 4055 properties from Godot's `extension_api.json` into the class database. New `class_properties()` walks inheritance. Dot-completions show both methods and properties.
+- **Human-readable LSP query output** — `gd lsp references/definition/hover/completions/symbols` now default to `--format human` with colored, tabular output. Use `--format json` for machine-readable output.
+- **Enum member hover** — hovering over enum members shows computed values (e.g. `Color.RED = 0`), handles explicit and implicit value calculation.
+- **Keyword hover** — hovering on `var`, `func`, `const`, `signal`, `class`, `enum` keywords (not just the name) now shows the declaration.
+- **Input automation commands** — `gd debug click/press/key/type/wait/screenshot` for game input automation via live eval (experimental).
+- **Shared live eval module** — extracted `send_eval()` to `src/core/live_eval.rs` for reuse by eval and input commands.
+- **Completions `--kind` filter** — filter completion results by kind (function, method, variable, property, etc.).
+
 ## [0.2.12] - 2026-02-15
 
 ### Added

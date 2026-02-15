@@ -55,16 +55,25 @@ pub enum LspCommand {
         /// Filter results to a specific class (requires --name)
         #[arg(long, requires = "name")]
         class: Option<String>,
+        /// Output format: json or human (default: human)
+        #[arg(long, default_value = "human")]
+        format: String,
     },
     /// Go to the definition of a symbol
     Definition {
         #[command(flatten)]
         pos: QueryPositionArgs,
+        /// Output format: json or human (default: human)
+        #[arg(long, default_value = "human")]
+        format: String,
     },
     /// Show hover information for a symbol
     Hover {
         #[command(flatten)]
         pos: QueryPositionArgs,
+        /// Output format: json or human (default: human)
+        #[arg(long, default_value = "human")]
+        format: String,
     },
     /// List completions at a position
     Completions {
@@ -73,6 +82,12 @@ pub enum LspCommand {
         /// Maximum number of results to return
         #[arg(long)]
         limit: Option<usize>,
+        /// Filter by kind (e.g. function, method, variable, property, constant, class, enum, enum_member, event, keyword)
+        #[arg(long)]
+        kind: Option<String>,
+        /// Output format: json or human (default: human)
+        #[arg(long, default_value = "human")]
+        format: String,
     },
     /// List available code actions at a position
     CodeActions {
@@ -92,6 +107,9 @@ pub enum LspCommand {
         /// Filter by symbol kind (repeatable, comma-separated: function, method, variable, class, constant, enum, event; aliases: field/property = variable+field)
         #[arg(long)]
         kind: Vec<String>,
+        /// Output format: json or human (default: human)
+        #[arg(long, default_value = "human")]
+        format: String,
     },
     /// View lines from a GDScript file (with optional line range)
     View {
@@ -477,6 +495,123 @@ pub struct QueryPositionArgs {
     pub column: usize,
 }
 
+fn print_references_human(result: &crate::lsp::query::ReferencesOutput) {
+    use owo_colors::OwoColorize;
+    println!(
+        "{} ({} reference{})",
+        result.symbol.bold(),
+        result.references.len(),
+        if result.references.len() == 1 {
+            ""
+        } else {
+            "s"
+        }
+    );
+    for r in &result.references {
+        println!(
+            "  {}:{}:{}  {}",
+            r.file.cyan(),
+            r.line,
+            r.column,
+            r.context.dimmed()
+        );
+    }
+}
+
+fn print_definition_human(result: &crate::lsp::query::DefinitionOutput) {
+    use owo_colors::OwoColorize;
+    println!(
+        "{} {} {}:{}:{}",
+        result.symbol.bold(),
+        "→".dimmed(),
+        result.file.cyan(),
+        result.line,
+        result.column
+    );
+}
+
+fn print_definition_from_json(val: &serde_json::Value) {
+    use owo_colors::OwoColorize;
+    let symbol = val.get("symbol").and_then(|v| v.as_str()).unwrap_or("?");
+    let file = val.get("file").and_then(|v| v.as_str()).unwrap_or("?");
+    let line = val
+        .get("line")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    let col = val
+        .get("column")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    println!(
+        "{} {} {}:{line}:{col}",
+        symbol.bold(),
+        "→".dimmed(),
+        file.cyan()
+    );
+}
+
+fn print_completions_human(items: &[crate::lsp::query::CompletionOutput]) {
+    use owo_colors::OwoColorize;
+    if items.is_empty() {
+        println!("  (no completions)");
+        return;
+    }
+    let max_kind = items.iter().map(|s| s.kind.len()).max().unwrap_or(0);
+    let max_label = items.iter().map(|s| s.label.len()).max().unwrap_or(0);
+
+    for item in items {
+        let kind_colored = color_kind(&item.kind, max_kind);
+        let detail = item
+            .detail
+            .as_deref()
+            .map_or(String::new(), |d| format!("  {}", d.dimmed()));
+        println!(
+            "  {kind_colored}  {:width$}{detail}",
+            item.label.bold(),
+            width = max_label,
+        );
+    }
+}
+
+fn color_kind(kind: &str, width: usize) -> String {
+    use owo_colors::OwoColorize;
+    let padded = format!("{kind:width$}");
+    match kind {
+        "function" | "method" => padded.cyan().to_string(),
+        "constant" => padded.yellow().to_string(),
+        "variable" | "property" => padded.blue().to_string(),
+        "event" => padded.magenta().to_string(),
+        "enum" | "enum_member" => padded.green().to_string(),
+        "class" => padded.red().to_string(),
+        "keyword" => padded.dimmed().to_string(),
+        _ => padded,
+    }
+}
+
+fn print_symbols_human(symbols: &[crate::lsp::query::SymbolOutput]) {
+    use owo_colors::OwoColorize;
+    if symbols.is_empty() {
+        println!("  (no symbols)");
+        return;
+    }
+    let max_kind = symbols.iter().map(|s| s.kind.len()).max().unwrap_or(0);
+    let max_name = symbols.iter().map(|s| s.name.len()).max().unwrap_or(0);
+
+    for s in symbols {
+        let kind_colored = color_kind(&s.kind, max_kind);
+        let detail = s
+            .detail
+            .as_deref()
+            .map_or(String::new(), |d| format!("  {}", d.dimmed()));
+        println!(
+            "  {kind_colored}  {:width$}  L{}{detail}",
+            s.name.bold(),
+            s.line,
+            width = max_name,
+        );
+    }
+}
+
 /// Parse a range string like "5-20" into (start, end) line numbers.
 fn parse_range(range: &str) -> Result<(usize, usize)> {
     let parts: Vec<&str> = range.splitn(2, '-').collect();
@@ -580,6 +715,7 @@ pub fn exec(args: LspArgs) -> Result<()> {
             line,
             column,
             class,
+            format,
         } => {
             let result = if let Some(ref name) = name {
                 crate::lsp::query::query_references_by_name(
@@ -596,11 +732,16 @@ pub fn exec(args: LspArgs) -> Result<()> {
                     .ok_or_else(|| miette::miette!("--column is required when not using --name"))?;
                 crate::lsp::query::query_references(&file, line, column)?
             };
-            let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
-            println!("{json}");
+            if format == "json" {
+                let j =
+                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+                println!("{j}");
+            } else {
+                print_references_human(&result);
+            }
             Ok(())
         }
-        LspCommand::Definition { pos } => {
+        LspCommand::Definition { pos, format } => {
             // Try daemon for rich Godot results
             if !args.no_godot_proxy
                 && let Some(result) = crate::lsp::daemon_client::query_daemon(
@@ -609,20 +750,30 @@ pub fn exec(args: LspArgs) -> Result<()> {
                     None,
                 )
             {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?
-                );
+                if format == "json" {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&result)
+                            .map_err(|e| miette::miette!("{e}"))?
+                    );
+                } else {
+                    print_definition_from_json(&result);
+                }
                 return Ok(());
             }
             // Fallback: static analysis only
             let result =
                 crate::lsp::query::query_definition(&pos.file, pos.line, pos.column, None)?;
-            let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
-            println!("{json}");
+            if format == "json" {
+                let j =
+                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+                println!("{j}");
+            } else {
+                print_definition_human(&result);
+            }
             Ok(())
         }
-        LspCommand::Hover { pos } => {
+        LspCommand::Hover { pos, format } => {
             // Try daemon for rich Godot results
             if !args.no_godot_proxy
                 && let Some(result) = crate::lsp::daemon_client::query_daemon(
@@ -631,19 +782,34 @@ pub fn exec(args: LspArgs) -> Result<()> {
                     None,
                 )
             {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?
-                );
+                if format == "json" {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&result)
+                            .map_err(|e| miette::miette!("{e}"))?
+                    );
+                } else if let Some(content) = result.get("content").and_then(|v| v.as_str()) {
+                    println!("{content}");
+                }
                 return Ok(());
             }
             // Fallback: static analysis only
             let result = crate::lsp::query::query_hover(&pos.file, pos.line, pos.column, None)?;
-            let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
-            println!("{json}");
+            if format == "json" {
+                let j =
+                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+                println!("{j}");
+            } else {
+                println!("{}", result.content);
+            }
             Ok(())
         }
-        LspCommand::Completions { pos, limit } => {
+        LspCommand::Completions {
+            pos,
+            limit,
+            kind,
+            format,
+        } => {
             // Try daemon for rich Godot results
             if !args.no_godot_proxy
                 && let Some(result) = crate::lsp::daemon_client::query_daemon(
@@ -657,6 +823,13 @@ pub fn exec(args: LspArgs) -> Result<()> {
                 } else {
                     vec![result]
                 };
+                if let Some(ref filter) = kind {
+                    items.retain(|v| {
+                        v.get("kind")
+                            .and_then(serde_json::Value::as_str)
+                            .is_some_and(|k| k == filter)
+                    });
+                }
                 if let Some(n) = limit {
                     items.truncate(n);
                 }
@@ -669,11 +842,19 @@ pub fn exec(args: LspArgs) -> Result<()> {
             // Fallback: static analysis only
             let mut result =
                 crate::lsp::query::query_completions(&pos.file, pos.line, pos.column, None)?;
+            if let Some(ref filter) = kind {
+                result.retain(|c| c.kind == *filter);
+            }
             if let Some(n) = limit {
                 result.truncate(n);
             }
-            let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
-            println!("{json}");
+            if format == "json" {
+                let j =
+                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+                println!("{j}");
+            } else {
+                print_completions_human(&result);
+            }
             Ok(())
         }
         LspCommand::CodeActions { pos } => {
@@ -683,7 +864,7 @@ pub fn exec(args: LspArgs) -> Result<()> {
             Ok(())
         }
         LspCommand::Diagnostics { paths } => crate::lsp::query::query_diagnostics(&paths),
-        LspCommand::Symbols { file, kind } => {
+        LspCommand::Symbols { file, kind, format } => {
             let mut result = crate::lsp::query::query_symbols(&file)?;
             let kind_filter: Vec<String> = kind
                 .iter()
@@ -697,8 +878,13 @@ pub fn exec(args: LspArgs) -> Result<()> {
             if !kind_filter.is_empty() {
                 result.retain(|s| kind_filter.iter().any(|k| k == &s.kind));
             }
-            let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
-            println!("{json}");
+            if format == "json" {
+                let j =
+                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+                println!("{j}");
+            } else {
+                print_symbols_human(&result);
+            }
             Ok(())
         }
         LspCommand::View {

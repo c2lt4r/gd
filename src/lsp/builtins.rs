@@ -1960,6 +1960,15 @@ const BUILTIN_MEMBER_DOCS: &[BuiltinMember] = &[
     },
 ];
 
+/// Return all built-in members for the given exact class name.
+/// Caller should walk the inheritance chain and call this per ancestor.
+pub fn members_for_class(class: &str) -> Vec<&'static BuiltinMember> {
+    BUILTIN_MEMBER_DOCS
+        .iter()
+        .filter(|m| m.class == class)
+        .collect()
+}
+
 /// Look up a built-in member by name (e.g. `global_position`, `move_and_slide`).
 /// Returns the first match — most commonly used class listed first.
 pub fn lookup_member(name: &str) -> Option<&'static BuiltinMember> {
@@ -2108,5 +2117,22 @@ mod tests {
         assert!(hover.contains("queue_free"));
         assert!(hover.contains("method"));
         assert!(hover.contains("class-node-method-queue-free"));
+    }
+
+    #[test]
+    fn members_for_class_node2d() {
+        let members = members_for_class("Node2D");
+        let names: Vec<&str> = members.iter().map(|m| m.name).collect();
+        assert!(names.contains(&"position"));
+        assert!(names.contains(&"global_position"));
+        assert!(names.contains(&"look_at"));
+        // Should NOT include Node members (exact class match)
+        assert!(!names.contains(&"add_child"));
+    }
+
+    #[test]
+    fn members_for_class_empty() {
+        let members = members_for_class("NonExistentClass");
+        assert!(members.is_empty());
     }
 }

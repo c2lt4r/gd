@@ -1,6 +1,7 @@
 mod args;
 mod camera;
 mod control;
+mod input;
 mod live;
 mod misc;
 mod properties;
@@ -46,6 +47,14 @@ pub fn exec(args: &DebugArgs) -> Result<()> {
         DebugCommand::Profiler(ref a) => misc::cmd_profiler(a),
         DebugCommand::SaveNode(ref a) => misc::cmd_save_node(a),
         DebugCommand::ReloadCached(ref a) => misc::cmd_reload_cached(a),
+
+        // Input automation (eval-based)
+        DebugCommand::Click(ref a) => input::cmd_click(a),
+        DebugCommand::Press(ref a) => input::cmd_press(a),
+        DebugCommand::Key(ref a) => input::cmd_key(a),
+        DebugCommand::Type(ref a) => input::cmd_type_text(a),
+        DebugCommand::Wait(ref a) => input::cmd_wait(a),
+        DebugCommand::Screenshot(ref a) => camera::cmd_screenshot(a),
 
         // Subcommand groups
         DebugCommand::Live(ref a) => exec_live(a),

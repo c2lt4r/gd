@@ -77,6 +77,20 @@ pub enum DebugCommand {
     #[command(name = "reload-cached")]
     ReloadCached(ReloadCachedArgs),
 
+    // ── Input automation (requires `gd run --eval`) ──
+    /// Click at coordinates or on a named Control node
+    Click(ClickArgs),
+    /// Trigger a Godot input action (e.g. "ui_accept", "jump")
+    Press(PressArgs),
+    /// Press a keyboard key
+    Key(KeyArgs),
+    /// Type a string of text as key events
+    Type(TypeTextArgs),
+    /// Wait for a duration (between input actions)
+    Wait(WaitArgs),
+    /// Take a screenshot (alias for `camera screenshot`)
+    Screenshot(ScreenshotArgs),
+
     // ── Subcommand groups ──
     /// Live editing commands (requires `live set-root` first)
     Live(LiveArgs),
@@ -725,6 +739,70 @@ pub struct ServerArgs {
     /// Timeout in seconds when using --wait (default: 60)
     #[arg(long, default_value = "60")]
     pub timeout: u64,
+}
+
+// ── Input automation args ─────────────────────────────────────────────
+
+#[derive(Args)]
+pub struct ClickArgs {
+    /// Viewport coordinates (e.g. "100,200")
+    #[arg(long)]
+    pub pos: Option<String>,
+    /// Node name (find_child) or path (/root/UI/Button)
+    #[arg(long)]
+    pub node: Option<String>,
+    /// Mouse button: left, right, or middle
+    #[arg(long, default_value = "left")]
+    pub button: String,
+    /// Double-click
+    #[arg(long)]
+    pub double: bool,
+    /// Output format
+    #[arg(long, default_value = "text")]
+    pub format: OutputFormat,
+}
+
+#[derive(Args)]
+pub struct PressArgs {
+    /// Godot input action name (e.g. "ui_accept", "jump")
+    #[arg(long)]
+    pub action: String,
+    /// Output format
+    #[arg(long, default_value = "text")]
+    pub format: OutputFormat,
+}
+
+#[derive(Args)]
+pub struct KeyArgs {
+    /// Key name (e.g. space, enter, a, f1, shift)
+    #[arg(long)]
+    pub key: String,
+    /// Output format
+    #[arg(long, default_value = "text")]
+    pub format: OutputFormat,
+}
+
+#[derive(Args)]
+pub struct TypeTextArgs {
+    /// Text to type as key events
+    #[arg(long)]
+    pub text: String,
+    /// Output format
+    #[arg(long, default_value = "text")]
+    pub format: OutputFormat,
+}
+
+#[derive(Args)]
+pub struct WaitArgs {
+    /// Wait N frames (~N*16.67ms)
+    #[arg(long)]
+    pub frames: Option<u64>,
+    /// Wait N seconds
+    #[arg(long)]
+    pub seconds: Option<f64>,
+    /// Output format
+    #[arg(long, default_value = "text")]
+    pub format: OutputFormat,
 }
 
 #[derive(Clone, Debug)]

@@ -142,12 +142,365 @@ const LIFECYCLE_METHODS: &[(&str, &str)] = &[
     ),
 ];
 
+// ── Dot-context detection ───────────────────────────────────────────
+
+/// Parsed dot-completion context: `receiver.prefix` where cursor is after the dot.
+struct DotContext {
+    /// The identifier before the dot (e.g. `"self"`, `"sprite"`, `"Vector2"`).
+    receiver: String,
+    /// Partial text typed after the dot (for prefix filtering).
+    prefix: String,
+}
+
+/// Detect if the cursor is in a dot-completion context by examining the text
+/// before the cursor on the current line.
+fn detect_dot_context(source: &str, position: Position) -> Option<DotContext> {
+    let line = source.lines().nth(position.line as usize)?;
+    let col = position.character as usize;
+    let before = if col <= line.len() {
+        &line[..col]
+    } else {
+        line
+    };
+
+    // Find the last '.' in the text before cursor
+    let dot_pos = before.rfind('.')?;
+    let after_dot = &before[dot_pos + 1..];
+    let prefix = after_dot.trim_start().to_string();
+
+    // Extract the receiver identifier before the dot
+    let before_dot = before[..dot_pos].trim_end();
+    if before_dot.is_empty() {
+        return None;
+    }
+
+    // Walk backwards to find the receiver identifier (letters, digits, underscore)
+    let receiver_start = before_dot
+        .rfind(|c: char| !c.is_alphanumeric() && c != '_')
+        .map_or(0, |i| i + 1);
+    let receiver = &before_dot[receiver_start..];
+    if receiver.is_empty() {
+        return None;
+    }
+
+    Some(DotContext {
+        receiver: receiver.to_string(),
+        prefix,
+    })
+}
+
+// ── Receiver type resolution ────────────────────────────────────────
+
+/// Resolve the type of a dot-completion receiver.
+/// Returns a Godot class name (e.g. `"Node2D"`, `"CharacterBody2D"`).
+fn resolve_receiver_type(
+    receiver: &str,
+    source: &str,
+    position: Position,
+    workspace: Option<&WorkspaceIndex>,
+) -> Option<String> {
+    // 1. self / super → file's extends class
+    if receiver == "self" || receiver == "super" {
+        if let Ok(tree) = crate::core::parser::parse(source) {
+            return find_extends_class(tree.root_node(), source);
+        }
+        return None;
+    }
+
+    // 2. Engine class name (for static-style access like `Node2D.`, `CharacterBody2D.`)
+    if crate::class_db::class_exists(receiver) {
+        return Some(receiver.to_string());
+    }
+
+    // 2b. Built-in types (Vector2, String, Array, etc.) — not in ClassDB but have members
+    if BUILTIN_TYPES.contains(&receiver) || !super::builtins::members_for_class(receiver).is_empty()
+    {
+        return Some(receiver.to_string());
+    }
+
+    // 3. Workspace: check class_name matches (autoloads, user classes like `GameManager.`)
+    if let Some(ws) = workspace {
+        for (_, content) in ws.all_files() {
+            if let Ok(tree) = crate::core::parser::parse(&content)
+                && find_class_name(tree.root_node(), &content).as_deref() == Some(receiver)
+            {
+                return Some(receiver.to_string());
+            }
+        }
+    }
+
+    // 4. Top-level typed vars from the current file's symbol table
+    if let Ok(tree) = crate::core::parser::parse(source) {
+        // Check top-level variable declarations
+        if let Some(ty) = find_variable_type(tree.root_node(), source, receiver) {
+            return Some(ty);
+        }
+
+        // 5. Local vars/params in enclosing function
+        if let Some(ty) = find_local_variable_type(tree.root_node(), source, position, receiver) {
+            return Some(ty);
+        }
+    }
+
+    None
+}
+
+/// Find the type annotation of a top-level variable by name.
+fn find_variable_type(root: tree_sitter::Node, source: &str, var_name: &str) -> Option<String> {
+    let bytes = source.as_bytes();
+    let mut cursor = root.walk();
+    for child in root.children(&mut cursor) {
+        if child.kind() == "variable_statement"
+            && let Some(name_node) = child.child_by_field_name("name")
+            && name_node.utf8_text(bytes).ok() == Some(var_name)
+        {
+            return extract_type_from_variable(&child, source);
+        }
+    }
+    None
+}
+
+/// Extract a type annotation from a variable_statement or typed_parameter.
+fn extract_type_from_variable(node: &tree_sitter::Node, source: &str) -> Option<String> {
+    node.child_by_field_name("type")?
+        .utf8_text(source.as_bytes())
+        .ok()
+        .map(std::string::ToString::to_string)
+}
+
+/// Find the type of a local variable or parameter within the function enclosing `position`.
+fn find_local_variable_type(
+    root: tree_sitter::Node,
+    source: &str,
+    position: Position,
+    var_name: &str,
+) -> Option<String> {
+    let bytes = source.as_bytes();
+    let point = tree_sitter::Point::new(position.line as usize, position.character as usize);
+
+    let func_node = find_enclosing_function(root, point)?;
+
+    // Search the function body for variable_statement with matching name + type
+    if let Some(body) = func_node.child_by_field_name("body") {
+        let mut cursor = body.walk();
+        for child in body.children(&mut cursor) {
+            if child.kind() == "variable_statement"
+                && let Some(name_node) = child.child_by_field_name("name")
+                && name_node.utf8_text(bytes).ok() == Some(var_name)
+                && let Some(ty) = extract_type_from_variable(&child, source)
+            {
+                return Some(ty);
+            }
+        }
+    }
+
+    // Check function parameters (typed_parameter has no `name` field —
+    // the identifier is the first named child)
+    if let Some(params) = func_node.child_by_field_name("parameters") {
+        let mut pcursor = params.walk();
+        for param in params.children(&mut pcursor) {
+            if param.kind() == "typed_parameter"
+                && let Some(first) = param.named_child(0)
+                && first.utf8_text(bytes).ok() == Some(var_name)
+            {
+                return param
+                    .child_by_field_name("type")?
+                    .utf8_text(bytes)
+                    .ok()
+                    .map(std::string::ToString::to_string);
+            }
+        }
+    }
+
+    None
+}
+
+/// Find the function definition node that encloses the given point.
+fn find_enclosing_function(
+    root: tree_sitter::Node,
+    point: tree_sitter::Point,
+) -> Option<tree_sitter::Node> {
+    let mut cursor = root.walk();
+    root.children(&mut cursor).find(|child| {
+        (child.kind() == "function_definition" || child.kind() == "constructor_definition")
+            && child.start_position().row <= point.row
+            && child.end_position().row >= point.row
+    })
+}
+
+// ── Dot-completion member collection ────────────────────────────────
+
+/// Provide dot-completions for a resolved class.
+fn provide_dot_completions(
+    source: &str,
+    position: Position,
+    dot_ctx: &DotContext,
+    workspace: Option<&WorkspaceIndex>,
+) -> Vec<CompletionItem> {
+    let Some(class_name) = resolve_receiver_type(&dot_ctx.receiver, source, position, workspace)
+    else {
+        return Vec::new();
+    };
+
+    let prefix = &dot_ctx.prefix;
+    let mut items = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    // For `self.`, include current file's declarations
+    if dot_ctx.receiver == "self"
+        && let Ok(tree) = crate::core::parser::parse(source)
+    {
+        collect_filtered_file_symbols(tree.root_node(), source, prefix, &mut seen, &mut items);
+    }
+
+    // For user-defined class names, include that class's file declarations
+    if dot_ctx.receiver != "self"
+        && dot_ctx.receiver != "super"
+        && let Some(ws) = workspace
+    {
+        collect_user_class_symbols(ws, &class_name, prefix, &mut seen, &mut items);
+    }
+
+    collect_class_db_dot_items(&class_name, prefix, &mut seen, &mut items);
+    collect_builtin_dot_items(&class_name, prefix, &mut seen, &mut items);
+
+    items
+}
+
+/// Collect file symbols filtered by prefix into items, tracking seen labels.
+fn collect_filtered_file_symbols(
+    root: tree_sitter::Node,
+    source: &str,
+    prefix: &str,
+    seen: &mut std::collections::HashSet<String>,
+    items: &mut Vec<CompletionItem>,
+) {
+    let mut file_items = Vec::new();
+    collect_file_symbols(root, source, &mut file_items);
+    for item in file_items {
+        if (prefix.is_empty() || item.label.starts_with(prefix)) && seen.insert(item.label.clone())
+        {
+            items.push(item);
+        }
+    }
+}
+
+/// Find and collect symbols from a workspace file matching a class_name.
+fn collect_user_class_symbols(
+    ws: &WorkspaceIndex,
+    class_name: &str,
+    prefix: &str,
+    seen: &mut std::collections::HashSet<String>,
+    items: &mut Vec<CompletionItem>,
+) {
+    for (_, content) in ws.all_files() {
+        if let Ok(tree) = crate::core::parser::parse(&content)
+            && find_class_name(tree.root_node(), &content).as_deref() == Some(class_name)
+        {
+            collect_filtered_file_symbols(tree.root_node(), &content, prefix, seen, items);
+            break;
+        }
+    }
+}
+
+/// Collect ClassDB methods and properties for dot-completion.
+fn collect_class_db_dot_items(
+    class_name: &str,
+    prefix: &str,
+    seen: &mut std::collections::HashSet<String>,
+    items: &mut Vec<CompletionItem>,
+) {
+    for (method_name, ret_type, owner_class) in crate::class_db::class_methods(class_name) {
+        if (!prefix.is_empty() && !method_name.starts_with(prefix))
+            || !seen.insert(method_name.to_string())
+        {
+            continue;
+        }
+        let documentation = member_doc(owner_class, method_name);
+        items.push(CompletionItem {
+            label: method_name.to_string(),
+            kind: Some(CompletionItemKind::METHOD),
+            detail: Some(format!("{owner_class}.{method_name}() -> {ret_type}")),
+            documentation,
+            ..Default::default()
+        });
+    }
+
+    for (prop_name, prop_type, owner_class) in crate::class_db::class_properties(class_name) {
+        if (!prefix.is_empty() && !prop_name.starts_with(prefix))
+            || !seen.insert(prop_name.to_string())
+        {
+            continue;
+        }
+        let documentation = member_doc(owner_class, prop_name);
+        items.push(CompletionItem {
+            label: prop_name.to_string(),
+            kind: Some(CompletionItemKind::PROPERTY),
+            detail: Some(format!("{prop_type} {owner_class}.{prop_name}")),
+            documentation,
+            ..Default::default()
+        });
+    }
+}
+
+/// Collect builtin member docs not already in ClassDB (e.g. Vector2/String/Array methods).
+fn collect_builtin_dot_items(
+    class_name: &str,
+    prefix: &str,
+    seen: &mut std::collections::HashSet<String>,
+    items: &mut Vec<CompletionItem>,
+) {
+    let mut cur = class_name;
+    loop {
+        for member in super::builtins::members_for_class(cur) {
+            if (!prefix.is_empty() && !member.name.starts_with(prefix))
+                || !seen.insert(member.name.to_string())
+            {
+                continue;
+            }
+            let kind = match member.kind {
+                super::builtins::MemberKind::Property => CompletionItemKind::PROPERTY,
+                super::builtins::MemberKind::Method => CompletionItemKind::METHOD,
+            };
+            items.push(CompletionItem {
+                label: member.name.to_string(),
+                kind: Some(kind),
+                detail: Some(member.brief.to_string()),
+                documentation: Some(Documentation::MarkupContent(MarkupContent {
+                    kind: MarkupKind::Markdown,
+                    value: member.description.to_string(),
+                })),
+                ..Default::default()
+            });
+        }
+        match crate::class_db::parent_class(cur) {
+            Some(parent) => cur = parent,
+            None => break,
+        }
+    }
+}
+
+/// Build documentation from builtin member lookup.
+fn member_doc(class: &str, name: &str) -> Option<Documentation> {
+    super::builtins::lookup_member_for(class, name).map(|doc| {
+        Documentation::MarkupContent(MarkupContent {
+            kind: MarkupKind::Markdown,
+            value: doc.description.to_string(),
+        })
+    })
+}
+
 /// Provide completion items at the given position.
 pub fn provide_completions(
     source: &str,
-    _position: Position,
+    position: Position,
     workspace: Option<&WorkspaceIndex>,
 ) -> Vec<CompletionItem> {
+    // Dot-completion: return only members of the receiver type
+    if let Some(dot_ctx) = detect_dot_context(source, position) {
+        return provide_dot_completions(source, position, &dot_ctx, workspace);
+    }
+
     let mut items = Vec::new();
 
     // Keywords
@@ -233,6 +586,22 @@ pub fn provide_completions(
     items
 }
 
+/// Find the `class_name` declaration in a file (e.g. `class_name GameManager`).
+fn find_class_name(root: tree_sitter::Node, source: &str) -> Option<String> {
+    let mut cursor = root.walk();
+    for child in root.children(&mut cursor) {
+        if child.kind() == "class_name_statement"
+            && let Some(name_node) = child.child_by_field_name("name")
+        {
+            return name_node
+                .utf8_text(source.as_bytes())
+                .ok()
+                .map(std::string::ToString::to_string);
+        }
+    }
+    None
+}
+
 /// Find the class name from the `extends` statement at the top of the file.
 fn find_extends_class(root: tree_sitter::Node, source: &str) -> Option<String> {
     let mut cursor = root.walk();
@@ -316,9 +685,16 @@ fn collect_file_symbols(node: tree_sitter::Node, source: &str, items: &mut Vec<C
             }
             "variable_statement" => {
                 if let Some(name) = child_name(&child, source) {
+                    // Top-level vars are properties; vars inside functions are variables
+                    let kind = if child.parent().is_some_and(|p| p.kind() == "source") {
+                        CompletionItemKind::PROPERTY
+                    } else {
+                        CompletionItemKind::VARIABLE
+                    };
                     items.push(CompletionItem {
                         label: name.to_string(),
-                        kind: Some(CompletionItemKind::VARIABLE),
+                        kind: Some(kind),
+                        detail: Some(build_variable_detail(&child, source)),
                         documentation: extract_doc_comment(&child, source),
                         ..Default::default()
                     });
@@ -329,6 +705,7 @@ fn collect_file_symbols(node: tree_sitter::Node, source: &str, items: &mut Vec<C
                     items.push(CompletionItem {
                         label: name.to_string(),
                         kind: Some(CompletionItemKind::CONSTANT),
+                        detail: Some(build_const_detail(&child, source)),
                         documentation: extract_doc_comment(&child, source),
                         ..Default::default()
                     });
@@ -339,6 +716,7 @@ fn collect_file_symbols(node: tree_sitter::Node, source: &str, items: &mut Vec<C
                     items.push(CompletionItem {
                         label: name.to_string(),
                         kind: Some(CompletionItemKind::EVENT),
+                        detail: Some(build_signal_detail(&child, source)),
                         documentation: extract_doc_comment(&child, source),
                         ..Default::default()
                     });
@@ -363,6 +741,8 @@ fn collect_file_symbols(node: tree_sitter::Node, source: &str, items: &mut Vec<C
                         ..Default::default()
                     });
                 }
+                // Also add individual enum members
+                collect_enum_members(&child, source, items);
             }
             _ => {}
         }
@@ -381,10 +761,11 @@ fn collect_workspace_symbols(
         match child.kind() {
             "function_definition" => {
                 if let Some(name) = child_name(&child, source) {
+                    let sig = build_function_detail(&child, source);
                     items.push(CompletionItem {
                         label: name.to_string(),
                         kind: Some(CompletionItemKind::FUNCTION),
-                        detail: Some(file_name.to_string()),
+                        detail: Some(format!("{sig}  ({file_name})")),
                         documentation: extract_doc_comment(&child, source),
                         ..Default::default()
                     });
@@ -401,16 +782,53 @@ fn collect_workspace_symbols(
                     });
                 }
             }
+            "variable_statement" => {
+                if let Some(name) = child_name(&child, source) {
+                    let var_detail = build_variable_detail(&child, source);
+                    items.push(CompletionItem {
+                        label: name.to_string(),
+                        kind: Some(CompletionItemKind::PROPERTY),
+                        detail: Some(format!("{var_detail}  ({file_name})")),
+                        documentation: extract_doc_comment(&child, source),
+                        ..Default::default()
+                    });
+                }
+            }
+            "const_statement" => {
+                if let Some(name) = child_name(&child, source) {
+                    let const_detail = build_const_detail(&child, source);
+                    items.push(CompletionItem {
+                        label: name.to_string(),
+                        kind: Some(CompletionItemKind::CONSTANT),
+                        detail: Some(format!("{const_detail}  ({file_name})")),
+                        documentation: extract_doc_comment(&child, source),
+                        ..Default::default()
+                    });
+                }
+            }
             "signal_statement" => {
                 if let Some(name) = child_name(&child, source) {
+                    let sig_detail = build_signal_detail(&child, source);
                     items.push(CompletionItem {
                         label: name.to_string(),
                         kind: Some(CompletionItemKind::EVENT),
+                        detail: Some(format!("{sig_detail}  ({file_name})")),
+                        documentation: extract_doc_comment(&child, source),
+                        ..Default::default()
+                    });
+                }
+            }
+            "enum_definition" => {
+                if let Some(name) = child_name(&child, source) {
+                    items.push(CompletionItem {
+                        label: name.to_string(),
+                        kind: Some(CompletionItemKind::ENUM),
                         detail: Some(file_name.to_string()),
                         documentation: extract_doc_comment(&child, source),
                         ..Default::default()
                     });
                 }
+                collect_enum_members(&child, source, items);
             }
             _ => {}
         }
@@ -420,6 +838,84 @@ fn collect_workspace_symbols(
 fn child_name<'a>(node: &tree_sitter::Node, source: &'a str) -> Option<&'a str> {
     let name_node = node.child_by_field_name("name")?;
     name_node.utf8_text(source.as_bytes()).ok()
+}
+
+/// Build detail string for a variable: `var name: Type` or `var name := value`.
+fn build_variable_detail(node: &tree_sitter::Node, source: &str) -> String {
+    let text = node.utf8_text(source.as_bytes()).unwrap_or("");
+    let first_line = text.lines().next().unwrap_or(text).trim();
+    first_line.to_string()
+}
+
+/// Build detail string for a constant: `const NAME: Type = value`.
+fn build_const_detail(node: &tree_sitter::Node, source: &str) -> String {
+    let text = node.utf8_text(source.as_bytes()).unwrap_or("");
+    let first_line = text.lines().next().unwrap_or(text).trim();
+    first_line.to_string()
+}
+
+/// Build detail string for a signal: `signal name(params)`.
+fn build_signal_detail(node: &tree_sitter::Node, source: &str) -> String {
+    let text = node.utf8_text(source.as_bytes()).unwrap_or("");
+    let first_line = text.lines().next().unwrap_or(text).trim();
+    first_line.to_string()
+}
+
+/// Collect individual enum members as `ENUM_MEMBER` completion items.
+fn collect_enum_members(
+    enum_node: &tree_sitter::Node,
+    source: &str,
+    items: &mut Vec<CompletionItem>,
+) {
+    let enum_name = enum_node
+        .child_by_field_name("name")
+        .and_then(|n| n.utf8_text(source.as_bytes()).ok());
+
+    let Some(body) = enum_node.child_by_field_name("body") else {
+        return;
+    };
+
+    let mut body_cursor = body.walk();
+    let mut index: i64 = 0;
+
+    for member in body.children(&mut body_cursor) {
+        if member.kind() != "enumerator" {
+            continue;
+        }
+        let Some(left) = member.child_by_field_name("left") else {
+            continue;
+        };
+        let Ok(member_name) = left.utf8_text(source.as_bytes()) else {
+            continue;
+        };
+
+        let value_str = if let Some(val) = member.child_by_field_name("right") {
+            let text = val.utf8_text(source.as_bytes()).unwrap_or("?");
+            if let Ok(v) = text.parse::<i64>() {
+                index = v + 1;
+            } else {
+                index += 1;
+            }
+            text.trim().to_string()
+        } else {
+            let v = index;
+            index += 1;
+            v.to_string()
+        };
+
+        let detail = match enum_name {
+            Some(name) => format!("{name}.{member_name} = {value_str}"),
+            None => format!("{member_name} = {value_str}"),
+        };
+
+        items.push(CompletionItem {
+            label: member_name.to_string(),
+            kind: Some(CompletionItemKind::ENUM_MEMBER),
+            detail: Some(detail),
+            documentation: extract_doc_comment(&member, source),
+            ..Default::default()
+        });
+    }
 }
 
 fn build_function_detail(node: &tree_sitter::Node, source: &str) -> String {
@@ -581,8 +1077,227 @@ func attack(target):
         let items = provide_completions(source, Position::new(0, 0), None);
         let health_item = items
             .iter()
-            .find(|i| i.label == "health" && i.kind == Some(CompletionItemKind::VARIABLE))
+            .find(|i| i.label == "health" && i.kind == Some(CompletionItemKind::PROPERTY))
             .unwrap();
         assert!(health_item.documentation.is_some());
+    }
+
+    #[test]
+    fn top_level_var_is_property_kind() {
+        let source = "var health: int = 100\n";
+        let items = provide_completions(source, Position::new(0, 0), None);
+        let health = items.iter().find(|i| i.label == "health").unwrap();
+        assert_eq!(health.kind, Some(CompletionItemKind::PROPERTY));
+    }
+
+    #[test]
+    fn variable_detail_shows_declaration() {
+        let source = "var speed: float = 5.0\n";
+        let items = provide_completions(source, Position::new(0, 0), None);
+        let speed = items.iter().find(|i| i.label == "speed").unwrap();
+        assert_eq!(speed.detail.as_deref(), Some("var speed: float = 5.0"));
+    }
+
+    #[test]
+    fn const_detail_shows_declaration() {
+        let source = "const MAX_HP: int = 100\n";
+        let items = provide_completions(source, Position::new(0, 0), None);
+        let item = items.iter().find(|i| i.label == "MAX_HP").unwrap();
+        assert_eq!(item.detail.as_deref(), Some("const MAX_HP: int = 100"));
+    }
+
+    #[test]
+    fn signal_detail_shows_params() {
+        let source = "signal health_changed(old: int, new_val: int)\n";
+        let items = provide_completions(source, Position::new(0, 0), None);
+        let item = items.iter().find(|i| i.label == "health_changed").unwrap();
+        let detail = item.detail.as_deref().unwrap();
+        assert!(detail.contains("health_changed"));
+        assert!(detail.contains("old: int"));
+    }
+
+    #[test]
+    fn enum_members_are_enum_member_kind() {
+        let source = "enum Color { RED, GREEN, BLUE }\n";
+        let items = provide_completions(source, Position::new(0, 0), None);
+        let red = items.iter().find(|i| i.label == "RED").unwrap();
+        assert_eq!(red.kind, Some(CompletionItemKind::ENUM_MEMBER));
+        assert_eq!(red.detail.as_deref(), Some("Color.RED = 0"));
+    }
+
+    #[test]
+    fn enum_member_with_explicit_value() {
+        let source = "enum Flags { A = 10, B, C }\n";
+        let items = provide_completions(source, Position::new(0, 0), None);
+        let a = items.iter().find(|i| i.label == "A").unwrap();
+        assert_eq!(a.detail.as_deref(), Some("Flags.A = 10"));
+        let b = items.iter().find(|i| i.label == "B").unwrap();
+        assert_eq!(b.detail.as_deref(), Some("Flags.B = 11"));
+    }
+
+    // ── Dot-completion tests ────────────────────────────────────────
+
+    #[test]
+    fn dot_context_self() {
+        let ctx = detect_dot_context("\tself.", Position::new(0, 6)).unwrap();
+        assert_eq!(ctx.receiver, "self");
+        assert_eq!(ctx.prefix, "");
+    }
+
+    #[test]
+    fn dot_context_self_with_prefix() {
+        let ctx = detect_dot_context("\tself.pos", Position::new(0, 10)).unwrap();
+        assert_eq!(ctx.receiver, "self");
+        assert_eq!(ctx.prefix, "pos");
+    }
+
+    #[test]
+    fn dot_context_variable() {
+        let ctx = detect_dot_context("\tplayer.move", Position::new(0, 13)).unwrap();
+        assert_eq!(ctx.receiver, "player");
+        assert_eq!(ctx.prefix, "move");
+    }
+
+    #[test]
+    fn dot_context_engine_class() {
+        let ctx = detect_dot_context("\tVector2.", Position::new(0, 10)).unwrap();
+        assert_eq!(ctx.receiver, "Vector2");
+        assert_eq!(ctx.prefix, "");
+    }
+
+    #[test]
+    fn dot_context_none_without_dot() {
+        assert!(detect_dot_context("\tvar x = 1", Position::new(0, 11)).is_none());
+    }
+
+    #[test]
+    fn self_dot_includes_file_symbols_excludes_keywords() {
+        let source =
+            "extends CharacterBody2D\nvar health: int = 100\nfunc run():\n\tself.\n\tpass\n";
+        // Cursor at end of `self.` on line 3
+        let items = provide_completions(source, Position::new(3, 6), None);
+        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        // File symbols should be present
+        assert!(
+            labels.contains(&"health"),
+            "should contain file var 'health'"
+        );
+        assert!(labels.contains(&"run"), "should contain file func 'run'");
+        // Engine methods from CharacterBody2D should be present
+        assert!(
+            labels.contains(&"move_and_slide"),
+            "should contain engine method 'move_and_slide'"
+        );
+        // Keywords/builtins should NOT be present
+        assert!(
+            !labels.contains(&"func"),
+            "should not contain keyword 'func'"
+        );
+        assert!(!labels.contains(&"var"), "should not contain keyword 'var'");
+        assert!(
+            !labels.contains(&"print"),
+            "should not contain builtin 'print'"
+        );
+        assert!(
+            !labels.contains(&"Vector2"),
+            "should not contain type 'Vector2'"
+        );
+    }
+
+    #[test]
+    fn self_dot_prefix_filters() {
+        let source =
+            "extends CharacterBody2D\nvar position_offset := 0\nfunc run():\n\tself.pos\n\tpass\n";
+        let items = provide_completions(source, Position::new(3, 9), None);
+        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        // position_offset matches prefix "pos"
+        assert!(labels.contains(&"position_offset"));
+        // add_child does NOT match prefix "pos"
+        assert!(!labels.contains(&"add_child"));
+    }
+
+    #[test]
+    fn typed_var_dot_completions() {
+        let source = "extends Node\nvar s: Sprite2D\nfunc run():\n\ts.\n\tpass\n";
+        let items = provide_completions(source, Position::new(3, 3), None);
+        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        // Sprite2D properties from ClassDB
+        assert!(
+            labels.contains(&"texture"),
+            "should contain Sprite2D property 'texture'"
+        );
+        assert!(
+            labels.contains(&"flip_h"),
+            "should contain Sprite2D property 'flip_h'"
+        );
+    }
+
+    #[test]
+    fn local_typed_var_in_function() {
+        let source = "extends Node\nfunc run():\n\tvar s: Sprite2D\n\ts.\n\tpass\n";
+        let items = provide_completions(source, Position::new(3, 3), None);
+        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(
+            labels.contains(&"texture"),
+            "should resolve local typed var"
+        );
+    }
+
+    #[test]
+    fn typed_param_in_function() {
+        let source = "extends Node\nfunc run(s: Sprite2D):\n\ts.\n\tpass\n";
+        let items = provide_completions(source, Position::new(2, 3), None);
+        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(
+            labels.contains(&"texture"),
+            "should resolve typed parameter"
+        );
+    }
+
+    #[test]
+    fn engine_class_dot_completions() {
+        let source = "extends Node\nfunc run():\n\tVector2.\n\tpass\n";
+        let items = provide_completions(source, Position::new(2, 9), None);
+        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        // Vector2 methods from builtins
+        assert!(
+            labels.contains(&"normalized"),
+            "should contain Vector2 method 'normalized'"
+        );
+    }
+
+    #[test]
+    fn non_dot_context_unchanged() {
+        let source = "extends Node2D\nfunc run():\n\tvar x = 1\n";
+        let items = provide_completions(source, Position::new(2, 10), None);
+        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        // Should have keywords and builtins
+        assert!(labels.contains(&"func"));
+        assert!(labels.contains(&"print"));
+        assert!(labels.contains(&"Vector2"));
+    }
+
+    #[test]
+    fn unknown_receiver_returns_empty() {
+        let source = "extends Node\nfunc run():\n\tunknown_thing.\n";
+        let items = provide_completions(source, Position::new(2, 15), None);
+        assert!(
+            items.is_empty(),
+            "unknown receiver should return empty list"
+        );
+    }
+
+    #[test]
+    fn self_dot_includes_class_db_properties() {
+        let source = "extends CharacterBody2D\nfunc run():\n\tself.\n\tpass\n";
+        let items = provide_completions(source, Position::new(2, 6), None);
+        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        // CharacterBody2D own property
+        assert!(labels.contains(&"velocity"), "should contain 'velocity'");
+        // Inherited from Node2D
+        assert!(
+            labels.contains(&"position"),
+            "should contain inherited 'position'"
+        );
     }
 }
