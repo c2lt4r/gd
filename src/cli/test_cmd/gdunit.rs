@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use crate::core::project::GodotProject;
 
 use super::{
-    TestArgs, TestError, TestResult, TestStatus, TestSummary, extract_errors, filter_noise,
+    RunArgs, TestError, TestResult, TestStatus, TestSummary, extract_errors, filter_noise,
     hprintln, run_with_timeout, strip_res_prefix,
 };
 
@@ -18,7 +18,7 @@ use super::{
 pub fn run_gdunit4_tests(
     godot: &Path,
     project: &GodotProject,
-    args: &TestArgs,
+    args: &RunArgs,
     json_mode: bool,
 ) -> Result<(Vec<TestResult>, TestSummary)> {
     if args.filter.is_some() {

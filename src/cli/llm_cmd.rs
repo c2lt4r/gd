@@ -42,6 +42,16 @@ gd clean                               # Remove build artifacts
 gd test                                # Run tests (auto-detects GUT/gdUnit4/script)
 gd test --format json                  # Machine-readable test results
 
+## Eval
+gd eval "<expr>"                       # Evaluate GDScript expression (prints result)
+gd eval "var x = 1; print(x * 2)"     # Multi-statement (semicolons)
+gd eval script.gd                      # Run existing .gd file via Godot -s
+gd eval -                              # Read script from stdin
+gd eval --check "<expr>"               # Parse-validate before running
+gd eval --timeout 10 "<expr>"          # Kill after N seconds (default: 30)
+gd eval --verbose "<expr>"             # Show Godot stderr
+gd eval --format json "<expr>"         # Machine-readable output (stdout, stderr, exit_code, errors)
+
 ## Scene
 gd scene attach-script --scene <f.tscn> --script <f.gd>          # Attach script to root node
 gd scene attach-script --scene <f.tscn> --script <f.gd> --node <name>  # Attach to named node

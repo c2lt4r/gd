@@ -9,6 +9,9 @@ pub fn dispatch_set_game_pid(server: &DaemonServer, params: &serde_json::Value) 
         return error_response("missing 'pid' parameter");
     };
     *server.game_pid.lock().unwrap() = Some(pid as u32);
+    server
+        .game_running
+        .store(true, std::sync::atomic::Ordering::Release);
     update_game_pid_in_state(&server.project_root, Some(pid as u32));
     ok_response(serde_json::json!({"pid": pid}))
 }
@@ -21,10 +24,13 @@ pub fn dispatch_debug_stop_game(server: &DaemonServer) -> DaemonResponse {
 
     crate::cli::stop_cmd::kill_game_process(pid);
 
-    // Clear debug server connection, game_running flag, and persisted PID
+    // Clear debug server connection, game_running flag, eval mode, and persisted PID
     *server.debug_server.lock().unwrap() = None;
     server
         .game_running
+        .store(false, std::sync::atomic::Ordering::Release);
+    server
+        .eval_mode
         .store(false, std::sync::atomic::Ordering::Release);
     update_game_pid_in_state(&server.project_root, None);
 

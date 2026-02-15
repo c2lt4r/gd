@@ -1,5 +1,6 @@
 mod dispatch_debug;
 mod dispatch_env;
+mod dispatch_eval;
 mod dispatch_live;
 mod dispatch_lsp;
 mod helpers;
@@ -69,6 +70,8 @@ struct DaemonServer {
     debug_server: Mutex<Option<Arc<crate::debug::godot_debug_server::GodotDebugServer>>>,
     /// PID of the game process launched by `gd run` (for `gd debug stop`).
     game_pid: Mutex<Option<u32>>,
+    /// True when eval mode is active (`gd run --eval`).
+    eval_mode: std::sync::atomic::AtomicBool,
     /// Cached Godot binary path (Windows path in WSL).
     cached_godot_path: Mutex<Option<String>>,
     workspace: WorkspaceIndex,
@@ -99,6 +102,7 @@ pub fn run(project_root: &Path, godot_port: u16) -> miette::Result<()> {
         game_running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         debug_server: Mutex::new(None),
         game_pid: Mutex::new(None),
+        eval_mode: std::sync::atomic::AtomicBool::new(false),
         cached_godot_path: Mutex::new(None),
         workspace,
         project_root: project_root.to_path_buf(),
@@ -248,6 +252,9 @@ fn dispatch(server: &DaemonServer, request: &DaemonRequest) -> DaemonResponse {
         // Godot binary path cache (WSL probe)
         "cached_godot_path" => dispatch_cached_godot_path(server),
         "cache_godot_path" => dispatch_cache_godot_path(server, &request.params),
+        // Eval server
+        "set_eval_mode" => dispatch_eval::dispatch_set_eval_mode(server, &request.params),
+        "eval_status" => dispatch_eval::dispatch_eval_status(server, &request.params),
         // Binary debug protocol
         "set_game_pid" => dispatch_debug::dispatch_set_game_pid(server, &request.params),
         "debug_stop_game" => dispatch_debug::dispatch_debug_stop_game(server),

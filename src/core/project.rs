@@ -33,6 +33,22 @@ impl GodotProject {
         }
         Ok("Untitled".to_string())
     }
+
+    /// Get the main scene path from project.godot (e.g. `"res://main.tscn"`).
+    /// Returns `Ok(None)` if `run/main_scene` is not set.
+    pub fn main_scene(&self) -> Result<Option<String>> {
+        let content = std::fs::read_to_string(&self.project_file)
+            .map_err(|e| miette!("Failed to read project.godot: {e}"))?;
+        for line in content.lines() {
+            if let Some(rest) = line.strip_prefix("run/main_scene=\"") {
+                let scene = rest.trim_end_matches('"');
+                if !scene.is_empty() {
+                    return Ok(Some(scene.to_string()));
+                }
+            }
+        }
+        Ok(None)
+    }
 }
 
 /// Detect the installed Godot major.minor version (e.g. "4.6").
@@ -154,5 +170,36 @@ mod tests {
     fn parse_autoloads_missing_file() {
         let result = parse_autoloads(Path::new("/nonexistent/project.godot"));
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn main_scene_found() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("project.godot");
+        std::fs::write(
+            &file,
+            "[application]\nconfig/name=\"Test\"\nrun/main_scene=\"res://main.tscn\"\n",
+        )
+        .unwrap();
+        let project = GodotProject {
+            project_file: file,
+            root: dir.path().to_path_buf(),
+        };
+        assert_eq!(
+            project.main_scene().unwrap(),
+            Some("res://main.tscn".to_string())
+        );
+    }
+
+    #[test]
+    fn main_scene_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("project.godot");
+        std::fs::write(&file, "[application]\nconfig/name=\"Test\"\n").unwrap();
+        let project = GodotProject {
+            project_file: file,
+            root: dir.path().to_path_buf(),
+        };
+        assert_eq!(project.main_scene().unwrap(), None);
     }
 }

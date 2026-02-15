@@ -9,6 +9,7 @@ pub mod debug_cmd;
 pub mod deps_cmd;
 pub mod doc_cmd;
 pub mod env_cmd;
+pub mod eval_cmd;
 pub mod fmt_cmd;
 pub mod init_cmd;
 pub mod lint_cmd;
@@ -56,7 +57,7 @@ pub enum Command {
     Check(check_cmd::CheckArgs),
     /// Clean build artifacts
     Clean(clean_cmd::CleanArgs),
-    /// Run GDScript tests
+    /// Test runner and automation
     Test(test_cmd::TestArgs),
     /// Generate shell completions
     Completions(completions_cmd::CompletionsArgs),
@@ -82,6 +83,8 @@ pub enum Command {
     Log(log_cmd::LogArgs),
     /// Start the Language Server Protocol server
     Lsp(lsp_cmd::LspArgs),
+    /// Evaluate a GDScript expression or run a script
+    Eval(eval_cmd::EvalArgs),
     /// Show environment info (gd version, Godot version, paths)
     Env(env_cmd::EnvArgs),
     /// Show script dependency graph
@@ -118,6 +121,7 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Ci(args) => ci_cmd::exec(args),
         Command::Log(ref args) => log_cmd::exec(args),
         Command::Lsp(args) => lsp_cmd::exec(args),
+        Command::Eval(ref args) => eval_cmd::exec(args),
         Command::Env(ref args) => env_cmd::exec(args),
         Command::Deps(ref args) => deps_cmd::exec(args),
         Command::Man(ref args) => man_cmd::exec(args),

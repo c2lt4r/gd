@@ -1,10 +1,10 @@
 use miette::{Result, miette};
 use owo_colors::OwoColorize;
 use std::env;
-use std::io::{BufRead, BufReader, BufWriter, Write};
+use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use crate::core::config::Config;
 use crate::core::fs;
@@ -105,13 +105,13 @@ fn find_godot_from_daemon() -> Option<String> {
     Some(fs::windows_to_wsl_path(path))
 }
 
-/// Get the `--path` argument for Godot, translating WSL paths for Windows binaries.
-fn project_path_for_godot(godot: &Path, project_root: &Path) -> String {
+/// Get a path argument for Godot, translating WSL paths for Windows binaries.
+pub fn path_for_godot(godot: &Path, path: &Path) -> String {
     if fs::is_windows_binary(godot) {
-        let s = project_root.to_string_lossy();
+        let s = path.to_string_lossy();
         fs::wsl_to_windows_path(&s).unwrap_or_else(|| s.to_string())
     } else {
-        project_root.to_string_lossy().to_string()
+        path.to_string_lossy().to_string()
     }
 }
 
@@ -129,13 +129,103 @@ fn search_path() -> Option<PathBuf> {
     None
 }
 
+/// Generate the GDScript eval server that polls for eval requests.
+/// `scene_path` is the `res://...` path to the main scene to load.
+///
+/// Uses `_initialize()` + `process_frame` signal instead of overriding `_process()`
+/// to avoid breaking SceneTree's built-in frame processing.
+pub fn generate_eval_server(scene_path: &str) -> String {
+    format!(
+        r##"extends SceneTree
+
+var _root: String
+var _runner: Node = null
+var _eval_id: String = ""
+
+func _initialize():
+	_root = ProjectSettings.globalize_path("res://")
+	var f = FileAccess.open(_root.path_join(".godot/gd-eval-ready"), FileAccess.WRITE)
+	if f:
+		f.store_string(str(OS.get_process_id()))
+	change_scene_to_file("{scene_path}")
+	# Use a Timer for polling — its callbacks fire during idle phase,
+	# which is safe for tree modification (unlike process_frame).
+	var timer = Timer.new()
+	timer.name = "GdEvalTimer"
+	timer.wait_time = 0.05
+	timer.autostart = true
+	timer.timeout.connect(_poll)
+	get_root().call_deferred("add_child", timer)
+
+func _poll():
+	# State machine: if a runner is pending, execute it (it's been in tree 1+ frames)
+	if _runner != null:
+		var result = _runner.call("run")
+		if is_instance_valid(_runner):
+			_runner.queue_free()
+		_runner = null
+		var result_str = str(result) if result != null else ""
+		_write_result(JSON.stringify({{"result": result_str, "error": ""}}))
+		return
+
+	var req = _root.path_join(".godot/gd-eval-request.gd")
+	if not FileAccess.file_exists(req):
+		return
+
+	# Read and compile the request
+	var file = FileAccess.open(req, FileAccess.READ)
+	if file == null:
+		return
+	var source = file.get_as_text()
+	DirAccess.remove_absolute(req)
+
+	# Extract request ID from first line: # eval-id: <id>
+	_eval_id = ""
+	var first_line = source.get_slice("\n", 0)
+	if first_line.begins_with("# eval-id: "):
+		_eval_id = first_line.substr(11).strip_edges()
+
+	var script = GDScript.new()
+	script.source_code = source
+	var err = script.reload()
+	if err != OK:
+		_write_result('{{"result":null,"error":"Script compilation failed"}}')
+		return
+
+	var runner = Node.new()
+	runner.name = "GdEvalRunner"
+	runner.set_script(script)
+	if not runner.has_method("run"):
+		runner.queue_free()
+		_write_result('{{"result":null,"error":"Script has no run() method"}}')
+		return
+
+	# Add to tree — run() will be called next poll cycle via state machine
+	get_root().add_child(runner)
+	_runner = runner
+
+func _write_result(json_str: String):
+	var name = "gd-eval-result.json"
+	if not _eval_id.is_empty():
+		name = "gd-eval-result-" + _eval_id + ".json"
+	var f = FileAccess.open(_root.path_join(".godot/" + name), FileAccess.WRITE)
+	if f:
+		f.store_string(json_str)
+
+func _finalize():
+	DirAccess.remove_absolute(_root.path_join(".godot/gd-eval-ready"))
+"##
+    )
+}
+
 /// Run the Godot project.
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines, clippy::fn_params_excessive_bools)]
 pub fn run_project(
     scene: Option<&str>,
     debug: bool,
     verbose: bool,
     log: bool,
+    eval: bool,
     extra: &[String],
 ) -> Result<()> {
     let cwd = env::current_dir().unwrap_or_default();
@@ -146,8 +236,7 @@ pub fn run_project(
     let project_name = project.name().unwrap_or_else(|_| "project".into());
 
     let mut cmd = Command::new(&godot);
-    cmd.arg("--path")
-        .arg(project_path_for_godot(&godot, &project.root));
+    cmd.arg("--path").arg(path_for_godot(&godot, &project.root));
 
     // Always wire up remote debug via daemon (silent — no user-facing port args)
     let debug_port = match crate::lsp::daemon_client::query_daemon(
@@ -183,9 +272,38 @@ pub fn run_project(
         cmd.arg(arg);
     }
 
-    // Scene path (positional, must come after flags)
-    if let Some(scene) = scene {
-        cmd.arg(scene);
+    // Eval server mode: inject --script with eval server, bake in the scene
+    if eval {
+        let scene_path = if let Some(s) = scene {
+            // User passed an explicit scene — use it as-is (res:// path or relative)
+            if s.starts_with("res://") {
+                s.to_string()
+            } else {
+                format!("res://{s}")
+            }
+        } else {
+            project.main_scene()?.ok_or_else(|| {
+                miette!(
+                    "No main scene configured and no scene argument provided.\n\
+                     Set run/main_scene in project.godot or pass a scene: gd run --eval <scene>"
+                )
+            })?
+        };
+
+        let server_script = generate_eval_server(&scene_path);
+        let server_path = project.root.join(".godot").join("gd-eval-server.gd");
+        std::fs::create_dir_all(project.root.join(".godot"))
+            .map_err(|e| miette!("Failed to create .godot directory: {e}"))?;
+        std::fs::write(&server_path, &server_script)
+            .map_err(|e| miette!("Failed to write eval server script: {e}"))?;
+
+        cmd.arg("--script")
+            .arg(path_for_godot(&godot, &server_path));
+    } else {
+        // Scene path (positional, must come after flags)
+        if let Some(scene) = scene {
+            cmd.arg(scene);
+        }
     }
 
     // Extra args from CLI (after --)
@@ -198,67 +316,108 @@ pub fn run_project(
     if let Some(parent) = log_path.parent() {
         std::fs::create_dir_all(parent).ok();
     }
-    let log_file =
-        std::fs::File::create(&log_path).map_err(|e| miette!("Failed to create log file: {e}"))?;
-    let log_file = Arc::new(Mutex::new(BufWriter::new(log_file)));
 
-    cmd.stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .stdin(Stdio::null());
-
-    let mut child = cmd
-        .spawn()
-        .map_err(|e| miette!("Failed to start Godot: {e}"))?;
-
-    let pid = child.id();
-
-    // Report PID to daemon so `gd debug stop` can kill the game
-    let _ = crate::lsp::daemon_client::query_daemon(
-        "set_game_pid",
-        serde_json::json!({"pid": pid}),
-        None,
-    );
-
-    let stdout = child.stdout.take().expect("stdout was piped");
-    let stderr = child.stderr.take().expect("stderr was piped");
-
-    let log1 = Arc::clone(&log_file);
-    let stdout_thread = std::thread::spawn(move || {
-        let reader = BufReader::new(stdout);
-        for line in reader.lines().map_while(Result::ok) {
-            if log {
-                println!("{line}");
-            }
-            if let Ok(mut f) = log1.lock() {
-                let _ = writeln!(f, "{line}");
-            }
-        }
-    });
-
-    let log2 = Arc::clone(&log_file);
-    let stderr_thread = std::thread::spawn(move || {
-        let reader = BufReader::new(stderr);
-        for line in reader.lines().map_while(Result::ok) {
-            if log {
-                eprintln!("{line}");
-            }
-            if let Ok(mut f) = log2.lock() {
-                let _ = writeln!(f, "{line}");
-            }
-        }
-    });
+    cmd.stdin(Stdio::null());
 
     if log {
-        let _ = stdout_thread.join();
-        let _ = stderr_thread.join();
-        let _ = child.wait();
-    } else {
-        // Reap the child and reader threads in the background to avoid zombies
+        // Pipe stdout/stderr so we can write to log file AND print to terminal.
+        // The tail loop keeps the main process alive, so pipes stay open.
+        let log_file = std::fs::File::create(&log_path)
+            .map_err(|e| miette!("Failed to create log file: {e}"))?;
+        let log_file = Arc::new(std::sync::Mutex::new(std::io::BufWriter::new(log_file)));
+
+        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| miette!("Failed to start Godot: {e}"))?;
+
+        report_game_to_daemon(&child, eval);
+
+        let stdout = child.stdout.take().expect("stdout was piped");
+        let stderr = child.stderr.take().expect("stderr was piped");
+
+        // Pump stdout/stderr to log file in background threads
+        let log1 = Arc::clone(&log_file);
         std::thread::spawn(move || {
-            let _ = stdout_thread.join();
-            let _ = stderr_thread.join();
+            use std::io::{BufRead, Write};
+            let reader = BufReader::new(stdout);
+            for line in reader.lines().map_while(Result::ok) {
+                if let Ok(mut f) = log1.lock() {
+                    let _ = writeln!(f, "{line}");
+                }
+            }
+        });
+
+        let log2 = Arc::clone(&log_file);
+        std::thread::spawn(move || {
+            use std::io::{BufRead, Write};
+            let reader = BufReader::new(stderr);
+            for line in reader.lines().map_while(Result::ok) {
+                if let Ok(mut f) = log2.lock() {
+                    let _ = writeln!(f, "{line}");
+                }
+            }
+        });
+
+        // Reap the child in the background
+        std::thread::spawn(move || {
             let _ = child.wait();
         });
+
+        print_status_line(&project_name, debug_port, eval);
+
+        // Tail the log file (blocks until game exits or Ctrl+C)
+        tail_log_file(&log_path);
+    } else if eval {
+        // Eval mode: pipe stdout/stderr and keep this process alive so the pipes
+        // stay valid. WSL closes inherited handles when the parent exits, which
+        // crashes Godot during eval operations that generate debug output.
+        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| miette!("Failed to start Godot: {e}"))?;
+
+        report_game_to_daemon(&child, eval);
+
+        // Drain pipes in background threads (discard output)
+        let stdout = child.stdout.take().expect("stdout was piped");
+        let stderr = child.stderr.take().expect("stderr was piped");
+        std::thread::spawn(move || {
+            let mut sink = std::io::sink();
+            let _ = std::io::copy(&mut BufReader::new(stdout), &mut sink);
+        });
+        std::thread::spawn(move || {
+            let mut sink = std::io::sink();
+            let _ = std::io::copy(&mut BufReader::new(stderr), &mut sink);
+        });
+
+        // Reap child in background
+        std::thread::spawn(move || {
+            let _ = child.wait();
+        });
+
+        print_status_line(&project_name, debug_port, eval);
+
+        // Block until game exits or Ctrl+C — keeps pipes alive
+        wait_for_game_exit();
+    } else {
+        // Normal run: inherit terminal handles and exit immediately
+        cmd.stdout(Stdio::inherit()).stderr(Stdio::inherit());
+
+        let child = cmd
+            .spawn()
+            .map_err(|e| miette!("Failed to start Godot: {e}"))?;
+
+        report_game_to_daemon(&child, eval);
+
+        // Reap the child in the background to avoid zombies
+        std::thread::spawn(move || {
+            let _ = child.wait_with_output();
+        });
+
+        print_status_line(&project_name, debug_port, eval);
     }
 
     // Tell the daemon to accept the debug connection (fire-and-forget)
@@ -274,19 +433,106 @@ pub fn run_project(
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
 
-    // Print clean status line
+    Ok(())
+}
+
+/// Tail a log file to stdout, following new content as it's written.
+/// Returns when the game process exits (detected via daemon) or on Ctrl+C.
+/// Block until the game exits or Ctrl+C. Keeps the process alive so piped
+/// stdio handles remain valid for the child (Godot) process.
+fn wait_for_game_exit() {
+    let running = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let r = Arc::clone(&running);
+    let _ = ctrlc::set_handler(move || {
+        r.store(false, std::sync::atomic::Ordering::Release);
+    });
+    while running.load(std::sync::atomic::Ordering::Acquire) {
+        let game_alive =
+            crate::lsp::daemon_client::query_daemon("status", serde_json::json!({}), None)
+                .and_then(|r| r.get("game_running").and_then(serde_json::Value::as_bool))
+                .unwrap_or(false);
+        if !game_alive {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+}
+
+fn tail_log_file(path: &Path) {
+    use std::io::{BufRead as _, Seek, SeekFrom};
+
+    // Set up Ctrl+C handler to exit cleanly (game keeps running)
+    let running = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let r = Arc::clone(&running);
+    let _ = ctrlc::set_handler(move || {
+        r.store(false, std::sync::atomic::Ordering::Release);
+    });
+
+    let Ok(file) = std::fs::File::open(path) else {
+        return;
+    };
+    let mut reader = BufReader::new(file);
+    // Start from the beginning to show existing output
+    let _ = reader.seek(SeekFrom::Start(0));
+
+    let mut line = String::new();
+    while running.load(std::sync::atomic::Ordering::Acquire) {
+        line.clear();
+        match reader.read_line(&mut line) {
+            Ok(0) => {
+                // No new data — check if game is still running
+                let game_alive =
+                    crate::lsp::daemon_client::query_daemon("status", serde_json::json!({}), None)
+                        .and_then(|r| r.get("game_running").and_then(serde_json::Value::as_bool))
+                        .unwrap_or(false);
+                if !game_alive {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            Ok(_) => {
+                // Print without extra newline (read_line includes \n)
+                print!("{line}");
+            }
+            Err(_) => break,
+        }
+    }
+}
+
+fn report_game_to_daemon(child: &std::process::Child, eval: bool) {
+    let pid = child.id();
+    let _ = crate::lsp::daemon_client::query_daemon(
+        "set_game_pid",
+        serde_json::json!({"pid": pid}),
+        None,
+    );
+    if eval {
+        let _ = crate::lsp::daemon_client::query_daemon(
+            "set_eval_mode",
+            serde_json::json!({"enabled": true}),
+            None,
+        );
+    }
+}
+
+fn print_status_line(project_name: &str, debug_port: Option<u64>, eval: bool) {
     let debug_info = if let Some(port) = debug_port {
         format!(" (debug on port {port})")
     } else {
         String::new()
     };
+    let eval_info = if eval { " (eval server)" } else { "" };
     println!(
-        "{} Running {}{debug_info}",
+        "{} Running {}{debug_info}{eval_info}",
         "▶".green(),
         project_name.bold(),
     );
-
-    Ok(())
+    if eval {
+        println!(
+            "  Use {} to evaluate against the running game",
+            "gd eval <expr>".bold(),
+        );
+    }
 }
 
 /// Path to the game log file within a project.
@@ -390,7 +636,7 @@ pub fn export_project(preset: Option<&str>, output: Option<&str>, release: bool)
     let mut cmd = Command::new(&godot);
     cmd.arg("--headless")
         .arg("--path")
-        .arg(project_path_for_godot(&godot, &project.root))
+        .arg(path_for_godot(&godot, &project.root))
         .arg(export_flag)
         .arg(&preset_name)
         .arg(&output_file);
@@ -443,4 +689,31 @@ fn parse_export_presets(project_root: &Path) -> Result<Vec<String>> {
     }
 
     Ok(presets)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn eval_server_contains_scene_load() {
+        let script = generate_eval_server("res://main.tscn");
+        assert!(script.contains(r#"change_scene_to_file("res://main.tscn")"#));
+        assert!(script.contains("extends SceneTree"));
+    }
+
+    #[test]
+    fn eval_server_contains_poll_logic() {
+        let script = generate_eval_server("res://main.tscn");
+        assert!(script.contains("gd-eval-request.gd"));
+        assert!(script.contains("gd-eval-result.json"));
+        assert!(script.contains("gd-eval-ready"));
+    }
+
+    #[test]
+    fn eval_server_contains_cleanup() {
+        let script = generate_eval_server("res://main.tscn");
+        assert!(script.contains("_finalize"));
+        assert!(script.contains("gd-eval-ready"));
+    }
 }

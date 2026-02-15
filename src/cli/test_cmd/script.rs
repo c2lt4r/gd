@@ -8,14 +8,14 @@ use std::time::{Duration, Instant};
 
 use crate::core::project::GodotProject;
 
-use super::{TestArgs, TestResult, TestStatus, TestSummary, extract_errors, filter_noise};
+use super::{RunArgs, TestResult, TestStatus, TestSummary, extract_errors, filter_noise};
 
 /// Run tests by executing each test script individually with Godot.
 #[allow(clippy::too_many_lines, clippy::unnecessary_wraps)]
 pub fn run_script_tests(
     godot: &Path,
     project: &GodotProject,
-    args: &TestArgs,
+    args: &RunArgs,
     test_files: &[std::path::PathBuf],
     json_mode: bool,
 ) -> Result<(Vec<TestResult>, TestSummary)> {
