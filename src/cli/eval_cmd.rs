@@ -199,6 +199,103 @@ fn generate_live_eval_script(input: &str) -> String {
     )
 }
 
+/// GDScript keywords for syntax highlighting.
+const GDSCRIPT_KEYWORDS: &[&str] = &[
+    "extends", "class_name", "func", "var", "const", "signal", "enum", "return", "if", "elif",
+    "else", "for", "while", "match", "break", "continue", "pass", "self", "super", "class",
+    "static", "await", "yield", "true", "false", "null", "not", "and", "or", "in", "is", "as",
+    "void", "int", "float", "bool", "String",
+];
+
+/// Print a GDScript source with line numbers and basic syntax highlighting.
+fn print_highlighted_script(source: &str) {
+    let lines: Vec<&str> = source.lines().collect();
+    let width = lines.len().to_string().len().max(3);
+    for (i, line) in lines.iter().enumerate() {
+        let num = format!("{:>width$}", i + 1);
+        eprint!("  {} ", num.dimmed());
+        eprintln!("{}", highlight_gdscript_line(line));
+    }
+}
+
+/// Apply basic ANSI syntax highlighting to a single GDScript line.
+fn highlight_gdscript_line(line: &str) -> String {
+    // Handle empty/whitespace-only lines
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return line.to_string();
+    }
+
+    // Comments — whole line dimmed green
+    if trimmed.starts_with('#') {
+        return format!("{}", line.green().dimmed());
+    }
+
+    let mut result = String::new();
+    let mut chars = line.chars().peekable();
+
+    while let Some(&ch) = chars.peek() {
+        if ch == '"' || ch == '\'' {
+            // String literal — green
+            let quote = ch;
+            let mut s = String::new();
+            s.push(chars.next().unwrap());
+            let mut escaped = false;
+            for c in chars.by_ref() {
+                s.push(c);
+                if escaped {
+                    escaped = false;
+                } else if c == '\\' {
+                    escaped = true;
+                } else if c == quote {
+                    break;
+                }
+            }
+            let _ = write!(result, "{}", s.green());
+        } else if ch.is_ascii_digit()
+            || (ch == '-'
+                && chars.clone().nth(1).is_some_and(|c| c.is_ascii_digit())
+                && (result.is_empty() || result.ends_with(|c: char| !c.is_alphanumeric() && c != '_')))
+        {
+            // Numeric literal — yellow
+            let mut s = String::new();
+            if ch == '-' {
+                s.push(chars.next().unwrap());
+            }
+            while let Some(&c) = chars.peek() {
+                if c.is_ascii_digit() || c == '.' || c == '_' || c == 'x' || c == 'b' || c == 'o'
+                {
+                    s.push(chars.next().unwrap());
+                } else {
+                    break;
+                }
+            }
+            let _ = write!(result, "{}", s.yellow());
+        } else if ch.is_alphabetic() || ch == '_' || ch == '@' {
+            // Word — check if it's a keyword
+            let mut word = String::new();
+            while let Some(&c) = chars.peek() {
+                if c.is_alphanumeric() || c == '_' || (word.is_empty() && c == '@') {
+                    word.push(chars.next().unwrap());
+                } else {
+                    break;
+                }
+            }
+            if GDSCRIPT_KEYWORDS.contains(&word.as_str()) {
+                let _ = write!(result, "{}", word.cyan());
+            } else if word.starts_with('@') {
+                let _ = write!(result, "{}", word.yellow());
+            } else {
+                result.push_str(&word);
+            }
+        } else {
+            result.push(chars.next().unwrap());
+        }
+    }
+
+    result
+}
+
 /// Try live eval against a running game (started with `gd run --eval`).
 /// Returns `None` if no eval-ready game is running (caller falls back to offline).
 fn try_live_eval(
@@ -218,12 +315,9 @@ fn try_live_eval(
     // Generate and write the request script
     let script = generate_live_eval_script(input);
 
-    // Show the script being sent (cat -n style)
+    // Show the script being sent with numbered lines and syntax highlighting
     if !json_mode {
-        eprintln!("{}", "Sending to running game:".dimmed());
-        for (i, line) in script.lines().enumerate() {
-            eprintln!("  {} {}", format!("{:>3}", i + 1).dimmed(), line);
-        }
+        print_highlighted_script(&script);
     }
 
     let request_path = godot_dir.join("gd-eval-request.gd");
@@ -309,7 +403,14 @@ pub fn exec(args: &EvalArgs) -> Result<()> {
     let mode = detect_input_mode(&args.input, &project.root);
 
     // Try live eval first for expressions/stdin (if a game is running with `gd run --eval`)
-    let eval_ready = project.root.join(".godot").join("gd-eval-ready").is_file();
+    // Ask the daemon — it polls for the ready file so we don't have to
+    let eval_ready = crate::lsp::daemon_client::query_daemon(
+        "eval_status",
+        serde_json::json!({"timeout": args.timeout}),
+        Some(Duration::from_secs(args.timeout + 5)),
+    )
+    .and_then(|r| r.get("ready").and_then(serde_json::Value::as_bool))
+    .unwrap_or(false);
     if eval_ready && mode != InputMode::File {
         let input_text = if mode == InputMode::Stdin {
             let mut buf = String::new();

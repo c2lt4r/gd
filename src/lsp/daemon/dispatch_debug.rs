@@ -21,10 +21,13 @@ pub fn dispatch_debug_stop_game(server: &DaemonServer) -> DaemonResponse {
 
     crate::cli::stop_cmd::kill_game_process(pid);
 
-    // Clear debug server connection, game_running flag, and persisted PID
+    // Clear debug server connection, game_running flag, eval mode, and persisted PID
     *server.debug_server.lock().unwrap() = None;
     server
         .game_running
+        .store(false, std::sync::atomic::Ordering::Release);
+    server
+        .eval_mode
         .store(false, std::sync::atomic::Ordering::Release);
     update_game_pid_in_state(&server.project_root, None);
 

@@ -284,67 +284,77 @@ pub fn run_project(
     if let Some(parent) = log_path.parent() {
         std::fs::create_dir_all(parent).ok();
     }
-    let log_file =
-        std::fs::File::create(&log_path).map_err(|e| miette!("Failed to create log file: {e}"))?;
-    let log_file = Arc::new(Mutex::new(BufWriter::new(log_file)));
 
-    cmd.stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .stdin(Stdio::null());
-
-    let mut child = cmd
-        .spawn()
-        .map_err(|e| miette!("Failed to start Godot: {e}"))?;
-
-    let pid = child.id();
-
-    // Report PID to daemon so `gd debug stop` can kill the game
-    let _ = crate::lsp::daemon_client::query_daemon(
-        "set_game_pid",
-        serde_json::json!({"pid": pid}),
-        None,
-    );
-
-    let stdout = child.stdout.take().expect("stdout was piped");
-    let stderr = child.stderr.take().expect("stderr was piped");
-
-    let log1 = Arc::clone(&log_file);
-    let stdout_thread = std::thread::spawn(move || {
-        let reader = BufReader::new(stdout);
-        for line in reader.lines().map_while(Result::ok) {
-            if log {
-                println!("{line}");
-            }
-            if let Ok(mut f) = log1.lock() {
-                let _ = writeln!(f, "{line}");
-            }
-        }
-    });
-
-    let log2 = Arc::clone(&log_file);
-    let stderr_thread = std::thread::spawn(move || {
-        let reader = BufReader::new(stderr);
-        for line in reader.lines().map_while(Result::ok) {
-            if log {
-                eprintln!("{line}");
-            }
-            if let Ok(mut f) = log2.lock() {
-                let _ = writeln!(f, "{line}");
-            }
-        }
-    });
+    cmd.stdin(Stdio::null());
 
     if log {
+        // Pipe stdout/stderr so we can print to terminal AND write to log file
+        let log_file = std::fs::File::create(&log_path)
+            .map_err(|e| miette!("Failed to create log file: {e}"))?;
+        let log_file = Arc::new(Mutex::new(BufWriter::new(log_file)));
+
+        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| miette!("Failed to start Godot: {e}"))?;
+
+        report_game_to_daemon(&child, eval);
+
+        let stdout = child.stdout.take().expect("stdout was piped");
+        let stderr = child.stderr.take().expect("stderr was piped");
+
+        let log1 = Arc::clone(&log_file);
+        let stdout_thread = std::thread::spawn(move || {
+            let reader = BufReader::new(stdout);
+            for line in reader.lines().map_while(Result::ok) {
+                println!("{line}");
+                if let Ok(mut f) = log1.lock() {
+                    let _ = writeln!(f, "{line}");
+                }
+            }
+        });
+
+        let log2 = Arc::clone(&log_file);
+        let stderr_thread = std::thread::spawn(move || {
+            let reader = BufReader::new(stderr);
+            for line in reader.lines().map_while(Result::ok) {
+                eprintln!("{line}");
+                if let Ok(mut f) = log2.lock() {
+                    let _ = writeln!(f, "{line}");
+                }
+            }
+        });
+
+        print_status_line(&project_name, debug_port, eval);
+
         let _ = stdout_thread.join();
         let _ = stderr_thread.join();
         let _ = child.wait();
     } else {
-        // Reap the child and reader threads in the background to avoid zombies
+        // Redirect stdout/stderr directly to log file — no pipes needed.
+        // This avoids broken-pipe freezes when the CLI process exits.
+        let stdout_file = std::fs::File::create(&log_path)
+            .map_err(|e| miette!("Failed to create log file: {e}"))?;
+        let stderr_file = stdout_file
+            .try_clone()
+            .map_err(|e| miette!("Failed to clone log file handle: {e}"))?;
+
+        cmd.stdout(Stdio::from(stdout_file))
+            .stderr(Stdio::from(stderr_file));
+
+        let child = cmd
+            .spawn()
+            .map_err(|e| miette!("Failed to start Godot: {e}"))?;
+
+        report_game_to_daemon(&child, eval);
+
+        // Reap the child in the background to avoid zombies
         std::thread::spawn(move || {
-            let _ = stdout_thread.join();
-            let _ = stderr_thread.join();
-            let _ = child.wait();
+            let _ = child.wait_with_output();
         });
+
+        print_status_line(&project_name, debug_port, eval);
     }
 
     // Tell the daemon to accept the debug connection (fire-and-forget)
@@ -360,46 +370,43 @@ pub fn run_project(
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
 
-    // Print clean status line
+    Ok(())
+}
+
+fn report_game_to_daemon(child: &std::process::Child, eval: bool) {
+    let pid = child.id();
+    let _ = crate::lsp::daemon_client::query_daemon(
+        "set_game_pid",
+        serde_json::json!({"pid": pid}),
+        None,
+    );
+    if eval {
+        let _ = crate::lsp::daemon_client::query_daemon(
+            "set_eval_mode",
+            serde_json::json!({"enabled": true}),
+            None,
+        );
+    }
+}
+
+fn print_status_line(project_name: &str, debug_port: Option<u64>, eval: bool) {
     let debug_info = if let Some(port) = debug_port {
         format!(" (debug on port {port})")
     } else {
         String::new()
     };
+    let eval_info = if eval { " (eval server)" } else { "" };
     println!(
-        "{} Running {}{debug_info}",
+        "{} Running {}{debug_info}{eval_info}",
         "▶".green(),
         project_name.bold(),
     );
-
-    // If eval mode, poll for the ready file
     if eval {
-        let ready_path = project.root.join(".godot").join("gd-eval-ready");
-        let poll_start = std::time::Instant::now();
-        let poll_timeout = std::time::Duration::from_secs(30);
-        let poll_interval = std::time::Duration::from_millis(200);
-        loop {
-            if ready_path.is_file() {
-                println!(
-                    "{} Eval server ready — run {} to evaluate against the game",
-                    "✓".green(),
-                    "gd eval <expr>".bold(),
-                );
-                break;
-            }
-            if poll_start.elapsed() >= poll_timeout {
-                eprintln!(
-                    "{} Eval server did not start within {}s",
-                    "✗".red().bold(),
-                    poll_timeout.as_secs()
-                );
-                break;
-            }
-            std::thread::sleep(poll_interval);
-        }
+        println!(
+            "  Use {} to evaluate against the running game",
+            "gd eval <expr>".bold(),
+        );
     }
-
-    Ok(())
 }
 
 /// Path to the game log file within a project.
