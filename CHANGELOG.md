@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.12] - 2026-02-15
+
+### Added
+- **LSP hover doc comments** — hovering over user-defined functions, variables, constants, signals, enums, and classes now shows `##` doc comments in the hover popup.
+- **LSP completion doc comments** — completion items for user-defined symbols now include `##` doc comments in the documentation field.
+- **Symbol table doc extraction** — `##` doc comments are parsed and stored on `FuncDecl`, `VarDecl`, `SignalDecl`, and `EnumDecl` in the symbol table, propagated to workspace index.
+
+### Fixed
+- **`replace-symbol` on `class_name` duplicated content** — replacing a symbol found via `class_name_statement` now replaces the entire file instead of just the `class_name` line, preventing old content from being appended below.
+- **`naming-convention` false positive on private constants** — constants with leading underscores (e.g. `_DIALOG_BOX_SCRIPT`) are now correctly recognized as valid `UPPER_SNAKE_CASE`.
+- **`gd fmt` collapsed multiline enums** — enums written across multiple lines are now preserved as multiline, matching the existing behavior for arrays and dictionaries.
+
 ## [0.2.11] - 2026-02-15
 
 ### Added
