@@ -136,9 +136,11 @@ fn search_path() -> Option<PathBuf> {
 /// to avoid breaking SceneTree's built-in frame processing.
 pub fn generate_eval_server(scene_path: &str) -> String {
     format!(
-        r#"extends SceneTree
+        r##"extends SceneTree
 
 var _root: String
+var _runner: Node = null
+var _eval_id: String = ""
 
 func _initialize():
 	_root = ProjectSettings.globalize_path("res://")
@@ -146,43 +148,72 @@ func _initialize():
 	if f:
 		f.store_string(str(OS.get_process_id()))
 	change_scene_to_file("{scene_path}")
-	process_frame.connect(_poll)
+	# Use a Timer for polling — its callbacks fire during idle phase,
+	# which is safe for tree modification (unlike process_frame).
+	var timer = Timer.new()
+	timer.wait_time = 0.05
+	timer.autostart = true
+	timer.timeout.connect(_poll)
+	get_root().call_deferred("add_child", timer)
 
 func _poll():
-	var req = _root.path_join(".godot/gd-eval-request.gd")
-	if FileAccess.file_exists(req):
-		call_deferred("_execute", req)
+	# State machine: if a runner is pending, execute it (it's been in tree 1+ frames)
+	if _runner != null:
+		var result = _runner.call("run")
+		if is_instance_valid(_runner):
+			_runner.queue_free()
+		_runner = null
+		var result_str = str(result) if result != null else ""
+		_write_result(JSON.stringify({{"result": result_str, "error": ""}}))
+		return
 
-func _execute(path: String):
-	var source = FileAccess.open(path, FileAccess.READ).get_as_text()
-	DirAccess.remove_absolute(path)
+	var req = _root.path_join(".godot/gd-eval-request.gd")
+	if not FileAccess.file_exists(req):
+		return
+
+	# Read and compile the request
+	var file = FileAccess.open(req, FileAccess.READ)
+	if file == null:
+		return
+	var source = file.get_as_text()
+	DirAccess.remove_absolute(req)
+
+	# Extract request ID from first line: # eval-id: <id>
+	_eval_id = ""
+	var first_line = source.get_slice("\n", 0)
+	if first_line.begins_with("# eval-id: "):
+		_eval_id = first_line.substr(11).strip_edges()
+
 	var script = GDScript.new()
 	script.source_code = source
 	var err = script.reload()
 	if err != OK:
 		_write_result('{{"result":null,"error":"Script compilation failed"}}')
 		return
+
 	var runner = Node.new()
 	runner.name = "GdEvalRunner"
 	runner.set_script(script)
-	get_root().add_child(runner)
 	if not runner.has_method("run"):
 		runner.queue_free()
 		_write_result('{{"result":null,"error":"Script has no run() method"}}')
 		return
-	var result = runner.call("run")
-	runner.queue_free()
-	var result_str = str(result) if result != null else ""
-	_write_result(JSON.stringify({{"result": result_str, "error": ""}}))
+
+	# Add to tree — run() will be called next poll cycle via state machine
+	get_root().add_child(runner)
+	_runner = runner
 
 func _write_result(json_str: String):
-	var f = FileAccess.open(_root.path_join(".godot/gd-eval-result.json"), FileAccess.WRITE)
+	var name = "gd-eval-result.json"
+	if not _eval_id.is_empty():
+		name = "gd-eval-result-" + _eval_id + ".json"
+	var f = FileAccess.open(_root.path_join(".godot/" + name), FileAccess.WRITE)
 	if f:
 		f.store_string(json_str)
 
 func _finalize():
 	DirAccess.remove_absolute(_root.path_join(".godot/gd-eval-ready"))
-"#
+"##
     )
 }
 
@@ -337,10 +368,42 @@ pub fn run_project(
 
         // Tail the log file (blocks until game exits or Ctrl+C)
         tail_log_file(&log_path);
+    } else if eval {
+        // Eval mode: pipe stdout/stderr and keep this process alive so the pipes
+        // stay valid. WSL closes inherited handles when the parent exits, which
+        // crashes Godot during eval operations that generate debug output.
+        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| miette!("Failed to start Godot: {e}"))?;
+
+        report_game_to_daemon(&child, eval);
+
+        // Drain pipes in background threads (discard output)
+        let stdout = child.stdout.take().expect("stdout was piped");
+        let stderr = child.stderr.take().expect("stderr was piped");
+        std::thread::spawn(move || {
+            let mut sink = std::io::sink();
+            let _ = std::io::copy(&mut BufReader::new(stdout), &mut sink);
+        });
+        std::thread::spawn(move || {
+            let mut sink = std::io::sink();
+            let _ = std::io::copy(&mut BufReader::new(stderr), &mut sink);
+        });
+
+        // Reap child in background
+        std::thread::spawn(move || {
+            let _ = child.wait();
+        });
+
+        print_status_line(&project_name, debug_port, eval);
+
+        // Block until game exits or Ctrl+C — keeps pipes alive
+        wait_for_game_exit();
     } else {
-        // Discard stdout/stderr — avoids WSL↔Windows handle translation issues
-        // that cause Godot to freeze. Use --log if you need game output.
-        cmd.stdout(Stdio::null()).stderr(Stdio::null());
+        // Normal run: inherit terminal handles and exit immediately
+        cmd.stdout(Stdio::inherit()).stderr(Stdio::inherit());
 
         let child = cmd
             .spawn()
@@ -374,6 +437,29 @@ pub fn run_project(
 
 /// Tail a log file to stdout, following new content as it's written.
 /// Returns when the game process exits (detected via daemon) or on Ctrl+C.
+/// Block until the game exits or Ctrl+C. Keeps the process alive so piped
+/// stdio handles remain valid for the child (Godot) process.
+fn wait_for_game_exit() {
+    let running = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let r = Arc::clone(&running);
+    let _ = ctrlc::set_handler(move || {
+        r.store(false, std::sync::atomic::Ordering::Release);
+    });
+    while running.load(std::sync::atomic::Ordering::Acquire) {
+        let game_alive = crate::lsp::daemon_client::query_daemon(
+            "status",
+            serde_json::json!({}),
+            None,
+        )
+        .and_then(|r| r.get("game_running").and_then(serde_json::Value::as_bool))
+        .unwrap_or(false);
+        if !game_alive {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+}
+
 fn tail_log_file(path: &Path) {
     use std::io::{BufRead as _, Seek, SeekFrom};
 

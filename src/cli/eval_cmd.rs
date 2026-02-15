@@ -222,6 +222,12 @@ struct LiveEvalResult {
 /// Generate a GDScript that the eval server will load and execute.
 /// The script extends Node so `get_node()` with absolute paths works.
 fn generate_live_eval_script(input: &str) -> String {
+    // If the input is already a complete script (has extends + run method), use as-is
+    let trimmed = input.trim();
+    if trimmed.starts_with("extends ") && trimmed.contains("func run()") {
+        return input.to_string();
+    }
+
     // Check if it looks like multi-statement (contains ; or newlines)
     let statements: Vec<&str> = if input.contains(';') {
         input
@@ -401,13 +407,23 @@ fn try_live_eval(
         print_highlighted_script(&script);
     }
 
+    // Generate a unique request ID to avoid stale result issues on WSL
+    let eval_id = format!(
+        "{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+    );
+    let tagged_script = format!("# eval-id: {eval_id}\n{script}");
+
     let request_path = godot_dir.join("gd-eval-request.gd");
-    if let Err(e) = std::fs::write(&request_path, &script) {
+    if let Err(e) = std::fs::write(&request_path, &tagged_script) {
         return Some(Err(miette!("Failed to write eval request: {e}")));
     }
 
-    // Poll for the result file
-    let result_path = godot_dir.join("gd-eval-result.json");
+    // Poll for the ID-specific result file
+    let result_path = godot_dir.join(format!("gd-eval-result-{eval_id}.json"));
     let poll_interval = Duration::from_millis(50);
     let start = std::time::Instant::now();
 
@@ -847,6 +863,13 @@ mod tests {
                 "Live script for '{input}' should parse cleanly, got:\n{script}"
             );
         }
+    }
+
+    #[test]
+    fn live_script_complete_passthrough() {
+        let full_script = "extends Node\n\nfunc run():\n\tvar label = Label.new()\n\treturn label\n";
+        let result = generate_live_eval_script(full_script);
+        assert_eq!(result, full_script);
     }
 
     #[test]
