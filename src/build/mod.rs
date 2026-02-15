@@ -198,8 +198,8 @@ pub fn run_project(
     if let Some(parent) = log_path.parent() {
         std::fs::create_dir_all(parent).ok();
     }
-    let log_file = std::fs::File::create(&log_path)
-        .map_err(|e| miette!("Failed to create log file: {e}"))?;
+    let log_file =
+        std::fs::File::create(&log_path).map_err(|e| miette!("Failed to create log file: {e}"))?;
     let log_file = Arc::new(Mutex::new(BufWriter::new(log_file)));
 
     cmd.stdout(Stdio::piped())

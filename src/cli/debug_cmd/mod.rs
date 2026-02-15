@@ -288,18 +288,14 @@ fn find_process_breakpoint_target() -> Option<(String, u32)> {
                 || trimmed.starts_with("func _physics_process(")
             {
                 // Find first non-empty, non-comment body line after declaration
-                let body_line = content
-                    .lines()
-                    .skip(i + 1)
-                    .enumerate()
-                    .find_map(|(j, l)| {
-                        let t = l.trim();
-                        if !t.is_empty() && !t.starts_with('#') {
-                            Some((i + j + 2) as u32) // 1-based
-                        } else {
-                            None
-                        }
-                    });
+                let body_line = content.lines().skip(i + 1).enumerate().find_map(|(j, l)| {
+                    let t = l.trim();
+                    if !t.is_empty() && !t.starts_with('#') {
+                        Some((i + j + 2) as u32) // 1-based
+                    } else {
+                        None
+                    }
+                });
 
                 if let Some(body_line) = body_line {
                     let Some(rel) = file.strip_prefix(&root).ok() else {

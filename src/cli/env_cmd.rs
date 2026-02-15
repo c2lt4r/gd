@@ -64,14 +64,8 @@ pub fn exec(args: &EnvArgs) -> Result<()> {
         if info.wsl {
             print_row("wsl", "yes");
         }
-        print_row(
-            "project",
-            info.project_root.as_deref().unwrap_or("none"),
-        );
-        print_row(
-            "config",
-            info.config_path.as_deref().unwrap_or("none"),
-        );
+        print_row("project", info.project_root.as_deref().unwrap_or("none"));
+        print_row("config", info.config_path.as_deref().unwrap_or("none"));
     }
 
     Ok(())

@@ -25,8 +25,7 @@ pub fn exec(args: &LogArgs) -> Result<()> {
 
     if args.clear {
         if log_path.exists() {
-            std::fs::write(&log_path, "")
-                .map_err(|e| miette!("Failed to clear log file: {e}"))?;
+            std::fs::write(&log_path, "").map_err(|e| miette!("Failed to clear log file: {e}"))?;
             println!("{} Log cleared", "✓".green());
         } else {
             println!("No log file to clear.");
@@ -43,8 +42,8 @@ pub fn exec(args: &LogArgs) -> Result<()> {
         return follow_log(&log_path);
     }
 
-    let content = std::fs::read_to_string(&log_path)
-        .map_err(|e| miette!("Failed to read log file: {e}"))?;
+    let content =
+        std::fs::read_to_string(&log_path).map_err(|e| miette!("Failed to read log file: {e}"))?;
 
     let lines: Vec<&str> = content.lines().collect();
     let start = if let Some(n) = args.tail {
@@ -62,8 +61,8 @@ pub fn exec(args: &LogArgs) -> Result<()> {
 }
 
 fn follow_log(log_path: &std::path::Path) -> Result<()> {
-    let file = std::fs::File::open(log_path)
-        .map_err(|e| miette!("Failed to open log file: {e}"))?;
+    let file =
+        std::fs::File::open(log_path).map_err(|e| miette!("Failed to open log file: {e}"))?;
     let mut reader = BufReader::new(file);
 
     // Start at the end of the file
