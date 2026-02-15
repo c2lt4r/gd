@@ -151,6 +151,7 @@ func _initialize():
 	# Use a Timer for polling — its callbacks fire during idle phase,
 	# which is safe for tree modification (unlike process_frame).
 	var timer = Timer.new()
+	timer.name = "GdEvalTimer"
 	timer.wait_time = 0.05
 	timer.autostart = true
 	timer.timeout.connect(_poll)
@@ -446,13 +447,10 @@ fn wait_for_game_exit() {
         r.store(false, std::sync::atomic::Ordering::Release);
     });
     while running.load(std::sync::atomic::Ordering::Acquire) {
-        let game_alive = crate::lsp::daemon_client::query_daemon(
-            "status",
-            serde_json::json!({}),
-            None,
-        )
-        .and_then(|r| r.get("game_running").and_then(serde_json::Value::as_bool))
-        .unwrap_or(false);
+        let game_alive =
+            crate::lsp::daemon_client::query_daemon("status", serde_json::json!({}), None)
+                .and_then(|r| r.get("game_running").and_then(serde_json::Value::as_bool))
+                .unwrap_or(false);
         if !game_alive {
             break;
         }
@@ -483,13 +481,10 @@ fn tail_log_file(path: &Path) {
         match reader.read_line(&mut line) {
             Ok(0) => {
                 // No new data — check if game is still running
-                let game_alive = crate::lsp::daemon_client::query_daemon(
-                    "status",
-                    serde_json::json!({}),
-                    None,
-                )
-                .and_then(|r| r.get("game_running").and_then(serde_json::Value::as_bool))
-                .unwrap_or(false);
+                let game_alive =
+                    crate::lsp::daemon_client::query_daemon("status", serde_json::json!({}), None)
+                        .and_then(|r| r.get("game_running").and_then(serde_json::Value::as_bool))
+                        .unwrap_or(false);
                 if !game_alive {
                     break;
                 }

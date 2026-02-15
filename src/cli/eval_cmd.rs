@@ -314,10 +314,43 @@ fn generate_live_eval_script(input: &str) -> String {
 
 /// GDScript keywords for syntax highlighting.
 const GDSCRIPT_KEYWORDS: &[&str] = &[
-    "extends", "class_name", "func", "var", "const", "signal", "enum", "return", "if", "elif",
-    "else", "for", "while", "match", "break", "continue", "pass", "self", "super", "class",
-    "static", "await", "yield", "true", "false", "null", "not", "and", "or", "in", "is", "as",
-    "void", "int", "float", "bool", "String",
+    "extends",
+    "class_name",
+    "func",
+    "var",
+    "const",
+    "signal",
+    "enum",
+    "return",
+    "if",
+    "elif",
+    "else",
+    "for",
+    "while",
+    "match",
+    "break",
+    "continue",
+    "pass",
+    "self",
+    "super",
+    "class",
+    "static",
+    "await",
+    "yield",
+    "true",
+    "false",
+    "null",
+    "not",
+    "and",
+    "or",
+    "in",
+    "is",
+    "as",
+    "void",
+    "int",
+    "float",
+    "bool",
+    "String",
 ];
 
 /// Print a GDScript source with line numbers and basic syntax highlighting.
@@ -368,7 +401,8 @@ fn highlight_gdscript_line(line: &str) -> String {
         } else if ch.is_ascii_digit()
             || (ch == '-'
                 && chars.clone().nth(1).is_some_and(|c| c.is_ascii_digit())
-                && (result.is_empty() || result.ends_with(|c: char| !c.is_alphanumeric() && c != '_')))
+                && (result.is_empty()
+                    || result.ends_with(|c: char| !c.is_alphanumeric() && c != '_')))
         {
             // Numeric literal — yellow
             let mut s = String::new();
@@ -376,8 +410,7 @@ fn highlight_gdscript_line(line: &str) -> String {
                 s.push(chars.next().unwrap());
             }
             while let Some(&c) = chars.peek() {
-                if c.is_ascii_digit() || c == '.' || c == '_' || c == 'x' || c == 'b' || c == 'o'
-                {
+                if c.is_ascii_digit() || c == '.' || c == '_' || c == 'x' || c == 'b' || c == 'o' {
                     s.push(chars.next().unwrap());
                 } else {
                     break;
@@ -440,7 +473,10 @@ fn try_live_eval(
         Err(e) => return Some(Err(e)),
     };
 
-    // 4. Ask daemon if eval server is ready (may block until game starts)
+    // 4. Check if eval server is ready — try daemon first, fall back to ready file
+    let godot_dir = project_root.join(".godot");
+    let ready_path = godot_dir.join("gd-eval-ready");
+
     let eval_ready = crate::lsp::daemon_client::query_daemon(
         "eval_status",
         serde_json::json!({"timeout": timeout.as_secs()}),
@@ -449,11 +485,11 @@ fn try_live_eval(
     .and_then(|r| r.get("ready").and_then(serde_json::Value::as_bool))
     .unwrap_or(false);
 
-    if !eval_ready {
+    // Fallback: daemon may have restarted (build ID mismatch) and lost state,
+    // but the eval server in Godot is still running and wrote the ready file.
+    if !eval_ready && !ready_path.is_file() {
         return None;
     }
-
-    let godot_dir = project_root.join(".godot");
 
     // 5. Show the script being sent with numbered lines and syntax highlighting
     if !json_mode {
@@ -552,19 +588,22 @@ pub fn exec(args: &EvalArgs) -> Result<()> {
 
     let mode = detect_input_mode(&args.input, &project.root);
 
+    // Read stdin once up front so both live and offline paths can use it
+    let stdin_text = if mode == InputMode::Stdin {
+        let mut buf = String::new();
+        std::io::stdin()
+            .read_to_string(&mut buf)
+            .map_err(|e| miette!("Failed to read stdin: {e}"))?;
+        Some(buf)
+    } else {
+        None
+    };
+
     // Try live eval first for expressions/stdin (if a game is running with `gd run --eval`)
     if mode != InputMode::File {
-        let input_text = if mode == InputMode::Stdin {
-            let mut buf = String::new();
-            std::io::stdin()
-                .read_to_string(&mut buf)
-                .map_err(|e| miette!("Failed to read stdin: {e}"))?;
-            buf
-        } else {
-            args.input.clone()
-        };
+        let input_text = stdin_text.as_deref().unwrap_or(&args.input);
         if let Some(result) = try_live_eval(
-            &input_text,
+            input_text,
             &project.root,
             Duration::from_secs(args.timeout),
             json_mode,
@@ -590,12 +629,18 @@ pub fn exec(args: &EvalArgs) -> Result<()> {
             (resolved, None)
         }
         InputMode::Stdin => {
-            let mut source = String::new();
-            std::io::stdin()
-                .read_to_string(&mut source)
-                .map_err(|e| miette!("Failed to read stdin: {e}"))?;
-            let wrapper = generate_wrapper_script(&source);
-            let path = write_temp_script(&project.root, &wrapper)?;
+            let source = stdin_text.as_deref().unwrap_or("");
+            let trimmed = source.trim();
+            // Complete script (has extends) — use as-is, validate base class
+            let content = if trimmed.starts_with("extends ") {
+                source.to_string()
+            } else {
+                generate_wrapper_script(source)
+            };
+            let path = write_temp_script(&project.root, &content)?;
+            if trimmed.starts_with("extends ") {
+                validate_script_base_class(&path)?;
+            }
             (path.clone(), Some(path))
         }
         InputMode::Expression => {
@@ -927,7 +972,8 @@ mod tests {
 
     #[test]
     fn live_script_complete_passthrough() {
-        let full_script = "extends Node\n\nfunc run():\n\tvar label = Label.new()\n\treturn label\n";
+        let full_script =
+            "extends Node\n\nfunc run():\n\tvar label = Label.new()\n\treturn label\n";
         let result = generate_live_eval_script(full_script);
         assert_eq!(result, full_script);
     }
@@ -952,8 +998,13 @@ mod tests {
     fn try_live_eval_sandbox_blocks() {
         // Sandbox blocks before reaching daemon, returns Some(Err)
         let tmp = tempfile::tempdir().unwrap();
-        let result =
-            try_live_eval("OS.execute('cmd', [])", tmp.path(), Duration::from_secs(1), false, true);
+        let result = try_live_eval(
+            "OS.execute('cmd', [])",
+            tmp.path(),
+            Duration::from_secs(1),
+            false,
+            true,
+        );
         assert!(result.is_some());
         assert!(result.unwrap().is_err());
     }
@@ -984,7 +1035,8 @@ mod tests {
 
     #[test]
     fn sandbox_allows_user_path() {
-        let violations = sandbox_check("FileAccess.open(\"user://saves/game.dat\", FileAccess.READ)");
+        let violations =
+            sandbox_check("FileAccess.open(\"user://saves/game.dat\", FileAccess.READ)");
         assert!(violations.is_empty());
     }
 
@@ -1034,8 +1086,14 @@ mod tests {
 
     #[test]
     fn sanitize_strips_invalid_escapes() {
-        assert_eq!(sanitize_escapes(r#"var s = "hello\!""#), r#"var s = "hello!""#);
-        assert_eq!(sanitize_escapes(r#"var s = "test\q""#), r#"var s = "testq""#);
+        assert_eq!(
+            sanitize_escapes(r#"var s = "hello\!""#),
+            r#"var s = "hello!""#
+        );
+        assert_eq!(
+            sanitize_escapes(r#"var s = "test\q""#),
+            r#"var s = "testq""#
+        );
         assert_eq!(sanitize_escapes(r"var s = 'bad\z'"), "var s = 'badz'");
     }
 
@@ -1053,8 +1111,36 @@ mod tests {
 
     #[test]
     fn pre_check_sanitizes_invalid_escape() {
-        let result = pre_check("extends SceneTree\nfunc _init():\n\tvar s = \"test\\!\"\n\tquit()\n");
+        let result =
+            pre_check("extends SceneTree\nfunc _init():\n\tvar s = \"test\\!\"\n\tquit()\n");
         assert!(result.is_ok());
         assert!(result.unwrap().contains("\"test!\""));
+    }
+
+    #[test]
+    fn pre_check_node_script_with_run() {
+        // This is the exact format that `generate_live_eval_script` passthrough produces
+        let src = "extends Node\n\nfunc run():\n\treturn 42\n";
+        let result = pre_check(src);
+        assert!(
+            result.is_ok(),
+            "pre_check should accept extends Node script: {result:?}"
+        );
+    }
+
+    #[test]
+    fn pre_check_multiline_node_script() {
+        // More complex script like the FPS overlay
+        let src = "extends Node\n\
+                    \n\
+                    func run():\n\
+                    \tvar label = Label.new()\n\
+                    \tlabel.text = \"hello\"\n\
+                    \treturn label\n";
+        let result = pre_check(src);
+        assert!(
+            result.is_ok(),
+            "pre_check should accept multi-line node script: {result:?}"
+        );
     }
 }
