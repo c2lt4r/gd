@@ -126,12 +126,64 @@ fn write_temp_script(project_root: &Path, content: &str) -> Result<PathBuf> {
 }
 
 /// Parse-validate a script without running Godot.
-fn pre_check(source: &str) -> Result<()> {
+fn pre_check(source: &str) -> Result<String> {
     let tree = crate::core::parser::parse(source)?;
     if tree.root_node().has_error() {
         return Err(miette!("Script has syntax errors"));
     }
-    Ok(())
+    // Strip invalid escape sequences in string literals — Godot crashes
+    // on these instead of reporting a parse error gracefully.
+    Ok(sanitize_escapes(source))
+}
+
+/// GDScript valid escape characters after `\`.
+const VALID_ESCAPES: &[char] = &[
+    '\\', '\'', '"', 'n', 't', 'r', 'a', 'b', 'f', 'v', '0', 'x', 'u', 'U',
+];
+
+/// Strip invalid escape sequences in string literals (`\!` → `!`).
+/// Godot crashes on these instead of reporting a parse error.
+fn sanitize_escapes(source: &str) -> String {
+    let mut result = String::with_capacity(source.len());
+    let mut chars = source.chars().peekable();
+    let mut in_string: Option<char> = None;
+
+    while let Some(ch) = chars.next() {
+        match in_string {
+            None => {
+                result.push(ch);
+                if ch == '#' {
+                    // Copy rest of comment line
+                    for c in chars.by_ref() {
+                        result.push(c);
+                        if c == '\n' {
+                            break;
+                        }
+                    }
+                } else if ch == '"' || ch == '\'' {
+                    in_string = Some(ch);
+                }
+            }
+            Some(quote) => {
+                if ch == '\\' {
+                    if let Some(&next) = chars.peek() {
+                        if VALID_ESCAPES.contains(&next) || next == '\n' {
+                            result.push(ch); // keep the backslash
+                        }
+                        // else: drop the backslash (invalid escape)
+                    } else {
+                        result.push(ch);
+                    }
+                } else {
+                    result.push(ch);
+                    if ch == quote {
+                        in_string = None;
+                    }
+                }
+            }
+        }
+    }
+    result
 }
 
 /// APIs blocked by the sandbox. These are system-level escapes that can cause
@@ -382,10 +434,11 @@ fn try_live_eval(
         }
     }
 
-    // 3. Syntax check — catch parse errors before waiting for daemon
-    if let Err(e) = pre_check(&script) {
-        return Some(Err(e));
-    }
+    // 3. Syntax check + sanitize escape sequences
+    let script = match pre_check(&script) {
+        Ok(sanitized) => sanitized,
+        Err(e) => return Some(Err(e)),
+    };
 
     // 4. Ask daemon if eval server is ready (may block until game starts)
     let eval_ready = crate::lsp::daemon_client::query_daemon(
@@ -569,10 +622,17 @@ pub fn exec(args: &EvalArgs) -> Result<()> {
         }
     }
 
-    // Always syntax-check — catches parse errors before launching Godot
-    if let Err(e) = pre_check(&source) {
-        cleanup_temp(temp_file.as_ref());
-        return Err(e);
+    // Always syntax-check + sanitize escape sequences before launching Godot
+    let source = match pre_check(&source) {
+        Ok(sanitized) => sanitized,
+        Err(e) => {
+            cleanup_temp(temp_file.as_ref());
+            return Err(e);
+        }
+    };
+    // Re-write the temp file if escapes were sanitized
+    if let Some(ref path) = temp_file {
+        let _ = std::fs::write(path, &source);
     }
 
     let mut cmd = Command::new(&godot);
@@ -958,5 +1018,43 @@ mod tests {
         let violations = sandbox_check("OS.execute('cmd'); var t = Thread.new()");
         assert!(violations.iter().any(|v| v.contains("OS.execute")));
         assert!(violations.iter().any(|v| v.contains("Thread")));
+    }
+
+    #[test]
+    fn sanitize_valid_escapes_unchanged() {
+        let src = r#"var s = "hello\nworld\t""#;
+        assert_eq!(sanitize_escapes(src), src);
+        let src2 = r#"var s = "path\\to\\file""#;
+        assert_eq!(sanitize_escapes(src2), src2);
+        let src3 = r#"var s = "say \"hi\"""#;
+        assert_eq!(sanitize_escapes(src3), src3);
+        let src4 = r"var s = '\r\0\a\b\f\v'";
+        assert_eq!(sanitize_escapes(src4), src4);
+    }
+
+    #[test]
+    fn sanitize_strips_invalid_escapes() {
+        assert_eq!(sanitize_escapes(r#"var s = "hello\!""#), r#"var s = "hello!""#);
+        assert_eq!(sanitize_escapes(r#"var s = "test\q""#), r#"var s = "testq""#);
+        assert_eq!(sanitize_escapes(r"var s = 'bad\z'"), "var s = 'badz'");
+    }
+
+    #[test]
+    fn sanitize_skips_comments() {
+        let src = "# this has \\! in a comment\nvar x = 1";
+        assert_eq!(sanitize_escapes(src), src);
+    }
+
+    #[test]
+    fn sanitize_no_strings_unchanged() {
+        let src = "var x = 1 + 2";
+        assert_eq!(sanitize_escapes(src), src);
+    }
+
+    #[test]
+    fn pre_check_sanitizes_invalid_escape() {
+        let result = pre_check("extends SceneTree\nfunc _init():\n\tvar s = \"test\\!\"\n\tquit()\n");
+        assert!(result.is_ok());
+        assert!(result.unwrap().contains("\"test!\""));
     }
 }
