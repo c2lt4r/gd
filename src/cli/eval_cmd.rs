@@ -131,6 +131,32 @@ fn pre_check(source: &str) -> Result<()> {
     Ok(())
 }
 
+/// Validate that a .gd file extends SceneTree or MainLoop (required for --script).
+/// Without this check, Godot shows an OS error dialog on Windows that blocks execution.
+fn validate_script_base_class(path: &Path) -> Result<()> {
+    let source = std::fs::read_to_string(path)
+        .map_err(|e| miette!("Failed to read {}: {e}", path.display()))?;
+    for line in source.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("extends") {
+            let base = rest.trim();
+            if base == "SceneTree" || base == "MainLoop" {
+                return Ok(());
+            }
+            return Err(miette!(
+                "Script extends '{base}', but --script requires 'extends SceneTree' or 'extends MainLoop'"
+            ));
+        }
+        // Skip comments and empty lines at top of file
+        if !trimmed.is_empty() && !trimmed.starts_with('#') && !trimmed.starts_with('@') {
+            break;
+        }
+    }
+    Err(miette!(
+        "Script has no 'extends' declaration. --script requires 'extends SceneTree' or 'extends MainLoop'"
+    ))
+}
+
 pub fn exec(args: &EvalArgs) -> Result<()> {
     let json_mode = match args.format.as_str() {
         "text" => false,
@@ -158,6 +184,7 @@ pub fn exec(args: &EvalArgs) -> Result<()> {
             } else {
                 project.root.join(path)
             };
+            validate_script_base_class(&resolved)?;
             (resolved, None)
         }
         InputMode::Stdin => {
@@ -195,7 +222,8 @@ pub fn exec(args: &EvalArgs) -> Result<()> {
     if args.headless {
         cmd.arg("--headless");
     }
-    cmd.arg("--path")
+    cmd.arg("--no-header")
+        .arg("--path")
         .arg(&project.root)
         .arg("--script")
         .arg(rel_script);
@@ -402,5 +430,38 @@ mod tests {
     #[test]
     fn pre_check_invalid() {
         assert!(pre_check("extends SceneTree\nfunc _init():\n\tif if if\n").is_err());
+    }
+
+    #[test]
+    fn validate_base_class_scene_tree() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("ok.gd");
+        std::fs::write(&path, "extends SceneTree\nfunc _init():\n\tquit()\n").unwrap();
+        assert!(validate_script_base_class(&path).is_ok());
+    }
+
+    #[test]
+    fn validate_base_class_main_loop() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("ok.gd");
+        std::fs::write(&path, "extends MainLoop\nfunc _init():\n\tquit()\n").unwrap();
+        assert!(validate_script_base_class(&path).is_ok());
+    }
+
+    #[test]
+    fn validate_base_class_rejects_node() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("bad.gd");
+        std::fs::write(&path, "extends Node\nfunc _ready():\n\tpass\n").unwrap();
+        let err = validate_script_base_class(&path).unwrap_err();
+        assert!(err.to_string().contains("extends 'Node'"));
+    }
+
+    #[test]
+    fn validate_base_class_with_annotations() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("tool.gd");
+        std::fs::write(&path, "@tool\nextends SceneTree\nfunc _init():\n\tquit()\n").unwrap();
+        assert!(validate_script_base_class(&path).is_ok());
     }
 }

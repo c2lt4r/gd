@@ -587,6 +587,24 @@ fn test_eval_check_valid_expression() {
 }
 
 #[test]
+fn test_eval_file_rejects_non_scene_tree() {
+    let temp = setup_gd_project(&[("bad.gd", "extends Node\nfunc _ready():\n\tpass\n")]);
+
+    let output = gd_bin()
+        .args(["eval", "bad.gd"])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd eval");
+
+    assert!(!output.status.success(), "Should reject non-SceneTree script");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("extends SceneTree") || stderr.contains("extends 'Node'"),
+        "Should explain the extends requirement, stderr: {stderr}"
+    );
+}
+
+#[test]
 fn test_eval_check_invalid_expression() {
     let temp = setup_gd_project(&[]);
 
