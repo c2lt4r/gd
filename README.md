@@ -13,7 +13,7 @@ Built with [tree-sitter](https://tree-sitter.github.io/) for accurate parsing an
 - **Manage addons** from Git or the Godot Asset Library (with lockfile and update support)
 - **Generate CI/CD** configurations for GitHub Actions and GitLab CI
 - **LSP server** with formatting, diagnostics, hover, go-to-definition, references, rename, completion, and 16 refactoring commands
-- **Scene analysis** &mdash; validate `.tscn`/`.tres` files, visualize scene node hierarchies, and track resource dependencies
+- **Scene management** &mdash; create scenes, add/remove nodes, set properties, wire connections, attach/detach scripts &mdash; plus validate `.tscn`/`.tres` files and visualize scene hierarchies
 - **Debug** a running Godot game via Godot's binary debug protocol &mdash; breakpoints, stepping, variable inspection, expression evaluation, live scene tree, node inspection, game speed control, and hot-reload
 - **Godot LSP proxy** &mdash; forward hover, completion, and go-to-definition to Godot's built-in LSP when the editor is running
 - **Analyze** your project with dependency graphs, class trees, and code statistics
@@ -80,7 +80,7 @@ gd run
 | `gd ci` | Generate CI/CD pipeline configuration |
 | `gd daemon` | Manage the background daemon (status, stop, restart) |
 | `gd debug` | Debug a running Godot game (breakpoints, stepping, eval, scene tree, inspect, time control) |
-| `gd scene` | Manage `.tscn` scene files (attach scripts to nodes) |
+| `gd scene` | Manage `.tscn` scene files (create, add/remove nodes, properties, connections, scripts) |
 | `gd lsp` | Start the LSP server, or run one-shot queries (see below) |
 | `gd deps` | Show script dependency graph (`--include-resources` for `.tscn`/`.tres`) |
 | `gd env` | Show environment info (gd version, Godot version/path, OS, project root) |
@@ -206,14 +206,30 @@ gd tree --scene main.tscn --format json
 ### Scene Management
 
 ```sh
-# Attach a script to the root node of a scene
-gd scene attach-script main.tscn player.gd
+# Create a new scene
+gd scene create level.tscn --root-type Node2D
+gd scene create main_menu.tscn --root-type Control --root-name MainMenu
 
-# Attach to a specific node
-gd scene attach-script main.tscn enemy_ai.gd --node Enemy
+# Add nodes
+gd scene add-node level.tscn --name Player --type CharacterBody2D
+gd scene add-node level.tscn --name Sprite --type Sprite2D --parent Player
 
-# Preview changes without writing
-gd scene attach-script main.tscn player.gd --dry-run
+# Set properties on nodes
+gd scene set-property level.tscn --node Player --key visible --value false
+
+# Attach and detach scripts
+gd scene attach-script level.tscn player.gd --node Player
+gd scene detach-script level.tscn --node Player
+
+# Manage signal connections
+gd scene add-connection level.tscn --signal ready --from Player --to . --method _on_ready
+gd scene remove-connection level.tscn --signal ready --from Player --to . --method _on_ready
+
+# Remove a node (cascades to children, cleans up connections and orphaned resources)
+gd scene remove-node level.tscn --name Player
+
+# Preview any command without writing
+gd scene create level.tscn --root-type Node2D --dry-run
 ```
 
 ### Statistics

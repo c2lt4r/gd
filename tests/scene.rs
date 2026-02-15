@@ -375,6 +375,532 @@ fn test_lsp_scene_info() {
     assert!(names.contains(&"Player"), "nodes should contain Player");
 }
 
+// ── gd scene create ──────────────────────────────────────────────────────
+
+#[test]
+fn test_scene_create_basic() {
+    let temp = TempDir::new().unwrap();
+    let scene_path = temp.path().join("level.tscn");
+
+    let output = gd_bin()
+        .arg("scene")
+        .arg("create")
+        .arg(&scene_path)
+        .arg("--root-type")
+        .arg("Node2D")
+        .output()
+        .expect("Failed to run gd scene create");
+
+    assert!(
+        output.status.success(),
+        "gd scene create should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let content = fs::read_to_string(&scene_path).unwrap();
+    assert!(content.contains("[gd_scene format=3]"));
+    assert!(content.contains(r#"[node name="Level" type="Node2D"]"#));
+}
+
+#[test]
+fn test_scene_create_custom_root_name() {
+    let temp = TempDir::new().unwrap();
+    let scene_path = temp.path().join("test.tscn");
+
+    let output = gd_bin()
+        .arg("scene")
+        .arg("create")
+        .arg(&scene_path)
+        .arg("--root-type")
+        .arg("Control")
+        .arg("--root-name")
+        .arg("MainMenu")
+        .output()
+        .expect("Failed to run gd scene create");
+
+    assert!(output.status.success());
+    let content = fs::read_to_string(&scene_path).unwrap();
+    assert!(content.contains(r#"[node name="MainMenu" type="Control"]"#));
+}
+
+#[test]
+fn test_scene_create_already_exists() {
+    let temp = TempDir::new().unwrap();
+    let scene_path = temp.path().join("existing.tscn");
+    fs::write(&scene_path, "[gd_scene format=3]\n").unwrap();
+
+    let output = gd_bin()
+        .arg("scene")
+        .arg("create")
+        .arg(&scene_path)
+        .arg("--root-type")
+        .arg("Node2D")
+        .output()
+        .expect("Failed to run gd scene create");
+
+    assert!(
+        !output.status.success(),
+        "should fail if file already exists"
+    );
+}
+
+#[test]
+fn test_scene_create_dry_run() {
+    let temp = TempDir::new().unwrap();
+    let scene_path = temp.path().join("dryrun.tscn");
+
+    let output = gd_bin()
+        .arg("scene")
+        .arg("create")
+        .arg(&scene_path)
+        .arg("--root-type")
+        .arg("Node3D")
+        .arg("--dry-run")
+        .output()
+        .expect("Failed to run gd scene create --dry-run");
+
+    assert!(output.status.success());
+    assert!(!scene_path.exists(), "dry-run should not create the file");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("[gd_scene format=3]"));
+}
+
+// ── gd scene add-node ────────────────────────────────────────────────────
+
+#[test]
+fn test_scene_add_node() {
+    let temp = TempDir::new().unwrap();
+    let scene_path = temp.path().join("test.tscn");
+    fs::write(
+        &scene_path,
+        "[gd_scene format=3]\n\n[node name=\"Root\" type=\"Node2D\"]\n",
+    )
+    .unwrap();
+
+    let output = gd_bin()
+        .arg("scene")
+        .arg("add-node")
+        .arg(&scene_path)
+        .arg("--name")
+        .arg("Player")
+        .arg("--type")
+        .arg("CharacterBody2D")
+        .output()
+        .expect("Failed to run gd scene add-node");
+
+    assert!(
+        output.status.success(),
+        "gd scene add-node should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let content = fs::read_to_string(&scene_path).unwrap();
+    assert!(content.contains(r#"[node name="Player" type="CharacterBody2D" parent="."]"#));
+}
+
+#[test]
+fn test_scene_add_node_to_parent() {
+    let temp = TempDir::new().unwrap();
+    let scene_path = temp.path().join("test.tscn");
+    fs::write(
+        &scene_path,
+        r#"[gd_scene format=3]
+
+[node name="Root" type="Node2D"]
+
+[node name="Player" type="CharacterBody2D" parent="."]
+"#,
+    )
+    .unwrap();
+
+    let output = gd_bin()
+        .arg("scene")
+        .arg("add-node")
+        .arg(&scene_path)
+        .arg("--name")
+        .arg("Sprite")
+        .arg("--type")
+        .arg("Sprite2D")
+        .arg("--parent")
+        .arg("Player")
+        .output()
+        .expect("Failed to run gd scene add-node --parent");
+
+    assert!(output.status.success());
+    let content = fs::read_to_string(&scene_path).unwrap();
+    assert!(content.contains(r#"[node name="Sprite" type="Sprite2D" parent="Player"]"#));
+}
+
+// ── gd scene set-property ────────────────────────────────────────────────
+
+#[test]
+fn test_scene_set_property() {
+    let temp = TempDir::new().unwrap();
+    let scene_path = temp.path().join("test.tscn");
+    fs::write(
+        &scene_path,
+        r#"[gd_scene format=3]
+
+[node name="Root" type="Node2D"]
+
+[node name="Player" type="CharacterBody2D" parent="."]
+"#,
+    )
+    .unwrap();
+
+    let output = gd_bin()
+        .arg("scene")
+        .arg("set-property")
+        .arg(&scene_path)
+        .arg("--node")
+        .arg("Player")
+        .arg("--key")
+        .arg("visible")
+        .arg("--value")
+        .arg("false")
+        .output()
+        .expect("Failed to run gd scene set-property");
+
+    assert!(
+        output.status.success(),
+        "gd scene set-property should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let content = fs::read_to_string(&scene_path).unwrap();
+    assert!(content.contains("visible = false"));
+}
+
+// ── gd scene add-connection / remove-connection ──────────────────────────
+
+#[test]
+fn test_scene_add_and_remove_connection() {
+    let temp = TempDir::new().unwrap();
+    let scene_path = temp.path().join("test.tscn");
+    fs::write(
+        &scene_path,
+        r#"[gd_scene format=3]
+
+[node name="Root" type="Node2D"]
+
+[node name="Button" type="Button" parent="."]
+"#,
+    )
+    .unwrap();
+
+    // Add connection
+    let output = gd_bin()
+        .arg("scene")
+        .arg("add-connection")
+        .arg(&scene_path)
+        .arg("--signal")
+        .arg("pressed")
+        .arg("--from")
+        .arg("Button")
+        .arg("--to")
+        .arg(".")
+        .arg("--method")
+        .arg("_on_button_pressed")
+        .output()
+        .expect("Failed to run gd scene add-connection");
+
+    assert!(
+        output.status.success(),
+        "gd scene add-connection should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let content = fs::read_to_string(&scene_path).unwrap();
+    assert!(content.contains(
+        r#"[connection signal="pressed" from="Button" to="." method="_on_button_pressed"]"#
+    ));
+
+    // Remove connection
+    let output = gd_bin()
+        .arg("scene")
+        .arg("remove-connection")
+        .arg(&scene_path)
+        .arg("--signal")
+        .arg("pressed")
+        .arg("--from")
+        .arg("Button")
+        .arg("--to")
+        .arg(".")
+        .arg("--method")
+        .arg("_on_button_pressed")
+        .output()
+        .expect("Failed to run gd scene remove-connection");
+
+    assert!(
+        output.status.success(),
+        "gd scene remove-connection should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let content = fs::read_to_string(&scene_path).unwrap();
+    assert!(!content.contains("[connection"));
+}
+
+// ── gd scene attach-script / detach-script ───────────────────────────────
+
+#[test]
+fn test_scene_attach_and_detach_script() {
+    let temp = TempDir::new().unwrap();
+
+    // Need project.godot for attach-script
+    fs::write(
+        temp.path().join("project.godot"),
+        "[gd_resource type=\"Environment\" format=3]\n",
+    )
+    .unwrap();
+    fs::write(
+        temp.path().join("root.gd"),
+        "extends Node2D\n\nfunc _ready() -> void:\n\tpass\n",
+    )
+    .unwrap();
+
+    let scene_path = temp.path().join("test.tscn");
+    fs::write(
+        &scene_path,
+        "[gd_scene format=3]\n\n[node name=\"Root\" type=\"Node2D\"]\n",
+    )
+    .unwrap();
+
+    // Attach
+    let output = gd_bin()
+        .arg("scene")
+        .arg("attach-script")
+        .arg(&scene_path)
+        .arg("root.gd")
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd scene attach-script");
+
+    assert!(
+        output.status.success(),
+        "gd scene attach-script should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let content = fs::read_to_string(&scene_path).unwrap();
+    assert!(content.contains("script = ExtResource("));
+    assert!(content.contains(r#"path="res://root.gd""#));
+
+    // Detach
+    let output = gd_bin()
+        .arg("scene")
+        .arg("detach-script")
+        .arg(&scene_path)
+        .output()
+        .expect("Failed to run gd scene detach-script");
+
+    assert!(
+        output.status.success(),
+        "gd scene detach-script should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let content = fs::read_to_string(&scene_path).unwrap();
+    assert!(!content.contains("script ="));
+    assert!(!content.contains("[ext_resource"));
+}
+
+// ── gd scene remove-node ─────────────────────────────────────────────────
+
+#[test]
+fn test_scene_remove_node_cascades() {
+    let temp = TempDir::new().unwrap();
+    let scene_path = temp.path().join("test.tscn");
+    fs::write(
+        &scene_path,
+        r#"[gd_scene format=3]
+
+[node name="Root" type="Node2D"]
+
+[node name="Player" type="CharacterBody2D" parent="."]
+
+[node name="Sprite" type="Sprite2D" parent="Player"]
+
+[connection signal="ready" from="Player" to="." method="_on_ready"]
+"#,
+    )
+    .unwrap();
+
+    let output = gd_bin()
+        .arg("scene")
+        .arg("remove-node")
+        .arg(&scene_path)
+        .arg("--name")
+        .arg("Player")
+        .output()
+        .expect("Failed to run gd scene remove-node");
+
+    assert!(
+        output.status.success(),
+        "gd scene remove-node should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let content = fs::read_to_string(&scene_path).unwrap();
+    assert!(content.contains("Root"));
+    assert!(!content.contains("Player"));
+    assert!(!content.contains("Sprite"));
+    assert!(!content.contains("[connection"));
+}
+
+#[test]
+fn test_scene_remove_node_cannot_remove_root() {
+    let temp = TempDir::new().unwrap();
+    let scene_path = temp.path().join("test.tscn");
+    fs::write(
+        &scene_path,
+        "[gd_scene format=3]\n\n[node name=\"Root\" type=\"Node2D\"]\n",
+    )
+    .unwrap();
+
+    let output = gd_bin()
+        .arg("scene")
+        .arg("remove-node")
+        .arg(&scene_path)
+        .arg("--name")
+        .arg("Root")
+        .output()
+        .expect("Failed to run gd scene remove-node");
+
+    assert!(
+        !output.status.success(),
+        "should fail when trying to remove root node"
+    );
+}
+
+// ── gd scene full workflow ───────────────────────────────────────────────
+
+/// Run `gd scene <subcmd> <scene_path> [extra_args...]` and assert success.
+fn run_scene_cmd(subcmd: &str, scene: &std::path::Path, extra: &[&str], label: &str) {
+    let mut cmd = gd_bin();
+    cmd.arg("scene").arg(subcmd).arg(scene);
+    for arg in extra {
+        cmd.arg(arg);
+    }
+    let out = cmd.output().unwrap();
+    assert!(
+        out.status.success(),
+        "{label} failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn test_scene_full_workflow_build() {
+    let temp = TempDir::new().unwrap();
+    let s = temp.path().join("game.tscn");
+
+    run_scene_cmd("create", &s, &["--root-type", "Node2D"], "create");
+    run_scene_cmd(
+        "add-node",
+        &s,
+        &["--name", "Player", "--type", "CharacterBody2D"],
+        "add Player",
+    );
+    run_scene_cmd(
+        "add-node",
+        &s,
+        &[
+            "--name", "Sprite", "--type", "Sprite2D", "--parent", "Player",
+        ],
+        "add Sprite",
+    );
+    run_scene_cmd(
+        "set-property",
+        &s,
+        &["--node", "Player", "--key", "visible", "--value", "false"],
+        "set-property",
+    );
+    run_scene_cmd(
+        "add-connection",
+        &s,
+        &[
+            "--signal",
+            "ready",
+            "--from",
+            "Player",
+            "--to",
+            ".",
+            "--method",
+            "_on_ready",
+        ],
+        "add-connection",
+    );
+
+    let c = fs::read_to_string(&s).unwrap();
+    assert!(c.contains("Game") && c.contains("Player") && c.contains("Sprite"));
+    assert!(c.contains("visible = false"));
+    assert!(c.contains("[connection"));
+}
+
+#[test]
+fn test_scene_full_workflow_teardown() {
+    let temp = TempDir::new().unwrap();
+    let s = temp.path().join("game.tscn");
+
+    run_scene_cmd("create", &s, &["--root-type", "Node2D"], "create");
+    run_scene_cmd(
+        "add-node",
+        &s,
+        &["--name", "Player", "--type", "CharacterBody2D"],
+        "add Player",
+    );
+    run_scene_cmd(
+        "add-node",
+        &s,
+        &[
+            "--name", "Sprite", "--type", "Sprite2D", "--parent", "Player",
+        ],
+        "add Sprite",
+    );
+    run_scene_cmd(
+        "add-connection",
+        &s,
+        &[
+            "--signal",
+            "ready",
+            "--from",
+            "Player",
+            "--to",
+            ".",
+            "--method",
+            "_on_ready",
+        ],
+        "add-connection",
+    );
+
+    run_scene_cmd(
+        "remove-connection",
+        &s,
+        &[
+            "--signal",
+            "ready",
+            "--from",
+            "Player",
+            "--to",
+            ".",
+            "--method",
+            "_on_ready",
+        ],
+        "remove-connection",
+    );
+    run_scene_cmd("remove-node", &s, &["--name", "Player"], "remove Player");
+
+    let c = fs::read_to_string(&s).unwrap();
+    assert!(c.contains("Game"), "should contain Game root: {c}");
+    assert!(!c.contains("Player"));
+    assert!(!c.contains("Sprite"));
+    assert!(!c.contains("[connection"));
+}
+
+// ── gd lsp scene-info ────────────────────────────────────────────────────
+
 #[test]
 fn test_lsp_scene_info_nodes_only() {
     let temp = TempDir::new().unwrap();

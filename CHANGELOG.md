@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.2.11] - 2026-02-15
+
+### Added
+- **`gd scene create`** — create new `.tscn` scene files with `--root-type` and optional `--root-name` (defaults to PascalCase of filename).
+- **`gd scene add-node`** — add nodes to a scene with `--name`, `--type`, and optional `--parent` (defaults to root).
+- **`gd scene remove-node`** — remove a node and all its descendants, with cascading cleanup of connections and orphaned ext_resources.
+- **`gd scene set-property`** — set or update a property on any node (pass-through Godot resource format values).
+- **`gd scene add-connection`** / **`gd scene remove-connection`** — add or remove signal connections with `--signal`, `--from`, `--to`, `--method`.
+- **`gd scene detach-script`** — remove a script from a node, with automatic cleanup of orphaned ext_resources and load_steps.
+- All scene commands support `--dry-run` to preview changes without writing.
+
+### Changed
+- `scene_cmd.rs` split into a directory module (`scene_cmd/`) with 8 submodules for maintainability.
+
 ## [0.2.10] - 2026-02-15
 
 ### Added
