@@ -296,6 +296,7 @@ impl LanguageServer for Backend {
         Ok(hover::hover_at(
             &source,
             params.text_document_position_params.position,
+            self.workspace.get(),
         ))
     }
 

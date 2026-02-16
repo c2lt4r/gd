@@ -413,8 +413,12 @@ pub fn query_hover(
         });
     }
 
+    // Build workspace index for cross-file resolution
+    let workspace = crate::core::config::find_project_root(&path)
+        .map(crate::lsp::workspace::WorkspaceIndex::new);
+
     // Fallback: static analysis
-    let content = crate::lsp::hover::hover_at(&source, position)
+    let content = crate::lsp::hover::hover_at(&source, position, workspace.as_ref())
         .map(|h| match h.contents {
             HoverContents::Markup(markup) => markup.value,
             HoverContents::Scalar(MarkedString::String(s)) => s,

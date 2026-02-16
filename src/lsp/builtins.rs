@@ -1958,6 +1958,63 @@ const BUILTIN_MEMBER_DOCS: &[BuiltinMember] = &[
         description: "Merges another dictionary into this one.",
         kind: Method,
     },
+    // ── Signal ─────────────────────────────────────────────────────
+    BuiltinMember {
+        class: "Signal",
+        name: "emit",
+        brief: "emit(...) -> void",
+        description: "Emits the signal. Arguments are passed to connected callables.",
+        kind: Method,
+    },
+    BuiltinMember {
+        class: "Signal",
+        name: "connect",
+        brief: "connect(callable: Callable, flags: int = 0) -> int",
+        description: "Connects this signal to a callable.",
+        kind: Method,
+    },
+    BuiltinMember {
+        class: "Signal",
+        name: "disconnect",
+        brief: "disconnect(callable: Callable) -> void",
+        description: "Disconnects a callable from this signal.",
+        kind: Method,
+    },
+    BuiltinMember {
+        class: "Signal",
+        name: "is_connected",
+        brief: "is_connected(callable: Callable) -> bool",
+        description: "Returns true if the given callable is connected to this signal.",
+        kind: Method,
+    },
+    BuiltinMember {
+        class: "Signal",
+        name: "get_connections",
+        brief: "get_connections() -> Array[Dictionary]",
+        description: "Returns an array of dictionaries with information about connections.",
+        kind: Method,
+    },
+    BuiltinMember {
+        class: "Signal",
+        name: "get_name",
+        brief: "get_name() -> StringName",
+        description: "Returns the name of the signal.",
+        kind: Method,
+    },
+    BuiltinMember {
+        class: "Signal",
+        name: "get_object",
+        brief: "get_object() -> Object",
+        description: "Returns the object that emits this signal.",
+        kind: Method,
+    },
+    BuiltinMember {
+        class: "Signal",
+        name: "get_object_id",
+        brief: "get_object_id() -> int",
+        description: "Returns the object ID of the emitting object.",
+        kind: Method,
+    },
 ];
 
 /// Return all built-in members for the given exact class name.

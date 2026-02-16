@@ -1,9 +1,10 @@
 use tower_lsp::lsp_types::{Hover, HoverContents, MarkupContent, MarkupKind, Position};
 
 use super::util::{matches_name, node_range, node_text};
+use super::workspace::WorkspaceIndex;
 
 /// Provide hover information at the given position.
-pub fn hover_at(source: &str, position: Position) -> Option<Hover> {
+pub fn hover_at(source: &str, position: Position, workspace: Option<&WorkspaceIndex>) -> Option<Hover> {
     let tree = crate::core::parser::parse(source).ok()?;
     let root = tree.root_node();
 
@@ -67,7 +68,7 @@ pub fn hover_at(source: &str, position: Position) -> Option<Hover> {
                 return None;
             }
             "identifier" | "name" => {
-                return resolve_hover_for_identifier(&current, &root, source);
+                return resolve_hover_for_identifier(&current, &root, source, position, workspace);
             }
             _ => {}
         }
@@ -101,14 +102,26 @@ fn resolve_hover_for_identifier(
     current: &tree_sitter::Node,
     root: &tree_sitter::Node,
     source: &str,
+    position: Position,
+    workspace: Option<&WorkspaceIndex>,
 ) -> Option<Hover> {
     let name = node_text(current, source);
 
-    // 1. Try to resolve to a same-file declaration
+    // 1. FIRST: check if this is a member access (foo.bar) — must come before
+    //    same-file declaration lookup to avoid name collisions (e.g. hovering on
+    //    `_turn_manager.submit_action` should NOT resolve to the local submit_action).
+    if let Some(hover) = try_member_hover(current, root, source, position, workspace) {
+        return Some(hover);
+    }
+    // 2. If we're the object side of a dot (EventBus in EventBus.foo), try workspace/autoload
+    if let Some(hover) = try_receiver_hover(current, name, workspace) {
+        return Some(hover);
+    }
+    // 3. Try to resolve to a same-file declaration
     if let Some(hover) = resolve_identifier(root, name, source) {
         return Some(hover);
     }
-    // 2. Try builtin type
+    // 4. Try builtin type
     if let Some(doc) = super::builtins::lookup_type(name) {
         return Some(Hover {
             contents: HoverContents::Markup(MarkupContent {
@@ -118,7 +131,7 @@ fn resolve_hover_for_identifier(
             range: Some(node_range(current)),
         });
     }
-    // 3. Try builtin function
+    // 5. Try builtin function
     if let Some(doc) = super::builtins::lookup_function(name) {
         return Some(Hover {
             contents: HoverContents::Markup(MarkupContent {
@@ -128,12 +141,7 @@ fn resolve_hover_for_identifier(
             range: Some(node_range(current)),
         });
     }
-    // 4. Check if this is a member access (foo.bar) — try builtin member
-    //    or self.member — resolve to same-file declaration
-    if let Some(hover) = try_member_hover(current, root, source) {
-        return Some(hover);
-    }
-    // 5. Try builtin member as standalone identifier (GDScript allows
+    // 6. Try builtin member as standalone identifier (GDScript allows
     //    inherited members without self prefix: velocity, move_and_slide, etc.)
     if let Some(doc) = super::builtins::lookup_member(name) {
         return Some(Hover {
@@ -144,51 +152,129 @@ fn resolve_hover_for_identifier(
             range: Some(node_range(current)),
         });
     }
-    // 6. Check if this is an enum member (HOUSE inside enum { HOUSE, MART })
+    // 7. Check if this is an enum member (HOUSE inside enum { HOUSE, MART })
     if let Some(parent) = current.parent()
         && parent.kind() == "enumerator"
     {
         return hover_enum_member(&parent, source);
     }
-    // 7. Check if this identifier refers to an enum member in the same file
+    // 8. Check if this identifier refers to an enum member in the same file
     if let Some(hover) = resolve_enum_member(root, name, source) {
         return Some(hover);
     }
-    // 8. Nothing found
+    // 9. Engine class/singleton used as bare identifier (Input, OS, Engine, etc.)
+    if crate::class_db::class_exists(name) {
+        let code = format!("class {name}");
+        return Some(make_hover(&code, current, None));
+    }
+    // 10. Nothing found
     None
 }
 
-/// Try to resolve a member access pattern (foo.bar or self.bar).
-fn try_member_hover(
+/// Hover for the object side of a dot-access: `EventBus` in `EventBus.foo`,
+/// `MapBuilder` in `MapBuilder.create_tileset`.
+fn try_receiver_hover(
     ident_node: &tree_sitter::Node,
-    root: &tree_sitter::Node,
-    source: &str,
+    name: &str,
+    workspace: Option<&WorkspaceIndex>,
 ) -> Option<Hover> {
+    // Only trigger when this identifier is the left side of an attribute node
     let parent = ident_node.parent()?;
     if parent.kind() != "attribute" {
         return None;
     }
-    let name = node_text(ident_node, source);
+    let object_node = parent.child(0)?;
+    if ident_node.id() != object_node.id() {
+        return None; // We're the member side, not the object
+    }
+
+    let ws = workspace?;
+
+    // Autoload singleton
+    if let Some(info) = ws.lookup_autoload(name) {
+        let extends = info
+            .class_name
+            .as_deref()
+            .unwrap_or("(autoload)");
+        let code = format!("{name}: {extends}");
+        return Some(make_hover(&code, ident_node, Some("Autoload singleton")));
+    }
+
+    // Workspace class_name
+    if let Some(path) = ws.lookup_class_name(name)
+        && let Some(content) = ws.get_content(&path)
+        && let Ok(tree) = crate::core::parser::parse(&content)
+    {
+        let extends = super::completion::find_extends_class(tree.root_node(), &content)
+            .unwrap_or_default();
+        let code = if extends.is_empty() {
+            format!("class_name {name}")
+        } else {
+            format!("class_name {name} extends {extends}")
+        };
+        return Some(make_hover(&code, ident_node, None));
+    }
+
+    None
+}
+
+/// Try to resolve a member access pattern (foo.bar or self.bar).
+///
+/// tree-sitter structures:
+/// - Property access: `attribute` > [`obj`, `.`, `member`]
+/// - Method call: `attribute` > [`obj`, `attribute_call` > [`method`, `arguments`]]
+fn try_member_hover(
+    ident_node: &tree_sitter::Node,
+    root: &tree_sitter::Node,
+    source: &str,
+    position: Position,
+    workspace: Option<&WorkspaceIndex>,
+) -> Option<Hover> {
+    let parent = ident_node.parent()?;
+
+    // Determine the attribute node and object node based on context
+    let attr_node = match parent.kind() {
+        // Direct property access: parent is the `attribute` node
+        "attribute" => parent,
+        // Method call: parent is `attribute_call`, grandparent is `attribute`
+        "attribute_call" => {
+            let grandparent = parent.parent()?;
+            if grandparent.kind() == "attribute" {
+                grandparent
+            } else {
+                return None;
+            }
+        }
+        _ => return None,
+    };
+
+    let member_name = node_text(ident_node, source);
 
     // Check if this identifier is the member (right side), not the object (left side).
-    // In tree-sitter-gdscript, `attribute` has children: object, ".", member
-    // The object is child(0), the member is the `attribute` field or last named child.
-    let object_node = parent.child(0)?;
+    let object_node = attr_node.child(0)?;
     if ident_node.id() == object_node.id() {
-        // This is the object side (foo in foo.bar), not the member
         return None;
     }
 
-    // Handle self.member — resolve to same-file declarations
+    // Handle self.member — resolve to same-file declarations first
     let object_text = node_text(&object_node, source);
     if object_text == "self"
-        && let Some(hover) = resolve_identifier(root, name, source)
+        && let Some(hover) = resolve_identifier(root, member_name, source)
     {
         return Some(hover);
     }
 
-    // Try builtin member lookup
-    if let Some(doc) = super::builtins::lookup_member(name) {
+    // Resolve the receiver's type using the completion resolver chain.
+    // Build the full receiver text (handles chains like `self.velocity`).
+    let receiver_text = build_receiver_text(&object_node, source);
+    if let Some(receiver_type) = resolve_receiver_for_hover(&receiver_text, source, position, workspace)
+        && let Some(hover) = hover_member_on_type(&receiver_type, member_name, ident_node, workspace)
+    {
+        return Some(hover);
+    }
+
+    // Last resort: bare builtin member lookup (e.g. unknown receiver but known method name)
+    if let Some(doc) = super::builtins::lookup_member(member_name) {
         return Some(Hover {
             contents: HoverContents::Markup(MarkupContent {
                 kind: MarkupKind::Markdown,
@@ -198,6 +284,120 @@ fn try_member_hover(
         });
     }
 
+    None
+}
+
+/// Build the full text of a receiver node, including chained attribute access.
+/// E.g. for `self.velocity`, the object_node is `self` → returns `"self"`.
+/// For `self.velocity.normalized`, the object_node is an attribute → returns `"self.velocity"`.
+fn build_receiver_text(node: &tree_sitter::Node, source: &str) -> String {
+    if node.kind() == "attribute" {
+        // Reconstruct dotted chain
+        let text = node.utf8_text(source.as_bytes()).unwrap_or("unknown");
+        text.to_string()
+    } else {
+        node_text(node, source).to_string()
+    }
+}
+
+/// Resolve a receiver string to its type name using the completion module's resolver.
+fn resolve_receiver_for_hover(
+    receiver: &str,
+    source: &str,
+    position: Position,
+    workspace: Option<&WorkspaceIndex>,
+) -> Option<String> {
+    use super::completion::{ResolvedReceiver, resolve_receiver_type};
+    match resolve_receiver_type(receiver, source, position, workspace)? {
+        ResolvedReceiver::ClassName(name) => Some(name),
+        ResolvedReceiver::WorkspaceEnum { .. } => None, // Enum members don't have sub-members
+    }
+}
+
+/// Provide hover for a member on a resolved type.
+/// Checks: workspace user-defined class → ClassDB → builtin members.
+fn hover_member_on_type(
+    class: &str,
+    member: &str,
+    ident_node: &tree_sitter::Node,
+    workspace: Option<&WorkspaceIndex>,
+) -> Option<Hover> {
+    // 1. User-defined class from workspace — find function/var/signal declaration
+    if let Some(ws) = workspace {
+        let content = ws
+            .lookup_class_name(class)
+            .and_then(|path| ws.get_content(&path))
+            .or_else(|| ws.autoload_content(class));
+        if let Some(content) = content
+            && let Ok(tree) = crate::core::parser::parse(&content)
+            && let Some(hover) = resolve_identifier(&tree.root_node(), member, &content)
+        {
+            return Some(hover);
+        }
+    }
+
+    // Resolve the ClassDB class name — if `class` is a user-defined name
+    // (autoload/class_name), find its `extends` chain for ClassDB lookup.
+    let db_class = if crate::class_db::class_exists(class) {
+        Some(class.to_string())
+    } else if let Some(ws) = workspace {
+        let content = ws
+            .lookup_class_name(class)
+            .and_then(|path| ws.get_content(&path))
+            .or_else(|| ws.autoload_content(class));
+        content.and_then(|c| {
+            let tree = crate::core::parser::parse(&c).ok()?;
+            super::completion::find_extends_class(tree.root_node(), &c)
+        })
+    } else {
+        None
+    };
+
+    let db_class = db_class.as_deref().unwrap_or(class);
+
+    // 2. ClassDB property
+    for (name, prop_type, owner_class) in crate::class_db::class_properties(db_class) {
+        if name == member {
+            let code = format!("{prop_type} {owner_class}.{name}");
+            return Some(make_hover(&code, ident_node, None));
+        }
+    }
+
+    // 3. ClassDB method
+    if let Some(ret) = crate::class_db::method_return_type(db_class, member) {
+        let owner = find_method_owner(db_class, member).unwrap_or(db_class);
+        let code = format!("{owner}.{member}() -> {ret}");
+        return Some(make_hover(&code, ident_node, None));
+    }
+
+    // 4. Builtin members (Vector2, String, Array, etc.) — walk inheritance
+    let mut cur = db_class;
+    loop {
+        if let Some(doc) = super::builtins::lookup_member_for(cur, member) {
+            return Some(Hover {
+                contents: HoverContents::Markup(MarkupContent {
+                    kind: MarkupKind::Markdown,
+                    value: super::builtins::format_member_hover(doc),
+                }),
+                range: Some(node_range(ident_node)),
+            });
+        }
+        match crate::class_db::parent_class(cur) {
+            Some(parent) => cur = parent,
+            None => break,
+        }
+    }
+
+    None
+}
+
+/// Find which class in the hierarchy actually defines a method.
+fn find_method_owner<'a>(class: &str, method: &str) -> Option<&'a str> {
+    for (name, _, owner) in crate::class_db::class_methods(class) {
+        if name == method {
+            return Some(owner);
+        }
+    }
     None
 }
 
@@ -437,7 +637,7 @@ mod tests {
     use super::*;
 
     fn hover_value(source: &str, line: u32, character: u32) -> Option<String> {
-        hover_at(source, Position::new(line, character)).map(|h| match h.contents {
+        hover_at(source, Position::new(line, character), None).map(|h| match h.contents {
             HoverContents::Markup(m) => m.value,
             _ => String::new(),
         })
@@ -578,5 +778,119 @@ mod tests {
         let source = "enum Color { RED, GREEN, BLUE }\nfunc f():\n\tvar c = RED\n";
         let val = hover_value(source, 2, 9).unwrap(); // col 9 = 'R' in RED usage
         assert!(val.contains("Color.RED = 0"));
+    }
+
+    // ── Dot-access hover with receiver resolution ────────────────────
+
+    #[test]
+    fn hover_typed_var_dot_member() {
+        // s.texture should resolve s: Sprite2D, then show ClassDB property
+        let source = "extends Node\nvar s: Sprite2D\nfunc run():\n\ts.texture\n";
+        let val = hover_value(source, 3, 3).unwrap(); // col 3 = 't' in texture
+        assert!(
+            val.contains("texture"),
+            "should hover Sprite2D.texture, got: {val}"
+        );
+    }
+
+    #[test]
+    fn hover_classdb_dot_method() {
+        // self.add_child should resolve to Node.add_child()
+        let source = "extends Node2D\nfunc run():\n\tself.add_child\n";
+        let val = hover_value(source, 2, 6).unwrap(); // col 6 = 'a' in add_child
+        assert!(
+            val.contains("add_child"),
+            "should hover Node.add_child, got: {val}"
+        );
+    }
+
+    #[test]
+    fn hover_self_velocity_classdb() {
+        // self.velocity should resolve to CharacterBody2D property
+        let source = "extends CharacterBody2D\nfunc run():\n\tself.velocity\n";
+        let val = hover_value(source, 2, 6).unwrap(); // col 6 = 'v' in velocity
+        assert!(
+            val.contains("velocity"),
+            "should hover CharacterBody2D.velocity, got: {val}"
+        );
+    }
+
+    #[test]
+    fn hover_builtin_type_dot_member() {
+        // Vector2.normalized should show builtin member doc
+        let source = "extends Node\nfunc run():\n\tvar v := Vector2(1, 2)\n\tv.normalized\n";
+        let val = hover_value(source, 3, 3).unwrap(); // col 3 = 'n' in normalized
+        assert!(
+            val.contains("normalized"),
+            "should hover Vector2.normalized, got: {val}"
+        );
+    }
+
+    #[test]
+    fn hover_member_name_collision() {
+        // Hovering on `obj.foo` where `foo` also exists in the current file
+        // should resolve to the receiver's type, NOT the local declaration.
+        let source = "extends Node\nvar s: Sprite2D\nfunc set_texture():\n\tpass\nfunc run():\n\ts.set_texture\n";
+        let val = hover_value(source, 5, 3).unwrap(); // col 3 = 's' in set_texture
+        // Should show Sprite2D.set_texture from ClassDB, not our local func
+        assert!(
+            val.contains("Sprite2D") || val.contains("CanvasItem"),
+            "should resolve to Sprite2D's set_texture, not local — got: {val}"
+        );
+    }
+
+    #[test]
+    fn hover_inferred_var_dot_member() {
+        // rng.seed should resolve rng := RandomNumberGenerator.new() → RNG property
+        let source = "extends Node\nfunc run():\n\tvar rng := RandomNumberGenerator.new()\n\trng.seed\n";
+        let val = hover_value(source, 3, 5).unwrap(); // col 5 = 's' in seed
+        assert!(
+            val.contains("seed") && !val.contains("func seed"),
+            "should hover RandomNumberGenerator.seed property, got: {val}"
+        );
+    }
+
+    #[test]
+    fn hover_method_call_on_typed_var() {
+        // s.get_rect() — hovering on get_rect should resolve via attribute_call
+        let source = "extends Node\nvar s: Sprite2D\nfunc run():\n\ts.get_rect()\n";
+        let val = hover_value(source, 3, 3).unwrap(); // col 3 = 'g' in get_rect
+        assert!(
+            val.contains("get_rect"),
+            "should hover Sprite2D.get_rect method call, got: {val}"
+        );
+    }
+
+    #[test]
+    fn hover_method_call_name_collision() {
+        // obj.add_child(x) where add_child also exists locally — should resolve to Node's
+        let source = "extends Node\nvar n: Node2D\nfunc add_child():\n\tpass\nfunc run():\n\tn.add_child(null)\n";
+        let val = hover_value(source, 5, 3).unwrap(); // col 3 = 'a' in add_child
+        assert!(
+            val.contains("Node.add_child"),
+            "should resolve to Node's add_child, not local — got: {val}"
+        );
+    }
+
+    #[test]
+    fn hover_engine_class_bare() {
+        // Hovering on `Input` as a bare identifier should show class info
+        let source = "extends Node\nfunc run():\n\tInput\n";
+        let val = hover_value(source, 2, 1).unwrap();
+        assert!(
+            val.contains("class Input"),
+            "should hover engine class Input, got: {val}"
+        );
+    }
+
+    #[test]
+    fn hover_signal_member_emit() {
+        // self.my_signal.emit — hover on emit should show Signal.emit
+        let source = "extends Node\nsignal my_signal(value: int)\nfunc run():\n\tself.my_signal.emit\n";
+        let val = hover_value(source, 3, 16).unwrap(); // col 16 = 'e' in emit
+        assert!(
+            val.contains("emit"),
+            "should hover Signal.emit, got: {val}"
+        );
     }
 }

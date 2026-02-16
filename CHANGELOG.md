@@ -3,11 +3,20 @@
 ## [0.2.15] - 2026-02-16
 
 ### Added
+- **LSP hover after dot** — `obj.method` now resolves the receiver's type and shows hover for the member on that type. Handles typed vars, `:=` inferred vars, autoloads, workspace `class_name` refs, and ClassDB inheritance chains.
+- **LSP completions for local variable types** — `:=` inferred variables now resolve their type from constructor calls (`ClassName.new()`), class constants (`Vector2.ZERO`), builtin constructors (`Vector2(...)`), same-file function return types (`_get_direction() -> Vector2`), and literals.
+- **LSP completions for for-loop typed iterators** — `for npc: Node2D in ...` now provides Node2D members when completing `npc.`.
+- **LSP autoload completions** — `EventBus.`, `PokemonDB.` and other autoload singletons now return script-defined signals, methods, and properties plus inherited ClassDB members.
+- **LSP Signal member completions** — `signal.emit()`, `.connect()`, `.disconnect()`, etc. now appear when completing after a signal name (e.g. `self.my_signal.` or `EventBus.player_moved.`).
+- **LSP workspace class_name + autoload index** — `WorkspaceIndex` now indexes `class_name` declarations and `project.godot` autoloads for O(1) lookups.
+- **LSP hover for engine singletons** — bare `Input`, `OS`, `Engine` etc. now show `class Input` on hover.
 - **`--hold` for input commands** — `gd debug press/key/click --hold <seconds>` holds the input for a duration instead of a single-frame tap. Uses Rust-side sleep so the game processes physics frames during the hold. Essential for 3D games where single-frame presses barely register.
 - **`--delay` for type command** — `gd debug type --delay <ms>` adds a delay between each character for more realistic typing.
 - **Orphaned game cleanup** — when the daemon detects a binary rebuild (build_id mismatch), it now kills the orphaned game process before spawning a new daemon. Uses platform-native kill on all platforms (WSL: tasklist.exe + taskkill.exe, Linux/macOS: SIGTERM/SIGKILL, Windows: TerminateProcess).
 
 ### Fixed
+- **LSP hover name collisions** — hovering on `obj.method` where `method` also exists in the current file now correctly resolves to the receiver's type instead of the local declaration.
+- **LSP hover for method calls** — `obj.method()` (with parentheses) now resolves hover via tree-sitter `attribute_call` traversal, not just property access.
 - **Eval ID collisions** — rapid-fire eval commands within 1ms got the same timestamp ID, causing overwrites. Now uses compound IDs (`{timestamp}-{pid}-{counter}`) with an atomic counter.
 - **Per-ID eval request files** — changed from single `gd-eval-request.gd` (concurrent evals overwrite each other) to `gd-eval-request-{id}.gd` per request. GDScript server scans directory for any matching file.
 - **Stale eval file cleanup** — `gd-eval-ready`, `gd-eval-request-*`, and `gd-eval-result-*` files are now cleaned up when the game exits or the daemon restarts.

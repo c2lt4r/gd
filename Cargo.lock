@@ -804,7 +804,7 @@ dependencies = [
 
 [[package]]
 name = "gd"
-version = "0.2.15"
+version = "0.2.15-dev"
 dependencies = [
  "clap",
  "clap_complete",

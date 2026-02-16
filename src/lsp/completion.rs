@@ -199,7 +199,7 @@ fn detect_dot_context(source: &str, position: Position) -> Option<DotContext> {
 // ── Receiver type resolution ────────────────────────────────────────
 
 /// Resolved receiver info for dot-completions.
-enum ResolvedReceiver {
+pub(super) enum ResolvedReceiver {
     /// A Godot/builtin/workspace class name (e.g. `"Node2D"`, `"CharacterBody2D"`).
     ClassName(String),
     /// An enum from a workspace file — provide its members instead of class members.
@@ -210,7 +210,7 @@ enum ResolvedReceiver {
 }
 
 /// Resolve the type of a dot-completion receiver.
-fn resolve_receiver_type(
+pub(super) fn resolve_receiver_type(
     receiver: &str,
     source: &str,
     position: Position,
@@ -227,7 +227,7 @@ fn resolve_receiver_type(
 }
 
 /// Resolve a simple (non-dotted) receiver to a class name.
-fn resolve_simple_receiver(
+pub(super) fn resolve_simple_receiver(
     receiver: &str,
     source: &str,
     position: Position,
@@ -252,14 +252,20 @@ fn resolve_simple_receiver(
         return Some(receiver.to_string());
     }
 
-    // 3. Workspace: check class_name matches (autoloads, user classes like `GameManager.`)
+    // 3. Workspace: check class_name index
     if let Some(ws) = workspace {
-        for (_, content) in ws.all_files() {
-            if let Ok(tree) = crate::core::parser::parse(&content)
-                && find_class_name(tree.root_node(), &content).as_deref() == Some(receiver)
-            {
-                return Some(receiver.to_string());
+        if ws.lookup_class_name(receiver).is_some() {
+            return Some(receiver.to_string());
+        }
+
+        // 3b. Autoload singletons (EventBus., PokemonDB., etc.)
+        // Return class_name if declared, otherwise the autoload name itself
+        // so that file symbols can be found via autoload_content().
+        if let Some(info) = ws.lookup_autoload(receiver) {
+            if let Some(cn) = &info.class_name {
+                return Some(cn.clone());
             }
+            return Some(receiver.to_string());
         }
     }
 
@@ -297,25 +303,47 @@ fn resolve_chain(
 
     // 1. If head is a workspace class_name, look up member in that file
     if let Some(ws) = workspace {
-        for (_, content) in ws.all_files() {
-            if let Ok(tree) = crate::core::parser::parse(&content)
-                && find_class_name(tree.root_node(), &content).as_deref() == Some(&*head_type)
-            {
-                // Check if member is an enum in that file
-                if find_enum_in_source(tree.root_node(), &content, member) {
-                    return Some(ResolvedReceiver::WorkspaceEnum {
-                        file_content: content,
-                        enum_name: member.to_string(),
-                    });
+        let content = ws
+            .lookup_class_name(&head_type)
+            .and_then(|path| ws.get_content(&path))
+            .or_else(|| ws.autoload_content(&head_type));
+        if let Some(content) = content
+            && let Ok(tree) = crate::core::parser::parse(&content)
+        {
+            // Check if member is an enum in that file
+            if find_enum_in_source(tree.root_node(), &content, member) {
+                return Some(ResolvedReceiver::WorkspaceEnum {
+                    file_content: content,
+                    enum_name: member.to_string(),
+                });
+            }
+            // Check if member is an inner class — return it as a class name
+            if find_inner_class(tree.root_node(), &content, member) {
+                return Some(ResolvedReceiver::ClassName(member.to_string()));
+            }
+            // Check if member is a signal — signals have type "Signal"
+            if find_signal_in_source(tree.root_node(), &content, member) {
+                let signal_type = "Signal".to_string();
+                if parts.len() > 1 {
+                    let remaining = parts[1..].join(".");
+                    return resolve_chain(&signal_type, &remaining, source, position, workspace);
                 }
-                // Check if member is an inner class — return it as a class name
-                if find_inner_class(tree.root_node(), &content, member) {
-                    // For now, treat inner class members as a class (limited resolution)
-                    return Some(ResolvedReceiver::ClassName(member.to_string()));
-                }
-                break;
+                return Some(ResolvedReceiver::ClassName(signal_type));
             }
         }
+    }
+
+    // 1b. For self/super, check current file's signals
+    if (head == "self" || head == "super")
+        && let Ok(tree) = crate::core::parser::parse(source)
+        && find_signal_in_source(tree.root_node(), source, member)
+    {
+        let signal_type = "Signal".to_string();
+        if parts.len() > 1 {
+            let remaining = parts[1..].join(".");
+            return resolve_chain(&signal_type, &remaining, source, position, workspace);
+        }
+        return Some(ResolvedReceiver::ClassName(signal_type));
     }
 
     // 2. If head resolved to self/extends or a typed var, look up the member's type
@@ -333,7 +361,7 @@ fn resolve_chain(
 }
 
 /// Resolve the type of a member (property/method return) on a class.
-fn resolve_member_type(class: &str, member: &str) -> Option<String> {
+pub(super) fn resolve_member_type(class: &str, member: &str) -> Option<String> {
     // Check ClassDB properties
     for (name, prop_type, _) in crate::class_db::class_properties(class) {
         if name == member {
@@ -380,6 +408,19 @@ fn find_enum_in_source(root: tree_sitter::Node, source: &str, enum_name: &str) -
     })
 }
 
+/// Check if a signal with the given name exists at the top level of a source file.
+fn find_signal_in_source(root: tree_sitter::Node, source: &str, signal_name: &str) -> bool {
+    let bytes = source.as_bytes();
+    let mut cursor = root.walk();
+    root.children(&mut cursor).any(|child| {
+        child.kind() == "signal_statement"
+            && child
+                .child_by_field_name("name")
+                .and_then(|n| n.utf8_text(bytes).ok())
+                == Some(signal_name)
+    })
+}
+
 /// Check if an inner class with the given name exists at the top level of a source file.
 fn find_inner_class(root: tree_sitter::Node, source: &str, class_name: &str) -> bool {
     let bytes = source.as_bytes();
@@ -402,15 +443,29 @@ fn find_variable_type(root: tree_sitter::Node, source: &str, var_name: &str) -> 
             && let Some(name_node) = child.child_by_field_name("name")
             && name_node.utf8_text(bytes).ok() == Some(var_name)
         {
-            return extract_type_from_variable(&child, source);
+            if let Some(ty) = extract_type_from_variable(&child, source) {
+                return Some(ty);
+            }
+            // Infer from initializer value (var x := Constructor.new())
+            if let Some(value_node) = child.child_by_field_name("value")
+                && let Some(ty) = infer_type_from_value(&value_node, source, Some(root))
+            {
+                return Some(ty);
+            }
         }
     }
     None
 }
 
 /// Extract a type annotation from a variable_statement or typed_parameter.
+/// Returns `None` for `:=` inferred types (tree-sitter `inferred_type` node).
 fn extract_type_from_variable(node: &tree_sitter::Node, source: &str) -> Option<String> {
-    node.child_by_field_name("type")?
+    let type_node = node.child_by_field_name("type")?;
+    // `:=` produces an `inferred_type` marker node — not a real type annotation
+    if type_node.kind() == "inferred_type" {
+        return None;
+    }
+    type_node
         .utf8_text(source.as_bytes())
         .ok()
         .map(std::string::ToString::to_string)
@@ -428,18 +483,11 @@ fn find_local_variable_type(
 
     let func_node = find_enclosing_function(root, point)?;
 
-    // Search the function body for variable_statement with matching name + type
-    if let Some(body) = func_node.child_by_field_name("body") {
-        let mut cursor = body.walk();
-        for child in body.children(&mut cursor) {
-            if child.kind() == "variable_statement"
-                && let Some(name_node) = child.child_by_field_name("name")
-                && name_node.utf8_text(bytes).ok() == Some(var_name)
-                && let Some(ty) = extract_type_from_variable(&child, source)
-            {
-                return Some(ty);
-            }
-        }
+    // Search the function body for variable_statement and for_statement
+    if let Some(body) = func_node.child_by_field_name("body")
+        && let Some(ty) = find_var_type_in_body(body, root, source, var_name, point)
+    {
+        return Some(ty);
     }
 
     // Check function parameters (typed_parameter has no `name` field —
@@ -463,6 +511,65 @@ fn find_local_variable_type(
     None
 }
 
+/// Search a body node recursively for variable/for-loop declarations matching `var_name`.
+fn find_var_type_in_body(
+    body: tree_sitter::Node,
+    root: tree_sitter::Node,
+    source: &str,
+    var_name: &str,
+    point: tree_sitter::Point,
+) -> Option<String> {
+    let bytes = source.as_bytes();
+    let mut cursor = body.walk();
+    for child in body.children(&mut cursor) {
+        // var x: Type or var x := expr
+        if child.kind() == "variable_statement"
+            && let Some(name_node) = child.child_by_field_name("name")
+            && name_node.utf8_text(bytes).ok() == Some(var_name)
+        {
+            if let Some(ty) = extract_type_from_variable(&child, source) {
+                return Some(ty);
+            }
+            if let Some(value_node) = child.child_by_field_name("value")
+                && let Some(ty) = infer_type_from_value(&value_node, source, Some(root))
+            {
+                return Some(ty);
+            }
+        }
+        // for npc: Type in expr — typed for-loop iterator
+        if child.kind() == "for_statement"
+            && let Some(left) = child.child_by_field_name("left")
+            && left.utf8_text(bytes).ok() == Some(var_name)
+        {
+            // Explicit type annotation: for npc: Node2D in ...
+            if let Some(type_node) = child.child_by_field_name("type")
+                && type_node.kind() != "inferred_type"
+                && let Ok(ty) = type_node.utf8_text(bytes)
+            {
+                return Some(ty.to_string());
+            }
+        }
+        // Recurse into for/if/while/match bodies that contain the cursor
+        if is_scope_with_body(&child)
+            && child.start_position().row <= point.row
+            && child.end_position().row >= point.row
+            && let Some(inner_body) = child.child_by_field_name("body")
+            && let Some(ty) = find_var_type_in_body(inner_body, root, source, var_name, point)
+        {
+            return Some(ty);
+        }
+    }
+    None
+}
+
+/// Check if a node is a scope-creating statement with a body field.
+fn is_scope_with_body(node: &tree_sitter::Node) -> bool {
+    matches!(
+        node.kind(),
+        "for_statement" | "while_statement" | "if_statement" | "elif_clause" | "else_clause"
+    )
+}
+
 /// Find the function definition node that encloses the given point.
 fn find_enclosing_function(
     root: tree_sitter::Node,
@@ -474,6 +581,76 @@ fn find_enclosing_function(
             && child.start_position().row <= point.row
             && child.end_position().row >= point.row
     })
+}
+
+/// Infer a type from an initializer value expression.
+///
+/// Handles: `ClassName.new()` → `ClassName`, `Vector2(...)` → `Vector2`,
+/// `func_call()` → return type from same-file function definition,
+/// literals → `int`/`float`/`String`/`bool`.
+fn infer_type_from_value(
+    node: &tree_sitter::Node,
+    source: &str,
+    root: Option<tree_sitter::Node>,
+) -> Option<String> {
+    let bytes = source.as_bytes();
+    match node.kind() {
+        // ClassName.new() or ClassName.CONSTANT → tree-sitter `attribute`
+        "attribute" => {
+            let class_node = node.child(0)?;
+            let class = class_node.utf8_text(bytes).ok()?;
+            // Only infer if the first child is a known type name
+            if crate::class_db::class_exists(class)
+                || BUILTIN_TYPES.contains(&class)
+                || !super::builtins::members_for_class(class).is_empty()
+            {
+                return Some(class.to_string());
+            }
+            None
+        }
+        // Constructor calls (Vector2(...)) or regular function calls
+        "call" => {
+            let callee = node.named_child(0)?;
+            let name = callee.utf8_text(bytes).ok()?;
+            // Constructor: class name used as function call
+            if crate::class_db::class_exists(name)
+                || BUILTIN_TYPES.contains(&name)
+                || !super::builtins::members_for_class(name).is_empty()
+            {
+                return Some(name.to_string());
+            }
+            // Regular function call: look up return type in same file
+            if let Some(root) = root {
+                return find_function_return_type(root, name, source);
+            }
+            None
+        }
+        "integer" => Some("int".to_string()),
+        "float" => Some("float".to_string()),
+        "string" => Some("String".to_string()),
+        "true" | "false" => Some("bool".to_string()),
+        _ => None,
+    }
+}
+
+/// Find the return type of a function definition in the same file.
+fn find_function_return_type(
+    root: tree_sitter::Node,
+    func_name: &str,
+    source: &str,
+) -> Option<String> {
+    let bytes = source.as_bytes();
+    let mut cursor = root.walk();
+    for child in root.children(&mut cursor) {
+        if child.kind() == "function_definition"
+            && let Some(name_node) = child.child_by_field_name("name")
+            && name_node.utf8_text(bytes).ok() == Some(func_name)
+            && let Some(ret) = child.child_by_field_name("return_type")
+        {
+            return ret.utf8_text(bytes).ok().map(std::string::ToString::to_string);
+        }
+    }
+    None
 }
 
 // ── Dot-completion member collection ────────────────────────────────
@@ -527,8 +704,29 @@ fn provide_class_dot_completions(
         collect_user_class_symbols(ws, class_name, prefix, &mut seen, &mut items);
     }
 
-    collect_class_db_dot_items(class_name, prefix, &mut seen, &mut items);
-    collect_builtin_dot_items(class_name, prefix, &mut seen, &mut items);
+    // Resolve the class for ClassDB/builtin lookup.
+    // If class_name is a user-defined name (autoload/class_name), find its extends chain.
+    let db_class = if crate::class_db::class_exists(class_name)
+        || !super::builtins::members_for_class(class_name).is_empty()
+    {
+        Some(class_name.to_string())
+    } else if let Some(ws) = workspace {
+        let content = ws
+            .lookup_class_name(class_name)
+            .and_then(|path| ws.get_content(&path))
+            .or_else(|| ws.autoload_content(class_name));
+        content.and_then(|c| {
+            let tree = crate::core::parser::parse(&c).ok()?;
+            find_extends_class(tree.root_node(), &c)
+        })
+    } else {
+        None
+    };
+
+    if let Some(ref cls) = db_class {
+        collect_class_db_dot_items(cls, prefix, &mut seen, &mut items);
+        collect_builtin_dot_items(cls, prefix, &mut seen, &mut items);
+    }
 
     items
 }
@@ -590,13 +788,20 @@ fn collect_user_class_symbols(
     seen: &mut std::collections::HashSet<String>,
     items: &mut Vec<CompletionItem>,
 ) {
-    for (_, content) in ws.all_files() {
-        if let Ok(tree) = crate::core::parser::parse(&content)
-            && find_class_name(tree.root_node(), &content).as_deref() == Some(class_name)
-        {
-            collect_filtered_file_symbols(tree.root_node(), &content, prefix, seen, items);
-            break;
-        }
+    // Fast path: lookup by class_name index
+    if let Some(path) = ws.lookup_class_name(class_name)
+        && let Some(content) = ws.get_content(&path)
+        && let Ok(tree) = crate::core::parser::parse(&content)
+    {
+        collect_filtered_file_symbols(tree.root_node(), &content, prefix, seen, items);
+        return;
+    }
+
+    // Fallback: check autoload scripts whose extends matches
+    if let Some(content) = ws.autoload_content(class_name)
+        && let Ok(tree) = crate::core::parser::parse(&content)
+    {
+        collect_filtered_file_symbols(tree.root_node(), &content, prefix, seen, items);
     }
 }
 
@@ -796,24 +1001,8 @@ pub fn provide_completions(
     items
 }
 
-/// Find the `class_name` declaration in a file (e.g. `class_name GameManager`).
-fn find_class_name(root: tree_sitter::Node, source: &str) -> Option<String> {
-    let mut cursor = root.walk();
-    for child in root.children(&mut cursor) {
-        if child.kind() == "class_name_statement"
-            && let Some(name_node) = child.child_by_field_name("name")
-        {
-            return name_node
-                .utf8_text(source.as_bytes())
-                .ok()
-                .map(std::string::ToString::to_string);
-        }
-    }
-    None
-}
-
 /// Find the class name from the `extends` statement at the top of the file.
-fn find_extends_class(root: tree_sitter::Node, source: &str) -> Option<String> {
+pub(super) fn find_extends_class(root: tree_sitter::Node, source: &str) -> Option<String> {
     let mut cursor = root.walk();
     for child in root.children(&mut cursor) {
         if child.kind() == "extends_statement" {
@@ -1568,5 +1757,105 @@ func attack(target):
         let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         assert!(labels.contains(&"normalized"));
         assert!(!labels.contains(&"length"));
+    }
+
+    // ── Inferred type tests ──────────────────────────────────────────
+
+    #[test]
+    fn local_var_inferred_from_constructor_new() {
+        // var rng := RandomNumberGenerator.new() → rng. should show RNG members
+        let source =
+            "extends Node\nfunc run():\n\tvar rng := RandomNumberGenerator.new()\n\trng.\n\tpass\n";
+        let items = provide_completions(source, Position::new(3, 5), None);
+        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(
+            labels.contains(&"seed"),
+            "rng. should show RandomNumberGenerator.seed, got: {labels:?}"
+        );
+    }
+
+    #[test]
+    fn local_var_inferred_from_builtin_constructor() {
+        // var v := Vector2(1, 2) → v. should show Vector2 members
+        let source = "extends Node\nfunc run():\n\tvar v := Vector2(1, 2)\n\tv.\n\tpass\n";
+        let items = provide_completions(source, Position::new(3, 3), None);
+        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(
+            labels.contains(&"normalized"),
+            "v. should show Vector2 method 'normalized', got: {labels:?}"
+        );
+    }
+
+    #[test]
+    fn top_level_var_inferred_from_constructor() {
+        // Top-level var with := should also infer type
+        let source = "extends Node\nvar rng := RandomNumberGenerator.new()\nfunc run():\n\trng.\n\tpass\n";
+        let items = provide_completions(source, Position::new(3, 5), None);
+        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(
+            labels.contains(&"seed"),
+            "top-level rng. should show RNG members, got: {labels:?}"
+        );
+    }
+
+    // ── Function return type inference ────────────────────────────────
+
+    #[test]
+    fn local_var_inferred_from_function_return_type() {
+        // var input_dir := _get_input_direction() where func returns -> Vector2
+        let source = "extends Node\nfunc run():\n\tvar input_dir := _get_input_direction()\n\tinput_dir.\n\tpass\n\nfunc _get_input_direction() -> Vector2:\n\treturn Vector2.ZERO\n";
+        let items = provide_completions(source, Position::new(3, 11), None);
+        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(
+            labels.contains(&"normalized"),
+            "input_dir. should show Vector2 method 'normalized', got: {labels:?}"
+        );
+    }
+
+    #[test]
+    fn local_var_inferred_from_class_constant() {
+        // var dir := Vector2.ZERO → dir. should show Vector2 members
+        let source =
+            "extends Node\nfunc run():\n\tvar dir := Vector2.ZERO\n\tdir.\n\tpass\n";
+        let items = provide_completions(source, Position::new(3, 5), None);
+        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(
+            labels.contains(&"normalized"),
+            "dir. should show Vector2 method 'normalized', got: {labels:?}"
+        );
+    }
+
+    // ── For-loop typed iterator ──────────────────────────────────────
+
+    #[test]
+    fn for_loop_typed_iterator_completions() {
+        // for npc: Node2D in get_children() → npc. should show Node2D members
+        let source = "extends Node\nfunc run():\n\tfor npc: Node2D in get_children():\n\t\tnpc.\n\t\tpass\n";
+        // \t\tnpc. → col 6 is after the dot
+        let items = provide_completions(source, Position::new(3, 6), None);
+        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(
+            labels.contains(&"position"),
+            "npc. in typed for-loop should show Node2D.position, got: {labels:?}"
+        );
+    }
+
+    // ── Signal member completions ────────────────────────────────────
+
+    #[test]
+    fn signal_dot_completions() {
+        // self.my_signal. should show Signal members (emit, connect, etc.)
+        let source = "extends Node\nsignal my_signal(value: int)\nfunc run():\n\tself.my_signal.\n\tpass\n";
+        // \tself.my_signal. → col 16 is after the second dot
+        let items = provide_completions(source, Position::new(3, 16), None);
+        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(
+            labels.contains(&"emit"),
+            "self.my_signal. should show Signal.emit, got: {labels:?}"
+        );
+        assert!(
+            labels.contains(&"connect"),
+            "self.my_signal. should show Signal.connect, got: {labels:?}"
+        );
     }
 }
