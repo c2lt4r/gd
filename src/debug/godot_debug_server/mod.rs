@@ -97,6 +97,8 @@ pub struct ObjectProperty {
 // GodotDebugServer
 // ---------------------------------------------------------------------------
 
+type OnDisconnectCallback = Arc<Mutex<Option<Box<dyn Fn() + Send>>>>;
+
 pub struct GodotDebugServer {
     stream: Mutex<Option<TcpStream>>,
     listener: TcpListener,
@@ -106,6 +108,10 @@ pub struct GodotDebugServer {
     running: Arc<Mutex<bool>>,
     /// Tracks whether the game is paused at a breakpoint (debug_enter/debug_exit).
     at_breakpoint: Arc<AtomicBool>,
+    /// Set to true when the reader thread exits (game disconnected).
+    disconnected: Arc<AtomicBool>,
+    /// Callback invoked when the game disconnects (reader thread exits).
+    on_disconnect: OnDisconnectCallback,
 }
 
 impl GodotDebugServer {
@@ -126,6 +132,8 @@ impl GodotDebugServer {
             inbox: Arc::new(Inbox::new()),
             running: Arc::new(Mutex::new(true)),
             at_breakpoint: Arc::new(AtomicBool::new(false)),
+            disconnected: Arc::new(AtomicBool::new(false)),
+            on_disconnect: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -153,6 +161,7 @@ impl GodotDebugServer {
                         return false;
                     };
                     *self.stream.lock().unwrap() = Some(tcp_stream);
+                    self.disconnected.store(false, Ordering::Release);
                     self.spawn_reader(reader_stream);
                     return true;
                 }
@@ -167,9 +176,15 @@ impl GodotDebugServer {
         }
     }
 
-    /// Check if connected.
+    /// Check if connected. Returns false if the reader thread has exited
+    /// (game disconnected) even if the stream object hasn't been cleaned up yet.
     pub fn is_connected(&self) -> bool {
-        self.stream.lock().unwrap().is_some()
+        self.stream.lock().unwrap().is_some() && !self.disconnected.load(Ordering::Acquire)
+    }
+
+    /// Register a callback to be invoked when the game disconnects.
+    pub fn set_on_disconnect(&self, cb: impl Fn() + Send + 'static) {
+        *self.on_disconnect.lock().unwrap() = Some(Box::new(cb));
     }
 
     /// Check if the game is currently paused at a breakpoint.
@@ -234,9 +249,16 @@ impl GodotDebugServer {
         let inbox = Arc::clone(&self.inbox);
         let running = Arc::clone(&self.running);
         let at_breakpoint = Arc::clone(&self.at_breakpoint);
+        let disconnected = Arc::clone(&self.disconnected);
+        let on_disconnect = Arc::clone(&self.on_disconnect);
 
         std::thread::spawn(move || {
             reader_loop(stream, &inbox, &running, &at_breakpoint);
+            // Reader exited — game disconnected
+            disconnected.store(true, Ordering::Release);
+            if let Some(cb) = on_disconnect.lock().unwrap().as_ref() {
+                cb();
+            }
         });
     }
 }

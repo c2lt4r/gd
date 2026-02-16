@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.2.14] - 2026-02-16
+
+### Added
+- **Game liveness detection** — the daemon now checks every 5 seconds whether the game process is still alive. If the game crashes or exits without `gd stop`, the daemon automatically clears `game_running` and `game_pid` state instead of staying stuck forever.
+- **Debug TCP disconnect callback** — when the game's debug TCP connection drops, the daemon immediately clears game state. Combined with liveness polling, this provides both instant and fallback detection.
+- **Single-instance daemon (`flock`)** — the daemon now acquires an exclusive file lock (`.godot/gd-daemon.lock`) on startup. A second `gd daemon serve` for the same project exits with a clear error instead of silently competing.
+- **Enriched `gd daemon status`** — response now includes `game_pid` and `debug_connected` fields alongside the existing `game_running`.
+- **Platform-native process management** — `libc` (Unix) and `windows-sys` (Windows) replace shell-out to `kill`/`taskkill` for process liveness checks and game termination.
+- **Faster WSL game stop** — replaced slow PowerShell `Get-CimInstance` lookup with `tasklist.exe /FI /FO CSV` for finding the Windows Godot PID.
+
+### Changed
+- **Unified game state** — `game_running` (AtomicBool) and `game_pid` (Mutex) merged into a single `game_state: Arc<Mutex<Option<GameInfo>>>`. Eliminates the class of bugs where one was set but the other wasn't.
+- **Idle monitor interval** — reduced from 30s to 5s for faster crash detection and idle exit.
+
+### Fixed
+- **Daemon stuck after game crash** — the `game_running` flag stayed true forever when the game exited without `gd stop`, blocking idle timeout and confusing agents/scripts polling `gd daemon status`.
+- **Stale PID accumulation** — `game_pid` was never cleared on unexpected game exit, leaving the state file pointing at a dead or reused PID.
+- **`lsp_cmd.rs` Windows FFI** — replaced hand-rolled `extern "system" { fn GetFileType }` with proper `windows-sys` bindings.
+
 ## [0.2.13] - 2026-02-15
 
 ### Added

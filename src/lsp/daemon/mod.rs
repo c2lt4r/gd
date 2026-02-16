@@ -18,6 +18,11 @@ use std::sync::Arc;
 use super::godot_client::GodotClient;
 use super::workspace::WorkspaceIndex;
 
+/// Info about a running game process, coupled to avoid desync between pid and flag.
+struct GameInfo {
+    pid: u32,
+}
+
 /// State file written to `.godot/gd-daemon.json` so CLI clients can find us.
 #[derive(Serialize, Deserialize)]
 pub struct DaemonState {
@@ -65,11 +70,9 @@ struct DaemonResponse {
 struct DaemonServer {
     godot: Mutex<Option<GodotClient>>,
     godot_ready: std::sync::atomic::AtomicBool,
-    /// True when a game is running (for idle timeout).
-    game_running: Arc<std::sync::atomic::AtomicBool>,
+    /// Unified game state: pid coupled with running flag. None = no game.
+    game_state: Arc<Mutex<Option<GameInfo>>>,
     debug_server: Mutex<Option<Arc<crate::debug::godot_debug_server::GodotDebugServer>>>,
-    /// PID of the game process launched by `gd run` (for `gd debug stop`).
-    game_pid: Mutex<Option<u32>>,
     /// True when eval mode is active (`gd run --eval`).
     eval_mode: std::sync::atomic::AtomicBool,
     /// Cached Godot binary path (Windows path in WSL).
@@ -80,11 +83,53 @@ struct DaemonServer {
     last_activity: Mutex<Instant>,
 }
 
+impl DaemonServer {
+    /// Register a game process.
+    fn set_game(&self, pid: u32) {
+        *self.game_state.lock().unwrap() = Some(GameInfo { pid });
+        update_game_pid_in_state(&self.project_root, Some(pid));
+    }
+
+    /// Clear game state (game exited, crashed, or was stopped).
+    fn clear_game(&self) {
+        *self.game_state.lock().unwrap() = None;
+        *self.debug_server.lock().unwrap() = None;
+        self.eval_mode
+            .store(false, std::sync::atomic::Ordering::Release);
+        update_game_pid_in_state(&self.project_root, None);
+    }
+
+    /// Check if a game is currently tracked.
+    fn is_game_running(&self) -> bool {
+        self.game_state.lock().unwrap().is_some()
+    }
+
+    /// Get the game PID if one is tracked.
+    fn game_pid(&self) -> Option<u32> {
+        self.game_state.lock().unwrap().as_ref().map(|g| g.pid)
+    }
+}
+
 const IDLE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
-const IDLE_CHECK_INTERVAL: Duration = Duration::from_secs(30);
+const IDLE_CHECK_INTERVAL: Duration = Duration::from_secs(5);
 
 /// Entry point for `gd lsp daemon`. Runs a persistent background server.
 pub fn run(project_root: &Path, godot_port: u16) -> miette::Result<()> {
+    // Acquire an exclusive lock to prevent duplicate daemons for this project.
+    // The lock auto-releases on process exit (crash, SIGKILL, normal exit).
+    let lock_path = project_root.join(".godot").join("gd-daemon.lock");
+    if let Some(parent) = lock_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let lock_file = std::fs::File::create(&lock_path)
+        .map_err(|e| miette::miette!("cannot create lock file: {e}"))?;
+    if !try_lock_exclusive(&lock_file) {
+        return Err(miette::miette!(
+            "another daemon is already running for this project"
+        ));
+    }
+    // lock_file is kept alive (not dropped) for the lifetime of the daemon
+
     // Bind to a random available port
     let listener = TcpListener::bind("127.0.0.1:0")
         .map_err(|e| miette::miette!("cannot bind TCP listener: {e}"))?;
@@ -99,9 +144,8 @@ pub fn run(project_root: &Path, godot_port: u16) -> miette::Result<()> {
     let server = std::sync::Arc::new(DaemonServer {
         godot: Mutex::new(None),
         godot_ready: std::sync::atomic::AtomicBool::new(false),
-        game_running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        game_state: Arc::new(Mutex::new(None)),
         debug_server: Mutex::new(None),
-        game_pid: Mutex::new(None),
         eval_mode: std::sync::atomic::AtomicBool::new(false),
         cached_godot_path: Mutex::new(None),
         workspace,
@@ -151,6 +195,8 @@ pub fn run(project_root: &Path, godot_port: u16) -> miette::Result<()> {
         });
     }
 
+    // Keep the lock file alive for the daemon's lifetime
+    drop(lock_file);
     Ok(())
 }
 
@@ -192,17 +238,21 @@ fn update_game_pid_in_state(project_root: &Path, game_pid: Option<u32>) {
 fn idle_monitor(server: &DaemonServer, state_path: &Path) {
     loop {
         std::thread::sleep(IDLE_CHECK_INTERVAL);
-        // Never exit while a game is running
-        if server
-            .game_running
-            .load(std::sync::atomic::Ordering::Acquire)
+
+        // If a game is supposedly running, verify it's actually alive
+        if let Some(pid) = server.game_pid()
+            && !is_process_alive(pid)
         {
-            continue;
+            eprintln!("daemon: game process {pid} is no longer alive, clearing state");
+            server.clear_game();
         }
-        let elapsed = server.last_activity.lock().unwrap().elapsed();
-        if elapsed >= IDLE_TIMEOUT {
-            let _ = std::fs::remove_file(state_path);
-            std::process::exit(0);
+
+        if !server.is_game_running() {
+            let elapsed = server.last_activity.lock().unwrap().elapsed();
+            if elapsed >= IDLE_TIMEOUT {
+                let _ = std::fs::remove_file(state_path);
+                std::process::exit(0);
+            }
         }
     }
 }
@@ -440,14 +490,21 @@ fn dispatch_status(server: &DaemonServer) -> DaemonResponse {
         .unwrap()
         .as_ref()
         .and_then(super::godot_client::GodotClient::godot_project_path);
-    let game_running = server
-        .game_running
-        .load(std::sync::atomic::Ordering::Acquire);
+    let game_running = server.is_game_running();
+    let game_pid = server.game_pid();
+    let debug_connected = server
+        .debug_server
+        .lock()
+        .unwrap()
+        .as_ref()
+        .is_some_and(|ds| ds.is_connected());
     ok_response(serde_json::json!({
         "godot_connected": godot_connected,
         "godot_ready": godot_ready,
         "godot_project_path": godot_path,
         "game_running": game_running,
+        "game_pid": game_pid,
+        "debug_connected": debug_connected,
         "project_root": server.project_root.to_string_lossy(),
         "godot_port": server.godot_port,
     }))
@@ -544,6 +601,74 @@ pub fn read_state_file(project_root: &Path) -> Option<DaemonState> {
     let path = project_root.join(".godot").join("gd-daemon.json");
     let data = std::fs::read_to_string(path).ok()?;
     serde_json::from_str(&data).ok()
+}
+
+// ── Platform-specific: file locking ──────────────────────────────────────────
+
+/// Try to acquire an exclusive, non-blocking lock on a file.
+/// Returns true on success, false if another process holds the lock.
+#[cfg(unix)]
+fn try_lock_exclusive(file: &std::fs::File) -> bool {
+    use std::os::unix::io::AsRawFd;
+    // SAFETY: flock is a well-defined POSIX syscall; we pass a valid fd.
+    unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) == 0 }
+}
+
+#[cfg(windows)]
+fn try_lock_exclusive(file: &std::fs::File) -> bool {
+    use std::os::windows::io::AsRawHandle;
+    let handle = file.as_raw_handle() as windows_sys::Win32::Foundation::HANDLE;
+    let mut overlapped: windows_sys::Win32::System::IO::OVERLAPPED = unsafe { std::mem::zeroed() };
+    // SAFETY: LockFileEx is a well-defined Win32 API; we pass a valid handle.
+    unsafe {
+        windows_sys::Win32::Storage::FileSystem::LockFileEx(
+            handle,
+            windows_sys::Win32::Storage::FileSystem::LOCKFILE_EXCLUSIVE_LOCK
+                | windows_sys::Win32::Storage::FileSystem::LOCKFILE_FAIL_IMMEDIATELY,
+            0,
+            1,
+            0,
+            &mut overlapped,
+        ) != 0
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+fn try_lock_exclusive(_file: &std::fs::File) -> bool {
+    true // Best-effort: no locking on unknown platforms
+}
+
+// ── Platform-specific: process liveness check ────────────────────────────────
+
+/// Check if a process is alive using OS-level APIs.
+pub fn is_process_alive(pid: u32) -> bool {
+    #[cfg(unix)]
+    {
+        // SAFETY: kill(pid, 0) is a standard POSIX probe — sends no signal.
+        unsafe { libc::kill(pid as i32, 0) == 0 }
+    }
+    #[cfg(windows)]
+    {
+        // SAFETY: OpenProcess + CloseHandle are well-defined Win32 APIs.
+        unsafe {
+            let handle = windows_sys::Win32::System::Threading::OpenProcess(
+                windows_sys::Win32::System::Threading::PROCESS_QUERY_LIMITED_INFORMATION,
+                0,
+                pid,
+            );
+            if handle.is_null() {
+                false
+            } else {
+                windows_sys::Win32::Foundation::CloseHandle(handle);
+                true
+            }
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = pid;
+        true // Assume alive on unknown platforms
+    }
 }
 
 #[cfg(test)]

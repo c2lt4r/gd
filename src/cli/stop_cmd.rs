@@ -39,54 +39,74 @@ fn kill_pid(pid: u32) {
 }
 
 /// Kill the game process. On WSL, the Linux PID is an init shim — use Windows
-/// tools to find and kill the actual Windows process by matching `--remote-debug`
-/// in the command line. On native platforms, a regular kill/taskkill suffices.
+/// tools to find and kill the actual Windows process. On native Linux, use
+/// SIGTERM then SIGKILL. On Windows, use `TerminateProcess`.
 pub fn kill_game_process(pid: u32) {
     #[cfg(unix)]
     {
         if crate::core::fs::is_wsl() {
-            // Find the Windows PID of our game (has --remote-debug in command line)
+            // Kill the WSL init shim first
+            // SAFETY: kill is a standard POSIX syscall with a valid pid.
+            unsafe {
+                libc::kill(pid as i32, libc::SIGTERM);
+            }
+            // Also find and kill the Windows process via tasklist.exe + taskkill.exe
             if let Some(win_pid) = find_windows_game_pid() {
                 let _ = std::process::Command::new(TASKKILL)
                     .args(["/F", "/PID", &win_pid.to_string()])
                     .output();
             }
-            // Also kill the WSL init shim
-            let _ = std::process::Command::new("kill")
-                .args(["-9", &pid.to_string()])
-                .output();
         } else {
-            let _ = std::process::Command::new("kill")
-                .args([&pid.to_string()])
-                .output();
+            // SAFETY: kill is a standard POSIX syscall with a valid pid.
+            unsafe {
+                libc::kill(pid as i32, libc::SIGTERM);
+            }
+            // Wait briefly, then SIGKILL if still alive
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            // SAFETY: kill is a standard POSIX syscall with a valid pid.
+            unsafe {
+                libc::kill(pid as i32, libc::SIGKILL);
+            }
         }
     }
     #[cfg(windows)]
     {
-        let _ = std::process::Command::new("taskkill")
-            .args(["/F", "/PID", &pid.to_string()])
-            .output();
+        // SAFETY: OpenProcess + TerminateProcess + CloseHandle are well-defined Win32 APIs.
+        unsafe {
+            let handle = windows_sys::Win32::System::Threading::OpenProcess(
+                windows_sys::Win32::System::Threading::PROCESS_TERMINATE,
+                0,
+                pid,
+            );
+            if !handle.is_null() {
+                windows_sys::Win32::System::Threading::TerminateProcess(handle, 1);
+                windows_sys::Win32::Foundation::CloseHandle(handle);
+            }
+        }
     }
 }
 
 #[cfg(unix)]
-const POWERSHELL: &str = "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe";
-#[cfg(unix)]
 const TASKKILL: &str = "/mnt/c/Windows/System32/taskkill.exe";
 
-/// Use PowerShell to find the Windows PID of the godot process launched with --remote-debug.
+/// Use `tasklist.exe` to find the Windows PID of a running godot process.
+/// Falls back from the slower PowerShell approach — `tasklist.exe` is always available.
 #[cfg(unix)]
 fn find_windows_game_pid() -> Option<u32> {
-    let output = std::process::Command::new(POWERSHELL)
-        .args([
-            "-NoProfile",
-            "-Command",
-            "Get-CimInstance Win32_Process -Filter \"Name='godot.exe'\" | \
-             Where-Object { $_.CommandLine -like '*--remote-debug*' } | \
-             Select-Object -ExpandProperty ProcessId",
-        ])
+    let output = std::process::Command::new("/mnt/c/Windows/System32/tasklist.exe")
+        .args(["/FI", "IMAGENAME eq godot.exe", "/FO", "CSV", "/NH"])
         .output()
         .ok()?;
-    let s = String::from_utf8_lossy(&output.stdout);
-    s.trim().parse().ok()
+    // Output format: "godot.exe","12345","Console","1","123,456 K"
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for line in stdout.lines() {
+        let fields: Vec<&str> = line.split(',').collect();
+        if fields.len() >= 2 {
+            let pid_str = fields[1].trim_matches('"');
+            if let Ok(pid) = pid_str.parse::<u32>() {
+                return Some(pid);
+            }
+        }
+    }
+    None
 }

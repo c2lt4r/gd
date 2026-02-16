@@ -1,6 +1,6 @@
 [package]
 name = "gd"
-version = "0.2.13"
+version = "0.2.14"
 edition = "2024"
 description = "A comprehensive Godot toolchain - format, lint, build, run, and manage Godot projects"
 license = "MIT"
@@ -65,6 +65,12 @@ tokio = { version = "1", features = ["io-std", "rt-multi-thread", "macros"] }
 dashmap = "6"
 path-slash = "0.2.1"
 ctrlc = "3.5.2"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_Storage_FileSystem"] }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

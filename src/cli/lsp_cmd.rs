@@ -688,15 +688,11 @@ fn is_stdin_pipe_or_file() -> bool {
 #[cfg(windows)]
 fn is_stdin_pipe_or_file() -> bool {
     use std::os::windows::io::AsRawHandle;
-    // GetFileType constants: FILE_TYPE_DISK=1, FILE_TYPE_PIPE=3
-    const FILE_TYPE_DISK: u32 = 1;
-    const FILE_TYPE_PIPE: u32 = 3;
-    unsafe extern "system" {
-        fn GetFileType(handle: *mut std::ffi::c_void) -> u32;
-    }
-    let handle = std::io::stdin().as_raw_handle();
-    let ft = unsafe { GetFileType(handle.cast()) };
-    ft == FILE_TYPE_DISK || ft == FILE_TYPE_PIPE
+    let handle = std::io::stdin().as_raw_handle() as windows_sys::Win32::Foundation::HANDLE;
+    // SAFETY: GetFileType is a well-defined Win32 API; we pass a valid handle.
+    let ft = unsafe { windows_sys::Win32::Storage::FileSystem::GetFileType(handle) };
+    ft == windows_sys::Win32::Storage::FileSystem::FILE_TYPE_DISK
+        || ft == windows_sys::Win32::Storage::FileSystem::FILE_TYPE_PIPE
 }
 
 #[cfg(not(any(unix, windows)))]

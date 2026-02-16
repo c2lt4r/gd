@@ -223,8 +223,7 @@ fn resolve_receiver_type(
         return resolve_chain(head, tail, source, position, workspace);
     }
 
-    resolve_simple_receiver(receiver, source, position, workspace)
-        .map(ResolvedReceiver::ClassName)
+    resolve_simple_receiver(receiver, source, position, workspace).map(ResolvedReceiver::ClassName)
 }
 
 /// Resolve a simple (non-dotted) receiver to a class name.
@@ -248,8 +247,7 @@ fn resolve_simple_receiver(
     }
 
     // 2b. Built-in types (Vector2, String, Array, etc.) — not in ClassDB but have members
-    if BUILTIN_TYPES.contains(&receiver)
-        || !super::builtins::members_for_class(receiver).is_empty()
+    if BUILTIN_TYPES.contains(&receiver) || !super::builtins::members_for_class(receiver).is_empty()
     {
         return Some(receiver.to_string());
     }

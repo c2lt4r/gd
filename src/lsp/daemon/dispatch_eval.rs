@@ -18,9 +18,7 @@ pub fn dispatch_set_eval_mode(server: &DaemonServer, params: &serde_json::Value)
 /// Blocks until the ready file appears or the timeout expires.
 pub fn dispatch_eval_status(server: &DaemonServer, params: &serde_json::Value) -> DaemonResponse {
     let eval_active = server.eval_mode.load(std::sync::atomic::Ordering::Acquire);
-    let game_running = server
-        .game_running
-        .load(std::sync::atomic::Ordering::Acquire);
+    let game_running = server.is_game_running();
 
     if !eval_active && !game_running {
         return ok_response(serde_json::json!({

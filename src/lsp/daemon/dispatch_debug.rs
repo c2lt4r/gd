@@ -2,37 +2,23 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::helpers::{get_debug_server, json_to_variant, variant_set_field};
-use super::{DaemonResponse, DaemonServer, error_response, ok_response, update_game_pid_in_state};
+use super::{DaemonResponse, DaemonServer, error_response, ok_response};
 
 pub fn dispatch_set_game_pid(server: &DaemonServer, params: &serde_json::Value) -> DaemonResponse {
     let Some(pid) = params.get("pid").and_then(serde_json::Value::as_u64) else {
         return error_response("missing 'pid' parameter");
     };
-    *server.game_pid.lock().unwrap() = Some(pid as u32);
-    server
-        .game_running
-        .store(true, std::sync::atomic::Ordering::Release);
-    update_game_pid_in_state(&server.project_root, Some(pid as u32));
+    server.set_game(pid as u32);
     ok_response(serde_json::json!({"pid": pid}))
 }
 
 pub fn dispatch_debug_stop_game(server: &DaemonServer) -> DaemonResponse {
-    let pid = server.game_pid.lock().unwrap().take();
-    let Some(pid) = pid else {
+    let Some(pid) = server.game_pid() else {
         return error_response("No game process tracked — was the game launched with `gd run`?");
     };
 
     crate::cli::stop_cmd::kill_game_process(pid);
-
-    // Clear debug server connection, game_running flag, eval mode, and persisted PID
-    *server.debug_server.lock().unwrap() = None;
-    server
-        .game_running
-        .store(false, std::sync::atomic::Ordering::Release);
-    server
-        .eval_mode
-        .store(false, std::sync::atomic::Ordering::Release);
-    update_game_pid_in_state(&server.project_root, None);
+    server.clear_game();
 
     ok_response(serde_json::json!({"stopped": true, "pid": pid}))
 }
@@ -91,9 +77,14 @@ pub fn dispatch_debug_accept(server: &DaemonServer, params: &serde_json::Value) 
 
     let connected = ds.accept(Duration::from_secs(timeout));
     if connected {
-        server
-            .game_running
-            .store(true, std::sync::atomic::Ordering::Release);
+        // Register a disconnect callback so the daemon learns when the game disconnects
+        let game_state = Arc::clone(&server.game_state);
+        let project_root = server.project_root.clone();
+        ds.set_on_disconnect(move || {
+            eprintln!("daemon: game disconnected via debug TCP");
+            *game_state.lock().unwrap() = None;
+            super::update_game_pid_in_state(&project_root, None);
+        });
     }
     ok_response(serde_json::json!({"connected": connected}))
 }

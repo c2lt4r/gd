@@ -815,6 +815,7 @@ dependencies = [
  "flate2",
  "ignore",
  "indicatif",
+ "libc",
  "miette",
  "notify",
  "notify-debouncer-mini",
@@ -837,6 +838,7 @@ dependencies = [
  "ureq",
  "urlencoding",
  "walkdir",
+ "windows-sys 0.59.0",
  "zip",
 ]
 

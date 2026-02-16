@@ -266,10 +266,10 @@ gd ci github --export --godot-version 4.4
 
 ### Daemon
 
-A background daemon maintains persistent Godot LSP and debug protocol connections, so CLI queries are instant. It auto-starts on the first query and auto-exits after 5 minutes of inactivity.
+A background daemon maintains persistent Godot LSP and debug protocol connections, so CLI queries are instant. It auto-starts on the first query and auto-exits after 5 minutes of inactivity. Only one daemon can run per project (enforced via file lock).
 
 ```sh
-# Show daemon connectivity and state
+# Show daemon connectivity and state (game_running, game_pid, debug_connected, etc.)
 gd daemon status
 
 # Stop the background daemon
@@ -279,7 +279,7 @@ gd daemon stop
 gd daemon restart
 ```
 
-The daemon auto-restarts when it detects a newer `gd` binary (after recompile/upgrade).
+The daemon auto-restarts when it detects a newer `gd` binary (after recompile/upgrade). If the game crashes or exits without `gd stop`, the daemon detects the dead process within seconds and clears state automatically.
 
 **WSL support:** On WSL, `gd run` and `gd build` auto-translate paths between Linux (`/mnt/c/...`) and Windows (`C:/...`) when using a Windows Godot binary. Set the path in `gd.toml`:
 

@@ -232,18 +232,9 @@ fn spawn_daemon(project_root: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Check if a process is alive. Uses /proc on Linux, assumes alive elsewhere
-/// (the TCP connection attempt is the real liveness check).
+/// Check if a process is alive using OS-level APIs.
 fn is_pid_alive(pid: u32) -> bool {
-    #[cfg(target_os = "linux")]
-    {
-        std::path::Path::new(&format!("/proc/{pid}")).exists()
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = pid;
-        true
-    }
+    super::daemon::is_process_alive(pid)
 }
 
 fn read_content_length(reader: &mut impl BufRead) -> Option<usize> {
