@@ -638,36 +638,70 @@ fn parse_range(range: &str) -> Result<(usize, usize)> {
 }
 
 /// Read content from `--input-file` if provided, otherwise from stdin.
+/// Uses the ripgrep `is_readable_stdin()` pattern (fstat-based) to avoid
+/// blocking when stdin is a terminal, /dev/null, or a closed descriptor.
 fn read_content(input_file: Option<&str>) -> Result<String> {
     if let Some(path) = input_file {
         std::fs::read_to_string(path)
             .map_err(|e| miette::miette!("cannot read input file '{}': {}", path, e))
+    } else if is_stdin_readable() {
+        let mut content = String::new();
+        std::io::stdin()
+            .read_to_string(&mut content)
+            .map_err(|e| miette::miette!("cannot read stdin: {e}"))?;
+        Ok(content)
     } else {
-        if std::io::stdin().is_terminal() {
-            return Err(miette::miette!(
-                "no input provided — use --input-file <path> or pipe content via stdin"
-            ));
-        }
-        // Read stdin with a timeout to avoid hanging in non-interactive contexts
-        // (CI, background processes, etc.) where stdin is an empty pipe.
-        read_stdin_with_timeout()
+        Err(miette::miette!(
+            "no input provided — use --input-file <path> or pipe content via stdin"
+        ))
     }
 }
 
-/// Read stdin, but give up if no data arrives within a short deadline.
-fn read_stdin_with_timeout() -> Result<String> {
-    use std::sync::mpsc;
-    let (tx, rx) = mpsc::channel();
-    std::thread::spawn(move || {
-        let mut content = String::new();
-        let result = std::io::stdin().read_to_string(&mut content);
-        let _ = tx.send(result.map(|_| content));
-    });
-    rx.recv_timeout(std::time::Duration::from_secs(2))
-        .map_err(|_| {
-            miette::miette!("no input received — use --input-file <path> or pipe content via stdin")
-        })?
-        .map_err(|e| miette::miette!("cannot read stdin: {e}"))
+/// Check if stdin has readable data (pipe, file, or socket).
+/// Returns false for terminals, /dev/null (char device), and closed descriptors.
+/// Based on ripgrep's `grep_cli::is_readable_stdin()` pattern.
+fn is_stdin_readable() -> bool {
+    if std::io::stdin().is_terminal() {
+        return false;
+    }
+    is_stdin_pipe_or_file()
+}
+
+#[cfg(unix)]
+fn is_stdin_pipe_or_file() -> bool {
+    use std::os::{fd::AsFd, unix::fs::FileTypeExt};
+    let stdin = std::io::stdin();
+    let Ok(fd) = stdin.as_fd().try_clone_to_owned() else {
+        return false;
+    };
+    let file = std::fs::File::from(fd);
+    let Ok(md) = file.metadata() else {
+        return false;
+    };
+    let ft = md.file_type();
+    // Accept pipes (echo "x" | gd lsp ...) and file redirects (< file).
+    // Exclude sockets — background process managers often attach stdin to a
+    // socket with no writer, which would block read_to_string forever.
+    ft.is_file() || ft.is_fifo()
+}
+
+#[cfg(windows)]
+fn is_stdin_pipe_or_file() -> bool {
+    use std::os::windows::io::AsRawHandle;
+    // GetFileType constants: FILE_TYPE_DISK=1, FILE_TYPE_PIPE=3
+    const FILE_TYPE_DISK: u32 = 1;
+    const FILE_TYPE_PIPE: u32 = 3;
+    unsafe extern "system" {
+        fn GetFileType(handle: *mut std::ffi::c_void) -> u32;
+    }
+    let handle = std::io::stdin().as_raw_handle();
+    let ft = unsafe { GetFileType(handle.cast()) };
+    ft == FILE_TYPE_DISK || ft == FILE_TYPE_PIPE
+}
+
+#[cfg(not(any(unix, windows)))]
+fn is_stdin_pipe_or_file() -> bool {
+    true // Best-effort: assume readable on unknown platforms
 }
 
 #[allow(clippy::too_many_lines)]
