@@ -737,7 +737,7 @@ Example GitHub Actions step:
 
 ### One-Shot CLI Queries
 
-`gd lsp` also exposes one-shot subcommands that output JSON to stdout — designed for AI tools and scripting:
+`gd lsp` also exposes one-shot subcommands — human-readable by default, `--format json` for structured output:
 
 ```sh
 # Rename a symbol across the project (applies to disk by default)
@@ -767,7 +767,7 @@ gd lsp completions --file player.gd --line 5 --column 10
 # Available code actions / quick fixes
 gd lsp code-actions --file player.gd --line 5 --column 1
 
-# Run diagnostics (same as gd lint --format json)
+# Run diagnostics (same as gd lint; --format json for structured output)
 gd lsp diagnostics
 
 # List symbols in a file
@@ -796,7 +796,7 @@ All positions are **1-based** (line 1, column 1 is the first character). Paths i
 
 ### Refactoring Commands
 
-`gd lsp` includes structural refactoring commands that output JSON and support `--dry-run`:
+`gd lsp` includes structural refactoring commands — human-readable by default, `--format json` for structured output, `--dry-run` to preview:
 
 ```sh
 # Delete a symbol (fails if references exist, use --force to override)

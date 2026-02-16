@@ -8,8 +8,8 @@ pub use analysis::{
     query_symbols,
 };
 pub use edit::{
-    query_create_file, query_edit_range, query_insert, query_replace_body, query_replace_symbol,
-    query_scene_info, query_view,
+    CreateFileOutput, SceneInfoOutput, query_create_file, query_edit_range, query_insert,
+    query_replace_body, query_replace_symbol, query_scene_info, query_view,
 };
 pub use navigation::{
     query_completions, query_definition, query_hover, query_references, query_references_by_name,

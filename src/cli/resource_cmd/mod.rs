@@ -113,6 +113,9 @@ pub struct RemoveScriptArgs {
 pub struct InfoArgs {
     /// Path to the .tres file
     pub file: String,
+    /// Output format: json or human (default: human)
+    #[arg(long)]
+    pub format: Option<String>,
 }
 
 pub fn exec(args: &ResourceArgs) -> Result<()> {

@@ -529,6 +529,8 @@ fn test_lsp_rename_dry_run_does_not_modify_file() {
             "--new-name",
             "velocity",
             "--dry-run",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -730,7 +732,7 @@ fn test_lsp_diagnostics_outputs_json() {
     )]);
 
     let output = gd_bin()
-        .args(["lsp", "diagnostics"])
+        .args(["lsp", "diagnostics", "--format", "json"])
         .current_dir(temp.path())
         .output()
         .expect("Failed to run gd lsp diagnostics");
@@ -763,6 +765,8 @@ fn test_lsp_code_actions_returns_fixes() {
             "5",
             "--column",
             "1",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()

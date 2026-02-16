@@ -23,6 +23,8 @@ fn test_lsp_delete_symbol_function() {
             "player.gd",
             "--name",
             "unused",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -56,6 +58,8 @@ fn test_lsp_delete_symbol_dry_run() {
             "--name",
             "unused",
             "--dry-run",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -84,6 +88,8 @@ fn test_lsp_delete_symbol_with_references() {
             "player.gd",
             "--name",
             "speed",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -118,6 +124,8 @@ fn test_lsp_delete_symbol_force() {
             "--name",
             "speed",
             "--force",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -139,7 +147,16 @@ fn test_lsp_delete_symbol_by_line() {
     )]);
 
     let output = gd_bin()
-        .args(["lsp", "delete-symbol", "--file", "player.gd", "--line", "4"])
+        .args([
+            "lsp",
+            "delete-symbol",
+            "--file",
+            "player.gd",
+            "--line",
+            "4",
+            "--format",
+            "json",
+        ])
         .current_dir(temp.path())
         .output()
         .expect("Failed to run gd lsp delete-symbol --line");
@@ -164,6 +181,8 @@ fn test_lsp_move_symbol_to_new_file() {
             "source.gd",
             "--to",
             "helpers.gd",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -205,6 +224,8 @@ fn test_lsp_move_symbol_to_existing_file() {
             "source.gd",
             "--to",
             "target.gd",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -237,6 +258,8 @@ fn test_lsp_move_symbol_dry_run() {
             "--to",
             "target.gd",
             "--dry-run",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -276,6 +299,8 @@ fn test_lsp_extract_method_simple() {
             "4",
             "--name",
             "do_print",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -320,6 +345,8 @@ fn test_lsp_extract_method_with_params() {
             "5",
             "--name",
             "show_stats",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -355,6 +382,8 @@ fn test_lsp_extract_method_with_return() {
             "3",
             "--name",
             "take_damage",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -400,6 +429,8 @@ fn test_lsp_extract_method_dry_run() {
             "--name",
             "greet",
             "--dry-run",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -439,6 +470,8 @@ fn test_lsp_extract_method_async_warning() {
             "2",
             "--name",
             "wait_a_bit",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -478,6 +511,8 @@ fn test_lsp_extract_method_no_async_no_warning() {
             "2",
             "--name",
             "greet",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -515,6 +550,8 @@ fn test_lsp_extract_method_multi_return() {
             "5",
             "--name",
             "increment",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -562,6 +599,8 @@ fn test_lsp_delete_symbol_inner_class() {
             "unused",
             "--class",
             "Inner",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -607,6 +646,8 @@ fn test_lsp_move_symbol_with_class() {
             "target.gd",
             "--class",
             "Src",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -652,6 +693,8 @@ fn test_lsp_delete_enum_member() {
             "state.gd",
             "--name",
             "State.RUNNING",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -688,6 +731,8 @@ fn test_lsp_delete_enum_member_dry_run() {
             "--name",
             "State.IDLE",
             "--dry-run",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -725,6 +770,8 @@ fn test_lsp_move_symbol_reports_preloads() {
             "source.gd",
             "--to",
             "target.gd",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -774,6 +821,8 @@ fn test_lsp_move_symbol_self_ref_warning() {
             "Src",
             "--target-class",
             "Dst",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -820,6 +869,8 @@ fn test_lsp_inline_method_simple() {
             "6",
             "--column",
             "2",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -858,6 +909,8 @@ fn test_lsp_inline_method_with_params() {
             "6",
             "--column",
             "16",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -903,6 +956,8 @@ fn test_lsp_change_signature_add_param() {
             "attack",
             "--add-param",
             "damage: int = 10",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -945,6 +1000,8 @@ fn test_lsp_change_signature_remove_param() {
             "attack",
             "--remove-param",
             "damage",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -984,6 +1041,8 @@ fn test_lsp_change_signature_dry_run() {
             "--add-param",
             "damage",
             "--dry-run",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -1023,6 +1082,8 @@ fn test_lsp_introduce_variable_simple() {
             "29",
             "--name",
             "velocity",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -1071,6 +1132,8 @@ fn test_lsp_introduce_variable_dry_run() {
             "--name",
             "velocity",
             "--dry-run",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -1105,6 +1168,8 @@ fn test_lsp_introduce_variable_call_expression() {
             "20",
             "--name",
             "hp",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -1155,6 +1220,8 @@ fn test_lsp_introduce_parameter_with_type() {
             "speed",
             "--type",
             "float",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -1206,6 +1273,8 @@ fn test_lsp_introduce_parameter_no_type() {
             "15",
             "--name",
             "msg",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -1249,6 +1318,8 @@ fn test_lsp_introduce_parameter_dry_run() {
             "--name",
             "msg",
             "--dry-run",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -1279,6 +1350,8 @@ fn test_lsp_bulk_delete_symbol() {
             "player.gd",
             "--names",
             "a,b,c",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -1315,6 +1388,8 @@ fn test_lsp_bulk_delete_symbol_skips_referenced() {
             "player.gd",
             "--names",
             "speed,unused",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -1341,6 +1416,8 @@ fn test_lsp_bulk_delete_symbol_dry_run() {
             "--names",
             "a,b",
             "--dry-run",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -1373,6 +1450,8 @@ fn test_lsp_bulk_rename() {
             "player.gd",
             "--renames",
             "speed:velocity,health:hp",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -1407,6 +1486,8 @@ fn test_lsp_bulk_rename_dry_run() {
             "--renames",
             "speed:velocity,health:hp",
             "--dry-run",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -1434,6 +1515,8 @@ fn test_lsp_bulk_rename_some_not_found() {
             "player.gd",
             "--renames",
             "speed:velocity,nonexistent:whatever",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -1463,6 +1546,8 @@ fn test_lsp_inline_delegate() {
             "player.gd",
             "--name",
             "attack",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -1505,6 +1590,8 @@ fn test_lsp_inline_delegate_dry_run() {
             "--name",
             "attack",
             "--dry-run",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -1536,6 +1623,8 @@ fn test_lsp_inline_delegate_not_delegate() {
             "player.gd",
             "--name",
             "foo",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -1566,6 +1655,8 @@ fn test_lsp_extract_class() {
             "helper",
             "--to",
             "helpers.gd",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -1612,6 +1703,8 @@ fn test_lsp_extract_class_dry_run() {
             "--to",
             "helpers.gd",
             "--dry-run",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -1649,6 +1742,8 @@ fn test_lsp_extract_class_multiple_symbols() {
             "speed,helper",
             "--to",
             "extracted.gd",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -1695,6 +1790,8 @@ fn test_lsp_move_symbol_update_callers() {
             "--to",
             "dest.gd",
             "--update-callers",
+            "--format",
+            "json",
         ])
         .current_dir(temp.path())
         .output()
@@ -1756,6 +1853,8 @@ fn test_lsp_replace_body() {
             "--name",
             "_ready",
             "--no-format",
+            "--format",
+            "json",
         ],
         "\tprint(\"hello\")\n",
     );
@@ -1787,6 +1886,8 @@ fn test_lsp_replace_body_dry_run() {
             "_ready",
             "--no-format",
             "--dry-run",
+            "--format",
+            "json",
         ],
         "\tprint(\"hello\")\n",
     );
@@ -1814,6 +1915,8 @@ fn test_lsp_replace_body_reindents() {
             "--name",
             "_ready",
             "--no-format",
+            "--format",
+            "json",
         ],
         "print(\"a\")\nprint(\"b\")\n",
     );
@@ -1838,6 +1941,8 @@ fn test_lsp_replace_body_non_function_fails() {
             "--name",
             "speed",
             "--no-format",
+            "--format",
+            "json",
         ],
         "\t42\n",
     );
@@ -1864,6 +1969,8 @@ fn test_lsp_replace_body_with_class() {
             "--class",
             "Inner",
             "--no-format",
+            "--format",
+            "json",
         ],
         "\t\tprint(1)\n",
     );
@@ -1887,6 +1994,8 @@ fn test_lsp_insert_after() {
             "--after",
             "_ready",
             "--no-format",
+            "--format",
+            "json",
         ],
         "\nfunc _process(delta):\n\tpass\n",
     );
@@ -1917,6 +2026,8 @@ fn test_lsp_insert_before() {
             "--before",
             "_ready",
             "--no-format",
+            "--format",
+            "json",
         ],
         "var speed = 10\n",
     );
@@ -1944,6 +2055,8 @@ fn test_lsp_insert_dry_run() {
             "_ready",
             "--no-format",
             "--dry-run",
+            "--format",
+            "json",
         ],
         "\nfunc foo():\n\tpass\n",
     );
@@ -1962,7 +2075,15 @@ fn test_lsp_insert_no_anchor_fails() {
 
     let output = run_lsp_edit(
         temp.path(),
-        &["lsp", "insert", "--file", "player.gd", "--no-format"],
+        &[
+            "lsp",
+            "insert",
+            "--file",
+            "player.gd",
+            "--no-format",
+            "--format",
+            "json",
+        ],
         "var x = 1\n",
     );
 
@@ -1992,6 +2113,7 @@ fn test_lsp_insert_input_file() {
             "--input-file",
         ])
         .arg(&input_path)
+        .args(["--format", "json"])
         .current_dir(temp.path())
         .output()
         .expect("Failed to run gd lsp insert --input-file");
@@ -2029,6 +2151,8 @@ fn test_lsp_replace_symbol() {
             "--name",
             "speed",
             "--no-format",
+            "--format",
+            "json",
         ],
         "var speed: float = 42.0\n",
     );
@@ -2061,6 +2185,8 @@ fn test_lsp_replace_symbol_function() {
             "--name",
             "old_func",
             "--no-format",
+            "--format",
+            "json",
         ],
         "func new_func():\n\tprint(\"replaced\")\n",
     );
@@ -2087,6 +2213,8 @@ fn test_lsp_replace_symbol_dry_run() {
             "speed",
             "--no-format",
             "--dry-run",
+            "--format",
+            "json",
         ],
         "var speed = 99\n",
     );
@@ -2118,6 +2246,8 @@ fn test_lsp_edit_range() {
             "--end-line",
             "3",
             "--no-format",
+            "--format",
+            "json",
         ],
         "var x = 10\nvar y = 20\n",
     );
@@ -2153,6 +2283,8 @@ fn test_lsp_edit_range_dry_run() {
             "2",
             "--no-format",
             "--dry-run",
+            "--format",
+            "json",
         ],
         "var replaced = 99\n",
     );
@@ -2181,6 +2313,8 @@ fn test_lsp_edit_range_invalid_lines() {
             "--end-line",
             "3",
             "--no-format",
+            "--format",
+            "json",
         ],
         "x\n",
     );
@@ -2202,6 +2336,8 @@ fn test_lsp_replace_body_with_format() {
             "player.gd",
             "--name",
             "_ready",
+            "--format",
+            "json",
         ],
         "\tprint( \"hello\" )\n",
     );
@@ -2226,7 +2362,14 @@ fn test_lsp_create_file_stdin() {
 
     let output = run_lsp_edit(
         temp.path(),
-        &["lsp", "create-file", "--file", "player.gd"],
+        &[
+            "lsp",
+            "create-file",
+            "--file",
+            "player.gd",
+            "--format",
+            "json",
+        ],
         custom_script,
     );
 

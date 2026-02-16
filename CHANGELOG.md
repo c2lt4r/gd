@@ -29,6 +29,7 @@
 - **`gd scene attach-script` path resolution** — failed with "Script file not found" when run from a subdirectory. Now resolves relative paths against both CWD and project root, and strips `res://` prefixes.
 
 ### Changed
+- **Human-readable defaults for all commands** — 22 LSP subcommands (refactoring, scene-info, find-implementations, diagnostics, code-actions) and `gd resource info` now default to concise human-readable output. Use `--format json` for structured output. Saves tokens for AI agents and is easier to scan for humans.
 - **Eval server enabled by default** — `gd run` now starts the eval server automatically. `gd eval` and `gd debug` input commands work without any extra flags. Use `--bare` to opt out.
 - **Eval output uses file redirect** — eval-without-log mode now redirects Godot's stdout/stderr to the log file via `Stdio::from(File)` instead of pipes, preventing broken-pipe crashes on WSL when the parent process exits.
 

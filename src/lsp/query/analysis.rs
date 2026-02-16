@@ -101,10 +101,9 @@ pub fn query_code_actions(file: &str, line: usize, column: usize) -> Result<Vec<
         .collect())
 }
 
-pub fn query_diagnostics(paths: &[String]) -> Result<()> {
-    // Delegate to the lint system with JSON output
+pub fn query_diagnostics(paths: &[String], json: bool) -> Result<()> {
     let opts = crate::lint::LintOptions {
-        format: "json".to_string(),
+        format: if json { "json" } else { "human" }.to_string(),
         ..Default::default()
     };
     crate::lint::run_lint(paths, &opts)

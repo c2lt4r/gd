@@ -258,6 +258,7 @@ fn test_resource_info() {
         .arg("resource")
         .arg("info")
         .arg(&path)
+        .args(["--format", "json"])
         .output()
         .expect("Failed to run gd resource info");
 

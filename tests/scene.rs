@@ -344,6 +344,7 @@ fn test_lsp_scene_info() {
         .arg("scene-info")
         .arg("--file")
         .arg(temp.path().join("main.tscn"))
+        .args(["--format", "json"])
         .output()
         .expect("Failed to run gd lsp scene-info");
 
@@ -959,6 +960,7 @@ fn test_lsp_scene_info_nodes_only() {
         .arg("--file")
         .arg(temp.path().join("main.tscn"))
         .arg("--nodes-only")
+        .args(["--format", "json"])
         .output()
         .expect("Failed to run gd lsp scene-info --nodes-only");
 

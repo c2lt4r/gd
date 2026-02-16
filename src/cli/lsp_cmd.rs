@@ -37,6 +37,9 @@ pub enum LspCommand {
         /// Preview the rename without writing changes
         #[arg(long)]
         dry_run: bool,
+        /// Output format: json or human (default: human)
+        #[arg(long)]
+        format: Option<String>,
     },
     /// Find all references to a symbol
     References {
@@ -93,11 +96,17 @@ pub enum LspCommand {
     CodeActions {
         #[command(flatten)]
         pos: QueryPositionArgs,
+        /// Output format: json or human (default: human)
+        #[arg(long)]
+        format: Option<String>,
     },
-    /// Run diagnostics on files (same as gd lint --format json)
+    /// Run diagnostics on files (same as gd lint)
     Diagnostics {
         /// Files or directories to check (defaults to current directory)
         paths: Vec<String>,
+        /// Output format: json or human (default: human)
+        #[arg(long)]
+        format: Option<String>,
     },
     /// List symbols in a file
     Symbols {
@@ -152,6 +161,9 @@ pub enum LspCommand {
         /// Preview without writing changes
         #[arg(long)]
         dry_run: bool,
+        /// Output format: json or human (default: human)
+        #[arg(long)]
+        format: Option<String>,
     },
     /// Move a symbol from one file to another (top-level or between classes)
     MoveSymbol {
@@ -176,6 +188,9 @@ pub enum LspCommand {
         /// Preview without writing changes
         #[arg(long)]
         dry_run: bool,
+        /// Output format: json or human (default: human)
+        #[arg(long)]
+        format: Option<String>,
     },
     /// Extract a range of lines into a new function
     ExtractMethod {
@@ -194,6 +209,9 @@ pub enum LspCommand {
         /// Preview without writing changes
         #[arg(long)]
         dry_run: bool,
+        /// Output format: json or human (default: human)
+        #[arg(long)]
+        format: Option<String>,
     },
     /// Inline a function call, replacing it with the function body
     InlineMethod {
@@ -215,6 +233,9 @@ pub enum LspCommand {
         /// Preview without writing changes
         #[arg(long)]
         dry_run: bool,
+        /// Output format: json or human (default: human)
+        #[arg(long)]
+        format: Option<String>,
     },
     /// Check if a file can be safely deleted (find all cross-file references)
     SafeDeleteFile {
@@ -227,6 +248,9 @@ pub enum LspCommand {
         /// Preview without deleting (default when --force is not set)
         #[arg(long)]
         dry_run: bool,
+        /// Output format: json or human (default: human)
+        #[arg(long)]
+        format: Option<String>,
     },
     /// Find all classes that implement (define) a given method
     FindImplementations {
@@ -236,6 +260,9 @@ pub enum LspCommand {
         /// Only include classes extending this type
         #[arg(long)]
         base: Option<String>,
+        /// Output format: json or human (default: human)
+        #[arg(long)]
+        format: Option<String>,
     },
     /// Extract an expression into a local variable
     IntroduceVariable {
@@ -257,6 +284,9 @@ pub enum LspCommand {
         /// Preview without writing changes
         #[arg(long)]
         dry_run: bool,
+        /// Output format: json or human (default: human)
+        #[arg(long)]
+        format: Option<String>,
     },
     /// Turn an expression into a function parameter with a default value
     IntroduceParameter {
@@ -281,6 +311,9 @@ pub enum LspCommand {
         /// Preview without writing changes
         #[arg(long)]
         dry_run: bool,
+        /// Output format: json or human (default: human)
+        #[arg(long)]
+        format: Option<String>,
     },
     /// Delete multiple symbols in one pass without line-shifting issues
     BulkDeleteSymbol {
@@ -296,6 +329,9 @@ pub enum LspCommand {
         /// Preview without writing changes
         #[arg(long)]
         dry_run: bool,
+        /// Output format: json or human (default: human)
+        #[arg(long)]
+        format: Option<String>,
     },
     /// Rename multiple symbols atomically
     BulkRename {
@@ -308,6 +344,9 @@ pub enum LspCommand {
         /// Preview without writing changes
         #[arg(long)]
         dry_run: bool,
+        /// Output format: json or human (default: human)
+        #[arg(long)]
+        format: Option<String>,
     },
     /// Inline a pure pass-through delegate function
     InlineDelegate {
@@ -320,6 +359,9 @@ pub enum LspCommand {
         /// Preview without writing changes
         #[arg(long)]
         dry_run: bool,
+        /// Output format: json or human (default: human)
+        #[arg(long)]
+        format: Option<String>,
     },
     /// Extract multiple symbols into a new class file
     ExtractClass {
@@ -335,6 +377,9 @@ pub enum LspCommand {
         /// Preview without writing changes
         #[arg(long)]
         dry_run: bool,
+        /// Output format: json or human (default: human)
+        #[arg(long)]
+        format: Option<String>,
     },
     /// Create a new GDScript file with boilerplate (or custom content from stdin/--input-file)
     CreateFile {
@@ -353,6 +398,9 @@ pub enum LspCommand {
         /// Preview without writing
         #[arg(long)]
         dry_run: bool,
+        /// Output format: json or human (default: human)
+        #[arg(long)]
+        format: Option<String>,
     },
     /// Replace a function's body (AST-aware, reads new body from stdin or --input-file)
     ReplaceBody {
@@ -374,6 +422,9 @@ pub enum LspCommand {
         /// Preview without writing changes
         #[arg(long)]
         dry_run: bool,
+        /// Output format: json or human (default: human)
+        #[arg(long)]
+        format: Option<String>,
     },
     /// Insert code before or after a named symbol (reads content from stdin or --input-file)
     Insert {
@@ -398,6 +449,9 @@ pub enum LspCommand {
         /// Preview without writing changes
         #[arg(long)]
         dry_run: bool,
+        /// Output format: json or human (default: human)
+        #[arg(long)]
+        format: Option<String>,
     },
     /// Replace an entire symbol declaration (reads new content from stdin or --input-file)
     ReplaceSymbol {
@@ -419,6 +473,9 @@ pub enum LspCommand {
         /// Preview without writing changes
         #[arg(long)]
         dry_run: bool,
+        /// Output format: json or human (default: human)
+        #[arg(long)]
+        format: Option<String>,
     },
     /// Replace a range of lines (reads new content from stdin or --input-file)
     EditRange {
@@ -443,6 +500,9 @@ pub enum LspCommand {
         /// Preview without writing changes
         #[arg(long)]
         dry_run: bool,
+        /// Output format: json or human (default: human)
+        #[arg(long)]
+        format: Option<String>,
     },
     /// Show scene structure from a .tscn file (nodes, resources, connections)
     SceneInfo {
@@ -452,6 +512,9 @@ pub enum LspCommand {
         /// Show only nodes (compact output)
         #[arg(long)]
         nodes_only: bool,
+        /// Output format: json or human (default: human)
+        #[arg(long)]
+        format: Option<String>,
     },
     /// Change a function's signature and update all call sites
     ChangeSignature {
@@ -479,6 +542,9 @@ pub enum LspCommand {
         /// Preview without writing changes
         #[arg(long)]
         dry_run: bool,
+        /// Output format: json or human (default: human)
+        #[arg(long)]
+        format: Option<String>,
     },
 }
 
@@ -612,6 +678,451 @@ fn print_symbols_human(symbols: &[crate::lsp::query::SymbolOutput]) {
     }
 }
 
+fn is_json(format: Option<&String>) -> bool {
+    format.map(String::as_str) == Some("json")
+}
+
+fn dry_run_suffix(applied: bool) -> &'static str {
+    if applied { "" } else { " (dry run)" }
+}
+
+// ── Group A: Reference-heavy ────────────────────────────────────────────────
+
+fn print_rename_human(r: &crate::lsp::query::RenameOutput) {
+    use owo_colors::OwoColorize;
+    if let Some(ref summary) = r.summary {
+        // Applied: show summary
+        let file_count = r.changes.len();
+        let edit_count: usize = r.changes.iter().map(|c| c.edits.len()).sum();
+        println!(
+            "{} {} {} ({} edit{} in {} file{})",
+            r.symbol.bold(),
+            "→".dimmed(),
+            r.new_name.green().bold(),
+            edit_count,
+            if edit_count == 1 { "" } else { "s" },
+            file_count,
+            if file_count == 1 { "" } else { "s" },
+        );
+        println!("  {summary}");
+    } else {
+        // Dry run: show change list
+        let file_count = r.changes.len();
+        let edit_count: usize = r.changes.iter().map(|c| c.edits.len()).sum();
+        println!(
+            "{} {} {} ({} edit{} in {} file{}) (dry run)",
+            r.symbol.bold(),
+            "→".dimmed(),
+            r.new_name.green().bold(),
+            edit_count,
+            if edit_count == 1 { "" } else { "s" },
+            file_count,
+            if file_count == 1 { "" } else { "s" },
+        );
+        for change in &r.changes {
+            for edit in &change.edits {
+                println!("  {}:{}:{}", change.file.cyan(), edit.line, edit.column,);
+            }
+        }
+    }
+}
+
+fn print_delete_symbol_human(r: &crate::lsp::refactor::DeleteSymbolOutput) {
+    use owo_colors::OwoColorize;
+    println!(
+        "{} {} {} (lines {}-{}){}",
+        if r.applied { "Deleted" } else { "Would delete" },
+        r.kind.dimmed(),
+        r.symbol.bold(),
+        r.removed_lines.start,
+        r.removed_lines.end,
+        dry_run_suffix(r.applied),
+    );
+    if !r.references.is_empty() {
+        println!(
+            "  {} dangling reference{}:",
+            r.references.len().to_string().yellow(),
+            if r.references.len() == 1 { "" } else { "s" }
+        );
+        for loc in &r.references {
+            println!("  {}:{}:{}", loc.file.cyan(), loc.line, loc.column);
+        }
+    }
+}
+
+fn print_find_implementations_human(r: &crate::lsp::query::ImplementationsOutput) {
+    use owo_colors::OwoColorize;
+    let count = r.implementations.len();
+    println!(
+        "{} ({} implementation{})",
+        r.method.bold(),
+        count,
+        if count == 1 { "" } else { "s" }
+    );
+    for entry in &r.implementations {
+        let class_info = match (&entry.class_name, &entry.extends) {
+            (Some(cn), Some(ext)) => format!("  {} extends {}", cn.green(), ext.dimmed()),
+            (Some(cn), None) => format!("  {}", cn.green()),
+            (None, Some(ext)) => format!("  extends {}", ext.dimmed()),
+            (None, None) => String::new(),
+        };
+        println!("  {}:{}{}", entry.file.cyan(), entry.line, class_info);
+    }
+}
+
+fn print_safe_delete_file_human(r: &crate::lsp::query::SafeDeleteFileOutput) {
+    use owo_colors::OwoColorize;
+    if r.references.is_empty() {
+        if r.deleted {
+            println!("Deleted {}", r.file.bold());
+        } else {
+            println!("{} can be safely deleted", r.file.bold());
+        }
+    } else {
+        println!(
+            "{} has {} reference{} — {}",
+            r.file.bold(),
+            r.references.len(),
+            if r.references.len() == 1 { "" } else { "s" },
+            if r.deleted {
+                "deleted anyway (--force)".to_string()
+            } else {
+                "blocked".to_string()
+            }
+        );
+        for loc in &r.references {
+            println!(
+                "  {}:{}  {} {}",
+                loc.file.cyan(),
+                loc.line,
+                loc.kind.dimmed(),
+                loc.text.dimmed()
+            );
+        }
+    }
+}
+
+// ── Group B: Edit-based one-liners ──────────────────────────────────────────
+
+fn print_edit_human(r: &crate::lsp::refactor::EditOutput) {
+    use owo_colors::OwoColorize;
+    let verb = match r.operation {
+        "replace_body" => "Replaced body of",
+        "insert_after" => "Inserted after",
+        "insert_before" => "Inserted before",
+        "replace_symbol" => "Replaced",
+        "edit_range" => "Replaced range in",
+        _ => r.operation,
+    };
+    let symbol_part = r
+        .symbol
+        .as_deref()
+        .map_or(String::new(), |s| format!(" {}", s.bold()));
+    println!(
+        "{verb}{symbol_part} in {} ({} line{}){}",
+        r.file.cyan(),
+        r.lines_changed,
+        if r.lines_changed == 1 { "" } else { "s" },
+        dry_run_suffix(r.applied),
+    );
+    for w in &r.warnings {
+        println!("  {}: {w}", "warning".yellow());
+    }
+}
+
+fn print_move_symbol_human(r: &crate::lsp::refactor::MoveSymbolOutput) {
+    use owo_colors::OwoColorize;
+    println!(
+        "Moved {} ({}) from {} {} {}{}",
+        r.symbol.bold(),
+        r.kind.dimmed(),
+        r.from.cyan(),
+        "→".dimmed(),
+        r.to.cyan(),
+        dry_run_suffix(r.applied),
+    );
+    for w in &r.warnings {
+        println!("  {}: {w}", "warning".yellow());
+    }
+}
+
+fn print_extract_method_human(r: &crate::lsp::refactor::ExtractMethodOutput) {
+    use owo_colors::OwoColorize;
+    println!(
+        "Extracted into {}() in {}{}",
+        r.function.green().bold(),
+        r.file.cyan(),
+        dry_run_suffix(r.applied),
+    );
+    for w in &r.warnings {
+        println!("  {}: {w}", "warning".yellow());
+    }
+}
+
+fn print_inline_method_human(r: &crate::lsp::refactor::InlineMethodOutput) {
+    use owo_colors::OwoColorize;
+    println!(
+        "Inlined {}() at {}:{} ({} line{}){}",
+        r.function.bold(),
+        r.call_site_file.cyan(),
+        r.call_site_line,
+        r.inlined_lines,
+        if r.inlined_lines == 1 { "" } else { "s" },
+        dry_run_suffix(r.applied),
+    );
+    if r.function_deleted {
+        println!("  function definition removed");
+    }
+    for w in &r.warnings {
+        println!("  {}: {w}", "warning".yellow());
+    }
+}
+
+fn print_inline_method_by_name_human(r: &crate::lsp::refactor::InlineMethodByNameOutput) {
+    use owo_colors::OwoColorize;
+    println!(
+        "Inlined {}() in {} ({} call site{}){}",
+        r.function.bold(),
+        r.file.cyan(),
+        r.call_sites_inlined,
+        if r.call_sites_inlined == 1 { "" } else { "s" },
+        dry_run_suffix(r.applied),
+    );
+    if r.function_deleted {
+        println!("  function definition removed");
+    }
+    for w in &r.warnings {
+        println!("  {}: {w}", "warning".yellow());
+    }
+}
+
+fn print_change_signature_human(r: &crate::lsp::refactor::ChangeSignatureOutput) {
+    use owo_colors::OwoColorize;
+    println!(
+        "{} {} {} ({} call site{}){}",
+        r.old_signature.dimmed(),
+        "→".dimmed(),
+        r.new_signature.green().bold(),
+        r.call_sites_updated,
+        if r.call_sites_updated == 1 { "" } else { "s" },
+        dry_run_suffix(r.applied),
+    );
+    for w in &r.warnings {
+        println!("  {}: {w}", "warning".yellow());
+    }
+}
+
+fn print_introduce_variable_human(r: &crate::lsp::refactor::IntroduceVariableOutput) {
+    use owo_colors::OwoColorize;
+    println!(
+        "Introduced {} = {} in {}{}",
+        r.variable.green().bold(),
+        r.expression.dimmed(),
+        r.file.cyan(),
+        dry_run_suffix(r.applied),
+    );
+}
+
+fn print_introduce_parameter_human(r: &crate::lsp::refactor::IntroduceParameterOutput) {
+    use owo_colors::OwoColorize;
+    println!(
+        "Added parameter {} to {}() in {}{}",
+        r.parameter.green().bold(),
+        r.function.bold(),
+        r.file.cyan(),
+        dry_run_suffix(r.applied),
+    );
+}
+
+fn print_bulk_delete_human(r: &crate::lsp::refactor::BulkDeleteSymbolOutput) {
+    use owo_colors::OwoColorize;
+    if !r.deleted.is_empty() {
+        let names: Vec<&str> = r.deleted.iter().map(|d| d.name.as_str()).collect();
+        println!(
+            "Deleted {} symbol{} from {}: {}{}",
+            r.deleted.len(),
+            if r.deleted.len() == 1 { "" } else { "s" },
+            r.file.cyan(),
+            names.join(", ").bold(),
+            dry_run_suffix(r.applied),
+        );
+    }
+    for s in &r.skipped {
+        println!("  {}: {} ({})", "skipped".yellow(), s.name, s.reason);
+    }
+}
+
+fn print_bulk_rename_human(r: &crate::lsp::refactor::BulkRenameOutput) {
+    use owo_colors::OwoColorize;
+    if !r.renames.is_empty() {
+        let pairs: Vec<String> = r
+            .renames
+            .iter()
+            .map(|rn| {
+                format!(
+                    "{}→{} ({})",
+                    rn.old_name,
+                    rn.new_name.green(),
+                    rn.occurrences
+                )
+            })
+            .collect();
+        println!(
+            "Renamed in {}: {}{}",
+            r.file.cyan(),
+            pairs.join(", "),
+            dry_run_suffix(r.applied),
+        );
+    }
+    for s in &r.skipped {
+        println!(
+            "  {}: {}→{} ({})",
+            "skipped".yellow(),
+            s.old_name,
+            s.new_name,
+            s.reason
+        );
+    }
+}
+
+fn print_inline_delegate_human(r: &crate::lsp::refactor::InlineDelegateOutput) {
+    use owo_colors::OwoColorize;
+    println!(
+        "Inlined delegate {}() {} {}() ({} call site{}){}",
+        r.function.bold(),
+        "→".dimmed(),
+        r.delegate_target.green().bold(),
+        r.call_sites_replaced,
+        if r.call_sites_replaced == 1 { "" } else { "s" },
+        dry_run_suffix(r.applied),
+    );
+    if r.function_deleted {
+        println!("  function definition removed");
+    }
+    for w in &r.warnings {
+        println!("  {}: {w}", "warning".yellow());
+    }
+}
+
+fn print_extract_class_human(r: &crate::lsp::refactor::ExtractClassOutput) {
+    use owo_colors::OwoColorize;
+    let names: Vec<&str> = r.extracted.iter().map(|s| s.name.as_str()).collect();
+    println!(
+        "Extracted {} symbol{} from {} {} {}: {}{}",
+        r.extracted.len(),
+        if r.extracted.len() == 1 { "" } else { "s" },
+        r.from.cyan(),
+        "→".dimmed(),
+        r.to.cyan(),
+        names.join(", ").bold(),
+        dry_run_suffix(r.applied),
+    );
+    for w in &r.warnings {
+        println!("  {}: {w}", "warning".yellow());
+    }
+}
+
+fn print_create_file_human(r: &crate::lsp::query::CreateFileOutput) {
+    use owo_colors::OwoColorize;
+    let class_part = r
+        .class_name
+        .as_deref()
+        .map_or_else(String::new, |cn: &str| {
+            format!(", class_name {}", cn.green())
+        });
+    println!(
+        "Created {} (extends {}{}, {} line{}){}",
+        r.file.cyan().bold(),
+        r.extends.green(),
+        class_part,
+        r.lines,
+        if r.lines == 1 { "" } else { "s" },
+        dry_run_suffix(r.applied),
+    );
+}
+
+// ── Group C: Structured data ────────────────────────────────────────────────
+
+fn print_scene_info_human(r: &crate::lsp::query::SceneInfoOutput) {
+    use owo_colors::OwoColorize;
+    println!("{}", r.file.bold());
+
+    if let Some(ref nodes) = r.nodes {
+        for (i, n) in nodes.iter().enumerate() {
+            let depth = match n.parent.as_deref() {
+                None => 0,
+                Some(".") => 1,
+                Some(p) => p.chars().filter(|&c| c == '/').count() + 2,
+            };
+
+            let indent = if depth == 0 {
+                String::new()
+            } else {
+                let is_last = nodes.get(i + 1).is_none_or(|next| {
+                    let nd = match next.parent.as_deref() {
+                        None => 0,
+                        Some(".") => 1,
+                        Some(p) => p.chars().filter(|&c| c == '/').count() + 2,
+                    };
+                    nd <= depth
+                });
+                let connector = if is_last { "└── " } else { "├── " };
+                format!("{}{}", "│   ".repeat(depth.saturating_sub(1)), connector)
+            };
+
+            let type_part = n
+                .r#type
+                .as_deref()
+                .map_or_else(String::new, |t: &str| format!(" ({})", t.dimmed()));
+            let script_part = n
+                .script
+                .as_deref()
+                .map_or_else(String::new, |s: &str| format!(" [{}]", s.cyan()));
+            let groups_part = if n.groups.is_empty() {
+                String::new()
+            } else {
+                format!(" {{{}}}", n.groups.join(", ").dimmed())
+            };
+
+            println!(
+                "{indent}{}{type_part}{script_part}{groups_part}",
+                n.name.bold()
+            );
+        }
+    }
+
+    if let Some(ref connections) = r.connections
+        && !connections.is_empty()
+    {
+        println!("\n{}:", "Connections".bold());
+        for c in connections {
+            println!(
+                "  {} {} {} {} {}",
+                c.from.cyan(),
+                format!(".{}", c.signal).dimmed(),
+                "→".dimmed(),
+                c.to.cyan(),
+                format!(".{}", c.method).dimmed()
+            );
+        }
+    }
+}
+
+fn print_code_actions_human(actions: &[crate::lsp::query::CodeActionOutput]) {
+    use owo_colors::OwoColorize;
+    if actions.is_empty() {
+        println!("  (no code actions)");
+        return;
+    }
+    for (i, action) in actions.iter().enumerate() {
+        println!(
+            "  {}. {}",
+            (i + 1).to_string().dimmed(),
+            action.title.bold()
+        );
+    }
+}
+
 /// Parse a range string like "5-20" into (start, end) line numbers.
 fn parse_range(range: &str) -> Result<(usize, usize)> {
     let parts: Vec<&str> = range.splitn(2, '-').collect();
@@ -721,6 +1232,7 @@ pub fn exec(args: LspArgs) -> Result<()> {
             column,
             new_name,
             dry_run,
+            format,
         } => {
             let mut result = if let Some(ref sym_name) = name {
                 crate::lsp::query::query_rename_by_name(sym_name, &new_name, file.as_deref())?
@@ -754,8 +1266,13 @@ pub fn exec(args: LspArgs) -> Result<()> {
                 ));
             }
 
-            let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
-            println!("{json}");
+            if is_json(format.as_ref()) {
+                let json =
+                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+                println!("{json}");
+            } else {
+                print_rename_human(&result);
+            }
             Ok(())
         }
         LspCommand::References {
@@ -906,13 +1423,20 @@ pub fn exec(args: LspArgs) -> Result<()> {
             }
             Ok(())
         }
-        LspCommand::CodeActions { pos } => {
+        LspCommand::CodeActions { pos, format } => {
             let result = crate::lsp::query::query_code_actions(&pos.file, pos.line, pos.column)?;
-            let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
-            println!("{json}");
+            if is_json(format.as_ref()) {
+                let json =
+                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+                println!("{json}");
+            } else {
+                print_code_actions_human(&result);
+            }
             Ok(())
         }
-        LspCommand::Diagnostics { paths } => crate::lsp::query::query_diagnostics(&paths),
+        LspCommand::Diagnostics { paths, format } => {
+            crate::lsp::query::query_diagnostics(&paths, is_json(format.as_ref()))
+        }
         LspCommand::Symbols { file, kind, format } => {
             let mut result = crate::lsp::query::query_symbols(&file)?;
             let kind_filter: Vec<String> = kind
@@ -976,6 +1500,7 @@ pub fn exec(args: LspArgs) -> Result<()> {
             class,
             force,
             dry_run,
+            format,
         } => {
             if name.is_none() && line.is_none() {
                 return Err(miette::miette!("either --name or --line is required"));
@@ -991,8 +1516,13 @@ pub fn exec(args: LspArgs) -> Result<()> {
                 dry_run,
                 class.as_deref(),
             )?;
-            let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
-            println!("{json}");
+            if is_json(format.as_ref()) {
+                let json =
+                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+                println!("{json}");
+            } else {
+                print_delete_symbol_human(&result);
+            }
             if !force && !result.references.is_empty() {
                 std::process::exit(1);
             }
@@ -1006,6 +1536,7 @@ pub fn exec(args: LspArgs) -> Result<()> {
             target_class,
             update_callers,
             dry_run,
+            format,
         } => {
             let result = crate::lsp::query::query_move_symbol(
                 &name,
@@ -1016,8 +1547,13 @@ pub fn exec(args: LspArgs) -> Result<()> {
                 target_class.as_deref(),
                 update_callers,
             )?;
-            let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
-            println!("{json}");
+            if is_json(format.as_ref()) {
+                let json =
+                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+                println!("{json}");
+            } else {
+                print_move_symbol_human(&result);
+            }
             Ok(())
         }
         LspCommand::ExtractMethod {
@@ -1026,12 +1562,18 @@ pub fn exec(args: LspArgs) -> Result<()> {
             end_line,
             name,
             dry_run,
+            format,
         } => {
             let result = crate::lsp::query::query_extract_method(
                 &file, start_line, end_line, &name, dry_run,
             )?;
-            let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
-            println!("{json}");
+            if is_json(format.as_ref()) {
+                let json =
+                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+                println!("{json}");
+            } else {
+                print_extract_method_human(&result);
+            }
             Ok(())
         }
         LspCommand::InlineMethod {
@@ -1041,22 +1583,31 @@ pub fn exec(args: LspArgs) -> Result<()> {
             line,
             column,
             dry_run,
+            format,
         } => {
             if let Some(ref func_name) = name {
                 let result =
                     crate::lsp::query::query_inline_method_by_name(&file, func_name, all, dry_run)?;
-                let json =
-                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
-                println!("{json}");
+                if is_json(format.as_ref()) {
+                    let json = serde_json::to_string_pretty(&result)
+                        .map_err(|e| miette::miette!("{e}"))?;
+                    println!("{json}");
+                } else {
+                    print_inline_method_by_name_human(&result);
+                }
             } else {
                 let line = line
                     .ok_or_else(|| miette::miette!("--line is required when not using --name"))?;
                 let column = column
                     .ok_or_else(|| miette::miette!("--column is required when not using --name"))?;
                 let result = crate::lsp::query::query_inline_method(&file, line, column, dry_run)?;
-                let json =
-                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
-                println!("{json}");
+                if is_json(format.as_ref()) {
+                    let json = serde_json::to_string_pretty(&result)
+                        .map_err(|e| miette::miette!("{e}"))?;
+                    println!("{json}");
+                } else {
+                    print_inline_method_human(&result);
+                }
             }
             Ok(())
         }
@@ -1064,19 +1615,30 @@ pub fn exec(args: LspArgs) -> Result<()> {
             file,
             force,
             dry_run,
+            format,
         } => {
             let result = crate::lsp::query::query_safe_delete_file(&file, force, dry_run)?;
-            let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
-            println!("{json}");
+            if is_json(format.as_ref()) {
+                let json =
+                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+                println!("{json}");
+            } else {
+                print_safe_delete_file_human(&result);
+            }
             if !force && !result.references.is_empty() {
                 std::process::exit(1);
             }
             Ok(())
         }
-        LspCommand::FindImplementations { name, base } => {
+        LspCommand::FindImplementations { name, base, format } => {
             let result = crate::lsp::query::query_find_implementations(&name, base.as_deref())?;
-            let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
-            println!("{json}");
+            if is_json(format.as_ref()) {
+                let json =
+                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+                println!("{json}");
+            } else {
+                print_find_implementations_human(&result);
+            }
             Ok(())
         }
         LspCommand::IntroduceVariable {
@@ -1086,12 +1648,18 @@ pub fn exec(args: LspArgs) -> Result<()> {
             end_column,
             name,
             dry_run,
+            format,
         } => {
             let result = crate::lsp::query::query_introduce_variable(
                 &file, line, column, end_column, &name, dry_run,
             )?;
-            let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
-            println!("{json}");
+            if is_json(format.as_ref()) {
+                let json =
+                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+                println!("{json}");
+            } else {
+                print_introduce_variable_human(&result);
+            }
             Ok(())
         }
         LspCommand::IntroduceParameter {
@@ -1102,6 +1670,7 @@ pub fn exec(args: LspArgs) -> Result<()> {
             name,
             r#type,
             dry_run,
+            format,
         } => {
             let result = crate::lsp::query::query_introduce_parameter(
                 &file,
@@ -1112,8 +1681,13 @@ pub fn exec(args: LspArgs) -> Result<()> {
                 r#type.as_deref(),
                 dry_run,
             )?;
-            let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
-            println!("{json}");
+            if is_json(format.as_ref()) {
+                let json =
+                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+                println!("{json}");
+            } else {
+                print_introduce_parameter_human(&result);
+            }
             Ok(())
         }
         LspCommand::CreateFile {
@@ -1122,6 +1696,7 @@ pub fn exec(args: LspArgs) -> Result<()> {
             class_name,
             input_file,
             dry_run,
+            format,
         } => {
             // Read custom content from --input-file or stdin (if piped).
             // Falls back to generating boilerplate when neither is provided.
@@ -1137,8 +1712,13 @@ pub fn exec(args: LspArgs) -> Result<()> {
                 custom_content.as_deref(),
                 dry_run,
             )?;
-            let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
-            println!("{json}");
+            if is_json(format.as_ref()) {
+                let json =
+                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+                println!("{json}");
+            } else {
+                print_create_file_human(&result);
+            }
             Ok(())
         }
         LspCommand::ReplaceBody {
@@ -1148,6 +1728,7 @@ pub fn exec(args: LspArgs) -> Result<()> {
             input_file,
             no_format,
             dry_run,
+            format,
         } => {
             let content = read_content(input_file.as_deref())?;
             let result = crate::lsp::query::query_replace_body(
@@ -1158,8 +1739,13 @@ pub fn exec(args: LspArgs) -> Result<()> {
                 no_format,
                 dry_run,
             )?;
-            let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
-            println!("{json}");
+            if is_json(format.as_ref()) {
+                let json =
+                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+                println!("{json}");
+            } else {
+                print_edit_human(&result);
+            }
             Ok(())
         }
         LspCommand::Insert {
@@ -1170,6 +1756,7 @@ pub fn exec(args: LspArgs) -> Result<()> {
             input_file,
             no_format,
             dry_run,
+            format,
         } => {
             let (anchor, is_after) = match (after, before) {
                 (Some(a), None) => (a, true),
@@ -1190,8 +1777,13 @@ pub fn exec(args: LspArgs) -> Result<()> {
                 no_format,
                 dry_run,
             )?;
-            let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
-            println!("{json}");
+            if is_json(format.as_ref()) {
+                let json =
+                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+                println!("{json}");
+            } else {
+                print_edit_human(&result);
+            }
             Ok(())
         }
         LspCommand::ReplaceSymbol {
@@ -1201,6 +1793,7 @@ pub fn exec(args: LspArgs) -> Result<()> {
             input_file,
             no_format,
             dry_run,
+            format,
         } => {
             let content = read_content(input_file.as_deref())?;
             let result = crate::lsp::query::query_replace_symbol(
@@ -1211,8 +1804,13 @@ pub fn exec(args: LspArgs) -> Result<()> {
                 no_format,
                 dry_run,
             )?;
-            let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
-            println!("{json}");
+            if is_json(format.as_ref()) {
+                let json =
+                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+                println!("{json}");
+            } else {
+                print_edit_human(&result);
+            }
             Ok(())
         }
         LspCommand::EditRange {
@@ -1223,6 +1821,7 @@ pub fn exec(args: LspArgs) -> Result<()> {
             input_file,
             no_format,
             dry_run,
+            format,
         } => {
             let (start, end) = if let Some(ref r) = range {
                 parse_range(r)?
@@ -1237,8 +1836,13 @@ pub fn exec(args: LspArgs) -> Result<()> {
             let result = crate::lsp::query::query_edit_range(
                 &file, start, end, &content, no_format, dry_run,
             )?;
-            let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
-            println!("{json}");
+            if is_json(format.as_ref()) {
+                let json =
+                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+                println!("{json}");
+            } else {
+                print_edit_human(&result);
+            }
             Ok(())
         }
         LspCommand::ChangeSignature {
@@ -1250,6 +1854,7 @@ pub fn exec(args: LspArgs) -> Result<()> {
             reorder,
             class,
             dry_run,
+            format,
         } => {
             let result = crate::lsp::query::query_change_signature(
                 &file,
@@ -1261,8 +1866,13 @@ pub fn exec(args: LspArgs) -> Result<()> {
                 class.as_deref(),
                 dry_run,
             )?;
-            let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
-            println!("{json}");
+            if is_json(format.as_ref()) {
+                let json =
+                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+                println!("{json}");
+            } else {
+                print_change_signature_human(&result);
+            }
             Ok(())
         }
         LspCommand::BulkDeleteSymbol {
@@ -1270,31 +1880,49 @@ pub fn exec(args: LspArgs) -> Result<()> {
             names,
             force,
             dry_run,
+            format,
         } => {
             let result =
                 crate::lsp::query::query_bulk_delete_symbol(&file, &names, force, dry_run)?;
-            let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
-            println!("{json}");
+            if is_json(format.as_ref()) {
+                let json =
+                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+                println!("{json}");
+            } else {
+                print_bulk_delete_human(&result);
+            }
             Ok(())
         }
         LspCommand::BulkRename {
             file,
             renames,
             dry_run,
+            format,
         } => {
             let result = crate::lsp::query::query_bulk_rename(&file, &renames, dry_run)?;
-            let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
-            println!("{json}");
+            if is_json(format.as_ref()) {
+                let json =
+                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+                println!("{json}");
+            } else {
+                print_bulk_rename_human(&result);
+            }
             Ok(())
         }
         LspCommand::InlineDelegate {
             file,
             name,
             dry_run,
+            format,
         } => {
             let result = crate::lsp::query::query_inline_delegate(&file, &name, dry_run)?;
-            let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
-            println!("{json}");
+            if is_json(format.as_ref()) {
+                let json =
+                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+                println!("{json}");
+            } else {
+                print_inline_delegate_human(&result);
+            }
             Ok(())
         }
         LspCommand::ExtractClass {
@@ -1302,16 +1930,31 @@ pub fn exec(args: LspArgs) -> Result<()> {
             symbols,
             to,
             dry_run,
+            format,
         } => {
             let result = crate::lsp::query::query_extract_class(&file, &symbols, &to, dry_run)?;
-            let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
-            println!("{json}");
+            if is_json(format.as_ref()) {
+                let json =
+                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+                println!("{json}");
+            } else {
+                print_extract_class_human(&result);
+            }
             Ok(())
         }
-        LspCommand::SceneInfo { file, nodes_only } => {
+        LspCommand::SceneInfo {
+            file,
+            nodes_only,
+            format,
+        } => {
             let result = crate::lsp::query::query_scene_info(&file, nodes_only)?;
-            let json = serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
-            println!("{json}");
+            if is_json(format.as_ref()) {
+                let json =
+                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+                println!("{json}");
+            } else {
+                print_scene_info_human(&result);
+            }
             Ok(())
         }
     }

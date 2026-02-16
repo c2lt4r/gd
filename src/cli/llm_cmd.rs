@@ -74,7 +74,8 @@ gd resource get-property <file> --key <k>               # Print property value t
 gd resource remove-property <file> --key <k>            # Delete a property
 gd resource set-script <file> <script>                  # Attach/change script
 gd resource remove-script <file>                        # Detach script + cleanup
-gd resource info <file>                                 # JSON dump of resource structure
+gd resource info <file>                                 # Resource structure (human-readable)
+gd resource info <file> --format json                   # JSON dump of resource structure
 # All write subcommands support --dry-run
 
 ## Debug (requires running game via `gd run`)
@@ -178,7 +179,7 @@ gd daemon restart                      # Restart daemon
 ## LSP (Language Server)
 gd lsp                                 # Start LSP server (for editors)
 
-# One-shot queries (all output JSON, positions are 1-based)
+# One-shot queries (human-readable default, add --format json for structured output)
 gd lsp hover --file <f> --line <L> --column <C>
 gd lsp definition --file <f> --line <L> --column <C>
 gd lsp references --name <sym>                    # Cross-project search by name
@@ -194,7 +195,7 @@ gd lsp code-actions --file <f> --line <L> --column <C>
 gd lsp view --file <f> [--start <L> --end <L>]   # View file lines
 gd lsp scene-info --file <f>                      # Scene structure from .tscn
 
-# Refactoring (all support --dry-run, stdin commands also accept --input-file)
+# Refactoring (human-readable default, --format json for structured output, --dry-run to preview)
 gd lsp delete-symbol --file <f> --name <sym>       # Also: --line <L>, --force
 gd lsp move-symbol --name <sym> --from <f> --to <f> [--update-callers]
 gd lsp extract-method --file <f> --start-line <L> --end-line <L> --name <name>
