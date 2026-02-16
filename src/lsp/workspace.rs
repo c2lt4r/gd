@@ -54,12 +54,10 @@ impl WorkspaceIndex {
         let project_file = self.project_root.join("project.godot");
         for (name, res_path) in crate::core::project::parse_autoloads(&project_file) {
             if let Some(abs_path) = self.resolve_res_path(&res_path) {
-                let class_name = self
-                    .get_content(&abs_path)
-                    .and_then(|content| {
-                        let tree = crate::core::parser::parse(&content).ok()?;
-                        extract_class_name(tree.root_node(), &content)
-                    });
+                let class_name = self.get_content(&abs_path).and_then(|content| {
+                    let tree = crate::core::parser::parse(&content).ok()?;
+                    extract_class_name(tree.root_node(), &content)
+                });
                 self.autoloads.insert(
                     name,
                     AutoloadInfo {
@@ -115,7 +113,10 @@ impl WorkspaceIndex {
     }
 
     /// Look up an autoload singleton by name.
-    pub fn lookup_autoload(&self, name: &str) -> Option<dashmap::mapref::one::Ref<'_, String, AutoloadInfo>> {
+    pub fn lookup_autoload(
+        &self,
+        name: &str,
+    ) -> Option<dashmap::mapref::one::Ref<'_, String, AutoloadInfo>> {
         self.autoloads.get(name)
     }
 
@@ -168,4 +169,3 @@ fn extract_class_name(root: tree_sitter::Node, source: &str) -> Option<String> {
     }
     None
 }
-

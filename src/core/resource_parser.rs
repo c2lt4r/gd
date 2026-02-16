@@ -46,6 +46,15 @@ pub fn parse_resource_file(path: &Path) -> Result<(String, Tree)> {
     Ok((source, tree))
 }
 
+/// Normalize `&"…"` StringName literals to `"…"` and return an owned copy.
+///
+/// Use this when you need to extract text from tree-sitter nodes using the
+/// source bytes — the tree is parsed from the normalized text, so offsets
+/// only match if you also extract from the normalized text.
+pub fn normalize_for_extraction(source: &str) -> String {
+    normalize_string_names(source).into_owned()
+}
+
 /// Replace `&"…"` StringName literals with plain `"…"` strings.
 ///
 /// The `&` sigil is Godot's StringName marker. The tree-sitter grammar for

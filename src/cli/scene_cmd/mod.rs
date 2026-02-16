@@ -188,9 +188,8 @@ pub fn exec(args: &SceneArgs) -> Result<()> {
 // ── Shared helpers ──────────────────────────────────────────────────────────
 
 /// Compute the next ext_resource ID by incrementing the max numeric prefix.
-pub(crate) fn next_ext_resource_id(data: &scene::SceneData) -> String {
-    let max_num = data
-        .ext_resources
+pub(crate) fn next_ext_resource_id(ext_resources: &[scene::ExtResource]) -> String {
+    let max_num = ext_resources
         .iter()
         .filter_map(|e| {
             let num_str: String = e.id.chars().take_while(char::is_ascii_digit).collect();
@@ -205,7 +204,8 @@ pub(crate) fn next_ext_resource_id(data: &scene::SceneData) -> String {
 pub(crate) fn is_non_ext_section(line: &str) -> bool {
     (line.starts_with("[sub_resource")
         || line.starts_with("[node")
-        || line.starts_with("[connection"))
+        || line.starts_with("[connection")
+        || line.starts_with("[resource"))
         && !line.starts_with("[ext_resource")
 }
 

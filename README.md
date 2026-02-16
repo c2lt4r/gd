@@ -80,6 +80,7 @@ gd run
 | `gd ci` | Generate CI/CD pipeline configuration |
 | `gd daemon` | Manage the background daemon (status, stop, restart) |
 | `gd debug` | Debug a running Godot game (breakpoints, stepping, eval, scene tree, inspect, time control) |
+| `gd resource` | Manage `.tres` resource files (create, properties, scripts, info) |
 | `gd scene` | Manage `.tscn` scene files (create, add/remove nodes, properties, connections, scripts) |
 | `gd lsp` | Start the LSP server, or run one-shot queries (see below) |
 | `gd deps` | Show script dependency graph (`--include-resources` for `.tscn`/`.tres`) |
@@ -230,6 +231,38 @@ gd scene remove-node level.tscn --name Player
 
 # Preview any command without writing
 gd scene create level.tscn --root-type Node2D --dry-run
+```
+
+### Resource Management
+
+```sh
+# Create a new .tres resource
+gd resource create item.tres --type Resource
+gd resource create theme.tres --type Theme
+
+# Create with a script attached
+gd resource create item.tres --type Resource --script item_data.gd
+
+# Set or update a property
+gd resource set-property item.tres --key cost --value 100
+
+# Read a property
+gd resource get-property item.tres --key cost
+
+# Remove a property
+gd resource remove-property item.tres --key cost
+
+# Attach or change a script
+gd resource set-script item.tres item_data.gd
+
+# Remove a script (cleans up ext_resource and load_steps)
+gd resource remove-script item.tres
+
+# Dump resource structure as JSON
+gd resource info item.tres
+
+# Preview any command without writing
+gd resource set-property item.tres --key cost --value 100 --dry-run
 ```
 
 ### Statistics

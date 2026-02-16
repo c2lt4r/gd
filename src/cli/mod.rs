@@ -18,6 +18,7 @@ pub mod log_cmd;
 pub mod lsp_cmd;
 pub mod man_cmd;
 pub mod new_cmd;
+pub mod resource_cmd;
 pub mod run_cmd;
 pub mod scene_cmd;
 pub mod stats_cmd;
@@ -73,6 +74,8 @@ pub enum Command {
     Daemon(daemon_cmd::DaemonArgs),
     /// Debug a running Godot game via Godot's binary debug protocol
     Debug(debug_cmd::DebugArgs),
+    /// Manage .tres resource files
+    Resource(resource_cmd::ResourceArgs),
     /// Manage .tscn scene files
     Scene(scene_cmd::SceneArgs),
     /// Show project statistics
@@ -116,6 +119,7 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Addons(args) => addons_cmd::exec(args),
         Command::Daemon(args) => daemon_cmd::exec(args),
         Command::Debug(ref args) => debug_cmd::exec(args),
+        Command::Resource(ref args) => resource_cmd::exec(args),
         Command::Scene(ref args) => scene_cmd::exec(args),
         Command::Stats(ref args) => stats_cmd::exec(args),
         Command::Ci(args) => ci_cmd::exec(args),

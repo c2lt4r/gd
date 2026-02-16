@@ -518,7 +518,11 @@ fn print_status_line(project_name: &str, debug_port: Option<u64>, eval: bool) {
     } else {
         String::new()
     };
-    let eval_info = if eval { "" } else { " (bare — no eval server)" };
+    let eval_info = if eval {
+        ""
+    } else {
+        " (bare — no eval server)"
+    };
     println!(
         "{} Running {}{debug_info}{eval_info}",
         "▶".green(),

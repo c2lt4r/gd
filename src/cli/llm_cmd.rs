@@ -54,9 +54,28 @@ gd eval --verbose "<expr>"             # Show Godot stderr
 gd eval --format json "<expr>"         # Machine-readable output (stdout, stderr, exit_code, errors)
 
 ## Scene
-gd scene attach-script --scene <f.tscn> --script <f.gd>          # Attach script to root node
-gd scene attach-script --scene <f.tscn> --script <f.gd> --node <name>  # Attach to named node
-gd scene attach-script --dry-run       # Preview without writing
+gd scene create <path> --root-type <T>                  # Create new .tscn
+gd scene add-node <scene> --name <n> --type <T>         # Add child node (default parent: root)
+gd scene remove-node <scene> --name <n>                 # Remove node + descendants
+gd scene set-property <scene> --node <n> --key <k> --value <v>  # Set node property
+gd scene add-connection <scene> --signal <s> --from <n> --to <n> --method <m>
+gd scene remove-connection <scene> --signal <s> --from <n> --to <n> --method <m>
+gd scene attach-script <scene> <script>                 # Attach script to root node
+gd scene attach-script <scene> <script> --node <name>   # Attach to named node
+gd scene detach-script <scene>                          # Detach script from root
+gd scene detach-script <scene> --node <name>            # Detach from named node
+# All scene subcommands support --dry-run
+
+## Resource (.tres)
+gd resource create <path> --type <T>                    # Create new .tres
+gd resource create <path> --type <T> --script <f.gd>   # Create with script attached
+gd resource set-property <file> --key <k> --value <v>   # Set/update [resource] property
+gd resource get-property <file> --key <k>               # Print property value to stdout
+gd resource remove-property <file> --key <k>            # Delete a property
+gd resource set-script <file> <script>                  # Attach/change script
+gd resource remove-script <file>                        # Detach script + cleanup
+gd resource info <file>                                 # JSON dump of resource structure
+# All write subcommands support --dry-run
 
 ## Debug (requires running game via `gd run`)
 # Scene inspection (gd debug scene <cmd>)

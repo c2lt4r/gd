@@ -80,19 +80,19 @@ fn make_multi_node_scene() -> SceneData {
 #[test]
 fn next_id_from_numeric_ids() {
     let data = make_scene_data(&["1", "2", "3"], "Root");
-    assert_eq!(next_ext_resource_id(&data), "4");
+    assert_eq!(next_ext_resource_id(&data.ext_resources), "4");
 }
 
 #[test]
 fn next_id_from_suffixed_ids() {
     let data = make_scene_data(&["1_abc", "2_def", "3_loading"], "Root");
-    assert_eq!(next_ext_resource_id(&data), "4");
+    assert_eq!(next_ext_resource_id(&data.ext_resources), "4");
 }
 
 #[test]
 fn next_id_empty_scene() {
     let data = make_scene_data(&[], "Root");
-    assert_eq!(next_ext_resource_id(&data), "1");
+    assert_eq!(next_ext_resource_id(&data.ext_resources), "1");
 }
 
 // ── increment/decrement load_steps ──────────────────────────────────────────

@@ -22,10 +22,7 @@ pub(crate) fn exec_attach_script(args: &AttachScriptArgs) -> Result<()> {
         .ok_or_else(|| miette!("Scene file not found: {}", args.scene))?;
 
     // Resolve script path: strip res:// prefix, try CWD first, then project root
-    let script_arg = args
-        .script
-        .strip_prefix("res://")
-        .unwrap_or(&args.script);
+    let script_arg = args.script.strip_prefix("res://").unwrap_or(&args.script);
     let script_path = resolve_path(script_arg, &cwd, &project_root)
         .ok_or_else(|| miette!("Script file not found: {}", args.script))?;
 
@@ -77,7 +74,7 @@ pub(crate) fn exec_attach_script(args: &AttachScriptArgs) -> Result<()> {
     }
 
     // Compute next ext_resource ID
-    let next_id = next_ext_resource_id(&data);
+    let next_id = next_ext_resource_id(&data.ext_resources);
 
     // Build the modified file content
     let result = insert_script_attachment(&source, &res_path, &next_id, target_node)?;
@@ -167,7 +164,11 @@ pub(crate) fn insert_script_attachment(
 }
 
 /// Resolve a file path by trying CWD first, then project root.
-fn resolve_path(path: &str, cwd: &std::path::Path, project_root: &std::path::Path) -> Option<PathBuf> {
+fn resolve_path(
+    path: &str,
+    cwd: &std::path::Path,
+    project_root: &std::path::Path,
+) -> Option<PathBuf> {
     let p = PathBuf::from(path);
     // Absolute path
     if p.is_absolute() {

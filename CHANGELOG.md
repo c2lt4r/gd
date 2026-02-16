@@ -3,6 +3,8 @@
 ## [0.2.15] - 2026-02-16
 
 ### Added
+- **`gd resource` command** — full CRUD API for `.tres` resource files (7 subcommands): `create`, `set-property`, `get-property`, `remove-property`, `set-script`, `remove-script`, `info`. All write commands support `--dry-run`. Create supports `--script` to attach a script at creation time.
+- **StringName (`&"..."`) parse fix** — `.tscn`/`.tres` files containing `&"StringName"` literals now parse correctly. Previously tree-sitter byte offsets were misaligned when `&"` was normalized, causing mangled property values in `gd check`, `gd tree --scene`, `gd lsp scene-info`, and `gd resource info`.
 - **LSP hover after dot** — `obj.method` now resolves the receiver's type and shows hover for the member on that type. Handles typed vars, `:=` inferred vars, autoloads, workspace `class_name` refs, and ClassDB inheritance chains.
 - **LSP completions for local variable types** — `:=` inferred variables now resolve their type from constructor calls (`ClassName.new()`), class constants (`Vector2.ZERO`), builtin constructors (`Vector2(...)`), same-file function return types (`_get_direction() -> Vector2`), and literals.
 - **LSP completions for for-loop typed iterators** — `for npc: Node2D in ...` now provides Node2D members when completing `npc.`.

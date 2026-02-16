@@ -4,7 +4,11 @@ use super::util::{matches_name, node_range, node_text};
 use super::workspace::WorkspaceIndex;
 
 /// Provide hover information at the given position.
-pub fn hover_at(source: &str, position: Position, workspace: Option<&WorkspaceIndex>) -> Option<Hover> {
+pub fn hover_at(
+    source: &str,
+    position: Position,
+    workspace: Option<&WorkspaceIndex>,
+) -> Option<Hover> {
     let tree = crate::core::parser::parse(source).ok()?;
     let root = tree.root_node();
 
@@ -192,10 +196,7 @@ fn try_receiver_hover(
 
     // Autoload singleton
     if let Some(info) = ws.lookup_autoload(name) {
-        let extends = info
-            .class_name
-            .as_deref()
-            .unwrap_or("(autoload)");
+        let extends = info.class_name.as_deref().unwrap_or("(autoload)");
         let code = format!("{name}: {extends}");
         return Some(make_hover(&code, ident_node, Some("Autoload singleton")));
     }
@@ -205,8 +206,8 @@ fn try_receiver_hover(
         && let Some(content) = ws.get_content(&path)
         && let Ok(tree) = crate::core::parser::parse(&content)
     {
-        let extends = super::completion::find_extends_class(tree.root_node(), &content)
-            .unwrap_or_default();
+        let extends =
+            super::completion::find_extends_class(tree.root_node(), &content).unwrap_or_default();
         let code = if extends.is_empty() {
             format!("class_name {name}")
         } else {
@@ -267,8 +268,10 @@ fn try_member_hover(
     // Resolve the receiver's type using the completion resolver chain.
     // Build the full receiver text (handles chains like `self.velocity`).
     let receiver_text = build_receiver_text(&object_node, source);
-    if let Some(receiver_type) = resolve_receiver_for_hover(&receiver_text, source, position, workspace)
-        && let Some(hover) = hover_member_on_type(&receiver_type, member_name, ident_node, workspace)
+    if let Some(receiver_type) =
+        resolve_receiver_for_hover(&receiver_text, source, position, workspace)
+        && let Some(hover) =
+            hover_member_on_type(&receiver_type, member_name, ident_node, workspace)
     {
         return Some(hover);
     }
@@ -842,7 +845,8 @@ mod tests {
     #[test]
     fn hover_inferred_var_dot_member() {
         // rng.seed should resolve rng := RandomNumberGenerator.new() → RNG property
-        let source = "extends Node\nfunc run():\n\tvar rng := RandomNumberGenerator.new()\n\trng.seed\n";
+        let source =
+            "extends Node\nfunc run():\n\tvar rng := RandomNumberGenerator.new()\n\trng.seed\n";
         let val = hover_value(source, 3, 5).unwrap(); // col 5 = 's' in seed
         assert!(
             val.contains("seed") && !val.contains("func seed"),
@@ -886,11 +890,9 @@ mod tests {
     #[test]
     fn hover_signal_member_emit() {
         // self.my_signal.emit — hover on emit should show Signal.emit
-        let source = "extends Node\nsignal my_signal(value: int)\nfunc run():\n\tself.my_signal.emit\n";
+        let source =
+            "extends Node\nsignal my_signal(value: int)\nfunc run():\n\tself.my_signal.emit\n";
         let val = hover_value(source, 3, 16).unwrap(); // col 16 = 'e' in emit
-        assert!(
-            val.contains("emit"),
-            "should hover Signal.emit, got: {val}"
-        );
+        assert!(val.contains("emit"), "should hover Signal.emit, got: {val}");
     }
 }

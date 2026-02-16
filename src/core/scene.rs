@@ -72,9 +72,11 @@ pub struct ResourceData {
 
 /// Parse a .tscn file and extract structured scene data.
 pub fn parse_scene(source: &str) -> Result<SceneData> {
-    let tree = resource_parser::parse_resource(source)?;
+    // Normalize &" → " so tree-sitter offsets match the text we extract from
+    let normalized = resource_parser::normalize_for_extraction(source);
+    let tree = resource_parser::parse_resource(&normalized)?;
     let root = tree.root_node();
-    let src = source.as_bytes();
+    let src = normalized.as_bytes();
 
     let mut data = SceneData {
         ext_resources: Vec::new(),
@@ -115,9 +117,11 @@ pub fn parse_scene(source: &str) -> Result<SceneData> {
 
 /// Parse a .tres file and extract structured resource data.
 pub fn parse_tres(source: &str) -> Result<ResourceData> {
-    let tree = resource_parser::parse_resource(source)?;
+    // Normalize &" → " so tree-sitter offsets match the text we extract from
+    let normalized = resource_parser::normalize_for_extraction(source);
+    let tree = resource_parser::parse_resource(&normalized)?;
     let root = tree.root_node();
-    let src = source.as_bytes();
+    let src = normalized.as_bytes();
 
     let mut data = ResourceData {
         type_name: String::new(),
@@ -163,7 +167,6 @@ pub fn parse_scene_file(path: &Path) -> Result<SceneData> {
 }
 
 /// Parse a .tres file from disk.
-#[allow(dead_code)]
 pub fn parse_tres_file(path: &Path) -> Result<ResourceData> {
     let source = std::fs::read_to_string(path)
         .map_err(|e| miette!("Failed to read {}: {e}", path.display()))?;

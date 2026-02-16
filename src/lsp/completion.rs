@@ -647,7 +647,10 @@ fn find_function_return_type(
             && name_node.utf8_text(bytes).ok() == Some(func_name)
             && let Some(ret) = child.child_by_field_name("return_type")
         {
-            return ret.utf8_text(bytes).ok().map(std::string::ToString::to_string);
+            return ret
+                .utf8_text(bytes)
+                .ok()
+                .map(std::string::ToString::to_string);
         }
     }
     None
@@ -1789,7 +1792,8 @@ func attack(target):
     #[test]
     fn top_level_var_inferred_from_constructor() {
         // Top-level var with := should also infer type
-        let source = "extends Node\nvar rng := RandomNumberGenerator.new()\nfunc run():\n\trng.\n\tpass\n";
+        let source =
+            "extends Node\nvar rng := RandomNumberGenerator.new()\nfunc run():\n\trng.\n\tpass\n";
         let items = provide_completions(source, Position::new(3, 5), None);
         let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         assert!(
@@ -1815,8 +1819,7 @@ func attack(target):
     #[test]
     fn local_var_inferred_from_class_constant() {
         // var dir := Vector2.ZERO → dir. should show Vector2 members
-        let source =
-            "extends Node\nfunc run():\n\tvar dir := Vector2.ZERO\n\tdir.\n\tpass\n";
+        let source = "extends Node\nfunc run():\n\tvar dir := Vector2.ZERO\n\tdir.\n\tpass\n";
         let items = provide_completions(source, Position::new(3, 5), None);
         let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         assert!(
@@ -1830,7 +1833,8 @@ func attack(target):
     #[test]
     fn for_loop_typed_iterator_completions() {
         // for npc: Node2D in get_children() → npc. should show Node2D members
-        let source = "extends Node\nfunc run():\n\tfor npc: Node2D in get_children():\n\t\tnpc.\n\t\tpass\n";
+        let source =
+            "extends Node\nfunc run():\n\tfor npc: Node2D in get_children():\n\t\tnpc.\n\t\tpass\n";
         // \t\tnpc. → col 6 is after the dot
         let items = provide_completions(source, Position::new(3, 6), None);
         let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
@@ -1845,7 +1849,8 @@ func attack(target):
     #[test]
     fn signal_dot_completions() {
         // self.my_signal. should show Signal members (emit, connect, etc.)
-        let source = "extends Node\nsignal my_signal(value: int)\nfunc run():\n\tself.my_signal.\n\tpass\n";
+        let source =
+            "extends Node\nsignal my_signal(value: int)\nfunc run():\n\tself.my_signal.\n\tpass\n";
         // \tself.my_signal. → col 16 is after the second dot
         let items = provide_completions(source, Position::new(3, 16), None);
         let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();

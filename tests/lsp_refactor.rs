@@ -2221,7 +2221,8 @@ fn test_lsp_replace_body_with_format() {
 fn test_lsp_create_file_stdin() {
     let temp = setup_gd_project(&[]);
 
-    let custom_script = "extends CharacterBody2D\n\n\nfunc _physics_process(delta):\n\tmove_and_slide()\n";
+    let custom_script =
+        "extends CharacterBody2D\n\n\nfunc _physics_process(delta):\n\tmove_and_slide()\n";
 
     let output = run_lsp_edit(
         temp.path(),

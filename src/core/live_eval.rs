@@ -65,9 +65,7 @@ pub fn send_eval(script: &str, project_root: &Path, timeout: Duration) -> Result
         // Daemon says not ready (or unreachable) — check ready file as fallback,
         // but verify the PID inside is still alive to avoid stale files
         if !is_ready_file_valid(&ready_path) {
-            return Err(miette!(
-                "No eval server running. Start a game with: gd run"
-            ));
+            return Err(miette!("No eval server running. Start a game with: gd run"));
         }
     }
 
