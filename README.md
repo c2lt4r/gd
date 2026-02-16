@@ -393,6 +393,37 @@ Interactive session commands (`gd debug attach`):
 | `reload` | Hot-reload scripts |
 | `quit` / `q` | Disconnect and exit |
 
+### Input Automation
+
+Simulate player input against a running game (requires `gd run --eval`):
+
+```sh
+# Click at screen coordinates or on a node
+gd debug click --pos 640,360
+gd debug click --node /root/Main/StartButton
+
+# Press an input action (from InputMap)
+gd debug press --action ui_accept
+gd debug press --action accelerate --hold 3.0   # hold for 3 seconds
+
+# Press a keyboard key
+gd debug key --key W
+gd debug key --key W --hold 5.0                 # hold W for 5 seconds (e.g. drive forward)
+
+# Type text
+gd debug type --text "Hello world"
+gd debug type --text "Hello" --delay 100         # 100ms between characters
+
+# Wait for a condition or timeout
+gd debug wait --seconds 2.0
+gd debug wait --signal button_pressed --timeout 10.0
+
+# Take a screenshot
+gd debug screenshot --output frame.png
+```
+
+The `--hold` flag keeps the input pressed for the specified duration while the game continues running (physics, animations, etc.). Essential for 3D games where single-frame presses barely register.
+
 ### GitHub Templates
 
 Create projects from any GitHub repository containing a Godot project:

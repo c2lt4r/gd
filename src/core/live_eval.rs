@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use miette::{Result, miette};
@@ -9,6 +10,37 @@ use serde::Deserialize;
 struct LiveEvalResult {
     result: Option<String>,
     error: String,
+}
+
+/// Monotonic counter to ensure unique eval IDs even within the same millisecond.
+static EVAL_COUNTER: AtomicU32 = AtomicU32::new(0);
+
+/// Generate a unique eval ID: timestamp_millis + monotonic counter + pid.
+fn generate_eval_id() -> String {
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let seq = EVAL_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let pid = std::process::id();
+    format!("{ts}-{pid}-{seq}")
+}
+
+/// Clean up stale eval files from `.godot/` (request files, result files, ready marker).
+/// Called when the daemon detects the game has exited.
+pub fn cleanup_stale_eval_files(project_root: &Path) {
+    let godot_dir = project_root.join(".godot");
+    let _ = std::fs::remove_file(godot_dir.join("gd-eval-ready"));
+    // Remove any lingering request/result files
+    if let Ok(entries) = std::fs::read_dir(&godot_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with("gd-eval-request-") || name.starts_with("gd-eval-result-") {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+    }
 }
 
 /// Send a GDScript to the live eval server and return the result string.
@@ -35,17 +67,12 @@ pub fn send_eval(script: &str, project_root: &Path, timeout: Duration) -> Result
         ));
     }
 
-    // 3. Generate a unique request ID
-    let eval_id = format!(
-        "{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis()
-    );
+    // 3. Generate a unique request ID (timestamp + pid + counter — no collisions)
+    let eval_id = generate_eval_id();
     let tagged_script = format!("# eval-id: {eval_id}\n{script}");
 
-    let request_path = godot_dir.join("gd-eval-request.gd");
+    // Write to per-ID request file so concurrent evals don't overwrite each other
+    let request_path = godot_dir.join(format!("gd-eval-request-{eval_id}.gd"));
     std::fs::write(&request_path, &tagged_script)
         .map_err(|e| miette!("Failed to write eval request: {e}"))?;
 

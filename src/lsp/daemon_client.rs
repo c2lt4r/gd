@@ -157,6 +157,9 @@ pub fn stop_daemon(project_root: &Path) -> bool {
 
 /// Send shutdown to a daemon, wait for it to die, then clean up.
 fn kill_daemon(pid: u32, port: u16, project_root: &Path) {
+    // Read game_pid before shutting down — we may need to kill an orphaned game
+    let game_pid = super::daemon::read_state_file(project_root).and_then(|s| s.game_pid);
+
     // Try graceful shutdown first
     let _ = send_query(
         port,
@@ -196,7 +199,17 @@ fn kill_daemon(pid: u32, port: u16, project_root: &Path) {
         }
     }
 
+    // Kill orphaned game process that the daemon was tracking
+    if let Some(gpid) = game_pid
+        && is_pid_alive(gpid)
+    {
+        eprintln!("gd: killing orphaned game process {gpid}");
+        crate::cli::stop_cmd::kill_game_process(gpid);
+    }
+
+    // Clean up state and stale eval files
     let _ = std::fs::remove_file(project_root.join(".godot").join("gd-daemon.json"));
+    crate::core::live_eval::cleanup_stale_eval_files(project_root);
 }
 
 fn spawn_daemon(project_root: &Path) -> std::io::Result<()> {

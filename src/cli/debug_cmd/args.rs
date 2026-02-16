@@ -757,6 +757,9 @@ pub struct ClickArgs {
     /// Double-click
     #[arg(long)]
     pub double: bool,
+    /// Hold duration in seconds (for long-press / drag-start)
+    #[arg(long)]
+    pub hold: Option<f64>,
     /// Output format
     #[arg(long, default_value = "text")]
     pub format: OutputFormat,
@@ -767,6 +770,9 @@ pub struct PressArgs {
     /// Godot input action name (e.g. "ui_accept", "jump")
     #[arg(long)]
     pub action: String,
+    /// Hold duration in seconds (default: instant press+release)
+    #[arg(long)]
+    pub hold: Option<f64>,
     /// Output format
     #[arg(long, default_value = "text")]
     pub format: OutputFormat,
@@ -777,6 +783,9 @@ pub struct KeyArgs {
     /// Key name (e.g. space, enter, a, f1, shift)
     #[arg(long)]
     pub key: String,
+    /// Hold duration in seconds (default: instant press+release)
+    #[arg(long)]
+    pub hold: Option<f64>,
     /// Output format
     #[arg(long, default_value = "text")]
     pub format: OutputFormat,
@@ -787,6 +796,9 @@ pub struct TypeTextArgs {
     /// Text to type as key events
     #[arg(long)]
     pub text: String,
+    /// Delay between characters in milliseconds
+    #[arg(long)]
+    pub delay: Option<u64>,
     /// Output format
     #[arg(long, default_value = "text")]
     pub format: OutputFormat,

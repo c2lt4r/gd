@@ -154,6 +154,7 @@ func _initialize():
 	timer.name = "GdEvalTimer"
 	timer.wait_time = 0.05
 	timer.autostart = true
+	timer.process_mode = Node.PROCESS_MODE_ALWAYS
 	timer.timeout.connect(_poll)
 	get_root().call_deferred("add_child", timer)
 
@@ -168,15 +169,31 @@ func _poll():
 		_write_result(JSON.stringify({{"result": result_str, "error": ""}}))
 		return
 
-	var req = _root.path_join(".godot/gd-eval-request.gd")
-	if not FileAccess.file_exists(req):
+	# Scan for per-ID request files (gd-eval-request-*.gd)
+	var godot_dir = _root.path_join(".godot")
+	var dir = DirAccess.open(godot_dir)
+	if dir == null:
 		return
+	var req_file := ""
+	dir.list_dir_begin()
+	var fname = dir.get_next()
+	while fname != "":
+		if fname.begins_with("gd-eval-request-") and fname.ends_with(".gd"):
+			req_file = fname
+			break
+		fname = dir.get_next()
+	dir.list_dir_end()
+	if req_file.is_empty():
+		return
+
+	var req = godot_dir.path_join(req_file)
 
 	# Read and compile the request
 	var file = FileAccess.open(req, FileAccess.READ)
 	if file == null:
 		return
 	var source = file.get_as_text()
+	file = null
 	DirAccess.remove_absolute(req)
 
 	# Extract request ID from first line: # eval-id: <id>
@@ -194,6 +211,7 @@ func _poll():
 
 	var runner = Node.new()
 	runner.name = "GdEvalRunner"
+	runner.process_mode = Node.PROCESS_MODE_ALWAYS
 	runner.set_script(script)
 	if not runner.has_method("run"):
 		runner.queue_free()
@@ -705,7 +723,7 @@ mod tests {
     #[test]
     fn eval_server_contains_poll_logic() {
         let script = generate_eval_server("res://main.tscn");
-        assert!(script.contains("gd-eval-request.gd"));
+        assert!(script.contains("gd-eval-request-"));
         assert!(script.contains("gd-eval-result.json"));
         assert!(script.contains("gd-eval-ready"));
     }

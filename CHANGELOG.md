@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.2.15] - 2026-02-16
+
+### Added
+- **`--hold` for input commands** — `gd debug press/key/click --hold <seconds>` holds the input for a duration instead of a single-frame tap. Uses Rust-side sleep so the game processes physics frames during the hold. Essential for 3D games where single-frame presses barely register.
+- **`--delay` for type command** — `gd debug type --delay <ms>` adds a delay between each character for more realistic typing.
+- **Orphaned game cleanup** — when the daemon detects a binary rebuild (build_id mismatch), it now kills the orphaned game process before spawning a new daemon. Uses platform-native kill on all platforms (WSL: tasklist.exe + taskkill.exe, Linux/macOS: SIGTERM/SIGKILL, Windows: TerminateProcess).
+
+### Fixed
+- **Eval ID collisions** — rapid-fire eval commands within 1ms got the same timestamp ID, causing overwrites. Now uses compound IDs (`{timestamp}-{pid}-{counter}`) with an atomic counter.
+- **Per-ID eval request files** — changed from single `gd-eval-request.gd` (concurrent evals overwrite each other) to `gd-eval-request-{id}.gd` per request. GDScript server scans directory for any matching file.
+- **Stale eval file cleanup** — `gd-eval-ready`, `gd-eval-request-*`, and `gd-eval-result-*` files are now cleaned up when the game exits or the daemon restarts.
+- **Eval works during tree pause** — eval Timer and runner Node both set to `PROCESS_MODE_ALWAYS`, so `gd eval` works while `SceneTree.paused = true`.
+- **WSL game not killed on daemon restart** — `kill_daemon()` was sending Linux `kill` to a WSL shim PID instead of using `tasklist.exe`/`taskkill.exe` to find and kill the actual Windows Godot process.
+
 ## [0.2.14] - 2026-02-16
 
 ### Added

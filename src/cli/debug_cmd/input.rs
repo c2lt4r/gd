@@ -10,6 +10,11 @@ use crate::core::project::GodotProject;
 /// Default timeout for input eval commands.
 const INPUT_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Convert an optional hold duration in seconds to milliseconds.
+fn hold_to_ms(hold: Option<f64>) -> u64 {
+    hold.map_or(0, |s| (s * 1000.0) as u64)
+}
+
 /// Resolve the project root for input commands.
 fn project_root() -> Result<std::path::PathBuf> {
     let cwd = std::env::current_dir().unwrap_or_default();
@@ -74,6 +79,40 @@ fn generate_click_pos_script(x: &str, y: &str, button: &str, double: bool) -> Re
     ))
 }
 
+fn generate_click_pos_down_script(x: &str, y: &str, button: &str) -> Result<String> {
+    let btn = mouse_button_constant(button)?;
+    Ok(format!(
+        "extends Node\n\
+         \n\
+         func run():\n\
+         \tvar pos = Vector2({x}, {y})\n\
+         \tvar ev = InputEventMouseButton.new()\n\
+         \tev.button_index = {btn}\n\
+         \tev.pressed = true\n\
+         \tev.position = pos\n\
+         \tev.global_position = pos\n\
+         \tInput.parse_input_event(ev)\n\
+         \treturn \"holding click at (%s, %s)\" % [pos.x, pos.y]\n"
+    ))
+}
+
+fn generate_click_pos_up_script(x: &str, y: &str, button: &str) -> Result<String> {
+    let btn = mouse_button_constant(button)?;
+    Ok(format!(
+        "extends Node\n\
+         \n\
+         func run():\n\
+         \tvar pos = Vector2({x}, {y})\n\
+         \tvar ev = InputEventMouseButton.new()\n\
+         \tev.button_index = {btn}\n\
+         \tev.pressed = false\n\
+         \tev.position = pos\n\
+         \tev.global_position = pos\n\
+         \tInput.parse_input_event(ev)\n\
+         \treturn \"released click at (%s, %s)\" % [pos.x, pos.y]\n"
+    ))
+}
+
 fn generate_click_node_script(node: &str, button: &str, double: bool) -> Result<String> {
     let btn = mouse_button_constant(button)?;
     let double_line = if double {
@@ -114,7 +153,8 @@ fn generate_click_node_script(node: &str, button: &str, double: bool) -> Result<
 }
 
 pub fn cmd_click(args: &ClickArgs) -> Result<()> {
-    let script = match (&args.pos, &args.node) {
+    let hold_ms = hold_to_ms(args.hold);
+    match (&args.pos, &args.node) {
         (Some(pos), None) => {
             let parts: Vec<&str> = pos.split(',').collect();
             if parts.len() != 2 {
@@ -124,23 +164,67 @@ pub fn cmd_click(args: &ClickArgs) -> Result<()> {
             }
             let x = parts[0].trim();
             let y = parts[1].trim();
-            // Validate that they're numbers
             x.parse::<f64>()
                 .map_err(|_| miette!("Invalid X coordinate: {x}"))?;
             y.parse::<f64>()
                 .map_err(|_| miette!("Invalid Y coordinate: {y}"))?;
-            generate_click_pos_script(x, y, &args.button, args.double)?
+            if hold_ms > 0 {
+                let down = generate_click_pos_down_script(x, y, &args.button)?;
+                run_input_script(&down, &args.format)?;
+                std::thread::sleep(Duration::from_millis(hold_ms));
+                let up = generate_click_pos_up_script(x, y, &args.button)?;
+                run_input_script(&up, &args.format)
+            } else {
+                let script = generate_click_pos_script(x, y, &args.button, args.double)?;
+                run_input_script(&script, &args.format)
+            }
         }
-        (None, Some(node)) => generate_click_node_script(node, &args.button, args.double)?,
-        (Some(_), Some(_)) => return Err(miette!("Specify either --pos or --node, not both")),
-        (None, None) => return Err(miette!("Specify --pos X,Y or --node <name>")),
-    };
-    run_input_script(&script, &args.format)
+        (None, Some(node)) => {
+            // Node click with hold not supported (node position may change)
+            let script = generate_click_node_script(node, &args.button, args.double)?;
+            run_input_script(&script, &args.format)
+        }
+        (Some(_), Some(_)) => Err(miette!("Specify either --pos or --node, not both")),
+        (None, None) => Err(miette!("Specify --pos X,Y or --node <name>")),
+    }
 }
 
 // ── Press ────────────────────────────────────────────────────────────
 
-fn generate_press_script(action: &str) -> String {
+fn generate_press_script(action: &str, release: bool) -> String {
+    if release {
+        // Release-only script
+        format!(
+            "extends Node\n\
+             \n\
+             func run():\n\
+             \tvar ev = InputEventAction.new()\n\
+             \tev.action = \"{action}\"\n\
+             \tev.pressed = false\n\
+             \tev.strength = 0.0\n\
+             \tInput.parse_input_event(ev)\n\
+             \treturn \"released action: {action}\"\n"
+        )
+    } else {
+        // Press + immediate release (original behavior)
+        format!(
+            "extends Node\n\
+             \n\
+             func run():\n\
+             \tvar ev = InputEventAction.new()\n\
+             \tev.action = \"{action}\"\n\
+             \tev.pressed = true\n\
+             \tev.strength = 1.0\n\
+             \tInput.parse_input_event(ev)\n\
+             \tvar rel = ev.duplicate()\n\
+             \trel.pressed = false\n\
+             \tInput.parse_input_event(rel)\n\
+             \treturn \"pressed action: {action}\"\n"
+        )
+    }
+}
+
+fn generate_press_down_script(action: &str) -> String {
     format!(
         "extends Node\n\
          \n\
@@ -150,16 +234,23 @@ fn generate_press_script(action: &str) -> String {
          \tev.pressed = true\n\
          \tev.strength = 1.0\n\
          \tInput.parse_input_event(ev)\n\
-         \tvar rel = ev.duplicate()\n\
-         \trel.pressed = false\n\
-         \tInput.parse_input_event(rel)\n\
-         \treturn \"pressed action: {action}\"\n"
+         \treturn \"holding action: {action}\"\n"
     )
 }
 
 pub fn cmd_press(args: &PressArgs) -> Result<()> {
-    let script = generate_press_script(&args.action);
-    run_input_script(&script, &args.format)
+    let hold_ms = hold_to_ms(args.hold);
+    if hold_ms > 0 {
+        // Hold mode: press → sleep on Rust side → release (game runs during sleep)
+        let press = generate_press_down_script(&args.action);
+        run_input_script(&press, &args.format)?;
+        std::thread::sleep(Duration::from_millis(hold_ms));
+        let release = generate_press_script(&args.action, true);
+        run_input_script(&release, &args.format)
+    } else {
+        let script = generate_press_script(&args.action, false);
+        run_input_script(&script, &args.format)
+    }
 }
 
 // ── Key ──────────────────────────────────────────────────────────────
@@ -254,10 +345,48 @@ fn generate_key_script(key_constant: &str, key_name: &str) -> String {
     )
 }
 
+fn generate_key_down_script(key_constant: &str, key_name: &str) -> String {
+    format!(
+        "extends Node\n\
+         \n\
+         func run():\n\
+         \tvar ev = InputEventKey.new()\n\
+         \tev.keycode = {key_constant}\n\
+         \tev.physical_keycode = {key_constant}\n\
+         \tev.pressed = true\n\
+         \tInput.parse_input_event(ev)\n\
+         \treturn \"holding key: {key_name}\"\n"
+    )
+}
+
+fn generate_key_up_script(key_constant: &str, key_name: &str) -> String {
+    format!(
+        "extends Node\n\
+         \n\
+         func run():\n\
+         \tvar ev = InputEventKey.new()\n\
+         \tev.keycode = {key_constant}\n\
+         \tev.physical_keycode = {key_constant}\n\
+         \tev.pressed = false\n\
+         \tInput.parse_input_event(ev)\n\
+         \treturn \"released key: {key_name}\"\n"
+    )
+}
+
 pub fn cmd_key(args: &KeyArgs) -> Result<()> {
     let constant = key_name_to_godot(&args.key)?;
-    let script = generate_key_script(constant, &args.key.to_lowercase());
-    run_input_script(&script, &args.format)
+    let key_name = args.key.to_lowercase();
+    let hold_ms = hold_to_ms(args.hold);
+    if hold_ms > 0 {
+        let press = generate_key_down_script(constant, &key_name);
+        run_input_script(&press, &args.format)?;
+        std::thread::sleep(Duration::from_millis(hold_ms));
+        let release = generate_key_up_script(constant, &key_name);
+        run_input_script(&release, &args.format)
+    } else {
+        let script = generate_key_script(constant, &key_name);
+        run_input_script(&script, &args.format)
+    }
 }
 
 // ── Type ─────────────────────────────────────────────────────────────
@@ -282,9 +411,51 @@ fn generate_type_script(text: &str) -> String {
     )
 }
 
+fn generate_type_char_script(ch: char) -> String {
+    let code = u32::from(ch);
+    format!(
+        "extends Node\n\
+         \n\
+         func run():\n\
+         \tvar ev = InputEventKey.new()\n\
+         \tev.unicode = {code}\n\
+         \tev.pressed = true\n\
+         \tInput.parse_input_event(ev)\n\
+         \tvar rel = ev.duplicate()\n\
+         \trel.pressed = false\n\
+         \tInput.parse_input_event(rel)\n\
+         \treturn \"typed char\"\n"
+    )
+}
+
 pub fn cmd_type_text(args: &TypeTextArgs) -> Result<()> {
-    let script = generate_type_script(&args.text);
-    run_input_script(&script, &args.format)
+    let delay_ms = args.delay.unwrap_or(0);
+    if delay_ms > 0 {
+        // Per-character with Rust-side delay (game keeps running between chars)
+        let root = project_root()?;
+        for ch in args.text.chars() {
+            let script = generate_type_char_script(ch);
+            send_eval(&script, &root, INPUT_TIMEOUT)?;
+            std::thread::sleep(Duration::from_millis(delay_ms));
+        }
+        let len = args.text.len();
+        match args.format {
+            OutputFormat::Json => {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(
+                        &serde_json::json!({"result": format!("typed {len} characters")})
+                    )
+                    .unwrap()
+                );
+            }
+            OutputFormat::Text => println!("{}", format!("typed {len} characters").green()),
+        }
+        Ok(())
+    } else {
+        let script = generate_type_script(&args.text);
+        run_input_script(&script, &args.format)
+    }
 }
 
 // ── Wait ─────────────────────────────────────────────────────────────
@@ -343,6 +514,19 @@ mod tests {
     }
 
     #[test]
+    fn click_pos_hold_scripts_parse() {
+        let down = generate_click_pos_down_script("100", "200", "left").unwrap();
+        let tree = crate::core::parser::parse(&down).unwrap();
+        assert!(
+            !tree.root_node().has_error(),
+            "Down script has errors:\n{down}"
+        );
+        let up = generate_click_pos_up_script("100", "200", "left").unwrap();
+        let tree = crate::core::parser::parse(&up).unwrap();
+        assert!(!tree.root_node().has_error(), "Up script has errors:\n{up}");
+    }
+
+    #[test]
     fn click_node_script_parses() {
         let script = generate_click_node_script("Button", "left", false).unwrap();
         let tree = crate::core::parser::parse(&script).unwrap();
@@ -364,12 +548,25 @@ mod tests {
 
     #[test]
     fn press_script_parses() {
-        let script = generate_press_script("ui_accept");
+        let script = generate_press_script("ui_accept", false);
         let tree = crate::core::parser::parse(&script).unwrap();
         assert!(
             !tree.root_node().has_error(),
             "Press script has parse errors:\n{script}"
         );
+    }
+
+    #[test]
+    fn press_hold_scripts_parse() {
+        let down = generate_press_down_script("accelerate");
+        let tree = crate::core::parser::parse(&down).unwrap();
+        assert!(
+            !tree.root_node().has_error(),
+            "Down script has errors:\n{down}"
+        );
+        let up = generate_press_script("accelerate", true);
+        let tree = crate::core::parser::parse(&up).unwrap();
+        assert!(!tree.root_node().has_error(), "Up script has errors:\n{up}");
     }
 
     #[test]
@@ -383,12 +580,35 @@ mod tests {
     }
 
     #[test]
+    fn key_hold_scripts_parse() {
+        let down = generate_key_down_script("KEY_UP", "up");
+        let tree = crate::core::parser::parse(&down).unwrap();
+        assert!(
+            !tree.root_node().has_error(),
+            "Down script has errors:\n{down}"
+        );
+        let up = generate_key_up_script("KEY_UP", "up");
+        let tree = crate::core::parser::parse(&up).unwrap();
+        assert!(!tree.root_node().has_error(), "Up script has errors:\n{up}");
+    }
+
+    #[test]
     fn type_script_parses() {
         let script = generate_type_script("hello world");
         let tree = crate::core::parser::parse(&script).unwrap();
         assert!(
             !tree.root_node().has_error(),
             "Type script has parse errors:\n{script}"
+        );
+    }
+
+    #[test]
+    fn type_char_script_parses() {
+        let script = generate_type_char_script('a');
+        let tree = crate::core::parser::parse(&script).unwrap();
+        assert!(
+            !tree.root_node().has_error(),
+            "Type char script has errors:\n{script}"
         );
     }
 

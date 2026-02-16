@@ -97,6 +97,8 @@ impl DaemonServer {
         self.eval_mode
             .store(false, std::sync::atomic::Ordering::Release);
         update_game_pid_in_state(&self.project_root, None);
+        // Clean up stale eval files (ready marker, leftover request/result files)
+        crate::core::live_eval::cleanup_stale_eval_files(&self.project_root);
     }
 
     /// Check if a game is currently tracked.
