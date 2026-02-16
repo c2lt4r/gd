@@ -706,6 +706,53 @@ fn test_scene_attach_and_detach_script() {
     assert!(!content.contains("[ext_resource"));
 }
 
+#[test]
+fn test_scene_attach_script_from_subdirectory() {
+    let temp = TempDir::new().unwrap();
+
+    fs::write(
+        temp.path().join("project.godot"),
+        "[gd_resource type=\"Environment\" format=3]\n",
+    )
+    .unwrap();
+
+    // Script in a subdirectory
+    fs::create_dir_all(temp.path().join("scripts")).unwrap();
+    fs::write(
+        temp.path().join("scripts/player.gd"),
+        "extends Node2D\n\nfunc _ready():\n\tpass\n",
+    )
+    .unwrap();
+
+    let scene_path = temp.path().join("level.tscn");
+    fs::write(
+        &scene_path,
+        "[gd_scene format=3]\n\n[node name=\"Root\" type=\"Node2D\"]\n",
+    )
+    .unwrap();
+
+    // Run from a subdirectory, pass paths relative to project root
+    fs::create_dir_all(temp.path().join("subdir")).unwrap();
+    let output = gd_bin()
+        .arg("scene")
+        .arg("attach-script")
+        .arg("level.tscn")
+        .arg("scripts/player.gd")
+        .current_dir(temp.path().join("subdir"))
+        .output()
+        .expect("Failed to run gd scene attach-script");
+
+    assert!(
+        output.status.success(),
+        "attach-script from subdirectory should resolve paths via project root: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let content = fs::read_to_string(&scene_path).unwrap();
+    assert!(content.contains("script = ExtResource("));
+    assert!(content.contains(r#"path="res://scripts/player.gd""#));
+}
+
 // ── gd scene remove-node ─────────────────────────────────────────────────
 
 #[test]

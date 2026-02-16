@@ -73,7 +73,7 @@ struct DaemonServer {
     /// Unified game state: pid coupled with running flag. None = no game.
     game_state: Arc<Mutex<Option<GameInfo>>>,
     debug_server: Mutex<Option<Arc<crate::debug::godot_debug_server::GodotDebugServer>>>,
-    /// True when eval mode is active (`gd run --eval`).
+    /// True when eval mode is active (default in `gd run`, disabled by `--bare`).
     eval_mode: std::sync::atomic::AtomicBool,
     /// Cached Godot binary path (Windows path in WSL).
     cached_godot_path: Mutex<Option<String>>,

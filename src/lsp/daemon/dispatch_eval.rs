@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use super::{DaemonResponse, DaemonServer, error_response, ok_response};
 
-/// Called by `gd run --eval` to tell the daemon that eval mode is active.
+/// Called by `gd run` to tell the daemon that eval mode is active.
 pub fn dispatch_set_eval_mode(server: &DaemonServer, params: &serde_json::Value) -> DaemonResponse {
     let enabled = params
         .get("enabled")

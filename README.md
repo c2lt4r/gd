@@ -63,7 +63,7 @@ gd run
 | `gd init` | Initialize gd toolchain in an existing project (detects export paths) |
 | `gd fmt` | Format GDScript files |
 | `gd lint` | Lint GDScript files |
-| `gd run` | Run the Godot project (non-blocking, auto-wires debug, `--log` to tee to terminal, `--eval` for live eval server) |
+| `gd run` | Run the Godot project (non-blocking, eval server enabled by default, `--log` to tee to terminal, `--bare` to disable eval) |
 | `gd stop` | Stop the running Godot game |
 | `gd log` | View game output from last run (`--tail N`, `--follow`, `--clear`) |
 | `gd build` | Build/export the Godot project |
@@ -395,7 +395,7 @@ Interactive session commands (`gd debug attach`):
 
 ### Input Automation
 
-Simulate player input against a running game (requires `gd run --eval`):
+Simulate player input against a running game (eval server enabled by default in `gd run`):
 
 ```sh
 # Click at screen coordinates or on a node

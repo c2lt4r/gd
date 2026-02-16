@@ -435,7 +435,7 @@ fn highlight_gdscript_line(line: &str) -> String {
     result
 }
 
-/// Try live eval against a running game (started with `gd run --eval`).
+/// Try live eval against a running game (started with `gd run`).
 /// Returns `None` if no eval-ready game is running (caller falls back to offline).
 fn try_live_eval(
     input: &str,
@@ -545,7 +545,7 @@ pub fn exec(args: &EvalArgs) -> Result<()> {
         None
     };
 
-    // Try live eval first for expressions/stdin (if a game is running with `gd run --eval`)
+    // Try live eval first for expressions/stdin (if a game is running with `gd run`)
     if mode != InputMode::File {
         let input_text = stdin_text.as_deref().unwrap_or(&args.input);
         if let Some(result) = try_live_eval(

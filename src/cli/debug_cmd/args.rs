@@ -77,7 +77,7 @@ pub enum DebugCommand {
     #[command(name = "reload-cached")]
     ReloadCached(ReloadCachedArgs),
 
-    // ── Input automation (requires `gd run --eval`) ──
+    // ── Input automation (requires eval server — enabled by default in `gd run`) ──
     /// Click at coordinates or on a named Control node
     Click(ClickArgs),
     /// Trigger a Godot input action (e.g. "ui_accept", "jump")

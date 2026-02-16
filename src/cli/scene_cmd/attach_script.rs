@@ -14,18 +14,20 @@ use super::{
 
 pub(crate) fn exec_attach_script(args: &AttachScriptArgs) -> Result<()> {
     let cwd = env::current_dir().unwrap_or_default();
-    let scene_path = PathBuf::from(&args.scene);
-    let script_path = PathBuf::from(&args.script);
-
-    if !scene_path.exists() {
-        return Err(miette!("Scene file not found: {}", args.scene));
-    }
-    if !script_path.exists() {
-        return Err(miette!("Script file not found: {}", args.script));
-    }
-
     let project_root = find_project_root(&cwd)
         .ok_or_else(|| miette!("No project.godot found — run from a Godot project directory"))?;
+
+    // Resolve scene path: try CWD first, then project root
+    let scene_path = resolve_path(&args.scene, &cwd, &project_root)
+        .ok_or_else(|| miette!("Scene file not found: {}", args.scene))?;
+
+    // Resolve script path: strip res:// prefix, try CWD first, then project root
+    let script_arg = args
+        .script
+        .strip_prefix("res://")
+        .unwrap_or(&args.script);
+    let script_path = resolve_path(script_arg, &cwd, &project_root)
+        .ok_or_else(|| miette!("Script file not found: {}", args.script))?;
 
     // Convert script path to res:// format
     let abs_script = if script_path.is_absolute() {
@@ -162,4 +164,24 @@ pub(crate) fn insert_script_attachment(
         output.push('\n');
     }
     Ok(output)
+}
+
+/// Resolve a file path by trying CWD first, then project root.
+fn resolve_path(path: &str, cwd: &std::path::Path, project_root: &std::path::Path) -> Option<PathBuf> {
+    let p = PathBuf::from(path);
+    // Absolute path
+    if p.is_absolute() {
+        return p.exists().then_some(p);
+    }
+    // Relative to CWD
+    let from_cwd = cwd.join(&p);
+    if from_cwd.exists() {
+        return Some(from_cwd);
+    }
+    // Relative to project root
+    let from_root = project_root.join(&p);
+    if from_root.exists() {
+        return Some(from_root);
+    }
+    None
 }

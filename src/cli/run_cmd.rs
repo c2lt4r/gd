@@ -14,9 +14,9 @@ pub struct RunArgs {
     /// Stream Godot's stdout/stderr to the terminal
     #[arg(short, long)]
     pub log: bool,
-    /// Inject eval server for live `gd eval` against the running game
+    /// Run without the eval server (disables `gd eval` and `gd debug` input commands)
     #[arg(long)]
-    pub eval: bool,
+    pub bare: bool,
     /// Extra args to pass to Godot
     #[arg(last = true)]
     pub extra: Vec<String>,
@@ -28,7 +28,7 @@ pub fn exec(args: &RunArgs) -> Result<()> {
         args.debug,
         args.verbose,
         args.log,
-        args.eval,
+        !args.bare,
         &args.extra,
     )
 }

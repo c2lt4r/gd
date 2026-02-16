@@ -22,6 +22,13 @@
 - **Stale eval file cleanup** — `gd-eval-ready`, `gd-eval-request-*`, and `gd-eval-result-*` files are now cleaned up when the game exits or the daemon restarts.
 - **Eval works during tree pause** — eval Timer and runner Node both set to `PROCESS_MODE_ALWAYS`, so `gd eval` works while `SceneTree.paused = true`.
 - **WSL game not killed on daemon restart** — `kill_daemon()` was sending Linux `kill` to a WSL shim PID instead of using `tasklist.exe`/`taskkill.exe` to find and kill the actual Windows Godot process.
+- **Stale eval timeout cascading** — purge all `gd-eval-request-*` and `gd-eval-result-*` files before each new eval to prevent the eval server from processing leftover requests from timed-out evals. Ready file now validates PID liveness.
+- **`gd lsp create-file` ignoring stdin** — piped content via `cat ... | gd lsp create-file --file <path>` was ignored, creating a bare stub file instead. Now checks `is_stdin_readable()` like other refactoring commands.
+- **`gd scene attach-script` path resolution** — failed with "Script file not found" when run from a subdirectory. Now resolves relative paths against both CWD and project root, and strips `res://` prefixes.
+
+### Changed
+- **Eval server enabled by default** — `gd run` now starts the eval server automatically. `gd eval` and `gd debug` input commands work without any extra flags. Use `--bare` to opt out.
+- **Eval output uses file redirect** — eval-without-log mode now redirects Godot's stdout/stderr to the log file via `Stdio::from(File)` instead of pipes, preventing broken-pipe crashes on WSL when the parent process exits.
 
 ## [0.2.14] - 2026-02-16
 

@@ -28,9 +28,10 @@ gd check                               # Parse + structural + semantic + .tscn/.
 gd check --format json                 # Machine-readable diagnostics
 
 ## Run & Build
-gd run                                 # Run project (non-blocking, auto-wires debug, captures to .godot/gd-game.log)
+gd run                                 # Run project (eval server enabled by default, non-blocking, captures to .godot/gd-game.log)
 gd run --scene <path>                  # Run specific scene
 gd run --log                           # Also stream Godot's stdout/stderr to terminal
+gd run --bare                          # Run without eval server (disables `gd eval` and `gd debug` input commands)
 gd stop                                # Stop the running game
 gd log                                 # View game output from last run (cat -n style)
 gd log --tail <N>                      # Last N lines

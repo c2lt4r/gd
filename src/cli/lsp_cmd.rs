@@ -1123,7 +1123,9 @@ pub fn exec(args: LspArgs) -> Result<()> {
             input_file,
             dry_run,
         } => {
-            let custom_content = if input_file.is_some() {
+            // Read custom content from --input-file or stdin (if piped).
+            // Falls back to generating boilerplate when neither is provided.
+            let custom_content = if input_file.is_some() || is_stdin_readable() {
                 Some(read_content(input_file.as_deref())?)
             } else {
                 None

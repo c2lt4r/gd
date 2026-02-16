@@ -2216,3 +2216,39 @@ fn test_lsp_replace_body_with_format() {
     assert!(content.contains("print("), "result should contain print");
     assert!(content.contains("func _ready():"), "signature preserved");
 }
+
+#[test]
+fn test_lsp_create_file_stdin() {
+    let temp = setup_gd_project(&[]);
+
+    let custom_script = "extends CharacterBody2D\n\n\nfunc _physics_process(delta):\n\tmove_and_slide()\n";
+
+    let output = run_lsp_edit(
+        temp.path(),
+        &["lsp", "create-file", "--file", "player.gd"],
+        custom_script,
+    );
+
+    assert!(
+        output.status.success(),
+        "create-file with stdin should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["applied"], true);
+    assert_eq!(json["file"], "player.gd");
+
+    let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+    assert!(
+        content.contains("extends CharacterBody2D"),
+        "should use stdin content, not boilerplate"
+    );
+    assert!(
+        content.contains("move_and_slide"),
+        "should contain stdin content"
+    );
+    assert!(
+        !content.contains("func _ready"),
+        "should not contain boilerplate"
+    );
+}
