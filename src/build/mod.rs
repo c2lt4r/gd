@@ -324,7 +324,7 @@ pub fn run_project(
         // The tail loop keeps the main process alive, so pipes stay open.
         let log_file = std::fs::File::create(&log_path)
             .map_err(|e| miette!("Failed to create log file: {e}"))?;
-        let log_file = Arc::new(std::sync::Mutex::new(std::io::BufWriter::new(log_file)));
+        let log_file = Arc::new(std::sync::Mutex::new(std::io::LineWriter::new(log_file)));
 
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 

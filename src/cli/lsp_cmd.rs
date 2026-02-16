@@ -643,12 +643,31 @@ fn read_content(input_file: Option<&str>) -> Result<String> {
         std::fs::read_to_string(path)
             .map_err(|e| miette::miette!("cannot read input file '{}': {}", path, e))
     } else {
-        let mut content = String::new();
-        std::io::stdin()
-            .read_to_string(&mut content)
-            .map_err(|e| miette::miette!("cannot read stdin: {e}"))?;
-        Ok(content)
+        if std::io::stdin().is_terminal() {
+            return Err(miette::miette!(
+                "no input provided — use --input-file <path> or pipe content via stdin"
+            ));
+        }
+        // Read stdin with a timeout to avoid hanging in non-interactive contexts
+        // (CI, background processes, etc.) where stdin is an empty pipe.
+        read_stdin_with_timeout()
     }
+}
+
+/// Read stdin, but give up if no data arrives within a short deadline.
+fn read_stdin_with_timeout() -> Result<String> {
+    use std::sync::mpsc;
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut content = String::new();
+        let result = std::io::stdin().read_to_string(&mut content);
+        let _ = tx.send(result.map(|_| content));
+    });
+    rx.recv_timeout(std::time::Duration::from_secs(2))
+        .map_err(|_| {
+            miette::miette!("no input received — use --input-file <path> or pipe content via stdin")
+        })?
+        .map_err(|e| miette::miette!("cannot read stdin: {e}"))
 }
 
 #[allow(clippy::too_many_lines)]
@@ -1076,10 +1095,8 @@ pub fn exec(args: LspArgs) -> Result<()> {
         } => {
             let custom_content = if input_file.is_some() {
                 Some(read_content(input_file.as_deref())?)
-            } else if std::io::stdin().is_terminal() {
-                None
             } else {
-                Some(read_content(None)?)
+                None
             };
             let result = crate::lsp::query::query_create_file(
                 &file,
