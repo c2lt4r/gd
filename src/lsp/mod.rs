@@ -455,7 +455,16 @@ impl LanguageServer for Backend {
         let source = doc.content.clone();
         drop(doc);
 
-        // Godot-first via daemon
+        // Our dot-completions first (handles class_name refs, chains, typed vars)
+        // — Godot's LSP doesn't resolve class_name static access or enum chains
+        let position = params.text_document_position.position;
+        if let Some(dot_items) =
+            completion::try_dot_completions(&source, position, self.workspace.get())
+        {
+            return Ok(Some(CompletionResponse::Array(dot_items)));
+        }
+
+        // Godot proxy for non-dot contexts (or unresolved dot receivers)
         if self.use_godot_proxy
             && let Some(path) = uri.to_file_path().ok()
             && let Some(file_str) = path.to_str()
@@ -511,12 +520,8 @@ impl LanguageServer for Backend {
             }
         }
 
-        // Fallback: static tree-sitter analysis
-        let items = completion::provide_completions(
-            &source,
-            params.text_document_position.position,
-            self.workspace.get(),
-        );
+        // Fallback: static tree-sitter analysis (global completions)
+        let items = completion::provide_completions(&source, position, self.workspace.get());
 
         if items.is_empty() {
             Ok(None)

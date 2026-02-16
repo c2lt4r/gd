@@ -448,7 +448,23 @@ pub fn query_completions(
         std::fs::read_to_string(&path).map_err(|e| miette::miette!("cannot read file: {e}"))?;
     let position = to_position(line, column);
 
-    // Godot-first: if Godot returns completions, use them exclusively
+    // Our dot-completions first (handles class_name refs, chains, typed vars)
+    let workspace = crate::core::config::find_project_root(&path)
+        .map(crate::lsp::workspace::WorkspaceIndex::new);
+    if let Some(dot_items) =
+        crate::lsp::completion::try_dot_completions(&source, position, workspace.as_ref())
+    {
+        return Ok(dot_items
+            .into_iter()
+            .map(|item| CompletionOutput {
+                label: item.label,
+                kind: completion_kind_str(item.kind),
+                detail: item.detail,
+            })
+            .collect());
+    }
+
+    // Godot proxy for non-dot contexts (or unresolved dot receivers)
     if let Some(proxy) = godot
         && let Ok(uri) = make_uri(&path)
     {
@@ -468,10 +484,7 @@ pub fn query_completions(
         }
     }
 
-    // Fallback: static analysis
-    let workspace = crate::core::config::find_project_root(&path)
-        .map(crate::lsp::workspace::WorkspaceIndex::new);
-
+    // Fallback: global completions (workspace already built above)
     let items = crate::lsp::completion::provide_completions(&source, position, workspace.as_ref());
 
     Ok(items

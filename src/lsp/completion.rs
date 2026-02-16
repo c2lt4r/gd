@@ -168,17 +168,24 @@ fn detect_dot_context(source: &str, position: Position) -> Option<DotContext> {
     let after_dot = &before[dot_pos + 1..];
     let prefix = after_dot.trim_start().to_string();
 
+    // If there are non-identifier characters between the dot and cursor,
+    // this isn't a dot-completion context (e.g. `tilemap.set_cell(x, y)` with
+    // cursor inside the argument list)
+    if prefix.contains(|c: char| !c.is_alphanumeric() && c != '_') {
+        return None;
+    }
+
     // Extract the receiver identifier before the dot
     let before_dot = before[..dot_pos].trim_end();
     if before_dot.is_empty() {
         return None;
     }
 
-    // Walk backwards to find the receiver identifier (letters, digits, underscore)
+    // Walk backwards to find the receiver chain (letters, digits, underscore, dots for chains)
     let receiver_start = before_dot
-        .rfind(|c: char| !c.is_alphanumeric() && c != '_')
+        .rfind(|c: char| !c.is_alphanumeric() && c != '_' && c != '.')
         .map_or(0, |i| i + 1);
-    let receiver = &before_dot[receiver_start..];
+    let receiver = before_dot[receiver_start..].trim_matches('.');
     if receiver.is_empty() {
         return None;
     }
@@ -191,9 +198,37 @@ fn detect_dot_context(source: &str, position: Position) -> Option<DotContext> {
 
 // ── Receiver type resolution ────────────────────────────────────────
 
+/// Resolved receiver info for dot-completions.
+enum ResolvedReceiver {
+    /// A Godot/builtin/workspace class name (e.g. `"Node2D"`, `"CharacterBody2D"`).
+    ClassName(String),
+    /// An enum from a workspace file — provide its members instead of class members.
+    WorkspaceEnum {
+        file_content: String,
+        enum_name: String,
+    },
+}
+
 /// Resolve the type of a dot-completion receiver.
-/// Returns a Godot class name (e.g. `"Node2D"`, `"CharacterBody2D"`).
 fn resolve_receiver_type(
+    receiver: &str,
+    source: &str,
+    position: Position,
+    workspace: Option<&WorkspaceIndex>,
+) -> Option<ResolvedReceiver> {
+    // Handle dotted chains: "MapBuilder.Tile" → resolve "MapBuilder", then "Tile" within it
+    if let Some(dot_pos) = receiver.find('.') {
+        let head = &receiver[..dot_pos];
+        let tail = &receiver[dot_pos + 1..];
+        return resolve_chain(head, tail, source, position, workspace);
+    }
+
+    resolve_simple_receiver(receiver, source, position, workspace)
+        .map(ResolvedReceiver::ClassName)
+}
+
+/// Resolve a simple (non-dotted) receiver to a class name.
+fn resolve_simple_receiver(
     receiver: &str,
     source: &str,
     position: Position,
@@ -213,7 +248,8 @@ fn resolve_receiver_type(
     }
 
     // 2b. Built-in types (Vector2, String, Array, etc.) — not in ClassDB but have members
-    if BUILTIN_TYPES.contains(&receiver) || !super::builtins::members_for_class(receiver).is_empty()
+    if BUILTIN_TYPES.contains(&receiver)
+        || !super::builtins::members_for_class(receiver).is_empty()
     {
         return Some(receiver.to_string());
     }
@@ -231,7 +267,6 @@ fn resolve_receiver_type(
 
     // 4. Top-level typed vars from the current file's symbol table
     if let Ok(tree) = crate::core::parser::parse(source) {
-        // Check top-level variable declarations
         if let Some(ty) = find_variable_type(tree.root_node(), source, receiver) {
             return Some(ty);
         }
@@ -243,6 +278,121 @@ fn resolve_receiver_type(
     }
 
     None
+}
+
+/// Resolve a dotted chain like `MapBuilder.Tile` or `self.velocity`.
+fn resolve_chain(
+    head: &str,
+    tail: &str,
+    source: &str,
+    position: Position,
+    workspace: Option<&WorkspaceIndex>,
+) -> Option<ResolvedReceiver> {
+    // Resolve the head first
+    let head_type = resolve_simple_receiver(head, source, position, workspace)?;
+
+    // Split remaining tail on dots for multi-level chains
+    let parts: Vec<&str> = tail.split('.').collect();
+    let member = parts[0];
+
+    // Try to resolve `member` within head_type:
+
+    // 1. If head is a workspace class_name, look up member in that file
+    if let Some(ws) = workspace {
+        for (_, content) in ws.all_files() {
+            if let Ok(tree) = crate::core::parser::parse(&content)
+                && find_class_name(tree.root_node(), &content).as_deref() == Some(&*head_type)
+            {
+                // Check if member is an enum in that file
+                if find_enum_in_source(tree.root_node(), &content, member) {
+                    return Some(ResolvedReceiver::WorkspaceEnum {
+                        file_content: content,
+                        enum_name: member.to_string(),
+                    });
+                }
+                // Check if member is an inner class — return it as a class name
+                if find_inner_class(tree.root_node(), &content, member) {
+                    // For now, treat inner class members as a class (limited resolution)
+                    return Some(ResolvedReceiver::ClassName(member.to_string()));
+                }
+                break;
+            }
+        }
+    }
+
+    // 2. If head resolved to self/extends or a typed var, look up the member's type
+    //    e.g. self.velocity → CharacterBody2D.velocity → type Vector2
+    if let Some(prop_type) = resolve_member_type(&head_type, member) {
+        if parts.len() > 1 {
+            // Multi-level: e.g. self.velocity.x → resolve recursively
+            let remaining = parts[1..].join(".");
+            return resolve_chain(&prop_type, &remaining, source, position, workspace);
+        }
+        return Some(ResolvedReceiver::ClassName(prop_type));
+    }
+
+    None
+}
+
+/// Resolve the type of a member (property/method return) on a class.
+fn resolve_member_type(class: &str, member: &str) -> Option<String> {
+    // Check ClassDB properties
+    for (name, prop_type, _) in crate::class_db::class_properties(class) {
+        if name == member {
+            return Some(normalize_type(prop_type));
+        }
+    }
+    // Check ClassDB method return types
+    if let Some(ret) = crate::class_db::method_return_type(class, member)
+        && ret != "void"
+    {
+        return Some(normalize_type(ret));
+    }
+    None
+}
+
+/// Normalize ClassDB type strings to simple class names.
+fn normalize_type(raw: &str) -> String {
+    // Strip enum:: prefix, typedarray:: prefix, etc.
+    if let Some(rest) = raw.strip_prefix("enum::") {
+        // "enum::Error" → "Error"
+        rest.to_string()
+    } else if let Some(rest) = raw.strip_prefix("typedarray::") {
+        // "typedarray::Node" → "Array"
+        let _ = rest;
+        "Array".to_string()
+    } else if let Some(rest) = raw.strip_prefix("bitfield::") {
+        let _ = rest;
+        "int".to_string()
+    } else {
+        raw.to_string()
+    }
+}
+
+/// Check if an enum with the given name exists at the top level of a source file.
+fn find_enum_in_source(root: tree_sitter::Node, source: &str, enum_name: &str) -> bool {
+    let bytes = source.as_bytes();
+    let mut cursor = root.walk();
+    root.children(&mut cursor).any(|child| {
+        child.kind() == "enum_definition"
+            && child
+                .child_by_field_name("name")
+                .and_then(|n| n.utf8_text(bytes).ok())
+                == Some(enum_name)
+    })
+}
+
+/// Check if an inner class with the given name exists at the top level of a source file.
+fn find_inner_class(root: tree_sitter::Node, source: &str, class_name: &str) -> bool {
+    let bytes = source.as_bytes();
+    let mut cursor = root.walk();
+    root.children(&mut cursor).any(|child| {
+        child.kind() == "class_definition"
+            && child
+                .child_by_field_name("name")
+                .and_then(|n| n.utf8_text(bytes).ok())
+                == Some(class_name)
+    })
 }
 
 /// Find the type annotation of a top-level variable by name.
@@ -330,18 +480,36 @@ fn find_enclosing_function(
 
 // ── Dot-completion member collection ────────────────────────────────
 
-/// Provide dot-completions for a resolved class.
+/// Provide dot-completions for a resolved receiver.
 fn provide_dot_completions(
     source: &str,
     position: Position,
     dot_ctx: &DotContext,
     workspace: Option<&WorkspaceIndex>,
 ) -> Vec<CompletionItem> {
-    let Some(class_name) = resolve_receiver_type(&dot_ctx.receiver, source, position, workspace)
+    let Some(resolved) = resolve_receiver_type(&dot_ctx.receiver, source, position, workspace)
     else {
         return Vec::new();
     };
 
+    match resolved {
+        ResolvedReceiver::ClassName(class_name) => {
+            provide_class_dot_completions(source, dot_ctx, workspace, &class_name)
+        }
+        ResolvedReceiver::WorkspaceEnum {
+            file_content,
+            enum_name,
+        } => collect_enum_dot_completions(&file_content, &enum_name, &dot_ctx.prefix),
+    }
+}
+
+/// Provide dot-completions for a resolved class name.
+fn provide_class_dot_completions(
+    source: &str,
+    dot_ctx: &DotContext,
+    workspace: Option<&WorkspaceIndex>,
+    class_name: &str,
+) -> Vec<CompletionItem> {
     let prefix = &dot_ctx.prefix;
     let mut items = Vec::new();
     let mut seen = std::collections::HashSet::new();
@@ -358,13 +526,44 @@ fn provide_dot_completions(
         && dot_ctx.receiver != "super"
         && let Some(ws) = workspace
     {
-        collect_user_class_symbols(ws, &class_name, prefix, &mut seen, &mut items);
+        collect_user_class_symbols(ws, class_name, prefix, &mut seen, &mut items);
     }
 
-    collect_class_db_dot_items(&class_name, prefix, &mut seen, &mut items);
-    collect_builtin_dot_items(&class_name, prefix, &mut seen, &mut items);
+    collect_class_db_dot_items(class_name, prefix, &mut seen, &mut items);
+    collect_builtin_dot_items(class_name, prefix, &mut seen, &mut items);
 
     items
+}
+
+/// Provide dot-completions for enum members (e.g. `MapBuilder.Tile.`).
+fn collect_enum_dot_completions(
+    file_content: &str,
+    enum_name: &str,
+    prefix: &str,
+) -> Vec<CompletionItem> {
+    let Ok(tree) = crate::core::parser::parse(file_content) else {
+        return Vec::new();
+    };
+    let root = tree.root_node();
+    let bytes = file_content.as_bytes();
+    let mut cursor = root.walk();
+
+    for child in root.children(&mut cursor) {
+        if child.kind() == "enum_definition"
+            && child
+                .child_by_field_name("name")
+                .and_then(|n| n.utf8_text(bytes).ok())
+                == Some(enum_name)
+        {
+            let mut items = Vec::new();
+            collect_enum_members(&child, file_content, &mut items);
+            if !prefix.is_empty() {
+                items.retain(|item| item.label.starts_with(prefix));
+            }
+            return items;
+        }
+    }
+    Vec::new()
 }
 
 /// Collect file symbols filtered by prefix into items, tracking seen labels.
@@ -488,6 +687,19 @@ fn member_doc(class: &str, name: &str) -> Option<Documentation> {
             value: doc.description.to_string(),
         })
     })
+}
+
+/// Try dot-completions only. Returns `Some(items)` if in a dot context with a
+/// resolved receiver. Returns `None` if not in a dot context or receiver is unknown.
+/// Used to prioritize our dot-completions over Godot proxy results.
+pub fn try_dot_completions(
+    source: &str,
+    position: Position,
+    workspace: Option<&WorkspaceIndex>,
+) -> Option<Vec<CompletionItem>> {
+    let dot_ctx = detect_dot_context(source, position)?;
+    let items = provide_dot_completions(source, position, &dot_ctx, workspace);
+    if items.is_empty() { None } else { Some(items) }
 }
 
 /// Provide completion items at the given position.
@@ -1299,5 +1511,64 @@ func attack(target):
             labels.contains(&"position"),
             "should contain inherited 'position'"
         );
+    }
+
+    // ── Chain resolution tests ───────────────────────────────────────
+
+    #[test]
+    fn dot_context_chained_receiver() {
+        let ctx = detect_dot_context("\tMapBuilder.Tile.", Position::new(0, 18)).unwrap();
+        assert_eq!(ctx.receiver, "MapBuilder.Tile");
+        assert_eq!(ctx.prefix, "");
+    }
+
+    #[test]
+    fn dot_context_chained_with_prefix() {
+        let ctx = detect_dot_context("\tMapBuilder.Tile.GR", Position::new(0, 20)).unwrap();
+        assert_eq!(ctx.receiver, "MapBuilder.Tile");
+        assert_eq!(ctx.prefix, "GR");
+    }
+
+    #[test]
+    fn enum_dot_completions_direct() {
+        let source = "class_name MapBuilder\nenum Tile { GRASS, WATER, SAND }\n";
+        let items = collect_enum_dot_completions(source, "Tile", "");
+        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(labels.contains(&"GRASS"));
+        assert!(labels.contains(&"WATER"));
+        assert!(labels.contains(&"SAND"));
+        assert_eq!(items.len(), 3);
+    }
+
+    #[test]
+    fn enum_dot_completions_with_prefix() {
+        let source = "enum Tile { GRASS, WATER, SAND }\n";
+        let items = collect_enum_dot_completions(source, "Tile", "GR");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].label, "GRASS");
+    }
+
+    #[test]
+    fn chain_self_velocity_dot() {
+        // self.velocity. should resolve to Vector2 members
+        let source = "extends CharacterBody2D\nfunc run():\n\tself.velocity.\n\tpass\n";
+        let items = provide_completions(source, Position::new(2, 15), None);
+        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        // Vector2 methods via builtins
+        assert!(
+            labels.contains(&"normalized"),
+            "self.velocity. should show Vector2 method 'normalized', got: {labels:?}"
+        );
+        // Should NOT have keywords
+        assert!(!labels.contains(&"func"));
+    }
+
+    #[test]
+    fn chain_self_velocity_prefix() {
+        let source = "extends CharacterBody2D\nfunc run():\n\tself.velocity.nor\n\tpass\n";
+        let items = provide_completions(source, Position::new(2, 18), None);
+        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(labels.contains(&"normalized"));
+        assert!(!labels.contains(&"length"));
     }
 }
