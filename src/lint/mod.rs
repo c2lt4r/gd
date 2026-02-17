@@ -82,6 +82,7 @@ pub fn run_lint(paths: &[String], opts: &LintOptions) -> Result<()> {
         &config.lint.disabled_rules,
         &config.lint.rules,
         &config.lint,
+        &opts.rule_filter,
     );
 
     // Use project root (not cwd) as base for ignore patterns
