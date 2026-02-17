@@ -22,6 +22,25 @@ fn project_root() -> Result<std::path::PathBuf> {
     Ok(project.root)
 }
 
+/// Sleep for `ms` milliseconds, but exit early if the game dies.
+/// Checks the eval-ready file every 100ms. Returns true if the full
+/// duration elapsed, false if the game exited early.
+fn hold_sleep(ms: u64, root: &std::path::Path) -> bool {
+    let ready_path = root.join(".godot").join("gd-eval-ready");
+    let interval = Duration::from_millis(100);
+    let start = std::time::Instant::now();
+    let target = Duration::from_millis(ms);
+
+    while start.elapsed() < target {
+        if !ready_path.is_file() {
+            return false;
+        }
+        let remaining = target.saturating_sub(start.elapsed());
+        std::thread::sleep(remaining.min(interval));
+    }
+    true
+}
+
 /// Run a generated GDScript via live eval and print the result.
 fn run_input_script(script: &str, format: &OutputFormat) -> Result<()> {
     let root = project_root()?;
@@ -169,9 +188,12 @@ pub fn cmd_click(args: &ClickArgs) -> Result<()> {
             y.parse::<f64>()
                 .map_err(|_| miette!("Invalid Y coordinate: {y}"))?;
             if hold_ms > 0 {
+                let root = project_root()?;
                 let down = generate_click_pos_down_script(x, y, &args.button)?;
                 run_input_script(&down, &args.format)?;
-                std::thread::sleep(Duration::from_millis(hold_ms));
+                if !hold_sleep(hold_ms, &root) {
+                    return Err(miette!("Game exited during hold"));
+                }
                 let up = generate_click_pos_up_script(x, y, &args.button)?;
                 run_input_script(&up, &args.format)
             } else {
@@ -242,9 +264,12 @@ pub fn cmd_press(args: &PressArgs) -> Result<()> {
     let hold_ms = hold_to_ms(args.hold);
     if hold_ms > 0 {
         // Hold mode: press → sleep on Rust side → release (game runs during sleep)
+        let root = project_root()?;
         let press = generate_press_down_script(&args.action);
         run_input_script(&press, &args.format)?;
-        std::thread::sleep(Duration::from_millis(hold_ms));
+        if !hold_sleep(hold_ms, &root) {
+            return Err(miette!("Game exited during hold"));
+        }
         let release = generate_press_script(&args.action, true);
         run_input_script(&release, &args.format)
     } else {
@@ -378,9 +403,12 @@ pub fn cmd_key(args: &KeyArgs) -> Result<()> {
     let key_name = args.key.to_lowercase();
     let hold_ms = hold_to_ms(args.hold);
     if hold_ms > 0 {
+        let root = project_root()?;
         let press = generate_key_down_script(constant, &key_name);
         run_input_script(&press, &args.format)?;
-        std::thread::sleep(Duration::from_millis(hold_ms));
+        if !hold_sleep(hold_ms, &root) {
+            return Err(miette!("Game exited during hold"));
+        }
         let release = generate_key_up_script(constant, &key_name);
         run_input_script(&release, &args.format)
     } else {
@@ -436,7 +464,9 @@ pub fn cmd_type_text(args: &TypeTextArgs) -> Result<()> {
         for ch in args.text.chars() {
             let script = generate_type_char_script(ch);
             send_eval(&script, &root, INPUT_TIMEOUT)?;
-            std::thread::sleep(Duration::from_millis(delay_ms));
+            if !hold_sleep(delay_ms, &root) {
+                return Err(miette!("Game exited during typing"));
+            }
         }
         let len = args.text.len();
         match args.format {

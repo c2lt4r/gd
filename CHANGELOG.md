@@ -20,6 +20,7 @@
 
 ### Fixed
 - **Node2D screen position** — `mouse-move`/`mouse-drag`/`mouse-hover` targeting a Node2D now apply the viewport canvas transform, so coordinates are correct when a Camera2D has panned or zoomed.
+- **Hold commands detect game exit** — `press/key/click --hold` and `type --delay` now poll the eval-ready file during the hold/delay instead of a blind sleep. If the game exits mid-hold, the command exits immediately with an error instead of lingering as an orphaned process.
 
 ## [0.2.15] - 2026-02-16
 
