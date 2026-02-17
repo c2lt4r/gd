@@ -103,13 +103,15 @@ pub enum DebugCommand {
     Set(SetNodeArgs),
     /// Wait for a runtime condition (node exists, property value, etc.)
     Await(AwaitArgs),
-    /// Move mouse cursor to coordinates or a node
-    #[command(name = "move-to")]
-    MoveTo(MoveToArgs),
-    /// Drag from one position/node to another
-    Drag(DragArgs),
-    /// Hover over a node or position (triggers mouse_enter events)
-    Hover(HoverArgs),
+    /// Move mouse cursor to screen coordinates or a node's position
+    #[command(name = "mouse-move")]
+    MouseMove(MoveToArgs),
+    /// Drag mouse cursor from one position/node to another
+    #[command(name = "mouse-drag")]
+    MouseDrag(DragArgs),
+    /// Hover mouse cursor over a node or position (triggers mouse_enter events)
+    #[command(name = "mouse-hover")]
+    MouseHover(HoverArgs),
 
     // ── Subcommand groups ──
     /// Live editing commands (requires `live set-root` first)

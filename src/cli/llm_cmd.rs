@@ -175,14 +175,14 @@ gd debug await --node <name> --property <p> --gt <v>       # Wait for property >
 gd debug await --node <name> --property <p> --lt <v>       # Wait for property < value
 gd debug await --node <name> --property <p> --contains <s> # Wait for string contains
 gd debug await ... --timeout <secs> --interval <ms>  # Configure polling (default: 10s / 200ms)
-gd debug move-to --pos <X,Y>                         # Move mouse cursor to coordinates
-gd debug move-to --node <name>                       # Move mouse to node center
-gd debug move-to --node <name> --duration <secs>     # Smooth move over duration
-gd debug drag --from <X,Y> --to <X,Y>               # Drag from A to B
-gd debug drag --from-node <n> --to-node <n>          # Drag between nodes
-gd debug drag ... --button <left|right|middle> --duration <secs> --steps <N>
-gd debug hover --node <name>                         # Hover over node (triggers mouse_enter)
-gd debug hover --pos <X,Y> --duration <secs>         # Hover at position for duration
+gd debug mouse-move --pos <X,Y>                      # Move mouse cursor to screen coordinates
+gd debug mouse-move --node <name>                    # Move mouse to node's screen position
+gd debug mouse-move --node <name> --duration <secs>  # Smooth cursor move over duration
+gd debug mouse-drag --from <X,Y> --to <X,Y>         # Drag cursor from A to B
+gd debug mouse-drag --from-node <n> --to-node <n>   # Drag cursor between nodes
+gd debug mouse-drag ... --button <left|right|middle> --duration <secs> --steps <N>
+gd debug mouse-hover --node <name>                   # Hover cursor over node (triggers mouse_enter)
+gd debug mouse-hover --pos <X,Y> --duration <secs>   # Hover cursor at position for duration
 
 # File management
 gd debug reload-cached --file <path> [--file <path>...]  # Reload cached files
