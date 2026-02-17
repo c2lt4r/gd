@@ -17,6 +17,9 @@ pub struct RunArgs {
     /// Run without the eval server (disables `gd eval` and `gd debug` input commands)
     #[arg(long)]
     pub bare: bool,
+    /// Use file-based IPC for eval server instead of TCP
+    #[arg(long)]
+    pub file_ipc: bool,
     /// Extra args to pass to Godot
     #[arg(last = true)]
     pub extra: Vec<String>,
@@ -29,6 +32,7 @@ pub fn exec(args: &RunArgs) -> Result<()> {
         args.verbose,
         args.log,
         !args.bare,
+        args.file_ipc,
         &args.extra,
     )
 }

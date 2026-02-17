@@ -129,13 +129,182 @@ fn search_path() -> Option<PathBuf> {
     None
 }
 
-/// Generate the GDScript eval server that polls for eval requests.
+/// Generate the GDScript eval server.
 /// `scene_path` is the `res://...` path to the main scene to load.
-///
-/// Uses `_initialize()` + `process_frame` signal instead of overriding `_process()`
-/// to avoid breaking SceneTree's built-in frame processing.
+/// When `tcp` is true, uses TCP for IPC (default). When false, uses file-based IPC.
+pub fn generate_eval_server(scene_path: &str, tcp: bool) -> String {
+    if tcp {
+        generate_eval_server_tcp(scene_path)
+    } else {
+        generate_eval_server_file(scene_path)
+    }
+}
+
+/// TCP-based eval server: listens on a random port, accepts one connection per eval.
+/// Wire protocol: 4-byte LE length prefix + payload (same as debug server).
 #[allow(clippy::too_many_lines)]
-pub fn generate_eval_server(scene_path: &str) -> String {
+fn generate_eval_server_tcp(scene_path: &str) -> String {
+    format!(
+        r#"extends SceneTree
+
+var _root: String
+var _tcp: TCPServer
+var _runner: Node = null
+var _pending_peer: StreamPeerTCP = null
+
+func _initialize():
+	_root = ProjectSettings.globalize_path("res://")
+	# Start TCP server on random port
+	_tcp = TCPServer.new()
+	_tcp.listen(0, "0.0.0.0")
+	var port = _tcp.get_local_port()
+	# Write pid:port to ready file (port discovery)
+	var f = FileAccess.open(_root.path_join(".godot/gd-eval-ready"), FileAccess.WRITE)
+	if f:
+		f.store_string("%d:%d" % [OS.get_process_id(), port])
+		f.flush()
+	change_scene_to_file("{scene_path}")
+	var timer = Timer.new()
+	timer.name = "GdEvalTimer"
+	timer.wait_time = 0.05
+	timer.autostart = true
+	timer.process_mode = Node.PROCESS_MODE_ALWAYS
+	timer.timeout.connect(_poll)
+	get_root().call_deferred("add_child", timer)
+
+func _poll():
+	# Watchdog: if previous run() crashed, send error to waiting peer
+	if _pending_peer != null and _runner == null:
+		_send_result(_pending_peer, null, "Script execution failed (runtime error)")
+		_pending_peer = null
+		return
+
+	# Execute pending runner (Node script, deferred from last tick)
+	if _runner != null:
+		var runner = _runner
+		_runner = null
+		var peer = _pending_peer
+		_pending_peer = null
+		var result = runner.call("run") if is_instance_valid(runner) else null
+		if is_instance_valid(runner):
+			runner.queue_free()
+		var result_str = str(result) if result != null else ""
+		_send_result(peer, result_str, "")
+		return
+
+	# Accept new connection (non-blocking)
+	if not _tcp.is_connection_available():
+		return
+	var peer = _tcp.take_connection()
+	if peer == null:
+		return
+
+	# Read request: [4 bytes LE length][script bytes]
+	# StreamPeerTCP.get_data() may return partial data if the full
+	# payload hasn't arrived yet (especially on WSL cross-VM TCP).
+	# Use _read_exact() to loop until all bytes are received.
+	var len_data = _read_exact(peer, 4)
+	if len_data == null:
+		return
+	var script_len = len_data.decode_u32(0)
+	var script_data = _read_exact(peer, script_len)
+	if script_data == null:
+		return
+	var source = script_data.get_string_from_utf8()
+
+	# Compile script. If reload() fails and the source has a `return` in
+	# run(), retry without it — handles void-returning calls like print(),
+	# emit(), etc. that GDScript rejects in `return void_call()`.
+	# Note: failed reload() may trigger a debugger SCRIPT ERROR log entry,
+	# but it does NOT pause the game (only runtime errors do that).
+	var script = GDScript.new()
+	script.source_code = source
+	var err = script.reload()
+	if err != OK:
+		var patched = _strip_void_return(source)
+		if patched != source:
+			script = GDScript.new()
+			script.source_code = patched
+			err = script.reload()
+	if err != OK:
+		_send_result(peer, null, "Script compilation failed")
+		return
+
+	var obj = script.new()
+	if not obj.has_method("run"):
+		if obj is Node:
+			obj.queue_free()
+		_send_result(peer, null, "Script has no run() method")
+		return
+
+	if obj is Node:
+		obj.name = "GdEvalRunner"
+		obj.process_mode = Node.PROCESS_MODE_ALWAYS
+		get_root().add_child(obj)
+		_runner = obj
+		_pending_peer = peer
+	else:
+		# RefCounted: execute immediately
+		var result = obj.call("run")
+		var result_str = str(result) if result != null else ""
+		_send_result(peer, result_str, "")
+
+func _strip_void_return(src: String) -> String:
+	# If run() body is a single `return <expr>`, strip the return keyword
+	# so void-returning calls like emit() or transition_to() compile.
+	var lines = src.split("\n")
+	for i in lines.size():
+		var stripped = lines[i].strip_edges()
+		if stripped.begins_with("return ") and i > 0:
+			var prev = lines[i - 1].strip_edges()
+			if prev == "func run():":
+				# Replace first occurrence of "return " preserving indentation
+				var idx = lines[i].find("return ")
+				lines[i] = lines[i].substr(0, idx) + lines[i].substr(idx + 7)
+				return "\n".join(lines)
+	return src
+
+func _read_exact(peer: StreamPeerTCP, size: int) -> Variant:
+	var buf = PackedByteArray()
+	var remaining = size
+	var deadline = Time.get_ticks_msec() + 2000
+	while remaining > 0:
+		if Time.get_ticks_msec() > deadline:
+			return null
+		peer.poll()
+		var chunk = peer.get_partial_data(remaining)
+		if chunk[0] != OK:
+			return null
+		if chunk[1].size() == 0:
+			OS.delay_msec(1)
+			continue
+		buf.append_array(chunk[1])
+		remaining -= chunk[1].size()
+	return buf
+
+func _send_result(peer: StreamPeerTCP, result, error: String):
+	if peer == null:
+		return
+	var result_str = str(result) if result != null else ""
+	var json = JSON.stringify({{"result": result_str, "error": error}})
+	var bytes = json.to_utf8_buffer()
+	var len_buf = PackedByteArray()
+	len_buf.resize(4)
+	len_buf.encode_u32(0, bytes.size())
+	peer.put_data(len_buf)
+	peer.put_data(bytes)
+
+func _finalize():
+	if _tcp:
+		_tcp.stop()
+	DirAccess.remove_absolute(_root.path_join(".godot/gd-eval-ready"))
+"#
+    )
+}
+
+/// File-based eval server (legacy): polls `.godot/` for request files.
+#[allow(clippy::too_many_lines)]
+fn generate_eval_server_file(scene_path: &str) -> String {
     format!(
         r##"extends SceneTree
 
@@ -146,8 +315,7 @@ var _pending_eval_id: String = ""
 
 func _initialize():
 	_root = ProjectSettings.globalize_path("res://")
-	# Clean up stale eval files from a previous session (gd stop may not
-	# have been able to delete them if the game was still shutting down).
+	# Clean up stale eval files from a previous session
 	var godot_dir = _root.path_join(".godot")
 	var dir = DirAccess.open(godot_dir)
 	if dir:
@@ -163,8 +331,6 @@ func _initialize():
 		f.store_string(str(OS.get_process_id()))
 		f.flush()
 	change_scene_to_file("{scene_path}")
-	# Use a Timer for polling — its callbacks fire during idle phase,
-	# which is safe for tree modification (unlike process_frame).
 	var timer = Timer.new()
 	timer.name = "GdEvalTimer"
 	timer.wait_time = 0.05
@@ -174,19 +340,13 @@ func _initialize():
 	get_root().call_deferred("add_child", timer)
 
 func _poll():
-	# Watchdog: if a previous run() crashed (GDScript aborts the callback),
-	# _pending_eval_id is still set but _runner is null. Write an error result
-	# so the Rust side doesn't hang waiting for a file that will never appear.
 	if not _pending_eval_id.is_empty() and _runner == null:
 		_eval_id = _pending_eval_id
 		_pending_eval_id = ""
 		_write_result(JSON.stringify({{"result": null, "error": "Script execution failed (runtime error)"}}))
 		return
 
-	# State machine: if a runner is pending, execute it (it's been in tree 1+ frames)
 	if _runner != null:
-		# Clear _runner FIRST so a GDScript error in run() can't leave us stuck.
-		# Set _pending_eval_id so the watchdog can write an error if run() crashes.
 		var runner = _runner
 		_runner = null
 		_pending_eval_id = _eval_id
@@ -198,7 +358,6 @@ func _poll():
 		_write_result(JSON.stringify({{"result": result_str, "error": ""}}))
 		return
 
-	# Scan for per-ID request files (gd-eval-request-*.gd)
 	var godot_dir = _root.path_join(".godot")
 	var dir = DirAccess.open(godot_dir)
 	if dir == null:
@@ -216,22 +375,16 @@ func _poll():
 		return
 
 	var req = godot_dir.path_join(req_file)
-
-	# Read the request file
 	var file = FileAccess.open(req, FileAccess.READ)
 	if file == null:
-		# File may be locked by the writer — skip and retry next cycle
 		return
 	var source = file.get_as_text()
 	file = null
 
-	# Delete the request file. If this fails (cross-filesystem race), skip this
-	# request — the Rust side will clean up stale files before its next eval call.
 	var err_del = DirAccess.remove_absolute(req)
 	if err_del != OK:
 		return
 
-	# Extract request ID from first line: # eval-id: <id>
 	_eval_id = ""
 	var first_line = source.get_slice("\n", 0)
 	if first_line.begins_with("# eval-id: "):
@@ -241,11 +394,15 @@ func _poll():
 	script.source_code = source
 	var err = script.reload()
 	if err != OK:
+		var patched = _strip_void_return(source)
+		if patched != source:
+			script = GDScript.new()
+			script.source_code = patched
+			err = script.reload()
+	if err != OK:
 		_write_result('{{"result":null,"error":"Script compilation failed"}}')
 		return
 
-	# Instantiate via script.new() — handles both Node and RefCounted scripts.
-	# Using Node.new() + set_script() would crash if the script extends RefCounted.
 	var runner = script.new()
 	if not runner.has_method("run"):
 		if runner is Node:
@@ -259,10 +416,21 @@ func _poll():
 		get_root().add_child(runner)
 		_runner = runner
 	else:
-		# RefCounted script — call run() immediately (no tree needed)
 		var result = runner.call("run")
 		var result_str = str(result) if result != null else ""
 		_write_result(JSON.stringify({{"result": result_str, "error": ""}}))
+
+func _strip_void_return(src: String) -> String:
+	var lines = src.split("\n")
+	for i in lines.size():
+		var stripped = lines[i].strip_edges()
+		if stripped.begins_with("return ") and i > 0:
+			var prev = lines[i - 1].strip_edges()
+			if prev == "func run():":
+				var idx = lines[i].find("return ")
+				lines[i] = lines[i].substr(0, idx) + lines[i].substr(idx + 7)
+				return "\n".join(lines)
+	return src
 
 func _write_result(json_str: String):
 	var name = "gd-eval-result.json"
@@ -287,6 +455,7 @@ pub fn run_project(
     verbose: bool,
     log: bool,
     eval: bool,
+    file_ipc: bool,
     extra: &[String],
 ) -> Result<()> {
     let cwd = env::current_dir().unwrap_or_default();
@@ -351,7 +520,7 @@ pub fn run_project(
             })?
         };
 
-        let server_script = generate_eval_server(&scene_path);
+        let server_script = generate_eval_server(&scene_path, !file_ipc);
         let server_path = project.root.join(".godot").join("gd-eval-server.gd");
         std::fs::create_dir_all(project.root.join(".godot"))
             .map_err(|e| miette!("Failed to create .godot directory: {e}"))?;
@@ -726,23 +895,52 @@ mod tests {
     use super::*;
 
     #[test]
-    fn eval_server_contains_scene_load() {
-        let script = generate_eval_server("res://main.tscn");
+    fn eval_server_tcp_contains_scene_load() {
+        let script = generate_eval_server("res://main.tscn", true);
         assert!(script.contains(r#"change_scene_to_file("res://main.tscn")"#));
         assert!(script.contains("extends SceneTree"));
     }
 
     #[test]
-    fn eval_server_contains_poll_logic() {
-        let script = generate_eval_server("res://main.tscn");
+    fn eval_server_tcp_contains_tcp_logic() {
+        let script = generate_eval_server("res://main.tscn", true);
+        assert!(script.contains("TCPServer"));
+        assert!(script.contains("get_local_port"));
+        assert!(script.contains("take_connection"));
+        assert!(script.contains("gd-eval-ready"));
+    }
+
+    #[test]
+    fn eval_server_tcp_writes_pid_port() {
+        let script = generate_eval_server("res://main.tscn", true);
+        assert!(script.contains(r#""%d:%d" % [OS.get_process_id(), port]"#));
+    }
+
+    #[test]
+    fn eval_server_tcp_contains_cleanup() {
+        let script = generate_eval_server("res://main.tscn", true);
+        assert!(script.contains("_finalize"));
+        assert!(script.contains("_tcp.stop()"));
+    }
+
+    #[test]
+    fn eval_server_file_contains_scene_load() {
+        let script = generate_eval_server("res://main.tscn", false);
+        assert!(script.contains(r#"change_scene_to_file("res://main.tscn")"#));
+        assert!(script.contains("extends SceneTree"));
+    }
+
+    #[test]
+    fn eval_server_file_contains_poll_logic() {
+        let script = generate_eval_server("res://main.tscn", false);
         assert!(script.contains("gd-eval-request-"));
         assert!(script.contains("gd-eval-result.json"));
         assert!(script.contains("gd-eval-ready"));
     }
 
     #[test]
-    fn eval_server_contains_cleanup() {
-        let script = generate_eval_server("res://main.tscn");
+    fn eval_server_file_contains_cleanup() {
+        let script = generate_eval_server("res://main.tscn", false);
         assert!(script.contains("_finalize"));
         assert!(script.contains("gd-eval-ready"));
     }

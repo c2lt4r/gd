@@ -209,6 +209,16 @@ pub fn is_tree_dependent_method(method: &str) -> bool {
     )
 }
 
+/// Check if a method name returns void on any class in the database.
+/// Used to detect void-returning calls in eval expressions where we
+/// don't have full type inference on the receiver.
+pub fn is_method_void_anywhere(method: &str) -> bool {
+    let suffix = format!(".{method}");
+    generated::METHODS
+        .iter()
+        .any(|(key, ret)| key.ends_with(&suffix) && *ret == "void")
+}
+
 /// Suggest similar constants for a typo using Levenshtein distance (walks inheritance).
 pub fn suggest_constant(class: &str, typo: &str, max_distance: usize) -> Vec<&'static str> {
     let mut suggestions: Vec<(&str, usize)> = Vec::new();
@@ -379,6 +389,16 @@ mod tests {
     fn test_method_return_type_unknown() {
         assert_eq!(method_return_type("Node", "nonexistent_method"), None);
         assert_eq!(method_return_type("FakeClass", "method"), None);
+    }
+
+    #[test]
+    fn test_is_method_void_anywhere() {
+        assert!(is_method_void_anywhere("add_child"));
+        assert!(is_method_void_anywhere("set_pause"));
+        assert!(is_method_void_anywhere("queue_free"));
+        assert!(!is_method_void_anywhere("get_child_count"));
+        assert!(!is_method_void_anywhere("get_child"));
+        assert!(!is_method_void_anywhere("nonexistent_xyz_method"));
     }
 
     #[test]

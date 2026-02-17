@@ -32,6 +32,7 @@ gd run                                 # Run project (eval server enabled by def
 gd run --scene <path>                  # Run specific scene
 gd run --log                           # Also stream Godot's stdout/stderr to terminal
 gd run --bare                          # Run without eval server (disables `gd eval` and `gd debug` input commands)
+gd run --file-ipc                      # Use file-based IPC instead of TCP for eval server
 gd stop                                # Stop the running game
 gd log                                 # View game output from last run (cat -n style)
 gd log --tail <N>                      # Last N lines

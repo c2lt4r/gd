@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.2.16] - Unreleased
+## [0.2.16] - 2026-02-17
 
 ### Added
 - **Game automation API (phase 2)** — 10 new `gd debug` subcommands for driving a running game by node name/path:
@@ -17,6 +17,7 @@
 
 ### Changed
 - **`gd debug eval` now uses full GDScript by default** — previously used Godot's Expression class (no loops, if, var). Now uses the file-based eval server, supporting arbitrary GDScript including loops, conditionals, and variable declarations. Add `--bare` to use the old Expression class behavior (needed for reading local variables at a breakpoint). Also adds `--timeout` flag (default 10s).
+- **TCP eval IPC replaces file-based** — the eval server now uses direct TCP (4-byte length-prefixed protocol) instead of filesystem polling. Eliminates transient `ENOENT` on WSL, stale files surviving `gd stop`, and 100ms+ round-trip overhead. Port discovery via `{pid}:{port}` in the ready file. Use `gd run --file-ipc` or `GD_EVAL_FILE_IPC=1` for the old file-based transport.
 
 ### Fixed
 - **Node2D screen position** — `mouse-move`/`mouse-drag`/`mouse-hover` targeting a Node2D now apply the viewport canvas transform, so coordinates are correct when a Camera2D has panned or zoomed.
@@ -28,6 +29,9 @@
 - **Eval server RefCounted fix** — the eval server now uses `script.new()` instead of `Node.new()` + `set_script()`, correctly handling scripts that extend RefCounted. Previously, non-Node scripts would crash the eval server with "Script inherits from RefCounted" and trigger a debug break.
 - **Eval server startup cleanup** — the eval server now purges stale request/result files during initialization, preventing leftover files from a previous session (e.g., when `gd stop` couldn't delete them due to Windows file locking on WSL).
 - **WSL file write retry** — eval request file writes retry once on transient `ENOENT` errors, which can occur on WSL under rapid cross-filesystem I/O (e.g., navigate polling every 200ms).
+- **Void call detection via ClassDB** — `return print(...)`, `return node.set_pause(...)`, and other void-returning calls no longer trigger a `SCRIPT ERROR` that freezes the game. The eval wrapper now checks 16,346 methods from Godot's ClassDB to detect void returns and omits the `return` keyword. Builtin void functions (`print`, `push_error`, etc.) are also handled.
+- **Better eval syntax errors** — `pre_check` now reports line number, column, and surrounding code for parse errors instead of a bare "Script has syntax errors" message.
+- **WSL TCP partial read fix** — the eval server now uses `get_partial_data()` in a loop with a 2-second timeout instead of `get_data()`, which could return truncated scripts on WSL cross-VM TCP connections.
 
 ## [0.2.15] - 2026-02-16
 

@@ -129,11 +129,55 @@ fn write_temp_script(project_root: &Path, content: &str) -> Result<PathBuf> {
 pub fn pre_check(source: &str) -> Result<String> {
     let tree = crate::core::parser::parse(source)?;
     if tree.root_node().has_error() {
-        return Err(miette!("Script has syntax errors"));
+        let details = find_parse_errors(&tree, source);
+        return Err(miette!("Script has syntax errors:\n{details}"));
     }
     // Strip invalid escape sequences in string literals — Godot crashes
     // on these instead of reporting a parse error gracefully.
     Ok(sanitize_escapes(source))
+}
+
+/// Walk the tree-sitter AST and collect human-readable error descriptions.
+fn find_parse_errors(tree: &tree_sitter::Tree, source: &str) -> String {
+    let mut errors = Vec::new();
+    let mut cursor = tree.root_node().walk();
+    collect_parse_errors(&mut cursor, source, &mut errors);
+    if errors.is_empty() {
+        return "unknown parse error".to_string();
+    }
+    errors.join("\n")
+}
+
+fn collect_parse_errors(
+    cursor: &mut tree_sitter::TreeCursor,
+    source: &str,
+    errors: &mut Vec<String>,
+) {
+    loop {
+        let node = cursor.node();
+        if node.is_error() || node.is_missing() {
+            let start = node.start_position();
+            let line = source.lines().nth(start.row).unwrap_or("");
+            errors.push(format!(
+                "  line {}:{} — {}\n  | {}",
+                start.row + 1,
+                start.column + 1,
+                if node.is_missing() {
+                    format!("missing {}", node.kind())
+                } else {
+                    "unexpected token".to_string()
+                },
+                line.trim(),
+            ));
+        }
+        if cursor.goto_first_child() {
+            collect_parse_errors(cursor, source, errors);
+            cursor.goto_parent();
+        }
+        if !cursor.goto_next_sibling() {
+            break;
+        }
+    }
 }
 
 /// GDScript valid escape characters after `\`.
@@ -264,6 +308,80 @@ fn validate_script_base_class(path: &Path) -> Result<()> {
     ))
 }
 
+/// GDScript builtin functions that return void (not in ClassDB).
+const VOID_BUILTINS: &[&str] = &[
+    "print",
+    "print_rich",
+    "printt",
+    "prints",
+    "printraw",
+    "printerr",
+    "print_verbose",
+    "push_error",
+    "push_warning",
+    "assert",
+    "breakpoint",
+];
+
+/// Heuristic: does this single expression look like a void-returning call?
+/// `return void_call()` is a compile error that pauses the remote debugger,
+/// so we must detect these on the Rust side before generating the wrapper.
+fn looks_like_void_call(expr: &str) -> bool {
+    let trimmed = expr.trim();
+
+    // Direct builtin calls: print(...), push_error(...)
+    if let Some(name) = extract_function_name(trimmed)
+        && VOID_BUILTINS.contains(&name)
+    {
+        return true;
+    }
+
+    // Dotted method calls: check the last method in a chain against ClassDB
+    if let Some(method_name) = extract_last_method_name(trimmed) {
+        // Check every class in ClassDB — if this method returns void on ANY class,
+        // assume it's void (safe: we lose the return value of null/void, no crash)
+        if crate::class_db::is_method_void_anywhere(method_name) {
+            return true;
+        }
+    }
+
+    false
+}
+
+/// Extract the function name from a bare call like `print("hi")`.
+/// Returns `None` for dotted calls or non-call expressions.
+fn extract_function_name(expr: &str) -> Option<&str> {
+    let paren = expr.find('(')?;
+    let name = &expr[..paren];
+    // Must be a simple identifier (no dots)
+    if name.chars().all(|c| c.is_alphanumeric() || c == '_') && !name.is_empty() {
+        Some(name)
+    } else {
+        None
+    }
+}
+
+/// Extract the last method name from a dotted call chain.
+/// `get_tree().set_pause(false)` → `Some("set_pause")`
+/// `print("hi")` → `None` (no dot)
+fn extract_last_method_name(expr: &str) -> Option<&str> {
+    let bytes = expr.as_bytes();
+    let mut depth = 0i32;
+    let mut last_dot = None;
+    for (i, &b) in bytes.iter().enumerate() {
+        match b {
+            b'(' | b'[' => depth += 1,
+            b')' | b']' => depth -= 1,
+            b'.' if depth == 0 => last_dot = Some(i),
+            _ => {}
+        }
+    }
+    let after_dot = &expr[last_dot? + 1..];
+    // Extract just the method name (before the opening paren)
+    let paren = after_dot.find('(')?;
+    Some(&after_dot[..paren])
+}
+
 /// Generate a GDScript that the eval server will load and execute.
 /// The script extends Node so `get_node()` with absolute paths works.
 pub fn generate_live_eval_script(input: &str) -> String {
@@ -283,13 +401,22 @@ pub fn generate_live_eval_script(input: &str) -> String {
     } else if input.contains('\n') {
         input.lines().collect()
     } else {
-        // Single expression — wrap with return
-        return format!(
-            "extends Node\n\
-             \n\
-             func run():\n\
-             \treturn {input}\n"
-        );
+        // Single expression — wrap with return, unless it's a void call
+        return if looks_like_void_call(input) {
+            format!(
+                "extends Node\n\
+                 \n\
+                 func run():\n\
+                 \t{input}\n"
+            )
+        } else {
+            format!(
+                "extends Node\n\
+                 \n\
+                 func run():\n\
+                 \treturn {input}\n"
+            )
+        };
     };
 
     let mut body = String::new();
@@ -1087,6 +1214,52 @@ mod tests {
         assert!(
             result.is_ok(),
             "pre_check should accept multi-line node script: {result:?}"
+        );
+    }
+
+    #[test]
+    fn void_call_detection() {
+        // Builtin void calls should NOT get return prefix
+        assert!(looks_like_void_call("print(\"hello\")"));
+        assert!(looks_like_void_call("push_error(\"bad\")"));
+        assert!(looks_like_void_call("printerr(\"fail\")"));
+        // Dotted void methods (from ClassDB)
+        assert!(looks_like_void_call("node.queue_free()"));
+        assert!(looks_like_void_call("get_tree().get_root().add_child(n)"));
+        assert!(looks_like_void_call("get_tree().set_pause(false)"));
+        // Non-void calls should NOT match
+        assert!(!looks_like_void_call("1 + 1"));
+        assert!(!looks_like_void_call("get_tree().get_root().get_child_count()"));
+        assert!(!looks_like_void_call("Vector2(1,2).normalized()"));
+        assert!(!looks_like_void_call("str(42)"));
+    }
+
+    #[test]
+    fn live_script_void_call_no_return() {
+        let script = generate_live_eval_script("print(\"hello\")");
+        assert!(script.contains("func run():"));
+        assert!(script.contains("\tprint(\"hello\")"));
+        assert!(!script.contains("return print"));
+    }
+
+    #[test]
+    fn live_script_non_void_has_return() {
+        let script = generate_live_eval_script("1 + 1");
+        assert!(script.contains("return 1 + 1"));
+    }
+
+    #[test]
+    fn pre_check_error_includes_details() {
+        let err = pre_check("extends SceneTree\nfunc _init():\n\tif if if\n")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("line 3"),
+            "Error should include line number: {err}"
+        );
+        assert!(
+            err.contains("if if if") || err.contains("unexpected"),
+            "Error should include context: {err}"
         );
     }
 }
