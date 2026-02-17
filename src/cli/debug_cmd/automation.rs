@@ -73,7 +73,7 @@ fn node_position_gdscript() -> &'static str {
      \tif node is Control:\n\
      \t\tpos = node.get_global_rect().get_center()\n\
      \telif node is Node2D:\n\
-     \t\tpos = node.global_position\n\
+     \t\tpos = node.get_viewport().get_canvas_transform() * node.global_position\n\
      \telif node is Node3D:\n\
      \t\tvar cam = node.get_viewport().get_camera_3d()\n\
      \t\tif cam:\n\
