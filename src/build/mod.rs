@@ -1,10 +1,8 @@
 use miette::{Result, miette};
 use owo_colors::OwoColorize;
 use std::env;
-use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::Arc;
 
 use crate::core::config::Config;
 use crate::core::fs;
@@ -453,7 +451,6 @@ pub fn run_project(
     scene: Option<&str>,
     debug: bool,
     verbose: bool,
-    log: bool,
     eval: bool,
     file_ipc: bool,
     extra: &[String],
@@ -541,69 +538,18 @@ pub fn run_project(
         cmd.arg(arg);
     }
 
-    // Always capture output to log file
-    let log_path = log_file_path(&project.root);
-    if let Some(parent) = log_path.parent() {
-        std::fs::create_dir_all(parent).ok();
-    }
-
     cmd.stdin(Stdio::null());
 
-    if log {
-        // Pipe stdout/stderr so we can write to log file AND print to terminal.
-        // The tail loop keeps the main process alive, so pipes stay open.
-        let log_file = std::fs::File::create(&log_path)
-            .map_err(|e| miette!("Failed to create log file: {e}"))?;
-        let log_file = Arc::new(std::sync::Mutex::new(std::io::LineWriter::new(log_file)));
-
-        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-
-        let mut child = cmd
-            .spawn()
-            .map_err(|e| miette!("Failed to start Godot: {e}"))?;
-
-        report_game_to_daemon(&child, eval);
-
-        let stdout = child.stdout.take().expect("stdout was piped");
-        let stderr = child.stderr.take().expect("stderr was piped");
-
-        // Pump stdout/stderr to log file in background threads
-        let log1 = Arc::clone(&log_file);
-        std::thread::spawn(move || {
-            use std::io::{BufRead, Write};
-            let reader = BufReader::new(stdout);
-            for line in reader.lines().map_while(Result::ok) {
-                if let Ok(mut f) = log1.lock() {
-                    let _ = writeln!(f, "{line}");
-                }
-            }
-        });
-
-        let log2 = Arc::clone(&log_file);
-        std::thread::spawn(move || {
-            use std::io::{BufRead, Write};
-            let reader = BufReader::new(stderr);
-            for line in reader.lines().map_while(Result::ok) {
-                if let Ok(mut f) = log2.lock() {
-                    let _ = writeln!(f, "{line}");
-                }
-            }
-        });
-
-        // Reap the child in the background
-        std::thread::spawn(move || {
-            let _ = child.wait();
-        });
-
-        print_status_line(&project_name, debug_port, eval);
-
-        // Tail the log file (blocks until game exits or Ctrl+C)
-        tail_log_file(&log_path);
-    } else if eval {
-        // Eval mode without --log: redirect output to the log file so Godot
-        // has valid file handles that survive after the parent process exits.
-        // (WSL closes inherited pipe handles when the parent exits, crashing
-        // Godot — file handles to a real file avoid this entirely.)
+    if eval {
+        // Eval mode: redirect output to a file so Godot has valid file handles
+        // that survive after the parent process exits. (WSL closes inherited
+        // pipe handles when the parent exits, crashing Godot — file handles
+        // to a real file avoid this entirely.)
+        // Game output is captured via the debug protocol ring buffer (`gd log`).
+        let log_path = project.root.join(".godot").join("gd-game.log");
+        if let Some(parent) = log_path.parent() {
+            std::fs::create_dir_all(parent).ok();
+        }
         let out_file = std::fs::File::create(&log_path)
             .map_err(|e| miette!("Failed to create log file: {e}"))?;
         let err_file = out_file
@@ -657,49 +603,6 @@ pub fn run_project(
     Ok(())
 }
 
-/// Tail a log file to stdout, following new content as it's written.
-/// Returns when the game process exits (detected via daemon) or on Ctrl+C.
-fn tail_log_file(path: &Path) {
-    use std::io::{BufRead as _, Seek, SeekFrom};
-
-    // Set up Ctrl+C handler to exit cleanly (game keeps running)
-    let running = Arc::new(std::sync::atomic::AtomicBool::new(true));
-    let r = Arc::clone(&running);
-    let _ = ctrlc::set_handler(move || {
-        r.store(false, std::sync::atomic::Ordering::Release);
-    });
-
-    let Ok(file) = std::fs::File::open(path) else {
-        return;
-    };
-    let mut reader = BufReader::new(file);
-    // Start from the beginning to show existing output
-    let _ = reader.seek(SeekFrom::Start(0));
-
-    let mut line = String::new();
-    while running.load(std::sync::atomic::Ordering::Acquire) {
-        line.clear();
-        match reader.read_line(&mut line) {
-            Ok(0) => {
-                // No new data — check if game is still running
-                let game_alive =
-                    crate::lsp::daemon_client::query_daemon("status", serde_json::json!({}), None)
-                        .and_then(|r| r.get("game_running").and_then(serde_json::Value::as_bool))
-                        .unwrap_or(false);
-                if !game_alive {
-                    break;
-                }
-                std::thread::sleep(std::time::Duration::from_millis(100));
-            }
-            Ok(_) => {
-                // Print without extra newline (read_line includes \n)
-                print!("{line}");
-            }
-            Err(_) => break,
-        }
-    }
-}
-
 fn report_game_to_daemon(child: &std::process::Child, eval: bool) {
     let pid = child.id();
     let _ = crate::lsp::daemon_client::query_daemon(
@@ -732,11 +635,6 @@ fn print_status_line(project_name: &str, debug_port: Option<u64>, eval: bool) {
         "▶".green(),
         project_name.bold(),
     );
-}
-
-/// Path to the game log file within a project.
-pub fn log_file_path(project_root: &Path) -> PathBuf {
-    project_root.join(".godot").join("gd-game.log")
 }
 
 /// Export/build the Godot project.

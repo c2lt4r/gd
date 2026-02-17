@@ -303,21 +303,29 @@ pub(crate) fn cmd_evaluate(args: &EvalBinArgs) -> Result<()> {
         .ok_or_else(|| miette!("No Godot project found (missing project.godot)"))?;
 
     let timeout = std::time::Duration::from_secs(args.timeout);
-    let result = crate::core::live_eval::send_eval(&script, &project_root, timeout)?;
+    let response = crate::core::live_eval::send_eval(&script, &project_root, timeout)?;
+
+    // Show captured print output
+    for line in &response.output {
+        match line.r#type.as_str() {
+            "error" => eprintln!("{}", line.message),
+            _ => println!("{}", line.message),
+        }
+    }
 
     match args.format {
         OutputFormat::Json => {
             println!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
-                    "result": result,
+                    "result": response.result,
                 }))
                 .unwrap()
             );
         }
         OutputFormat::Text => {
-            if !result.is_empty() {
-                println!("{result}");
+            if !response.result.is_empty() {
+                println!("{}", response.result);
             }
         }
     }

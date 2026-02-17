@@ -14,13 +14,47 @@ struct LiveEvalResult {
     error: String,
 }
 
+/// Result from an eval execution, including any captured print output.
+pub struct EvalResponse {
+    /// The return value of the eval script (may be empty for void calls).
+    pub result: String,
+    /// Output captured from print()/push_error()/push_warning() during execution.
+    pub output: Vec<CapturedOutput>,
+}
+
+/// Re-export for callers.
+pub use crate::debug::godot_debug_server::CapturedOutput;
+
 /// Send a GDScript to the live eval server and return the result string.
 /// Uses TCP by default, falls back to file-based IPC when `GD_EVAL_FILE_IPC` is set.
-pub fn send_eval(script: &str, project_root: &Path, timeout: Duration) -> Result<String> {
+/// Captures output non-blockingly (instant drain, ~2ms). For void calls that need
+/// to wait for Godot's output flush, use `send_eval_with_output` instead.
+pub fn send_eval(script: &str, project_root: &Path, timeout: Duration) -> Result<EvalResponse> {
     if is_file_ipc_mode() {
-        send_eval_file(script, project_root, timeout)
+        send_eval_file(script, project_root, timeout).map(|result| EvalResponse {
+            result,
+            output: vec![],
+        })
     } else {
-        send_eval_tcp(script, project_root, timeout)
+        send_eval_tcp(script, project_root, timeout, false)
+    }
+}
+
+/// Like `send_eval` but also captures print output via the debug protocol.
+/// For void calls (empty result), polls up to ~1.5s for Godot to flush output.
+/// Use this for interactive REPL, not for automation commands.
+pub fn send_eval_with_output(
+    script: &str,
+    project_root: &Path,
+    timeout: Duration,
+) -> Result<EvalResponse> {
+    if is_file_ipc_mode() {
+        send_eval_file(script, project_root, timeout).map(|result| EvalResponse {
+            result,
+            output: vec![],
+        })
+    } else {
+        send_eval_tcp(script, project_root, timeout, true)
     }
 }
 
@@ -32,8 +66,23 @@ fn is_file_ipc_mode() -> bool {
 // ── TCP transport ──────────────────────────────────────────────────────
 
 /// Send eval via TCP: connect to eval server, write script, read result.
-fn send_eval_tcp(script: &str, project_root: &Path, timeout: Duration) -> Result<String> {
+/// Always starts output capture via the daemon's debug protocol.
+/// When `poll_output` is true, polls for output on void results (up to ~1.5s).
+/// When false, does a single instant drain (~2ms, non-blocking).
+fn send_eval_tcp(
+    script: &str,
+    project_root: &Path,
+    timeout: Duration,
+    poll_output: bool,
+) -> Result<EvalResponse> {
     let script = crate::cli::eval_cmd::pre_check(script)?;
+
+    // Always start output capture — the overhead is ~2ms (one daemon query)
+    let _ = crate::lsp::daemon_client::query_daemon(
+        "output_capture_start",
+        serde_json::json!({}),
+        Some(Duration::from_secs(2)),
+    );
 
     let addr = get_eval_address(project_root, timeout)?;
 
@@ -84,9 +133,66 @@ fn send_eval_tcp(script: &str, project_root: &Path, timeout: Duration) -> Result
         serde_json::from_str(&data).map_err(|e| miette!("Failed to parse eval result: {e}"))?;
 
     if !eval_result.error.is_empty() {
+        // Drain output even on error (there may be prints before the error)
+        let _ = crate::lsp::daemon_client::query_daemon(
+            "output_capture_drain",
+            serde_json::json!({}),
+            Some(Duration::from_secs(1)),
+        );
         return Err(miette!("{}", eval_result.error));
     }
-    Ok(eval_result.result.unwrap_or_default())
+
+    let result_str = eval_result.result.unwrap_or_default();
+
+    // Drain captured output. Godot batches print() via the debug protocol (~1s).
+    // - poll_output + void result: poll up to 1.5s (REPL: user expects to see print output)
+    // - otherwise: single instant drain (non-blocking, captures anything already arrived)
+    let output = if poll_output && result_str.is_empty() {
+        drain_output_with_poll(Duration::from_millis(1500))
+    } else {
+        drain_output_quick()
+    };
+
+    Ok(EvalResponse {
+        result: result_str,
+        output,
+    })
+}
+
+/// Single instant drain — no waiting. Returns whatever output has already arrived.
+fn drain_output_quick() -> Vec<CapturedOutput> {
+    crate::lsp::daemon_client::query_daemon(
+        "output_capture_drain",
+        serde_json::json!({}),
+        Some(Duration::from_secs(1)),
+    )
+    .and_then(|r| r.get("output").cloned())
+    .and_then(|v| serde_json::from_value::<Vec<CapturedOutput>>(v).ok())
+    .unwrap_or_default()
+}
+
+/// Poll the daemon for captured output, waiting up to `max_wait` for messages to arrive.
+/// Returns as soon as output is found, or after the timeout with whatever was captured.
+fn drain_output_with_poll(max_wait: Duration) -> Vec<CapturedOutput> {
+    let start = std::time::Instant::now();
+    let poll_interval = Duration::from_millis(150);
+
+    loop {
+        let output = crate::lsp::daemon_client::query_daemon(
+            "output_capture_drain",
+            serde_json::json!({}),
+            Some(Duration::from_secs(2)),
+        )
+        .and_then(|r| r.get("output").cloned())
+        .and_then(|v| serde_json::from_value::<Vec<CapturedOutput>>(v).ok())
+        .unwrap_or_default();
+
+        if !output.is_empty() || start.elapsed() >= max_wait {
+            return output;
+        }
+
+        std::thread::sleep(poll_interval);
+    }
 }
 
 /// Resolve the eval server's TCP address from daemon or ready file.

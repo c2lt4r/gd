@@ -502,3 +502,49 @@ pub fn dispatch_debug_bool_param(
         error_response(&format!("{label} failed"))
     }
 }
+
+pub fn dispatch_output_capture_start(server: &DaemonServer) -> DaemonResponse {
+    let Some(ds) = get_debug_server(server) else {
+        return error_response("No debug server running");
+    };
+    ds.start_output_capture();
+    ok_response(serde_json::json!({"capturing": true}))
+}
+
+pub fn dispatch_output_capture_drain(server: &DaemonServer) -> DaemonResponse {
+    let Some(ds) = get_debug_server(server) else {
+        return error_response("No debug server running");
+    };
+    let output = ds.drain_output();
+    ok_response(serde_json::json!({"output": output}))
+}
+
+pub fn dispatch_log_query(
+    server: &DaemonServer,
+    params: &serde_json::Value,
+) -> DaemonResponse {
+    let Some(ds) = get_debug_server(server) else {
+        return error_response("No debug server running");
+    };
+    let after_seq = params
+        .get("after_seq")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    let count = params
+        .get("count")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0) as usize;
+    let type_filter = params
+        .get("type_filter")
+        .and_then(serde_json::Value::as_str);
+    let entries = ds.query_log(after_seq, count, type_filter);
+    ok_response(serde_json::json!({"entries": entries}))
+}
+
+pub fn dispatch_log_clear(server: &DaemonServer) -> DaemonResponse {
+    let Some(ds) = get_debug_server(server) else {
+        return error_response("No debug server running");
+    };
+    ds.clear_log();
+    ok_response(serde_json::json!({"cleared": true}))
+}

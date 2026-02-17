@@ -23,7 +23,7 @@ fn project_root() -> Result<std::path::PathBuf> {
 /// Run a generated GDScript via live eval and return the raw result string.
 fn run_eval(script: &str) -> Result<String> {
     let root = project_root()?;
-    let result = send_eval(script, &root, AUTO_TIMEOUT)?;
+    let result = send_eval(script, &root, AUTO_TIMEOUT)?.result;
     if result.starts_with("ERROR:") {
         return Err(miette!("{result}"));
     }
@@ -33,7 +33,7 @@ fn run_eval(script: &str) -> Result<String> {
 /// Run eval with a custom timeout.
 fn run_eval_timeout(script: &str, timeout: Duration) -> Result<String> {
     let root = project_root()?;
-    let result = send_eval(script, &root, timeout)?;
+    let result = send_eval(script, &root, timeout)?.result;
     if result.starts_with("ERROR:") {
         return Err(miette!("{result}"));
     }

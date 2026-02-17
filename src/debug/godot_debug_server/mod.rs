@@ -9,9 +9,10 @@ pub(crate) mod parsers;
 #[cfg(test)]
 mod tests;
 
+use std::collections::VecDeque;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -99,6 +100,26 @@ pub struct ObjectProperty {
 
 type OnDisconnectCallback = Arc<Mutex<Option<Box<dyn Fn() + Send>>>>;
 
+/// A captured output line from Godot's `print()` / `push_error()` / `push_warning()`.
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
+pub struct CapturedOutput {
+    pub message: String,
+    /// `"log"`, `"error"`, `"warning"`, or `"log_rich"`
+    pub r#type: String,
+}
+
+/// An output line in the log ring buffer with a monotonic sequence number.
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
+pub struct LogEntry {
+    /// Monotonic sequence number (for `--follow` cursoring).
+    pub seq: u64,
+    pub message: String,
+    pub r#type: String,
+}
+
+/// Maximum number of log entries kept in the ring buffer.
+const LOG_RING_CAPACITY: usize = 2000;
+
 pub struct GodotDebugServer {
     stream: Mutex<Option<TcpStream>>,
     listener: TcpListener,
@@ -112,6 +133,14 @@ pub struct GodotDebugServer {
     disconnected: Arc<AtomicBool>,
     /// Callback invoked when the game disconnects (reader thread exits).
     on_disconnect: OnDisconnectCallback,
+    /// When true, the reader loop buffers "output" messages into `output_buffer` for eval capture.
+    capturing_output: Arc<AtomicBool>,
+    /// Buffered output lines captured during an eval.
+    output_buffer: Arc<Mutex<Vec<CapturedOutput>>>,
+    /// Always-on log ring buffer. All output/error messages are stored here.
+    log_ring: Arc<Mutex<VecDeque<LogEntry>>>,
+    /// Monotonic sequence counter for log entries.
+    log_seq: Arc<AtomicU64>,
 }
 
 impl GodotDebugServer {
@@ -134,6 +163,10 @@ impl GodotDebugServer {
             at_breakpoint: Arc::new(AtomicBool::new(false)),
             disconnected: Arc::new(AtomicBool::new(false)),
             on_disconnect: Arc::new(Mutex::new(None)),
+            capturing_output: Arc::new(AtomicBool::new(false)),
+            output_buffer: Arc::new(Mutex::new(Vec::new())),
+            log_ring: Arc::new(Mutex::new(VecDeque::with_capacity(LOG_RING_CAPACITY))),
+            log_seq: Arc::new(AtomicU64::new(1)),
         })
     }
 
@@ -194,6 +227,56 @@ impl GodotDebugServer {
         self.at_breakpoint.load(Ordering::Relaxed)
     }
 
+    /// Start capturing output messages from Godot (print, push_error, etc.).
+    /// Clears any previously buffered output.
+    pub fn start_output_capture(&self) {
+        self.output_buffer.lock().unwrap().clear();
+        self.capturing_output.store(true, Ordering::Release);
+    }
+
+    /// Drain all buffered output messages captured so far.
+    /// Does NOT stop capturing — output continues to be buffered until the next
+    /// `start_output_capture()` call (which clears and restarts).
+    pub fn drain_output(&self) -> Vec<CapturedOutput> {
+        std::mem::take(&mut *self.output_buffer.lock().unwrap())
+    }
+
+    /// Query the log ring buffer. Returns entries matching the filter criteria.
+    /// - `after_seq`: only return entries with seq > this value (for follow/polling)
+    /// - `count`: max entries to return (0 = all matching)
+    /// - `type_filter`: only return entries of this type (None = all)
+    pub fn query_log(
+        &self,
+        after_seq: u64,
+        count: usize,
+        type_filter: Option<&str>,
+    ) -> Vec<LogEntry> {
+        let ring = self.log_ring.lock().unwrap();
+        let iter = ring.iter().filter(|e| {
+            e.seq > after_seq
+                && type_filter.is_none_or(|f| {
+                    if f == "errors" {
+                        e.r#type == "error" || e.r#type == "warning"
+                    } else {
+                        e.r#type == f
+                    }
+                })
+        });
+        if count > 0 {
+            // Return the LAST `count` entries (most recent)
+            let entries: Vec<&LogEntry> = iter.collect();
+            let start = entries.len().saturating_sub(count);
+            entries[start..].iter().map(|e| (*e).clone()).collect()
+        } else {
+            iter.cloned().collect()
+        }
+    }
+
+    /// Clear the log ring buffer.
+    pub fn clear_log(&self) {
+        self.log_ring.lock().unwrap().clear();
+    }
+
     /// Send a command to the game.
     /// Wire format: Array([String(command), Int(thread_id), Array([args...])])
     /// Godot 4.2+ requires three elements: command name, thread_id, and a
@@ -251,9 +334,22 @@ impl GodotDebugServer {
         let at_breakpoint = Arc::clone(&self.at_breakpoint);
         let disconnected = Arc::clone(&self.disconnected);
         let on_disconnect = Arc::clone(&self.on_disconnect);
+        let capturing_output = Arc::clone(&self.capturing_output);
+        let output_buffer = Arc::clone(&self.output_buffer);
+        let log_ring = Arc::clone(&self.log_ring);
+        let log_seq = Arc::clone(&self.log_seq);
 
         std::thread::spawn(move || {
-            reader_loop(stream, &inbox, &running, &at_breakpoint);
+            reader_loop(
+                stream,
+                &inbox,
+                &running,
+                &at_breakpoint,
+                &capturing_output,
+                &output_buffer,
+                &log_ring,
+                &log_seq,
+            );
             // Reader exited — game disconnected
             disconnected.store(true, Ordering::Release);
             if let Some(cb) = on_disconnect.lock().unwrap().as_ref() {
@@ -273,11 +369,16 @@ impl Drop for GodotDebugServer {
 // Reader thread
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::too_many_arguments)]
 fn reader_loop(
     mut stream: TcpStream,
     inbox: &Inbox,
     running: &Mutex<bool>,
     at_breakpoint: &AtomicBool,
+    capturing_output: &AtomicBool,
+    output_buffer: &Mutex<Vec<CapturedOutput>>,
+    log_ring: &Mutex<VecDeque<LogEntry>>,
+    log_seq: &AtomicU64,
 ) {
     // Set a short read timeout so we can check the `running` flag periodically
     let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
@@ -318,11 +419,25 @@ fn reader_loop(
             // to flat [cmd, data_items...] for downstream parsing
             let items = normalize_message(items);
 
-            // Track breakpoint state from debug_enter/debug_exit messages
+            // Track breakpoint state and capture output/error messages
             if let Some(GodotVariant::String(cmd)) = items.first() {
                 match cmd.as_str() {
                     "debug_enter" => at_breakpoint.store(true, Ordering::Relaxed),
                     "debug_exit" => at_breakpoint.store(false, Ordering::Relaxed),
+                    "output" => {
+                        // Always push to the log ring buffer
+                        push_output_to_log(&items, log_ring, log_seq);
+                        // Also push to eval capture buffer if active
+                        if capturing_output.load(Ordering::Acquire) {
+                            extract_output_messages(&items, output_buffer);
+                        }
+                    }
+                    "error" => {
+                        push_error_to_log(&items, log_ring, log_seq);
+                        if capturing_output.load(Ordering::Acquire) {
+                            extract_error_message(&items, output_buffer);
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -367,4 +482,180 @@ fn normalize_message(items: Vec<GodotVariant>) -> Vec<GodotVariant> {
     }
     // Fallback: return as-is (older protocol or unknown format)
     items
+}
+
+/// Parse a normalized "output" message and append to the capture buffer.
+/// Godot format (after normalization): `["output", PackedStringArray(strings), PackedInt32Array(types)]`
+/// Types: 0 = LOG, 1 = ERROR, 2 = LOG_RICH
+fn extract_output_messages(items: &[GodotVariant], buffer: &Mutex<Vec<CapturedOutput>>) {
+    // Godot sends PackedStringArray for the message strings
+    let strings: &[String] = match items.get(1) {
+        Some(GodotVariant::PackedStringArray(v)) => v,
+        Some(GodotVariant::Array(v)) => {
+            // Fallback: extract String variants from Array
+            let mut buf = buffer.lock().unwrap();
+            for (i, s) in v.iter().enumerate() {
+                let GodotVariant::String(msg) = s else {
+                    continue;
+                };
+                let type_name = type_from_array(items.get(2), i);
+                buf.push(CapturedOutput {
+                    message: msg.clone(),
+                    r#type: type_name.to_string(),
+                });
+            }
+            return;
+        }
+        _ => return,
+    };
+
+    // Godot sends PackedInt32Array for the message types
+    let types: Option<&[i32]> = match items.get(2) {
+        Some(GodotVariant::PackedInt32Array(v)) => Some(v),
+        _ => None,
+    };
+
+    let mut buf = buffer.lock().unwrap();
+    for (i, msg) in strings.iter().enumerate() {
+        let type_name = types
+            .and_then(|t| t.get(i))
+            .map_or("log", |&v| match v {
+                1 => "error",
+                2 => "log_rich",
+                _ => "log",
+            });
+        // Strip trailing null bytes that Godot sometimes appends
+        let msg = msg.trim_end_matches('\0');
+        if msg.is_empty() {
+            continue;
+        }
+        buf.push(CapturedOutput {
+            message: msg.to_string(),
+            r#type: type_name.to_string(),
+        });
+    }
+}
+
+/// Helper: get type name from an Array variant (fallback path).
+fn type_from_array(item: Option<&GodotVariant>, idx: usize) -> &'static str {
+    match item {
+        Some(GodotVariant::Array(t)) => t
+            .get(idx)
+            .and_then(|v| match v {
+                GodotVariant::Int(0) => Some("log"),
+                GodotVariant::Int(1) => Some("error"),
+                GodotVariant::Int(2) => Some("log_rich"),
+                _ => None,
+            })
+            .unwrap_or("log"),
+        _ => "log",
+    }
+}
+
+/// Parse a normalized "error" message and append to the capture buffer.
+/// Godot wire format (after normalization):
+///   `["error", Int(hr), Int(has_stack), Int(thread), Int(id),
+///     String(file), String(func), Int(line),
+///     String(rationale), String(error_descr), Bool(warning), ...]`
+/// We capture `rationale` (index 8) or `error_descr` (index 9).
+fn extract_error_message(items: &[GodotVariant], buffer: &Mutex<Vec<CapturedOutput>>) {
+    // Try rationale first (e.g. "something bad"), then error_descr
+    let msg = items
+        .get(8)
+        .and_then(|v| match v {
+            GodotVariant::String(s) if !s.is_empty() => Some(s.as_str()),
+            _ => None,
+        })
+        .or_else(|| {
+            items.get(9).and_then(|v| match v {
+                GodotVariant::String(s) if !s.is_empty() => Some(s.as_str()),
+                _ => None,
+            })
+        });
+
+    if let Some(msg) = msg {
+        let is_warning = matches!(items.get(10), Some(GodotVariant::Bool(true)));
+        buffer.lock().unwrap().push(CapturedOutput {
+            message: msg.to_string(),
+            r#type: if is_warning { "warning" } else { "error" }.to_string(),
+        });
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Log ring buffer helpers
+// ---------------------------------------------------------------------------
+
+/// Push output messages to the always-on log ring buffer.
+fn push_output_to_log(
+    items: &[GodotVariant],
+    ring: &Mutex<VecDeque<LogEntry>>,
+    seq: &AtomicU64,
+) {
+    let strings: &[String] = match items.get(1) {
+        Some(GodotVariant::PackedStringArray(v)) => v,
+        _ => return,
+    };
+    let types: Option<&[i32]> = match items.get(2) {
+        Some(GodotVariant::PackedInt32Array(v)) => Some(v),
+        _ => None,
+    };
+
+    let mut ring = ring.lock().unwrap();
+    for (i, msg) in strings.iter().enumerate() {
+        let msg = msg.trim_end_matches('\0');
+        if msg.is_empty() {
+            continue;
+        }
+        let type_name = types
+            .and_then(|t| t.get(i))
+            .map_or("log", |&v| match v {
+                1 => "error",
+                2 => "log_rich",
+                _ => "log",
+            });
+        let id = seq.fetch_add(1, Ordering::Relaxed);
+        if ring.len() >= LOG_RING_CAPACITY {
+            ring.pop_front();
+        }
+        ring.push_back(LogEntry {
+            seq: id,
+            message: msg.to_string(),
+            r#type: type_name.to_string(),
+        });
+    }
+}
+
+/// Push an error/warning message to the always-on log ring buffer.
+fn push_error_to_log(
+    items: &[GodotVariant],
+    ring: &Mutex<VecDeque<LogEntry>>,
+    seq: &AtomicU64,
+) {
+    let msg = items
+        .get(8)
+        .and_then(|v| match v {
+            GodotVariant::String(s) if !s.is_empty() => Some(s.as_str()),
+            _ => None,
+        })
+        .or_else(|| {
+            items.get(9).and_then(|v| match v {
+                GodotVariant::String(s) if !s.is_empty() => Some(s.as_str()),
+                _ => None,
+            })
+        });
+
+    if let Some(msg) = msg {
+        let is_warning = matches!(items.get(10), Some(GodotVariant::Bool(true)));
+        let id = seq.fetch_add(1, Ordering::Relaxed);
+        let mut ring = ring.lock().unwrap();
+        if ring.len() >= LOG_RING_CAPACITY {
+            ring.pop_front();
+        }
+        ring.push_back(LogEntry {
+            seq: id,
+            message: msg.to_string(),
+            r#type: if is_warning { "warning" } else { "error" }.to_string(),
+        });
+    }
 }
