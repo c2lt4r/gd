@@ -9,6 +9,14 @@ fn has_annotations(node: &Node) -> bool {
         .any(|child| child.kind() == "annotations")
 }
 
+/// Check if a comment node contains a `gd:ignore` suppression directive.
+fn is_suppression_comment(node: &Node, source: &str) -> bool {
+    node.kind() == "comment"
+        && node
+            .utf8_text(source.as_bytes())
+            .is_ok_and(|t| t.contains("gd:ignore"))
+}
+
 /// Returns the number of blank lines to insert between two consecutive siblings.
 ///
 /// `func_blank` and `class_blank` control blank lines around function and class
@@ -19,9 +27,15 @@ pub fn spacing_between(
     in_class_body: bool,
     func_blank: usize,
     class_blank: usize,
+    source: &str,
 ) -> usize {
+    // Suppression comments (# gd:ignore-next-line) attach to the next statement
+    if is_suppression_comment(prev, source) {
+        return 0;
+    }
+
     if in_class_body {
-        return spacing_in_class_body(prev, next);
+        return spacing_in_class_body(prev, next, source);
     }
 
     let prev_kind = prev.kind();
@@ -71,7 +85,7 @@ pub fn spacing_between(
     1
 }
 
-fn spacing_in_class_body(prev: &Node, next: &Node) -> usize {
+fn spacing_in_class_body(prev: &Node, next: &Node, _source: &str) -> usize {
     let prev_kind = prev.kind();
     let next_kind = next.kind();
 

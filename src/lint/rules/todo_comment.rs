@@ -33,12 +33,31 @@ const MARKERS: &[&str] = &[
     "WARNING",
 ];
 
+/// Check if a marker appears as a standalone word in the comment text.
+/// The marker must be preceded by `#`, whitespace, or start of string,
+/// and followed by `:`, whitespace, end of string, or non-alphanumeric.
+fn contains_marker_word(text: &str, marker: &str) -> bool {
+    let upper = text.to_ascii_uppercase();
+    let bytes = upper.as_bytes();
+    let mut start = 0;
+    while let Some(pos) = upper[start..].find(marker) {
+        let abs = start + pos;
+        let before_ok = abs == 0 || matches!(bytes[abs - 1], b'#' | b' ' | b'\t');
+        let after = abs + marker.len();
+        let after_ok = after >= bytes.len() || !bytes[after].is_ascii_alphanumeric();
+        if before_ok && after_ok {
+            return true;
+        }
+        start = abs + 1;
+    }
+    false
+}
+
 fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
     if node.kind() == "comment" {
         let text = node.utf8_text(source.as_bytes()).unwrap_or("");
-        let upper = text.to_ascii_uppercase();
         for marker in MARKERS {
-            if upper.contains(marker) {
+            if contains_marker_word(text, marker) {
                 diags.push(LintDiagnostic {
                     rule: "todo-comment",
                     message: format!("comment contains {marker} marker"),
@@ -158,6 +177,18 @@ mod tests {
     fn no_warning_for_normal_comment() {
         let source = "# This is a normal comment\n";
         assert!(check(source).is_empty());
+    }
+
+    #[test]
+    fn no_warning_debug_substring() {
+        let source = "# Debug trail for visualizing nav paths\n";
+        assert!(check(source).is_empty(), "Debug should not match BUG");
+    }
+
+    #[test]
+    fn no_warning_xxx_in_string_literal_comment() {
+        let source = "# \"xxx-1f\", \"xxx-b2f\" are format codes\n";
+        assert!(check(source).is_empty(), "xxx- should not match XXX marker");
     }
 
     #[test]

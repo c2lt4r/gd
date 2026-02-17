@@ -32,6 +32,7 @@ pub fn lint_source(source: &str, uri: &Url) -> Vec<Diagnostic> {
         &config.lint.disabled_rules,
         &config.lint.rules,
         &config.lint,
+        &[],
     );
     let file_path = uri.to_file_path().ok();
     let override_base = file_path

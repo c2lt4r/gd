@@ -61,20 +61,27 @@ const BUILTIN_TYPES: &[&str] = &[
     "StringName",
     "Color",
     "Rect2",
+    "Rect2i",
     "Transform2D",
     "Transform3D",
     "Basis",
     "AABB",
     "Plane",
     "Quaternion",
+    "Projection",
+    "RID",
+    "Callable",
+    "Signal",
     "PackedByteArray",
     "PackedInt32Array",
     "PackedInt64Array",
     "PackedFloat32Array",
     "PackedFloat64Array",
     "PackedStringArray",
+    "PackedColorArray",
     "PackedVector2Array",
     "PackedVector3Array",
+    "PackedVector4Array",
 ];
 
 /// GDScript built-in functions.
@@ -281,6 +288,13 @@ pub(super) fn resolve_simple_receiver(
         if let Some(ty) = find_local_variable_type(tree.root_node(), source, position, receiver) {
             return Some(ty);
         }
+
+        // 6. Inherited member from the file's extends class (e.g. position → Vector2)
+        if let Some(extends_class) = find_extends_class(tree.root_node(), source)
+            && let Some(ty) = resolve_member_type(&extends_class, receiver)
+        {
+            return Some(ty);
+        }
     }
 
     None
@@ -376,7 +390,30 @@ pub(super) fn resolve_member_type(class: &str, member: &str) -> Option<String> {
     {
         return Some(normalize_type(ret));
     }
+    // Check builtin type members (Vector2.x, String.length(), etc.)
+    if let Some(doc) = super::builtins::lookup_member_for(class, member) {
+        return extract_type_from_brief(doc.brief, doc.kind);
+    }
     None
+}
+
+/// Extract a type from a builtin member's brief string.
+/// Methods: `"normalized() -> Vector2"` → `"Vector2"`
+/// Properties: `"x: float"` → `"float"`
+fn extract_type_from_brief(brief: &str, kind: super::builtins::MemberKind) -> Option<String> {
+    match kind {
+        super::builtins::MemberKind::Method => {
+            let ret = brief.rsplit(" -> ").next()?;
+            if ret == "void" {
+                return None;
+            }
+            Some(ret.to_string())
+        }
+        super::builtins::MemberKind::Property => {
+            let ty = brief.rsplit(": ").next()?;
+            Some(ty.to_string())
+        }
+    }
 }
 
 /// Normalize ClassDB type strings to simple class names.
@@ -450,7 +487,12 @@ fn find_variable_type(root: tree_sitter::Node, source: &str, var_name: &str) -> 
             }
             // Infer from initializer value (var x := Constructor.new())
             if let Some(value_node) = child.child_by_field_name("value")
-                && let Some(ty) = infer_type_from_value(&value_node, source, Some(root))
+                && let Some(ty) = infer_type_from_value(
+                    &value_node,
+                    source,
+                    Some(root),
+                    &std::collections::HashMap::new(),
+                )
             {
                 return Some(ty);
             }
@@ -514,6 +556,7 @@ fn find_local_variable_type(
 }
 
 /// Search a body node recursively for variable/for-loop declarations matching `var_name`.
+/// Builds a progressive local type map so that later variables can use earlier types.
 fn find_var_type_in_body(
     body: tree_sitter::Node,
     root: tree_sitter::Node,
@@ -521,21 +564,37 @@ fn find_var_type_in_body(
     var_name: &str,
     point: tree_sitter::Point,
 ) -> Option<String> {
+    let mut local_types = std::collections::HashMap::new();
+    find_var_type_in_body_with_locals(body, root, source, var_name, point, &mut local_types)
+}
+
+fn find_var_type_in_body_with_locals(
+    body: tree_sitter::Node,
+    root: tree_sitter::Node,
+    source: &str,
+    var_name: &str,
+    point: tree_sitter::Point,
+    local_types: &mut std::collections::HashMap<String, String>,
+) -> Option<String> {
     let bytes = source.as_bytes();
     let mut cursor = body.walk();
     for child in body.children(&mut cursor) {
         // var x: Type or var x := expr
         if child.kind() == "variable_statement"
             && let Some(name_node) = child.child_by_field_name("name")
-            && name_node.utf8_text(bytes).ok() == Some(var_name)
+            && let Ok(name) = name_node.utf8_text(bytes)
         {
-            if let Some(ty) = extract_type_from_variable(&child, source) {
-                return Some(ty);
+            let resolved = extract_type_from_variable(&child, source).or_else(|| {
+                child
+                    .child_by_field_name("value")
+                    .and_then(|v| infer_type_from_value(&v, source, Some(root), local_types))
+            });
+            if name == var_name {
+                return resolved;
             }
-            if let Some(value_node) = child.child_by_field_name("value")
-                && let Some(ty) = infer_type_from_value(&value_node, source, Some(root))
-            {
-                return Some(ty);
+            // Accumulate for later lookups
+            if let Some(ty) = resolved {
+                local_types.insert(name.to_string(), ty);
             }
         }
         // for npc: Type in expr — typed for-loop iterator
@@ -556,7 +615,14 @@ fn find_var_type_in_body(
             && child.start_position().row <= point.row
             && child.end_position().row >= point.row
             && let Some(inner_body) = child.child_by_field_name("body")
-            && let Some(ty) = find_var_type_in_body(inner_body, root, source, var_name, point)
+            && let Some(ty) = find_var_type_in_body_with_locals(
+                inner_body,
+                root,
+                source,
+                var_name,
+                point,
+                local_types,
+            )
         {
             return Some(ty);
         }
@@ -589,24 +655,52 @@ fn find_enclosing_function(
 ///
 /// Handles: `ClassName.new()` → `ClassName`, `Vector2(...)` → `Vector2`,
 /// `func_call()` → return type from same-file function definition,
+/// `expr.method()` → method return type, `a + b` → propagated type,
 /// literals → `int`/`float`/`String`/`bool`.
+#[allow(clippy::too_many_lines)]
 fn infer_type_from_value(
     node: &tree_sitter::Node,
     source: &str,
     root: Option<tree_sitter::Node>,
+    local_types: &std::collections::HashMap<String, String>,
 ) -> Option<String> {
     let bytes = source.as_bytes();
     match node.kind() {
-        // ClassName.new() or ClassName.CONSTANT → tree-sitter `attribute`
+        // ClassName.new(), ClassName.CONSTANT, or receiver.method() / receiver.property
         "attribute" => {
-            let class_node = node.child(0)?;
-            let class = class_node.utf8_text(bytes).ok()?;
-            // Only infer if the first child is a known type name
-            if crate::class_db::class_exists(class)
-                || BUILTIN_TYPES.contains(&class)
-                || !super::builtins::members_for_class(class).is_empty()
+            let first = node.child(0)?;
+            let first_text = first.utf8_text(bytes).ok()?;
+
+            // ClassName.new() / ClassName.CONSTANT — first child is a known type
+            if crate::class_db::class_exists(first_text)
+                || BUILTIN_TYPES.contains(&first_text)
+                || !super::builtins::members_for_class(first_text).is_empty()
             {
-                return Some(class.to_string());
+                return Some(first_text.to_string());
+            }
+
+            // receiver.method() / receiver.property — resolve receiver type, then member
+            if let Some(receiver_type) = infer_type_from_value(&first, source, root, local_types) {
+                let mut c = node.walk();
+                for child in node.children(&mut c) {
+                    // method call: receiver.method()
+                    if child.kind() == "attribute_call"
+                        && let Some(method_id) = child.named_child(0)
+                        && method_id.kind() == "identifier"
+                        && let Ok(method_name) = method_id.utf8_text(bytes)
+                    {
+                        return resolve_member_type(&receiver_type, method_name)
+                            .or(Some(receiver_type));
+                    }
+                    // property access: receiver.prop
+                    if child.kind() == "identifier"
+                        && child.id() != first.id()
+                        && let Ok(prop_name) = child.utf8_text(bytes)
+                    {
+                        return resolve_member_type(&receiver_type, prop_name)
+                            .or(Some(receiver_type));
+                    }
+                }
             }
             None
         }
@@ -627,12 +721,75 @@ fn infer_type_from_value(
             }
             None
         }
+        // Binary operators: propagate non-primitive type from either operand.
+        // e.g. Vector2(...) * TILE_SIZE → Vector2, position - target → Vector2
+        "binary_operator" => {
+            let op = node
+                .child_by_field_name("operator")
+                .and_then(|n| n.utf8_text(bytes).ok())
+                .unwrap_or("");
+            // Comparison operators always return bool
+            if matches!(
+                op,
+                "==" | "!=" | "<" | ">" | "<=" | ">=" | "and" | "or" | "not"
+            ) {
+                return Some("bool".to_string());
+            }
+            // For arithmetic, try both sides — prefer non-primitive types
+            let left = node
+                .child_by_field_name("left")
+                .and_then(|n| infer_type_from_value(&n, source, root, local_types));
+            let right = node
+                .child_by_field_name("right")
+                .and_then(|n| infer_type_from_value(&n, source, root, local_types));
+            match (&left, &right) {
+                (Some(l), _) if !is_primitive_type(l) => left,
+                (_, Some(r)) if !is_primitive_type(r) => right,
+                (Some(_), _) => left,
+                _ => right,
+            }
+        }
+        // Parenthesized expression: unwrap
+        "parenthesized_expression" => {
+            let inner = node.named_child(0)?;
+            infer_type_from_value(&inner, source, root, local_types)
+        }
+        // Identifier: resolve via local types, file-level vars, and inherited members
+        "identifier" => {
+            let name = node.utf8_text(bytes).ok()?;
+            // Class/type name used as value
+            if crate::class_db::class_exists(name) || BUILTIN_TYPES.contains(&name) {
+                return Some(name.to_string());
+            }
+            // Local variable resolved earlier in the same function
+            if let Some(ty) = local_types.get(name) {
+                return Some(ty.clone());
+            }
+            if let Some(root) = root {
+                // Top-level typed vars in the file
+                if let Some(ty) = find_variable_type(root, source, name) {
+                    return Some(ty);
+                }
+                // Inherited member from extends class (e.g. `position` → Vector2)
+                if let Some(extends_class) = find_extends_class(root, source)
+                    && let Some(ty) = resolve_member_type(&extends_class, name)
+                {
+                    return Some(ty);
+                }
+            }
+            None
+        }
         "integer" => Some("int".to_string()),
         "float" => Some("float".to_string()),
         "string" => Some("String".to_string()),
         "true" | "false" => Some("bool".to_string()),
         _ => None,
     }
+}
+
+/// Check if a type name is a primitive GDScript type.
+fn is_primitive_type(ty: &str) -> bool {
+    matches!(ty, "int" | "float" | "bool" | "String")
 }
 
 /// Find the return type of a function definition in the same file.
@@ -1681,6 +1838,37 @@ func attack(target):
         assert!(
             labels.contains(&"normalized"),
             "should contain Vector2 method 'normalized'"
+        );
+    }
+
+    #[test]
+    fn color_dot_completions() {
+        let source = "extends Node\nfunc run():\n\tColor.\n\tpass\n";
+        let items = provide_completions(source, Position::new(2, 7), None);
+        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(
+            labels.contains(&"lightened"),
+            "should contain Color method 'lightened', got: {labels:?}"
+        );
+        assert!(
+            labels.contains(&"r"),
+            "should contain Color property 'r', got: {labels:?}"
+        );
+    }
+
+    #[test]
+    fn string_dot_completions_generated() {
+        let source = "extends Node\nfunc run():\n\tString.\n\tpass\n";
+        let items = provide_completions(source, Position::new(2, 8), None);
+        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        // Generated methods that weren't in the manual list
+        assert!(
+            labels.contains(&"replace"),
+            "should contain String method 'replace', got: {labels:?}"
+        );
+        assert!(
+            labels.contains(&"is_empty"),
+            "should contain String method 'is_empty', got: {labels:?}"
         );
     }
 

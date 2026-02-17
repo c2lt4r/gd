@@ -7,7 +7,7 @@ Built with [tree-sitter](https://tree-sitter.github.io/) for accurate parsing an
 ## Features
 
 - **Format** GDScript files with an AST-based formatter aligned to the [GDScript style guide](https://docs.godotengine.org/en/stable/tutorials/scripting/gdscript/gdscript_styleguide.html)
-- **Lint** with 76 built-in rules (17 auto-fixable), SARIF output for CI
+- **Lint** with 78 built-in rules (17 auto-fixable), SARIF output for CI
 - **Run**, **build**, **test**, and **clean** your Godot project from the terminal
 - **Watch** for file changes and auto-lint/format on save
 - **Manage addons** from Git or the Godot Asset Library (with lockfile and update support)
@@ -514,7 +514,7 @@ The template system automatically finds `project.godot` within the repository to
 
 ## Lint Rules
 
-76 built-in rules organized into 8 categories (45 default-enabled, 31 opt-in):
+78 built-in rules organized into 8 categories (48 default-enabled, 30 opt-in):
 
 ### Categories
 
@@ -525,8 +525,8 @@ The template system automatically finds `project.godot` within the repository to
 | **style** | Naming and code style | 14 |
 | **complexity** | Code size and complexity metrics | 8 |
 | **performance** | Godot runtime performance | 4 |
-| **godot** | Godot engine best practices | 10 |
-| **type_safety** | Type system strictness | 7 |
+| **godot** | Godot engine best practices | 12 |
+| **type_safety** | Type system strictness | 8 |
 | **maintenance** | Unused code and debug artifacts | 9 |
 
 Categories can be bulk-controlled in `gd.toml`:
@@ -571,6 +571,7 @@ severity = "warning"       # re-enable despite maintenance = "off"
 | `get-node-in-process` | performance | Detect `get_node()` in `_process()` | warning | |
 | `god-object` | complexity | Warn on classes with too many functions/members/lines | warning | |
 | `incompatible-ternary` | suspicious | Detect ternary branches with incompatible types | warning | |
+| `infer-unknown-member` | type_safety | Detect `:=` inference from unknown engine class members | warning | |
 | `integer-division` | suspicious | Warn on integer literal division truncation | warning | |
 | `long-function` | complexity | Warn on functions exceeding line threshold | warning | |
 | `look-at-before-tree` | godot | Detect tree-dependent calls before `add_child()` | warning | |
@@ -615,6 +616,7 @@ severity = "warning"       # re-enable despite maintenance = "off"
 | `unsafe-void-return` | suspicious | Detect returning or assigning void call results | warning | yes |
 | `untyped-array` | type_safety | Suggest typed array annotations | warning | |
 | `untyped-array-literal` | type_safety | Warn on `var x := [...]` without typed Array annotation | warning | yes |
+| `unnamed-node` | godot | Detect `add_child()` with dynamically created nodes that have no `.name` set | warning | |
 | `unused-parameter` | maintenance | Detect unused function parameters | warning | |
 | `unused-preload` | maintenance | Detect unused preload variables | warning | |
 | `unused-private-class-variable` | maintenance | Detect unused `_`-prefixed class variables | warning | |

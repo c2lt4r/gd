@@ -90,6 +90,39 @@ pub fn enum_type_exists(class: &str, name: &str) -> bool {
     }
 }
 
+/// Check if a signal exists on a class (including inherited signals).
+pub fn signal_exists(class: &str, signal: &str) -> bool {
+    let mut current = class;
+    loop {
+        let key = format!("{current}.{signal}");
+        if generated::SIGNALS.binary_search(&key.as_str()).is_ok() {
+            return true;
+        }
+        match parent_class(current) {
+            Some(parent) => current = parent,
+            None => return false,
+        }
+    }
+}
+
+/// Check if a property exists on a class (including inherited properties).
+pub fn property_exists(class: &str, property: &str) -> bool {
+    let mut current = class;
+    loop {
+        let key = format!("{current}.{property}");
+        if generated::PROPERTIES
+            .binary_search_by_key(&key.as_str(), |&(k, _)| k)
+            .is_ok()
+        {
+            return true;
+        }
+        match parent_class(current) {
+            Some(parent) => current = parent,
+            None => return false,
+        }
+    }
+}
+
 /// Check if a method exists on a class (including inherited methods).
 #[allow(dead_code)]
 pub fn method_exists(class: &str, method: &str) -> bool {

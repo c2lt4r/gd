@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.2.19] - 2026-02-17
+
+### Added
+- **`unnamed-node` lint rule** (godot, opt-in) — detects `add_child()` calls where a dynamically created node (via `.new()`) has no `.name` set, making it harder to find in the scene tree at runtime.
+- **`infer-unknown-member` lint rule** (type_safety) — detects `var x := obj.member` where `obj` has a declared engine type but `member` is not a known property, method, or signal on that type. Godot's parser cannot infer the type and throws a parse error; this rule catches it at lint time.
+- **`--rule` flag now force-enables opt-in rules** — `gd lint --rule <name>` activates the specified rule even if it's opt-in or disabled, instead of only post-filtering results.
+- **Inline suppression docs** — `gd lint --help` and `gd man lint` now document the `# gd:ignore` / `# gd:ignore-next-line` / `# gd:ignore[rule]` suppression comment syntax. Also added to `gd llm` output for AI agent discoverability.
+- **ClassDB signals table** — the generated class database now includes signal names (e.g., `value_changed`, `pressed`), used by lint rules to distinguish signals from unknown members.
+
+### Improved
+- **Dot-completions for builtin types** — `position.x`, `diff.length()`, `dir.normalized()` and other member accesses on inherited properties, binary expressions, and chained method calls now return correct completions. Type inference follows the full chain: inherited member → ClassDB property type → builtin member return type → progressive local variable resolution.
+
+### Fixed
+- **`use-before-assign` false positives on Node subclasses** — members assigned in `_ready()` or `_init()` (directly or transitively through called methods) are now recognized as initialized in other methods. Previously, procedural UI code that assigned members in `_build_ui()` called from `_ready()` would produce spurious warnings.
+- **`use-before-assign` false positives on null-guarded members** — bare identifier reads (`if member:`, `if not member: return`, `if x == member`) are no longer flagged as use-before-assign. Only dereference reads (`.prop`, `[idx]`) are reported. Additionally, members that are null-checked before being dereferenced are automatically suppressed.
+- **`delete-symbol --line` no longer matches enclosing function** — `--line N` pointing to a statement inside a function body now correctly reports "no declaration found" instead of deleting the entire enclosing function. Only the declaration start line matches.
+- **`native-method-override` no longer flags user-defined base class methods** — overriding methods from user-defined base classes (e.g., State pattern `enter()`/`exit()`) is normal polymorphism. The rule now only flags overrides of engine-native (ClassDB) methods.
+- **`print-statement` no longer flags `push_error()`/`push_warning()`** — these are Godot's structured logging (shown in debugger with stack traces), not debug prints. They belong in production code.
+- **`todo-comment` word boundary matching** — markers like `BUG`, `XXX`, `WARNING` now require word boundaries. "Debug trail" no longer matches `BUG`, and `"xxx-1f"` no longer matches `XXX`.
+- **Formatter keeps `# gd:ignore-next-line` attached** — `gd fmt` no longer inserts blank lines between a suppression comment and the declaration it targets (functions, signals, etc.).
+
 ## [0.2.18] - 2026-02-17
 
 ### Added

@@ -15,6 +15,7 @@ pub fn provide_code_actions(uri: &Url, source: &str, range: &Range) -> Option<Co
         &config.lint.disabled_rules,
         &config.lint.rules,
         &config.lint,
+        &[],
     );
 
     let mut all_diags = Vec::new();

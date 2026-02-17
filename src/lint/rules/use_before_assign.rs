@@ -29,8 +29,27 @@ impl LintRule for UseBeforeAssign {
 
         let func_info = collect_function_info(root, source, &members);
 
+        // For Node subclasses, members assigned in _ready() or _init() (directly
+        // or transitively through called methods) are guaranteed initialized
+        // before any other user method runs.
+        let ready_assigned = extract_extends_class(root, source)
+            .filter(|cls| crate::class_db::inherits(cls, "Node") || cls == "Node")
+            .map(|_| {
+                let mut assigned = transitive_assigns("_ready", &func_info);
+                assigned.extend(transitive_assigns("_init", &func_info));
+                assigned
+            })
+            .unwrap_or_default();
+
         let mut diags = Vec::new();
-        check_functions(root, source, &members, &func_info, &mut diags);
+        check_functions(
+            root,
+            source,
+            &members,
+            &func_info,
+            &ready_assigned,
+            &mut diags,
+        );
         diags
     }
 }
@@ -73,6 +92,8 @@ fn collect_member_vars(root: Node, source: &str) -> HashSet<String> {
 
 struct FuncInfo {
     reads_before_assign: HashSet<String>,
+    assigns: HashSet<String>,
+    calls: HashSet<String>,
 }
 
 fn collect_function_info(
@@ -87,20 +108,45 @@ fn collect_function_info(
     }
     loop {
         let node = cursor.node();
-        if node.kind() == "function_definition"
-            && let Some(name_node) = node.child_by_field_name("name")
-            && let Ok(func_name) = name_node.utf8_text(source.as_bytes())
-            && let Some(body) = node.child_by_field_name("body")
-        {
-            let mut assigned = HashSet::new();
-            let mut reads = HashSet::new();
-            scan_body_for_member_access(body, source, members, &mut assigned, &mut reads);
-            info.insert(
-                func_name.to_string(),
-                FuncInfo {
-                    reads_before_assign: reads,
-                },
-            );
+        let kind = node.kind();
+        // Handle both regular functions and _init() (constructor_definition)
+        if kind == "function_definition" || kind == "constructor_definition" {
+            let func_name = if kind == "constructor_definition" {
+                Some("_init")
+            } else {
+                node.child_by_field_name("name")
+                    .and_then(|n| n.utf8_text(source.as_bytes()).ok())
+            };
+            if let Some(func_name) = func_name
+                && let Some(body) = node.child_by_field_name("body")
+            {
+                let mut assigned = HashSet::new();
+                let mut reads = HashSet::new();
+                let mut null_checked = HashSet::new();
+                let mut calls = HashSet::new();
+                scan_body_for_member_access(
+                    body,
+                    source,
+                    members,
+                    &mut assigned,
+                    &mut reads,
+                    &mut null_checked,
+                );
+                collect_calls_in_body(body, source, &mut calls);
+                // Members that are null-checked (bare identifier reads) within the
+                // function are assumed to be properly guarded before dereference.
+                for m in &null_checked {
+                    reads.remove(m);
+                }
+                info.insert(
+                    func_name.to_string(),
+                    FuncInfo {
+                        reads_before_assign: reads,
+                        assigns: assigned,
+                        calls,
+                    },
+                );
+            }
         }
         if !cursor.goto_next_sibling() {
             break;
@@ -109,16 +155,109 @@ fn collect_function_info(
     info
 }
 
+/// Collect all function names called within a body (for transitive assignment tracking).
+fn collect_calls_in_body(node: Node, source: &str, calls: &mut HashSet<String>) {
+    let kind = node.kind();
+    // Plain call: func_name()
+    if kind == "call"
+        && let Some(func_id) = node.named_child(0)
+        && func_id.kind() == "identifier"
+        && let Ok(callee) = func_id.utf8_text(source.as_bytes())
+    {
+        calls.insert(callee.to_string());
+    }
+    // self.func_name()
+    if kind == "attribute"
+        && let Some(first) = node.named_child(0)
+        && first.kind() == "identifier"
+        && first.utf8_text(source.as_bytes()).ok() == Some("self")
+    {
+        let mut c = node.walk();
+        for child in node.children(&mut c) {
+            if child.kind() == "attribute_call"
+                && let Some(method_id) = child.named_child(0)
+                && method_id.kind() == "identifier"
+                && let Ok(callee) = method_id.utf8_text(source.as_bytes())
+            {
+                calls.insert(callee.to_string());
+            }
+        }
+    }
+    // Recurse
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            collect_calls_in_body(cursor.node(), source, calls);
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+    }
+}
+
+/// Extract the class name from `extends ClassName` at the top of the file.
+fn extract_extends_class(root: Node, source: &str) -> Option<String> {
+    let mut cursor = root.walk();
+    for child in root.children(&mut cursor) {
+        if child.kind() == "extends_statement" {
+            // The class name is in a "type" or "identifier" named child
+            let mut c = child.walk();
+            for sub in child.children(&mut c) {
+                if sub.kind() == "type" || sub.kind() == "identifier" {
+                    return sub.utf8_text(source.as_bytes()).ok().map(String::from);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Compute the transitive set of member assignments reachable from a function
+/// by following its call graph (BFS). E.g. `_ready → _build_ui → _build_move_panel`
+/// will collect assigns from all three functions.
+fn transitive_assigns(start: &str, func_info: &HashMap<String, FuncInfo>) -> HashSet<String> {
+    let mut result = HashSet::new();
+    let mut visited = HashSet::new();
+    let mut queue = std::collections::VecDeque::new();
+
+    if func_info.contains_key(start) {
+        queue.push_back(start.to_string());
+    }
+
+    while let Some(func_name) = queue.pop_front() {
+        if !visited.insert(func_name.clone()) {
+            continue;
+        }
+        if let Some(info) = func_info.get(&func_name) {
+            result.extend(info.assigns.iter().cloned());
+            for callee in &info.calls {
+                if !visited.contains(callee) {
+                    queue.push_back(callee.clone());
+                }
+            }
+        }
+    }
+    result
+}
+
 fn scan_body_for_member_access(
     body: Node,
     source: &str,
     members: &HashSet<String>,
     assigned: &mut HashSet<String>,
     reads_before_assign: &mut HashSet<String>,
+    null_checked: &mut HashSet<String>,
 ) {
     let mut cursor = body.walk();
     for child in body.children(&mut cursor) {
-        scan_statement(child, source, members, assigned, reads_before_assign);
+        scan_statement(
+            child,
+            source,
+            members,
+            assigned,
+            reads_before_assign,
+            null_checked,
+        );
     }
 }
 
@@ -128,6 +267,7 @@ fn scan_statement(
     members: &HashSet<String>,
     assigned: &mut HashSet<String>,
     reads_before_assign: &mut HashSet<String>,
+    null_checked: &mut HashSet<String>,
 ) {
     if node.kind() == "expression_statement" {
         let mut c = node.walk();
@@ -136,7 +276,14 @@ fn scan_statement(
                 && let Some(member) = extract_member_assign(&child, source, members)
             {
                 if let Some(rhs) = child.named_child(1) {
-                    collect_member_reads(rhs, source, members, assigned, reads_before_assign);
+                    collect_member_reads(
+                        rhs,
+                        source,
+                        members,
+                        assigned,
+                        reads_before_assign,
+                        null_checked,
+                    );
                 }
                 assigned.insert(member);
                 return;
@@ -144,7 +291,14 @@ fn scan_statement(
         }
     }
 
-    collect_member_reads(node, source, members, assigned, reads_before_assign);
+    collect_member_reads(
+        node,
+        source,
+        members,
+        assigned,
+        reads_before_assign,
+        null_checked,
+    );
 
     match node.kind() {
         "if_statement" | "for_statement" | "while_statement" | "match_statement" => {
@@ -157,12 +311,20 @@ fn scan_statement(
                         members,
                         assigned,
                         reads_before_assign,
+                        null_checked,
                     );
                 }
                 if (child.kind() == "elif_branch" || child.kind() == "else_branch")
                     && let Some(b) = child.child_by_field_name("body")
                 {
-                    scan_body_for_member_access(b, source, members, assigned, reads_before_assign);
+                    scan_body_for_member_access(
+                        b,
+                        source,
+                        members,
+                        assigned,
+                        reads_before_assign,
+                        null_checked,
+                    );
                 }
             }
         }
@@ -207,32 +369,58 @@ fn collect_member_reads(
     members: &HashSet<String>,
     assigned: &HashSet<String>,
     reads_before_assign: &mut HashSet<String>,
+    null_checked: &mut HashSet<String>,
 ) {
     match node.kind() {
         "identifier" => {
+            // Bare identifier reads are safe (null checks, comparisons, args)
+            // but record them as evidence the function is null-aware about this member.
             if let Ok(name) = node.utf8_text(source.as_bytes())
                 && members.contains(name)
                 && !assigned.contains(name)
             {
-                reads_before_assign.insert(name.to_string());
+                null_checked.insert(name.to_string());
             }
+            return;
         }
         "attribute" => {
             if let Some(first) = node.named_child(0)
                 && first.kind() == "identifier"
-                && first.utf8_text(source.as_bytes()).ok() == Some("self")
             {
-                let mut c = node.walk();
-                for child in node.children(&mut c) {
-                    if child.kind() == "identifier"
-                        && child != first
-                        && let Ok(name) = child.utf8_text(source.as_bytes())
-                        && members.contains(name)
-                        && !assigned.contains(name)
-                    {
-                        reads_before_assign.insert(name.to_string());
+                if first.utf8_text(source.as_bytes()).ok() == Some("self") {
+                    // self.member — flag member reads via self
+                    let mut c = node.walk();
+                    for child in node.children(&mut c) {
+                        if child.kind() == "identifier"
+                            && child != first
+                            && let Ok(name) = child.utf8_text(source.as_bytes())
+                            && members.contains(name)
+                            && !assigned.contains(name)
+                        {
+                            reads_before_assign.insert(name.to_string());
+                        }
                     }
+                    return;
                 }
+                // member.something — dereferencing a possibly-unassigned member
+                if let Ok(name) = first.utf8_text(source.as_bytes())
+                    && members.contains(name)
+                    && !assigned.contains(name)
+                {
+                    reads_before_assign.insert(name.to_string());
+                    return;
+                }
+            }
+        }
+        "subscript" => {
+            // member[index] — dereferencing a possibly-unassigned member
+            if let Some(first) = node.named_child(0)
+                && first.kind() == "identifier"
+                && let Ok(name) = first.utf8_text(source.as_bytes())
+                && members.contains(name)
+                && !assigned.contains(name)
+            {
+                reads_before_assign.insert(name.to_string());
                 return;
             }
         }
@@ -248,6 +436,7 @@ fn collect_member_reads(
                 members,
                 assigned,
                 reads_before_assign,
+                null_checked,
             );
             if !cursor.goto_next_sibling() {
                 break;
@@ -261,6 +450,7 @@ fn check_functions(
     source: &str,
     members: &HashSet<String>,
     func_info: &HashMap<String, FuncInfo>,
+    ready_assigned: &HashSet<String>,
     diags: &mut Vec<LintDiagnostic>,
 ) {
     let mut cursor = root.walk();
@@ -269,21 +459,34 @@ fn check_functions(
     }
     loop {
         let node = cursor.node();
-        if node.kind() == "function_definition"
-            && let Some(name_node) = node.child_by_field_name("name")
-            && let Ok(func_name) = name_node.utf8_text(source.as_bytes())
-            && let Some(body) = node.child_by_field_name("body")
-        {
-            let mut assigned_so_far = HashSet::new();
-            check_body_calls(
-                body,
-                source,
-                members,
-                func_info,
-                func_name,
-                &mut assigned_so_far,
-                diags,
-            );
+        let kind = node.kind();
+        if kind == "function_definition" || kind == "constructor_definition" {
+            let func_name = if kind == "constructor_definition" {
+                Some("_init")
+            } else {
+                node.child_by_field_name("name")
+                    .and_then(|n| n.utf8_text(source.as_bytes()).ok())
+            };
+            if let Some(func_name) = func_name
+                && let Some(body) = node.child_by_field_name("body")
+            {
+                // For non-_ready/_init functions in Node subclasses, pre-populate
+                // with members that _ready() and _init() guarantee are assigned.
+                let mut assigned_so_far = if func_name == "_ready" || func_name == "_init" {
+                    HashSet::new()
+                } else {
+                    ready_assigned.clone()
+                };
+                check_body_calls(
+                    body,
+                    source,
+                    members,
+                    func_info,
+                    func_name,
+                    &mut assigned_so_far,
+                    diags,
+                );
+            }
         }
         if !cursor.goto_next_sibling() {
             break;
@@ -620,5 +823,290 @@ func setup():
     #[test]
     fn opt_in() {
         assert!(!UseBeforeAssign.default_enabled());
+    }
+
+    // --- Node subclass _ready() suppression tests ---
+
+    #[test]
+    fn control_ready_assigns_suppresses_other_methods() {
+        // Procedural UI: _ready calls _build_ui which assigns _label,
+        // then _update reads _label — should not warn.
+        let source = "\
+extends Control
+
+var _label: Label
+
+func _ready():
+\t_build_ui()
+
+func _build_ui():
+\t_label = Label.new()
+\tadd_child(_label)
+
+func _update():
+\t_label.text = \"hello\"
+";
+        assert!(check(source).is_empty());
+    }
+
+    #[test]
+    fn control_ready_direct_assign_suppresses() {
+        // Direct assignment in _ready, read in another method.
+        let source = "\
+extends Control
+
+var _btn: Button
+
+func _ready():
+\t_btn = Button.new()
+\tadd_child(_btn)
+
+func _on_pressed():
+\t_btn.text = \"clicked\"
+";
+        assert!(check(source).is_empty());
+    }
+
+    #[test]
+    fn control_still_warns_in_ready_itself() {
+        // _ready calls setup before assigning — should still warn.
+        let source = "\
+extends Control
+
+var _label: Label
+
+func _ready():
+\t_update()
+\t_label = Label.new()
+
+func _update():
+\t_label.text = \"hello\"
+";
+        let diags = check(source);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("_update()"));
+    }
+
+    #[test]
+    fn non_node_class_no_suppression() {
+        // RefCounted subclass — no _ready suppression.
+        // Even though _ready assigns _data via _build, RefCounted is not a Node
+        // so other functions calling _use_data should still warn.
+        let source = "\
+extends RefCounted
+
+var _data: Dictionary
+
+func _ready():
+\t_build()
+
+func _build():
+\t_data = {}
+
+func process():
+\t_use_data()
+
+func _use_data():
+\t_data.clear()
+";
+        // RefCounted is not a Node, so no suppression for process() calling _use_data()
+        let diags = check(source);
+        assert!(!diags.is_empty());
+    }
+
+    #[test]
+    fn panelcontainer_ready_suppresses() {
+        // PanelContainer extends Node transitively — _ready suppression should work.
+        let source = "\
+extends PanelContainer
+
+var _label: Label
+var _arrow: Label
+
+func _ready() -> void:
+\t_build_ui()
+
+func _build_ui() -> void:
+\t_label = Label.new()
+\t_arrow = Label.new()
+
+func _process(delta: float) -> void:
+\t_advance_queue()
+
+func _advance_queue() -> void:
+\t_label.text = \"hello\"
+\t_arrow.visible = true
+";
+        assert!(check(source).is_empty());
+    }
+
+    #[test]
+    fn node_subclass_suppresses() {
+        // Node2D extends Node — should suppress.
+        let source = "\
+extends Node2D
+
+var _sprite: Sprite2D
+
+func _ready():
+\t_sprite = Sprite2D.new()
+\tadd_child(_sprite)
+
+func _process(_delta):
+\t_sprite.rotation += 0.1
+";
+        assert!(check(source).is_empty());
+    }
+
+    #[test]
+    fn init_assigns_suppresses() {
+        // _init() is the constructor — assignments there are guaranteed.
+        let source = "\
+extends Node
+
+var _processor: Node
+
+func _init() -> void:
+\t_processor = Node.new()
+
+func _do_work():
+\t_use_processor()
+
+func _use_processor():
+\t_processor.queue_free()
+";
+        assert!(check(source).is_empty());
+    }
+
+    #[test]
+    fn bare_identifier_null_check_not_flagged() {
+        // Bare identifier reads (null checks, comparisons, passing as args)
+        // are safe — only dereferences (member.something) are dangerous.
+        let source = "\
+extends Node
+
+var _target: Node2D
+
+func _ready():
+\t_target = get_node(\"Target\")
+
+func _check():
+\tif _target:
+\t\t_target.visible = true
+
+func _compare(other):
+\tif other == _target:
+\t\tpass
+
+func _pass_arg():
+\tprint(_target)
+";
+        assert!(check(source).is_empty());
+    }
+
+    #[test]
+    fn bare_identifier_guard_with_return_not_flagged() {
+        // `if not member: return` is a common guard pattern — safe.
+        let source = "\
+extends Node
+
+var _active: Node
+
+func _ready():
+\t_active = Node.new()
+
+func _process(_delta):
+\tif not _active:
+\t\treturn
+\t_active.queue_free()
+";
+        assert!(check(source).is_empty());
+    }
+
+    #[test]
+    fn null_guard_suppresses_dereference() {
+        // If a function null-checks a member before dereferencing it,
+        // the function is null-aware — don't flag the dereference.
+        let source = "\
+extends Node
+
+var _active: Node2D
+
+func _ready():
+\t_active = get_node(\"Active\")
+
+func _show():
+\tif _active:
+\t\t_active.visible = true
+
+func _hide():
+\tif not _active:
+\t\treturn
+\t_active.visible = false
+
+func _process(_delta):
+\t_show()
+\t_hide()
+";
+        assert!(check(source).is_empty());
+    }
+
+    #[test]
+    fn dereference_without_guard_still_flagged() {
+        // member.property without prior assignment should still warn.
+        let source = "\
+var target: Node2D
+
+func _ready():
+\tsetup()
+\ttarget = get_node(\"T\")
+
+func setup():
+\ttarget.visible = true
+";
+        let diags = check(source);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("target"));
+    }
+
+    #[test]
+    fn subscript_dereference_flagged() {
+        // member[index] is a dereference — should be flagged.
+        let source = "\
+var _items: Array
+
+func _ready():
+\tuse_items()
+\t_items = []
+
+func use_items():
+\t_items[0] = 1
+";
+        let diags = check(source);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("_items"));
+    }
+
+    #[test]
+    fn deep_transitive_chain() {
+        // _ready → _build_ui → _build_panels → assigns _panel
+        let source = "\
+extends Control
+
+var _panel: HBoxContainer
+
+func _ready():
+\t_build_ui()
+
+func _build_ui():
+\t_build_panels()
+
+func _build_panels():
+\t_panel = HBoxContainer.new()
+
+func _update():
+\t_panel.visible = true
+";
+        assert!(check(source).is_empty());
     }
 }

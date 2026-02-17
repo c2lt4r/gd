@@ -55,6 +55,7 @@ pub mod get_node_default_without_onready;
 pub mod get_node_in_process;
 pub mod god_object;
 pub mod incompatible_ternary;
+pub mod infer_unknown_member;
 pub mod look_at_before_tree;
 pub mod loop_variable_name;
 pub mod max_file_lines;
@@ -79,6 +80,7 @@ pub mod unused_private_class_variable;
 pub mod missing_tool;
 pub mod shadowed_variable_base_class;
 pub mod static_called_on_instance;
+pub mod unnamed_node;
 
 use std::collections::HashMap;
 use std::fmt;
@@ -262,12 +264,14 @@ pub trait LintRule: Send + Sync {
 /// 2. Per-rule `severity = "off"` → always disables
 /// 3. Per-rule config (severity != "off") → enables with that severity
 /// 4. Category setting → enables/disables + sets severity for all rules in category
-/// 5. Rule's built-in default (`default_enabled` + default severity)
+/// 5. `--rule` filter → force-enables only the named rules (even opt-in)
+/// 6. Rule's built-in default (`default_enabled` + default severity)
 #[allow(clippy::too_many_lines)]
 pub fn all_rules(
     disabled: &[String],
     rules_config: &HashMap<String, RuleConfig>,
     lint_config: &LintConfig,
+    force_enable: &[String],
 ) -> Vec<Box<dyn LintRule>> {
     let all: Vec<Box<dyn LintRule>> = vec![
         Box::new(naming_convention::NamingConvention),
@@ -346,6 +350,8 @@ pub fn all_rules(
         Box::new(static_called_on_instance::StaticCalledOnInstance),
         Box::new(missing_tool::MissingTool),
         Box::new(enum_name_collision::EnumNameCollision),
+        Box::new(unnamed_node::UnnamedNode),
+        Box::new(infer_unknown_member::InferUnknownMember),
     ];
     all.into_iter()
         .filter(|r| {
@@ -374,7 +380,12 @@ pub fn all_rules(
                 return cat_level != "off";
             }
 
-            // 5. Rule's built-in default
+            // 5. --rule flag force-enables (even opt-in rules)
+            if !force_enable.is_empty() {
+                return force_enable.iter().any(|f| f == name);
+            }
+
+            // 6. Rule's built-in default
             if r.default_enabled() {
                 true
             } else {
@@ -399,7 +410,7 @@ mod tests {
 
     #[test]
     fn all_rules_returns_all_default_enabled_with_no_config() {
-        let rules = all_rules(&[], &empty_rules_config(), &default_lint_config());
+        let rules = all_rules(&[], &empty_rules_config(), &default_lint_config(), &[]);
         // Default-enabled rules should be present, opt-in ones should not
         assert!(rules.iter().any(|r| r.name() == "duplicate-signal"));
         assert!(!rules.iter().any(|r| r.name() == "variant-inference"));
@@ -410,7 +421,7 @@ mod tests {
         // type_safety = "warning" should enable opt-in rules like variant-inference
         let mut config = default_lint_config();
         config.type_safety = Some("warning".to_string());
-        let rules = all_rules(&[], &empty_rules_config(), &config);
+        let rules = all_rules(&[], &empty_rules_config(), &config, &[]);
         assert!(rules.iter().any(|r| r.name() == "variant-inference"));
         assert!(rules.iter().any(|r| r.name() == "static-type-inference"));
     }
@@ -420,7 +431,7 @@ mod tests {
         // correctness = "off" should disable rules like duplicate-signal
         let mut config = default_lint_config();
         config.correctness = Some("off".to_string());
-        let rules = all_rules(&[], &empty_rules_config(), &config);
+        let rules = all_rules(&[], &empty_rules_config(), &config, &[]);
         assert!(!rules.iter().any(|r| r.name() == "duplicate-signal"));
         assert!(!rules.iter().any(|r| r.name() == "duplicate-function"));
     }
@@ -438,7 +449,7 @@ mod tests {
                 ..RuleConfig::default()
             },
         );
-        let rules = all_rules(&[], &rules_config, &config);
+        let rules = all_rules(&[], &rules_config, &config, &[]);
         assert!(rules.iter().any(|r| r.name() == "naming-convention"));
         assert!(!rules.iter().any(|r| r.name() == "shadowed-variable"));
     }
@@ -449,7 +460,7 @@ mod tests {
         let mut config = default_lint_config();
         config.type_safety = Some("warning".to_string());
         let disabled = vec!["variant-inference".to_string()];
-        let rules = all_rules(&disabled, &empty_rules_config(), &config);
+        let rules = all_rules(&disabled, &empty_rules_config(), &config, &[]);
         assert!(!rules.iter().any(|r| r.name() == "variant-inference"));
         // Other type_safety rules still enabled
         assert!(rules.iter().any(|r| r.name() == "missing-type-hint"));
@@ -457,7 +468,7 @@ mod tests {
 
     #[test]
     fn every_rule_has_a_category() {
-        let rules = all_rules(&[], &empty_rules_config(), &default_lint_config());
+        let rules = all_rules(&[], &empty_rules_config(), &default_lint_config(), &[]);
         for rule in &rules {
             // Just verify it doesn't panic
             let _ = rule.category();
