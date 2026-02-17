@@ -5,6 +5,14 @@ use crate::lint::LintOptions;
 use crate::lint::rules::Severity;
 
 #[derive(Args)]
+#[command(after_long_help = "\
+INLINE SUPPRESSION:
+  # gd:ignore                       Suppress all warnings on this line
+  # gd:ignore[rule-name]            Suppress a specific rule on this line
+  # gd:ignore[rule-a, rule-b]       Suppress multiple rules on this line
+  # gd:ignore-next-line             Suppress all warnings on the next line
+  # gd:ignore-next-line[rule-name]  Suppress a specific rule on the next line
+")]
 pub struct LintArgs {
     /// Files or directories to lint (defaults to current directory)
     pub paths: Vec<String>,

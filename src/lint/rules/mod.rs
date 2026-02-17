@@ -55,6 +55,7 @@ pub mod get_node_default_without_onready;
 pub mod get_node_in_process;
 pub mod god_object;
 pub mod incompatible_ternary;
+pub mod infer_unknown_member;
 pub mod look_at_before_tree;
 pub mod loop_variable_name;
 pub mod max_file_lines;
@@ -350,6 +351,7 @@ pub fn all_rules(
         Box::new(missing_tool::MissingTool),
         Box::new(enum_name_collision::EnumNameCollision),
         Box::new(unnamed_node::UnnamedNode),
+        Box::new(infer_unknown_member::InferUnknownMember),
     ];
     all.into_iter()
         .filter(|r| {

@@ -154,14 +154,16 @@ pub(super) fn find_declaration_by_name<'a>(
     None
 }
 
-/// Find a top-level declaration whose range contains the given line (0-based).
+/// Find a top-level declaration at the given line (0-based).
+/// Only matches the declaration's start line — pointing to a line inside
+/// a function body does NOT match the enclosing function.
 pub(super) fn find_declaration_by_line(root: Node, line: usize) -> Option<Node> {
     let mut cursor = root.walk();
     for child in root.children(&mut cursor) {
         if !DECLARATION_KINDS.contains(&child.kind()) {
             continue;
         }
-        if child.start_position().row <= line && line <= child.end_position().row {
+        if child.start_position().row == line {
             return Some(child);
         }
     }
@@ -283,7 +285,7 @@ pub(super) fn find_declaration_in_class_by_line(class_node: Node, line: usize) -
         if !DECLARATION_KINDS.contains(&child.kind()) {
             continue;
         }
-        if child.start_position().row <= line && line <= child.end_position().row {
+        if child.start_position().row == line {
             return Some(child);
         }
     }
@@ -412,6 +414,16 @@ mod tests {
             get_declaration_name(node.unwrap(), src),
             Some("foo".to_string())
         );
+    }
+
+    #[test]
+    fn find_decl_by_line_body_does_not_match() {
+        let src = "func foo():\n\tvar x = 1\n\treturn x\n";
+        let tree = crate::core::parser::parse(src).unwrap();
+        // Line 0 is "func foo():" — should match
+        assert!(find_declaration_by_line(tree.root_node(), 0).is_some());
+        // Line 2 (0-based) is "return x" inside the body — should NOT match
+        assert!(find_declaration_by_line(tree.root_node(), 2).is_none());
     }
 
     // ── declaration_full_range ────────────────────────────────────────────

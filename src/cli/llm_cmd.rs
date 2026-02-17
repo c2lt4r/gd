@@ -26,6 +26,12 @@ gd lint --fix                          # Auto-fix fixable lint issues
 gd lint --format json|text|sarif       # Output format
 gd check                               # Parse + structural + semantic + .tscn/.tres validation
 gd check --format json                 # Machine-readable diagnostics
+# Inline suppression comments (add to end of line or on line before):
+#   # gd:ignore                        Suppress all warnings on this line
+#   # gd:ignore[rule-name]             Suppress a specific rule
+#   # gd:ignore[rule-a, rule-b]        Suppress multiple rules
+#   # gd:ignore-next-line              Suppress all warnings on next line
+#   # gd:ignore-next-line[rule-name]   Suppress a specific rule on next line
 
 ## Run & Build
 gd run                                 # Run project (eval server enabled by default, non-blocking)

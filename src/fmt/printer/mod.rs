@@ -232,6 +232,7 @@ impl Printer {
                     false,
                     self.blank_lines_around_functions,
                     self.blank_lines_around_classes,
+                    source,
                 );
                 self.write_blank_lines(blank_lines);
             }
@@ -277,6 +278,7 @@ impl Printer {
                     true,
                     self.blank_lines_around_functions,
                     self.blank_lines_around_classes,
+                    source,
                 );
                 self.write_blank_lines(blank_lines);
             } else {

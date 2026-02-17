@@ -601,3 +601,34 @@ fn test_trailing_comment_idempotent() {
         "not idempotent:\npass1: {pass1}\npass2: {pass2}"
     );
 }
+
+#[test]
+fn test_ignore_next_line_stays_attached_to_func() {
+    let input = "var x := 1\n# gd:ignore-next-line\nfunc foo():\n\tpass\n";
+    let output = format_source(input);
+    assert!(
+        output.contains("# gd:ignore-next-line\nfunc foo"),
+        "ignore-next-line should stay attached to func, got: {output}"
+    );
+}
+
+#[test]
+fn test_ignore_next_line_stays_attached_to_signal() {
+    let input = "var x := 1\n# gd:ignore-next-line\nsignal my_signal\n";
+    let output = format_source(input);
+    assert!(
+        output.contains("# gd:ignore-next-line\nsignal my_signal"),
+        "ignore-next-line should stay attached to signal, got: {output}"
+    );
+}
+
+#[test]
+fn test_ignore_next_line_in_class_body() {
+    let input =
+        "class Foo:\n\t# gd:ignore-next-line\n\tfunc bar():\n\t\tpass\n\n\tfunc baz():\n\t\tpass\n";
+    let output = format_source(input);
+    assert!(
+        output.contains("# gd:ignore-next-line\n\tfunc bar"),
+        "ignore-next-line should stay attached in class body, got: {output}"
+    );
+}

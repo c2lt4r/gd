@@ -42,7 +42,14 @@ impl LintRule for UseBeforeAssign {
             .unwrap_or_default();
 
         let mut diags = Vec::new();
-        check_functions(root, source, &members, &func_info, &ready_assigned, &mut diags);
+        check_functions(
+            root,
+            source,
+            &members,
+            &func_info,
+            &ready_assigned,
+            &mut diags,
+        );
         diags
     }
 }
@@ -115,9 +122,22 @@ fn collect_function_info(
             {
                 let mut assigned = HashSet::new();
                 let mut reads = HashSet::new();
+                let mut null_checked = HashSet::new();
                 let mut calls = HashSet::new();
-                scan_body_for_member_access(body, source, members, &mut assigned, &mut reads);
+                scan_body_for_member_access(
+                    body,
+                    source,
+                    members,
+                    &mut assigned,
+                    &mut reads,
+                    &mut null_checked,
+                );
                 collect_calls_in_body(body, source, &mut calls);
+                // Members that are null-checked (bare identifier reads) within the
+                // function are assumed to be properly guarded before dereference.
+                for m in &null_checked {
+                    reads.remove(m);
+                }
                 info.insert(
                     func_name.to_string(),
                     FuncInfo {
@@ -195,10 +215,7 @@ fn extract_extends_class(root: Node, source: &str) -> Option<String> {
 /// Compute the transitive set of member assignments reachable from a function
 /// by following its call graph (BFS). E.g. `_ready → _build_ui → _build_move_panel`
 /// will collect assigns from all three functions.
-fn transitive_assigns(
-    start: &str,
-    func_info: &HashMap<String, FuncInfo>,
-) -> HashSet<String> {
+fn transitive_assigns(start: &str, func_info: &HashMap<String, FuncInfo>) -> HashSet<String> {
     let mut result = HashSet::new();
     let mut visited = HashSet::new();
     let mut queue = std::collections::VecDeque::new();
@@ -229,10 +246,18 @@ fn scan_body_for_member_access(
     members: &HashSet<String>,
     assigned: &mut HashSet<String>,
     reads_before_assign: &mut HashSet<String>,
+    null_checked: &mut HashSet<String>,
 ) {
     let mut cursor = body.walk();
     for child in body.children(&mut cursor) {
-        scan_statement(child, source, members, assigned, reads_before_assign);
+        scan_statement(
+            child,
+            source,
+            members,
+            assigned,
+            reads_before_assign,
+            null_checked,
+        );
     }
 }
 
@@ -242,6 +267,7 @@ fn scan_statement(
     members: &HashSet<String>,
     assigned: &mut HashSet<String>,
     reads_before_assign: &mut HashSet<String>,
+    null_checked: &mut HashSet<String>,
 ) {
     if node.kind() == "expression_statement" {
         let mut c = node.walk();
@@ -250,7 +276,14 @@ fn scan_statement(
                 && let Some(member) = extract_member_assign(&child, source, members)
             {
                 if let Some(rhs) = child.named_child(1) {
-                    collect_member_reads(rhs, source, members, assigned, reads_before_assign);
+                    collect_member_reads(
+                        rhs,
+                        source,
+                        members,
+                        assigned,
+                        reads_before_assign,
+                        null_checked,
+                    );
                 }
                 assigned.insert(member);
                 return;
@@ -258,7 +291,14 @@ fn scan_statement(
         }
     }
 
-    collect_member_reads(node, source, members, assigned, reads_before_assign);
+    collect_member_reads(
+        node,
+        source,
+        members,
+        assigned,
+        reads_before_assign,
+        null_checked,
+    );
 
     match node.kind() {
         "if_statement" | "for_statement" | "while_statement" | "match_statement" => {
@@ -271,12 +311,20 @@ fn scan_statement(
                         members,
                         assigned,
                         reads_before_assign,
+                        null_checked,
                     );
                 }
                 if (child.kind() == "elif_branch" || child.kind() == "else_branch")
                     && let Some(b) = child.child_by_field_name("body")
                 {
-                    scan_body_for_member_access(b, source, members, assigned, reads_before_assign);
+                    scan_body_for_member_access(
+                        b,
+                        source,
+                        members,
+                        assigned,
+                        reads_before_assign,
+                        null_checked,
+                    );
                 }
             }
         }
@@ -321,32 +369,58 @@ fn collect_member_reads(
     members: &HashSet<String>,
     assigned: &HashSet<String>,
     reads_before_assign: &mut HashSet<String>,
+    null_checked: &mut HashSet<String>,
 ) {
     match node.kind() {
         "identifier" => {
+            // Bare identifier reads are safe (null checks, comparisons, args)
+            // but record them as evidence the function is null-aware about this member.
             if let Ok(name) = node.utf8_text(source.as_bytes())
                 && members.contains(name)
                 && !assigned.contains(name)
             {
-                reads_before_assign.insert(name.to_string());
+                null_checked.insert(name.to_string());
             }
+            return;
         }
         "attribute" => {
             if let Some(first) = node.named_child(0)
                 && first.kind() == "identifier"
-                && first.utf8_text(source.as_bytes()).ok() == Some("self")
             {
-                let mut c = node.walk();
-                for child in node.children(&mut c) {
-                    if child.kind() == "identifier"
-                        && child != first
-                        && let Ok(name) = child.utf8_text(source.as_bytes())
-                        && members.contains(name)
-                        && !assigned.contains(name)
-                    {
-                        reads_before_assign.insert(name.to_string());
+                if first.utf8_text(source.as_bytes()).ok() == Some("self") {
+                    // self.member — flag member reads via self
+                    let mut c = node.walk();
+                    for child in node.children(&mut c) {
+                        if child.kind() == "identifier"
+                            && child != first
+                            && let Ok(name) = child.utf8_text(source.as_bytes())
+                            && members.contains(name)
+                            && !assigned.contains(name)
+                        {
+                            reads_before_assign.insert(name.to_string());
+                        }
                     }
+                    return;
                 }
+                // member.something — dereferencing a possibly-unassigned member
+                if let Ok(name) = first.utf8_text(source.as_bytes())
+                    && members.contains(name)
+                    && !assigned.contains(name)
+                {
+                    reads_before_assign.insert(name.to_string());
+                    return;
+                }
+            }
+        }
+        "subscript" => {
+            // member[index] — dereferencing a possibly-unassigned member
+            if let Some(first) = node.named_child(0)
+                && first.kind() == "identifier"
+                && let Ok(name) = first.utf8_text(source.as_bytes())
+                && members.contains(name)
+                && !assigned.contains(name)
+            {
+                reads_before_assign.insert(name.to_string());
                 return;
             }
         }
@@ -362,6 +436,7 @@ fn collect_member_reads(
                 members,
                 assigned,
                 reads_before_assign,
+                null_checked,
             );
             if !cursor.goto_next_sibling() {
                 break;
@@ -832,7 +907,7 @@ func process():
 \t_use_data()
 
 func _use_data():
-\tprint(_data)
+\t_data.clear()
 ";
         // RefCounted is not a Node, so no suppression for process() calling _use_data()
         let diags = check(source);
@@ -901,6 +976,115 @@ func _use_processor():
 \t_processor.queue_free()
 ";
         assert!(check(source).is_empty());
+    }
+
+    #[test]
+    fn bare_identifier_null_check_not_flagged() {
+        // Bare identifier reads (null checks, comparisons, passing as args)
+        // are safe — only dereferences (member.something) are dangerous.
+        let source = "\
+extends Node
+
+var _target: Node2D
+
+func _ready():
+\t_target = get_node(\"Target\")
+
+func _check():
+\tif _target:
+\t\t_target.visible = true
+
+func _compare(other):
+\tif other == _target:
+\t\tpass
+
+func _pass_arg():
+\tprint(_target)
+";
+        assert!(check(source).is_empty());
+    }
+
+    #[test]
+    fn bare_identifier_guard_with_return_not_flagged() {
+        // `if not member: return` is a common guard pattern — safe.
+        let source = "\
+extends Node
+
+var _active: Node
+
+func _ready():
+\t_active = Node.new()
+
+func _process(_delta):
+\tif not _active:
+\t\treturn
+\t_active.queue_free()
+";
+        assert!(check(source).is_empty());
+    }
+
+    #[test]
+    fn null_guard_suppresses_dereference() {
+        // If a function null-checks a member before dereferencing it,
+        // the function is null-aware — don't flag the dereference.
+        let source = "\
+extends Node
+
+var _active: Node2D
+
+func _ready():
+\t_active = get_node(\"Active\")
+
+func _show():
+\tif _active:
+\t\t_active.visible = true
+
+func _hide():
+\tif not _active:
+\t\treturn
+\t_active.visible = false
+
+func _process(_delta):
+\t_show()
+\t_hide()
+";
+        assert!(check(source).is_empty());
+    }
+
+    #[test]
+    fn dereference_without_guard_still_flagged() {
+        // member.property without prior assignment should still warn.
+        let source = "\
+var target: Node2D
+
+func _ready():
+\tsetup()
+\ttarget = get_node(\"T\")
+
+func setup():
+\ttarget.visible = true
+";
+        let diags = check(source);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("target"));
+    }
+
+    #[test]
+    fn subscript_dereference_flagged() {
+        // member[index] is a dereference — should be flagged.
+        let source = "\
+var _items: Array
+
+func _ready():
+\tuse_items()
+\t_items = []
+
+func use_items():
+\t_items[0] = 1
+";
+        let diags = check(source);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("_items"));
     }
 
     #[test]

@@ -22,6 +22,7 @@ def main():
     enum_members = []
     methods = []
     properties = []
+    signals = []
 
     for cls in api.get("classes", []):
         name = cls["name"]
@@ -50,6 +51,10 @@ def main():
             prop_type = prop.get("type", "Variant")
             properties.append((f"{name}.{prop_name}", prop_type))
 
+        for sig in cls.get("signals", []):
+            sig_name = sig["name"]
+            signals.append(f"{name}.{sig_name}")
+
     # Also extract global enums/constants
     for enum in api.get("global_enums", []):
         enum_name = enum["name"]
@@ -70,6 +75,7 @@ def main():
     enum_members.sort(key=lambda x: x[0])
     methods.sort(key=lambda x: x[0])
     properties.sort(key=lambda x: x[0])
+    signals.sort()
 
     print('//! Auto-generated Godot class database.')
     print('//! Regenerate: python tools/generate_class_db.py extension_api.json > src/class_db/generated.rs')
@@ -109,6 +115,12 @@ def main():
     print(f'pub static PROPERTIES: &[(&str, &str)] = &[')
     for key, val in properties:
         print(f'    ("{key}", "{val}"),')
+    print('];')
+    print()
+
+    print(f'pub static SIGNALS: &[&str] = &[')
+    for key in signals:
+        print(f'    "{key}",')
     print('];')
 
 

@@ -23,6 +23,9 @@ impl LintRule for PrintStatement {
 }
 
 /// Debug print function names to detect.
+/// Note: push_error() and push_warning() are intentionally excluded — they are
+/// Godot's structured logging (appear in debugger with stack traces) and belong
+/// in production code for error conditions and graceful degradation.
 const PRINT_FUNCTIONS: &[&str] = &[
     "print",
     "prints",
@@ -31,8 +34,6 @@ const PRINT_FUNCTIONS: &[&str] = &[
     "print_debug",
     "print_rich",
     "print_verbose",
-    "push_error",
-    "push_warning",
 ];
 
 fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
@@ -142,19 +143,21 @@ mod tests {
     }
 
     #[test]
-    fn detects_push_error() {
+    fn no_warning_push_error() {
         let source = "func foo():\n\tpush_error(\"error\")\n";
-        let diags = check(source);
-        assert_eq!(diags.len(), 1);
-        assert!(diags[0].message.contains("push_error()"));
+        assert!(
+            check(source).is_empty(),
+            "push_error is structured logging, not debug print"
+        );
     }
 
     #[test]
-    fn detects_push_warning() {
+    fn no_warning_push_warning() {
         let source = "func foo():\n\tpush_warning(\"warning\")\n";
-        let diags = check(source);
-        assert_eq!(diags.len(), 1);
-        assert!(diags[0].message.contains("push_warning()"));
+        assert!(
+            check(source).is_empty(),
+            "push_warning is structured logging, not debug print"
+        );
     }
 
     // ── No false positives ────────────────────────────────────────────
@@ -199,7 +202,7 @@ func foo():
         let source = "\
 func foo():
 \tprint(\"a\")
-\tpush_error(\"b\")
+\tprints(\"b\", \"c\")
 ";
         let diags = check(source);
         assert_eq!(diags.len(), 2);

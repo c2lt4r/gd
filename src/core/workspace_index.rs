@@ -195,6 +195,7 @@ impl ProjectIndex {
     }
 
     /// Check if a method exists on a user-defined class (walking extends chain).
+    #[allow(dead_code)]
     pub fn method_exists(&self, class: &str, method: &str) -> bool {
         let mut current = class;
         for _ in 0..64 {
