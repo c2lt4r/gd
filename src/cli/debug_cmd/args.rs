@@ -103,6 +103,8 @@ pub enum DebugCommand {
     Set(SetNodeArgs),
     /// Wait for a runtime condition (node exists, property value, etc.)
     Await(AwaitArgs),
+    /// AI-readable snapshot of game state: player position, nearby nodes, scene, input actions
+    Describe(DescribeArgs),
     /// Navigate a node to a target position using its NavigationAgent
     Navigate(NavigateArgs),
 
@@ -943,6 +945,19 @@ pub struct AwaitArgs {
     /// Poll interval in milliseconds (default: 200)
     #[arg(long, default_value = "200")]
     pub interval: u64,
+    /// Output format
+    #[arg(long, default_value = "text")]
+    pub format: OutputFormat,
+}
+
+#[derive(Args)]
+pub struct DescribeArgs {
+    /// Node to use as the reference point (default: auto-detect player)
+    #[arg(long)]
+    pub node: Option<String>,
+    /// Radius for nearby node search (default: 500 for 2D, 20 for 3D)
+    #[arg(long)]
+    pub radius: Option<f64>,
     /// Output format
     #[arg(long, default_value = "text")]
     pub format: OutputFormat,

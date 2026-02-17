@@ -159,6 +159,9 @@ gd debug live remove-keep --path <node-path> --object-id <N>  # Remove but keep 
 gd debug live restore --object-id <N> --path <node-path> [--pos <N>]  # Restore (uses object ID)
 
 # Node automation (requires eval server — `gd run` enables by default)
+gd debug describe                      # AI snapshot: player position, nearby nodes, scene, input actions
+gd debug describe --node <name>        # Use specific node as reference (default: auto-detect Player)
+gd debug describe --radius <N>         # Custom search radius (default: 500 for 2D, 20 for 3D)
 gd debug find --name <name>            # Find node by name (recursive) or absolute path
 gd debug find --type <class>           # Find all nodes of a class type
 gd debug find --group <group>          # Find all nodes in a group

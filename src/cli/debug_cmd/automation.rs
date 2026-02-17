@@ -4,8 +4,8 @@ use miette::{Result, miette};
 use owo_colors::OwoColorize;
 
 use super::args::{
-    AwaitArgs, CallArgs, DragArgs, FindArgs, GetPropArgs, HoverArgs, MoveToArgs, NavigateArgs,
-    OutputFormat, SetNodeArgs,
+    AwaitArgs, CallArgs, DescribeArgs, DragArgs, FindArgs, GetPropArgs, HoverArgs, MoveToArgs,
+    NavigateArgs, OutputFormat, SetNodeArgs,
 };
 use crate::core::live_eval::send_eval;
 use crate::core::project::GodotProject;
@@ -112,6 +112,176 @@ fn parse_pos(pos: &str) -> Result<(String, String)> {
     y.parse::<f64>()
         .map_err(|_| miette!("Invalid Y coordinate: {y}"))?;
     Ok((x, y))
+}
+
+// ── 0. Describe ──────────────────────────────────────────────────────
+
+/// Generate the GDScript for `describe`. A single eval that returns a full
+/// game-state snapshot: reference node, nearby nodes, scene info, input actions.
+fn generate_describe_script(node_spec: Option<&str>, radius: Option<f64>) -> String {
+    // If node is specified, use it; otherwise auto-detect common player names
+    let find_ref = if let Some(spec) = node_spec {
+        if spec.starts_with('/') {
+            format!(
+                "\tvar ref_node = root.get_node_or_null(\"{spec}\")\n\
+                 \tif ref_node == null: return \"ERROR: node '{spec}' not found\""
+            )
+        } else {
+            format!(
+                "\tvar ref_node = root.find_child(\"{spec}\", true, false)\n\
+                 \tif ref_node == null: return \"ERROR: node '{spec}' not found\""
+            )
+        }
+    } else {
+        "\tvar ref_node = null\n\
+         \tfor n in [\"Player\", \"player\", \"Character\", \"character\"]:\n\
+         \t\tref_node = root.find_child(n, true, false)\n\
+         \t\tif ref_node: break\n\
+         \tif ref_node == null: return \"ERROR: no player node found (use --node to specify)\""
+            .to_string()
+    };
+
+    // Radius: use provided, or default based on 2D vs 3D detection
+    let radius_expr = if let Some(r) = radius {
+        format!("{r}")
+    } else {
+        "500.0 if ref_node is Node2D else 20.0 if ref_node is Node3D else 500.0".to_string()
+    };
+
+    format!(
+        "extends Node\n\
+         \n\
+         func run():\n\
+         \tvar root = get_tree().get_root()\n\
+         {find_ref}\n\
+         \tvar ref_pos = ref_node.global_position\n\
+         \tvar radius = {radius_expr}\n\
+         \tvar is_3d = ref_node is Node3D\n\
+         \n\
+         \t# Nearby nodes\n\
+         \tvar nearby = []\n\
+         \t_scan(root, ref_node, ref_pos, radius, is_3d, nearby)\n\
+         \tnearby.sort_custom(func(a, b): return a[\"distance\"] < b[\"distance\"])\n\
+         \n\
+         \t# Scene info\n\
+         \tvar scene_path = get_tree().current_scene.scene_file_path if get_tree().current_scene else \"unknown\"\n\
+         \n\
+         \t# Input actions\n\
+         \tvar actions = []\n\
+         \tfor act in InputMap.get_actions():\n\
+         \t\tif not act.begins_with(\"ui_\"): actions.append(str(act))\n\
+         \n\
+         \tvar d = {{}}\n\
+         \td[\"reference_node\"] = {{\"name\": ref_node.name, \"class\": ref_node.get_class(), \"position\": str(ref_pos), \"groups\": _groups(ref_node)}}\n\
+         \td[\"scene\"] = scene_path\n\
+         \td[\"nearby\"] = nearby\n\
+         \td[\"input_actions\"] = actions\n\
+         \td[\"radius\"] = radius\n\
+         \treturn JSON.stringify(d)\n\
+         \n\
+         func _scan(node, ref_node, ref_pos, radius, is_3d, out):\n\
+         \tif node == ref_node: \n\
+         \t\tfor child in node.get_children():\n\
+         \t\t\t_scan(child, ref_node, ref_pos, radius, is_3d, out)\n\
+         \t\treturn\n\
+         \tvar pos = null\n\
+         \tif is_3d and node is Node3D:\n\
+         \t\tpos = node.global_position\n\
+         \telif not is_3d and node is Node2D:\n\
+         \t\tpos = node.global_position\n\
+         \telif node is Control:\n\
+         \t\tpos = node.get_global_rect().get_center()\n\
+         \tif pos != null:\n\
+         \t\tvar dist = pos.distance_to(ref_pos)\n\
+         \t\tif dist <= radius:\n\
+         \t\t\tout.append({{\"name\": node.name, \"class\": node.get_class(), \"position\": str(pos), \"distance\": snappedf(dist, 0.1), \"groups\": _groups(node)}})\n\
+         \tfor child in node.get_children():\n\
+         \t\t_scan(child, ref_node, ref_pos, radius, is_3d, out)\n\
+         \n\
+         func _groups(node):\n\
+         \tvar g = []\n\
+         \tfor gr in node.get_groups():\n\
+         \t\tg.append(str(gr))\n\
+         \treturn g\n"
+    )
+}
+
+pub fn cmd_describe(args: &DescribeArgs) -> Result<()> {
+    let script = generate_describe_script(args.node.as_deref(), args.radius);
+    let result = run_eval(&script)?;
+    let parsed: serde_json::Value = serde_json::from_str(&result)
+        .map_err(|e| miette!("Failed to parse describe result: {e}"))?;
+
+    match args.format {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&parsed).unwrap());
+        }
+        OutputFormat::Text => {
+            // Reference node
+            let ref_node = &parsed["reference_node"];
+            let name = ref_node["name"].as_str().unwrap_or("?");
+            let cls = ref_node["class"].as_str().unwrap_or("?");
+            let pos = ref_node["position"].as_str().unwrap_or("?");
+            let groups = format_groups(&ref_node["groups"]);
+            println!(
+                "{} {} at {}{groups}",
+                name.green().bold(),
+                cls.dimmed(),
+                pos.cyan()
+            );
+
+            // Scene
+            let scene = parsed["scene"].as_str().unwrap_or("?");
+            println!("Scene: {}", scene.dimmed());
+
+            // Nearby
+            let radius = parsed["radius"].as_f64().unwrap_or(0.0);
+            let nearby = parsed["nearby"].as_array();
+            if let Some(nodes) = nearby {
+                println!(
+                    "\n{} ({} within {radius:.0}):",
+                    "Nearby".bold(),
+                    nodes.len()
+                );
+                for n in nodes {
+                    let n_name = n["name"].as_str().unwrap_or("?");
+                    let n_cls = n["class"].as_str().unwrap_or("?");
+                    let n_dist = n["distance"].as_f64().unwrap_or(0.0);
+                    let n_groups = format_groups(&n["groups"]);
+                    println!(
+                        "  {:.0} — {} {}{n_groups}",
+                        n_dist,
+                        n_name.green(),
+                        n_cls.dimmed()
+                    );
+                }
+            }
+
+            // Input actions
+            if let Some(acts) = parsed["input_actions"].as_array()
+                && !acts.is_empty()
+            {
+                let act_strs: Vec<&str> =
+                    acts.iter().filter_map(serde_json::Value::as_str).collect();
+                println!("\n{}: {}", "Input actions".bold(), act_strs.join(", "));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Format groups array as a display string.
+fn format_groups(groups: &serde_json::Value) -> String {
+    let arr = match groups.as_array() {
+        Some(a) if !a.is_empty() => a,
+        _ => return String::new(),
+    };
+    let strs: Vec<&str> = arr.iter().filter_map(serde_json::Value::as_str).collect();
+    if strs.is_empty() {
+        String::new()
+    } else {
+        format!(" [{}]", strs.join(", "))
+    }
 }
 
 // ── 1. Find ──────────────────────────────────────────────────────────
@@ -1042,6 +1212,28 @@ mod tests {
             !tree.root_node().has_error(),
             "Script has parse errors:\n{script}"
         );
+    }
+
+    // -- Describe scripts --
+
+    #[test]
+    fn describe_auto_detect_parses() {
+        assert_parses(&generate_describe_script(None, None));
+    }
+
+    #[test]
+    fn describe_named_node_parses() {
+        assert_parses(&generate_describe_script(Some("Hero"), None));
+    }
+
+    #[test]
+    fn describe_absolute_path_parses() {
+        assert_parses(&generate_describe_script(Some("/root/Main/Player"), None));
+    }
+
+    #[test]
+    fn describe_custom_radius_parses() {
+        assert_parses(&generate_describe_script(Some("Player"), Some(1000.0)));
     }
 
     // -- Find scripts --
