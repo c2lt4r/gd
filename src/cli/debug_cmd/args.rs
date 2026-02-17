@@ -103,6 +103,9 @@ pub enum DebugCommand {
     Set(SetNodeArgs),
     /// Wait for a runtime condition (node exists, property value, etc.)
     Await(AwaitArgs),
+    /// Navigate a node to a target position using its NavigationAgent
+    Navigate(NavigateArgs),
+
     /// Move mouse cursor to screen coordinates or a node's position
     #[command(name = "mouse-move")]
     MouseMove(MoveToArgs),
@@ -936,6 +939,28 @@ pub struct AwaitArgs {
     pub removed: bool,
     /// Timeout in seconds (default: 10)
     #[arg(long, default_value = "10")]
+    pub timeout: f64,
+    /// Poll interval in milliseconds (default: 200)
+    #[arg(long, default_value = "200")]
+    pub interval: u64,
+    /// Output format
+    #[arg(long, default_value = "text")]
+    pub format: OutputFormat,
+}
+
+#[derive(Args)]
+pub struct NavigateArgs {
+    /// Node to move (must have a NavigationAgent2D/3D child)
+    #[arg(long)]
+    pub node: String,
+    /// Target coordinates (e.g. "500,300" for 2D or "10,0,5" for 3D)
+    #[arg(long)]
+    pub to: Option<String>,
+    /// Target node name/path (navigates to its position)
+    #[arg(long)]
+    pub to_node: Option<String>,
+    /// Timeout in seconds (default: 30)
+    #[arg(long, default_value = "30")]
     pub timeout: f64,
     /// Poll interval in milliseconds (default: 200)
     #[arg(long, default_value = "200")]

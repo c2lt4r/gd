@@ -175,6 +175,10 @@ gd debug await --node <name> --property <p> --gt <v>       # Wait for property >
 gd debug await --node <name> --property <p> --lt <v>       # Wait for property < value
 gd debug await --node <name> --property <p> --contains <s> # Wait for string contains
 gd debug await ... --timeout <secs> --interval <ms>  # Configure polling (default: 10s / 200ms)
+gd debug navigate --node <name> --to <X,Y>             # Navigate node via NavigationAgent2D (2D coords)
+gd debug navigate --node <name> --to <X,Y,Z>          # Navigate node via NavigationAgent3D (3D coords)
+gd debug navigate --node <name> --to-node <target>     # Navigate to another node's position
+gd debug navigate ... --timeout <secs> --interval <ms> # Configure polling (default: 30s / 200ms)
 gd debug mouse-move --pos <X,Y>                      # Move mouse cursor to screen coordinates
 gd debug mouse-move --node <name>                    # Move mouse to node's screen position
 gd debug mouse-move --node <name> --duration <secs>  # Smooth cursor move over duration

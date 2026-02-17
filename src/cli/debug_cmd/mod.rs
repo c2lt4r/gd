@@ -63,6 +63,7 @@ pub fn exec(args: &DebugArgs) -> Result<()> {
         DebugCommand::Call(ref a) => automation::cmd_call(a),
         DebugCommand::Set(ref a) => automation::cmd_set(a),
         DebugCommand::Await(ref a) => automation::cmd_await(a),
+        DebugCommand::Navigate(ref a) => automation::cmd_navigate(a),
         DebugCommand::MouseMove(ref a) => automation::cmd_move_to(a),
         DebugCommand::MouseDrag(ref a) => automation::cmd_drag(a),
         DebugCommand::MouseHover(ref a) => automation::cmd_hover(a),

@@ -4,8 +4,8 @@ use miette::{Result, miette};
 use owo_colors::OwoColorize;
 
 use super::args::{
-    AwaitArgs, CallArgs, DragArgs, FindArgs, GetPropArgs, HoverArgs, MoveToArgs, OutputFormat,
-    SetNodeArgs,
+    AwaitArgs, CallArgs, DragArgs, FindArgs, GetPropArgs, HoverArgs, MoveToArgs, NavigateArgs,
+    OutputFormat, SetNodeArgs,
 };
 use crate::core::live_eval::send_eval;
 use crate::core::project::GodotProject;
@@ -546,7 +546,185 @@ pub fn cmd_await(args: &AwaitArgs) -> Result<()> {
     }
 }
 
-// ── 6. Move-to ───────────────────────────────────────────────────────
+// ── 6. Navigate ──────────────────────────────────────────────────────
+
+/// Generate GDScript to find the NavigationAgent on a node and set the target.
+/// Supports both 2D (Vector2) and 3D (Vector3) targets.
+fn generate_navigate_start_script(node_lookup: &str, target_expr: &str) -> String {
+    format!(
+        "extends Node\n\
+         \n\
+         func run():\n\
+         {node_lookup}\n\
+         \tvar agent = null\n\
+         \tfor child in node.get_children():\n\
+         \t\tif child is NavigationAgent2D or child is NavigationAgent3D:\n\
+         \t\t\tagent = child\n\
+         \t\t\tbreak\n\
+         \tif agent == null: return \"ERROR: no NavigationAgent found on '\" + node.name + \"'\"\n\
+         \tagent.target_position = {target_expr}\n\
+         \tvar d = {{\"node\": node.name, \"agent\": agent.get_class(), \"target\": str({target_expr})}}\n\
+         \treturn JSON.stringify(d)\n"
+    )
+}
+
+/// Generate GDScript to check if navigation is finished.
+fn generate_navigate_poll_script(node_lookup: &str) -> String {
+    format!(
+        "extends Node\n\
+         \n\
+         func run():\n\
+         {node_lookup}\n\
+         \tvar agent = null\n\
+         \tfor child in node.get_children():\n\
+         \t\tif child is NavigationAgent2D or child is NavigationAgent3D:\n\
+         \t\t\tagent = child\n\
+         \t\t\tbreak\n\
+         \tif agent == null: return \"ERROR: agent lost\"\n\
+         \tvar pos = node.global_position\n\
+         \tvar d = {{\"finished\": agent.is_navigation_finished(), \"position\": str(pos)}}\n\
+         \treturn JSON.stringify(d)\n"
+    )
+}
+
+/// Parse "X,Y" or "X,Y,Z" into a GDScript Vector expression.
+fn parse_target_coords(coords: &str) -> Result<String> {
+    let parts: Vec<&str> = coords.split(',').collect();
+    match parts.len() {
+        2 => {
+            let x = parts[0].trim();
+            let y = parts[1].trim();
+            x.parse::<f64>()
+                .map_err(|_| miette!("Invalid X coordinate: {x}"))?;
+            y.parse::<f64>()
+                .map_err(|_| miette!("Invalid Y coordinate: {y}"))?;
+            Ok(format!("Vector2({x}, {y})"))
+        }
+        3 => {
+            let x = parts[0].trim();
+            let y = parts[1].trim();
+            let z = parts[2].trim();
+            x.parse::<f64>()
+                .map_err(|_| miette!("Invalid X coordinate: {x}"))?;
+            y.parse::<f64>()
+                .map_err(|_| miette!("Invalid Y coordinate: {y}"))?;
+            z.parse::<f64>()
+                .map_err(|_| miette!("Invalid Z coordinate: {z}"))?;
+            Ok(format!("Vector3({x}, {y}, {z})"))
+        }
+        _ => Err(miette!(
+            "Invalid coordinates '{coords}' — expected X,Y (2D) or X,Y,Z (3D)"
+        )),
+    }
+}
+
+/// Resolve target from a node's global_position via eval.
+fn generate_navigate_to_node_script(node_lookup: &str, target_node: &str) -> String {
+    let target_lookup = if target_node.starts_with('/') {
+        format!(
+            "\tvar target = get_tree().get_root().get_node_or_null(\"{target_node}\")\n\
+             \tif target == null: return \"ERROR: target node '{target_node}' not found\""
+        )
+    } else {
+        format!(
+            "\tvar target = get_tree().get_root().find_child(\"{target_node}\", true, false)\n\
+             \tif target == null: return \"ERROR: target node '{target_node}' not found\""
+        )
+    };
+    format!(
+        "extends Node\n\
+         \n\
+         func run():\n\
+         {node_lookup}\n\
+         {target_lookup}\n\
+         \tvar agent = null\n\
+         \tfor child in node.get_children():\n\
+         \t\tif child is NavigationAgent2D or child is NavigationAgent3D:\n\
+         \t\t\tagent = child\n\
+         \t\t\tbreak\n\
+         \tif agent == null: return \"ERROR: no NavigationAgent found on '\" + node.name + \"'\"\n\
+         \tagent.target_position = target.global_position\n\
+         \tvar d = {{\"node\": node.name, \"agent\": agent.get_class(), \"target\": str(target.global_position)}}\n\
+         \treturn JSON.stringify(d)\n"
+    )
+}
+
+pub fn cmd_navigate(args: &NavigateArgs) -> Result<()> {
+    let lookup = node_lookup_gdscript(&args.node);
+
+    // 1. Set target on the NavigationAgent
+    let start_script = match (&args.to, &args.to_node) {
+        (Some(coords), None) => {
+            let target_expr = parse_target_coords(coords)?;
+            generate_navigate_start_script(&lookup, &target_expr)
+        }
+        (None, Some(target_node)) => generate_navigate_to_node_script(&lookup, target_node),
+        (Some(_), Some(_)) => return Err(miette!("Specify either --to or --to-node, not both")),
+        (None, None) => return Err(miette!("Specify --to X,Y or --to-node <name>")),
+    };
+
+    let start_result = run_eval(&start_script)?;
+    let start_info: serde_json::Value =
+        serde_json::from_str(&start_result).map_err(|e| miette!("Failed to parse result: {e}"))?;
+
+    let agent_type = start_info["agent"].as_str().unwrap_or("?");
+    let target_str = start_info["target"].as_str().unwrap_or("?");
+
+    // 2. Poll until navigation finishes
+    let poll_script = generate_navigate_poll_script(&lookup);
+    let start = Instant::now();
+    let timeout = Duration::from_secs_f64(args.timeout);
+    let interval = Duration::from_millis(args.interval);
+
+    loop {
+        if start.elapsed() > timeout {
+            return Err(miette!(
+                "Navigation timeout after {:.1}s — {} didn't reach {target_str}",
+                args.timeout,
+                args.node,
+            ));
+        }
+
+        std::thread::sleep(interval);
+
+        let poll_result = run_eval_timeout(&poll_script, AUTO_TIMEOUT)?;
+        let poll: serde_json::Value = serde_json::from_str(&poll_result).unwrap_or_default();
+
+        if poll["finished"].as_bool() == Some(true) {
+            let elapsed = start.elapsed().as_secs_f64();
+            let final_pos = poll["position"].as_str().unwrap_or("?");
+            match args.format {
+                OutputFormat::Json => {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "node": args.node,
+                            "agent": agent_type,
+                            "target": target_str,
+                            "final_position": final_pos,
+                            "elapsed_seconds": elapsed,
+                            "finished": true,
+                        }))
+                        .unwrap()
+                    );
+                }
+                OutputFormat::Text => {
+                    println!(
+                        "{}",
+                        format!(
+                            "{} navigated to {target_str} ({elapsed:.1}s, {agent_type})",
+                            args.node
+                        )
+                        .green()
+                    );
+                }
+            }
+            return Ok(());
+        }
+    }
+}
+
+// ── 7. Move-to ───────────────────────────────────────────────────────
 
 fn generate_move_to_node_script(node: &str) -> String {
     let lookup = node_lookup_gdscript(node);
@@ -984,6 +1162,64 @@ mod tests {
     #[test]
     fn move_to_node_path_script_parses() {
         assert_parses(&generate_move_to_node_script("/root/UI/Button"));
+    }
+
+    // -- Navigate scripts --
+
+    #[test]
+    fn navigate_start_2d_parses() {
+        let lookup = node_lookup_gdscript("Player");
+        assert_parses(&generate_navigate_start_script(
+            &lookup,
+            "Vector2(500, 300)",
+        ));
+    }
+
+    #[test]
+    fn navigate_start_3d_parses() {
+        let lookup = node_lookup_gdscript("Player");
+        assert_parses(&generate_navigate_start_script(
+            &lookup,
+            "Vector3(10, 0, 5)",
+        ));
+    }
+
+    #[test]
+    fn navigate_poll_parses() {
+        let lookup = node_lookup_gdscript("Player");
+        assert_parses(&generate_navigate_poll_script(&lookup));
+    }
+
+    #[test]
+    fn navigate_to_node_parses() {
+        let lookup = node_lookup_gdscript("Player");
+        assert_parses(&generate_navigate_to_node_script(&lookup, "Chest"));
+    }
+
+    #[test]
+    fn navigate_to_node_path_parses() {
+        let lookup = node_lookup_gdscript("Player");
+        assert_parses(&generate_navigate_to_node_script(
+            &lookup,
+            "/root/Main/Exit",
+        ));
+    }
+
+    #[test]
+    fn parse_target_coords_2d() {
+        assert_eq!(parse_target_coords("500,300").unwrap(), "Vector2(500, 300)");
+    }
+
+    #[test]
+    fn parse_target_coords_3d() {
+        assert_eq!(parse_target_coords("10,0,5").unwrap(), "Vector3(10, 0, 5)");
+    }
+
+    #[test]
+    fn parse_target_coords_invalid() {
+        assert!(parse_target_coords("100").is_err());
+        assert!(parse_target_coords("1,2,3,4").is_err());
+        assert!(parse_target_coords("abc,200").is_err());
     }
 
     // -- Drag scripts --
