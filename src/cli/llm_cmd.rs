@@ -110,10 +110,12 @@ gd debug ignore-errors [--off]         # Ignore/stop-on error breaks
 gd debug stack                         # Call stack
 gd debug vars --frame <N>              # Variables for stack frame
 
-# Evaluate expressions (auto-breaks into _process, no manual breakpoint needed)
-gd debug eval --expr <expr>            # Evaluate GDScript expression in game context
-gd debug eval --expr <expr> --format json  # JSON result with type info
-# Rewrites: $Node → get_node(), x = val → set(), x += val → set(), multi; expr → [array]
+# Evaluate (full GDScript — loops, if, var, for all work)
+gd debug eval --expr <expr>            # Evaluate GDScript in game context (via eval server)
+gd debug eval --expr "for i in 5: print(i)"  # Loops and control flow work
+gd debug eval --expr <expr> --timeout 30     # Custom timeout (default: 10s)
+gd debug eval --expr <expr> --format json    # JSON result
+gd debug eval --expr <expr> --bare     # Use Godot's Expression class (no loops/if/var, but reads breakpoint locals)
 
 # Game loop control
 gd debug suspend                       # Freeze game loop

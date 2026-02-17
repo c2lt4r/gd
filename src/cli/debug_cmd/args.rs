@@ -600,6 +600,13 @@ pub struct EvalBinArgs {
     /// Stack frame index (default: 0 = top frame)
     #[arg(long, default_value = "0")]
     pub frame: u32,
+    /// Use Godot's Expression class instead of file-based eval (limited to expressions,
+    /// no loops/if/var — but can read local variables at a breakpoint)
+    #[arg(long)]
+    pub bare: bool,
+    /// Timeout in seconds (default: 10)
+    #[arg(short, long, default_value_t = 10)]
+    pub timeout: u64,
     /// Output format
     #[arg(long, default_value = "text")]
     pub format: OutputFormat,

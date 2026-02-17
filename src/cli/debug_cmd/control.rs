@@ -290,6 +290,43 @@ pub(crate) fn cmd_vars(args: &VarsArgs) -> Result<()> {
 pub(crate) fn cmd_evaluate(args: &EvalBinArgs) -> Result<()> {
     ensure_binary_debug()?;
 
+    if args.bare {
+        return cmd_evaluate_bare(args);
+    }
+
+    // Default: full GDScript via file-based eval IPC (supports loops, if, var, etc.)
+    let input = args.expr.trim();
+    let script = crate::cli::eval_cmd::generate_live_eval_script(input);
+
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let project_root = crate::core::config::find_project_root(&cwd)
+        .ok_or_else(|| miette!("No Godot project found (missing project.godot)"))?;
+
+    let timeout = std::time::Duration::from_secs(args.timeout);
+    let result = crate::core::live_eval::send_eval(&script, &project_root, timeout)?;
+
+    match args.format {
+        OutputFormat::Json => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "result": result,
+                }))
+                .unwrap()
+            );
+        }
+        OutputFormat::Text => {
+            if !result.is_empty() {
+                println!("{result}");
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Bare mode: use Godot's Expression class via binary debug protocol.
+/// Limited to expressions (no loops/if/var) but can read local variables at a breakpoint.
+fn cmd_evaluate_bare(args: &EvalBinArgs) -> Result<()> {
     let input = args.expr.trim();
     let (expr, was_rewritten) = rewrite_eval_expression(input);
     if was_rewritten && !matches!(args.format, OutputFormat::Json) {

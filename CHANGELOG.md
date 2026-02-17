@@ -15,6 +15,9 @@
   - `mouse-drag` — multi-step cursor drag between coordinates or nodes (renamed from `drag`).
   - `mouse-hover` — hover cursor over a node/position with configurable dwell time (renamed from `hover`).
 
+### Changed
+- **`gd debug eval` now uses full GDScript by default** — previously used Godot's Expression class (no loops, if, var). Now uses the file-based eval server, supporting arbitrary GDScript including loops, conditionals, and variable declarations. Add `--bare` to use the old Expression class behavior (needed for reading local variables at a breakpoint). Also adds `--timeout` flag (default 10s).
+
 ### Fixed
 - **Node2D screen position** — `mouse-move`/`mouse-drag`/`mouse-hover` targeting a Node2D now apply the viewport canvas transform, so coordinates are correct when a Camera2D has panned or zoomed.
 

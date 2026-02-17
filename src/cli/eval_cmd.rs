@@ -266,7 +266,7 @@ fn validate_script_base_class(path: &Path) -> Result<()> {
 
 /// Generate a GDScript that the eval server will load and execute.
 /// The script extends Node so `get_node()` with absolute paths works.
-fn generate_live_eval_script(input: &str) -> String {
+pub fn generate_live_eval_script(input: &str) -> String {
     // If the input is already a complete script (has extends + run method), use as-is
     let trimmed = input.trim();
     if trimmed.starts_with("extends ") && trimmed.contains("func run()") {
