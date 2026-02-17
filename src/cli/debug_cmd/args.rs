@@ -91,6 +91,26 @@ pub enum DebugCommand {
     /// Take a screenshot (alias for `camera screenshot`)
     Screenshot(ScreenshotArgs),
 
+    // ── Node automation (requires eval server — enabled by default in `gd run`) ──
+    /// Find nodes in the running scene by name, type, or group
+    Find(FindArgs),
+    /// Read a property value from a node by name/path/ID
+    #[command(name = "get-prop")]
+    GetProp(GetPropArgs),
+    /// Call a method on a node by name/path/ID
+    Call(CallArgs),
+    /// Set a property on a node by name/path (no object ID needed)
+    Set(SetNodeArgs),
+    /// Wait for a runtime condition (node exists, property value, etc.)
+    Await(AwaitArgs),
+    /// Move mouse cursor to coordinates or a node
+    #[command(name = "move-to")]
+    MoveTo(MoveToArgs),
+    /// Drag from one position/node to another
+    Drag(DragArgs),
+    /// Hover over a node or position (triggers mouse_enter events)
+    Hover(HoverArgs),
+
     // ── Subcommand groups ──
     /// Live editing commands (requires `live set-root` first)
     Live(LiveArgs),
@@ -812,6 +832,172 @@ pub struct WaitArgs {
     /// Wait N seconds
     #[arg(long)]
     pub seconds: Option<f64>,
+    /// Output format
+    #[arg(long, default_value = "text")]
+    pub format: OutputFormat,
+}
+
+// ── Node automation args ──────────────────────────────────────────────
+
+#[derive(Args)]
+pub struct FindArgs {
+    /// Node name (recursive find_child) or absolute path (/root/Main/Player)
+    #[arg(long)]
+    pub name: Option<String>,
+    /// Find all nodes of this class type (e.g. "CharacterBody2D")
+    #[arg(long, name = "type")]
+    pub type_: Option<String>,
+    /// Find all nodes in this group (e.g. "enemies")
+    #[arg(long)]
+    pub group: Option<String>,
+    /// Output format
+    #[arg(long, default_value = "text")]
+    pub format: OutputFormat,
+}
+
+#[derive(Args)]
+pub struct GetPropArgs {
+    /// Node name (find_child) or absolute path (/root/...)
+    #[arg(long)]
+    pub node: Option<String>,
+    /// Object ID (from scene tree)
+    #[arg(long)]
+    pub id: Option<u64>,
+    /// Property name to read
+    #[arg(long)]
+    pub property: String,
+    /// Output format
+    #[arg(long, default_value = "text")]
+    pub format: OutputFormat,
+}
+
+#[derive(Args)]
+pub struct CallArgs {
+    /// Node name (find_child) or absolute path (/root/...)
+    #[arg(long)]
+    pub node: Option<String>,
+    /// Object ID (from scene tree)
+    #[arg(long)]
+    pub id: Option<u64>,
+    /// Method name to call
+    #[arg(long)]
+    pub method: String,
+    /// Arguments as JSON array (e.g. '[10, "hello"]')
+    #[arg(long, default_value = "[]")]
+    pub args: String,
+    /// Output format
+    #[arg(long, default_value = "text")]
+    pub format: OutputFormat,
+}
+
+#[derive(Args)]
+pub struct SetNodeArgs {
+    /// Node name (find_child) or absolute path (/root/...)
+    #[arg(long)]
+    pub node: String,
+    /// Property name to set
+    #[arg(long)]
+    pub property: String,
+    /// Value as GDScript expression (e.g. "200", "Vector2(100, 200)", '"Game Over"')
+    #[arg(long)]
+    pub value: String,
+    /// Take a screenshot after setting the property
+    #[arg(long)]
+    pub screenshot: bool,
+    /// Output format
+    #[arg(long, default_value = "text")]
+    pub format: OutputFormat,
+}
+
+#[derive(Args)]
+pub struct AwaitArgs {
+    /// Node name/path to watch (for --property or --removed)
+    #[arg(long)]
+    pub node: Option<String>,
+    /// Property name to poll
+    #[arg(long)]
+    pub property: Option<String>,
+    /// Wait until property equals this value
+    #[arg(long)]
+    pub equals: Option<String>,
+    /// Wait until property is greater than this value
+    #[arg(long)]
+    pub gt: Option<String>,
+    /// Wait until property is less than this value
+    #[arg(long)]
+    pub lt: Option<String>,
+    /// Wait until property string contains this substring
+    #[arg(long)]
+    pub contains: Option<String>,
+    /// Wait for node to be removed (instead of existing)
+    #[arg(long)]
+    pub removed: bool,
+    /// Timeout in seconds (default: 10)
+    #[arg(long, default_value = "10")]
+    pub timeout: f64,
+    /// Poll interval in milliseconds (default: 200)
+    #[arg(long, default_value = "200")]
+    pub interval: u64,
+    /// Output format
+    #[arg(long, default_value = "text")]
+    pub format: OutputFormat,
+}
+
+#[derive(Args)]
+pub struct MoveToArgs {
+    /// Viewport coordinates (e.g. "400,300")
+    #[arg(long)]
+    pub pos: Option<String>,
+    /// Node name (find_child) or absolute path
+    #[arg(long)]
+    pub node: Option<String>,
+    /// Smooth move duration in seconds (interpolated steps)
+    #[arg(long)]
+    pub duration: Option<f64>,
+    /// Output format
+    #[arg(long, default_value = "text")]
+    pub format: OutputFormat,
+}
+
+#[derive(Args)]
+pub struct DragArgs {
+    /// Start coordinates (e.g. "100,200")
+    #[arg(long)]
+    pub from: Option<String>,
+    /// End coordinates (e.g. "300,400")
+    #[arg(long)]
+    pub to: Option<String>,
+    /// Start node name/path
+    #[arg(long)]
+    pub from_node: Option<String>,
+    /// End node name/path
+    #[arg(long)]
+    pub to_node: Option<String>,
+    /// Mouse button: left, right, or middle
+    #[arg(long, default_value = "left")]
+    pub button: String,
+    /// Drag duration in seconds (default: 0.2)
+    #[arg(long, default_value = "0.2")]
+    pub duration: f64,
+    /// Number of interpolation steps (default: 10)
+    #[arg(long, default_value = "10")]
+    pub steps: u32,
+    /// Output format
+    #[arg(long, default_value = "text")]
+    pub format: OutputFormat,
+}
+
+#[derive(Args)]
+pub struct HoverArgs {
+    /// Node name (find_child) or absolute path
+    #[arg(long)]
+    pub node: Option<String>,
+    /// Viewport coordinates (e.g. "200,150")
+    #[arg(long)]
+    pub pos: Option<String>,
+    /// How long to hold the hover in seconds (default: 0.1)
+    #[arg(long, default_value = "0.1")]
+    pub duration: f64,
     /// Output format
     #[arg(long, default_value = "text")]
     pub format: OutputFormat,

@@ -158,6 +158,32 @@ gd debug live res-path --path <res-path> --id <N>       # Set resource path mapp
 gd debug live remove-keep --path <node-path> --object-id <N>  # Remove but keep ref (uses object ID)
 gd debug live restore --object-id <N> --path <node-path> [--pos <N>]  # Restore (uses object ID)
 
+# Node automation (requires eval server — `gd run` enables by default)
+gd debug find --name <name>            # Find node by name (recursive) or absolute path
+gd debug find --type <class>           # Find all nodes of a class type
+gd debug find --group <group>          # Find all nodes in a group
+gd debug get-prop --node <name> --property <prop>    # Read property value by node name/path
+gd debug get-prop --id <N> --property <prop>         # Read property value by object ID
+gd debug call --node <name> --method <method> [--args <json-array>]   # Call method on node
+gd debug call --id <N> --method <method> [--args <json-array>]        # Call method by object ID
+gd debug set --node <name> --property <prop> --value <gdscript-expr>  # Set property by name/path
+gd debug set --node <name> --property <prop> --value <expr> --screenshot  # Set + auto-screenshot
+gd debug await --node <name>                         # Wait for node to exist (poll)
+gd debug await --node <name> --removed               # Wait for node to be removed
+gd debug await --node <name> --property <p> --equals <v>   # Wait for property == value
+gd debug await --node <name> --property <p> --gt <v>       # Wait for property > value
+gd debug await --node <name> --property <p> --lt <v>       # Wait for property < value
+gd debug await --node <name> --property <p> --contains <s> # Wait for string contains
+gd debug await ... --timeout <secs> --interval <ms>  # Configure polling (default: 10s / 200ms)
+gd debug move-to --pos <X,Y>                         # Move mouse cursor to coordinates
+gd debug move-to --node <name>                       # Move mouse to node center
+gd debug move-to --node <name> --duration <secs>     # Smooth move over duration
+gd debug drag --from <X,Y> --to <X,Y>               # Drag from A to B
+gd debug drag --from-node <n> --to-node <n>          # Drag between nodes
+gd debug drag ... --button <left|right|middle> --duration <secs> --steps <N>
+gd debug hover --node <name>                         # Hover over node (triggers mouse_enter)
+gd debug hover --pos <X,Y> --duration <secs>         # Hover at position for duration
+
 # File management
 gd debug reload-cached --file <path> [--file <path>...]  # Reload cached files
 

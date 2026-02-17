@@ -1,4 +1,5 @@
 mod args;
+mod automation;
 mod camera;
 mod control;
 mod input;
@@ -55,6 +56,16 @@ pub fn exec(args: &DebugArgs) -> Result<()> {
         DebugCommand::Type(ref a) => input::cmd_type_text(a),
         DebugCommand::Wait(ref a) => input::cmd_wait(a),
         DebugCommand::Screenshot(ref a) => camera::cmd_screenshot(a),
+
+        // Node automation (eval-based)
+        DebugCommand::Find(ref a) => automation::cmd_find(a),
+        DebugCommand::GetProp(ref a) => automation::cmd_get_prop(a),
+        DebugCommand::Call(ref a) => automation::cmd_call(a),
+        DebugCommand::Set(ref a) => automation::cmd_set(a),
+        DebugCommand::Await(ref a) => automation::cmd_await(a),
+        DebugCommand::MoveTo(ref a) => automation::cmd_move_to(a),
+        DebugCommand::Drag(ref a) => automation::cmd_drag(a),
+        DebugCommand::Hover(ref a) => automation::cmd_hover(a),
 
         // Subcommand groups
         DebugCommand::Live(ref a) => exec_live(a),
