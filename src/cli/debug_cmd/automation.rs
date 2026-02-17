@@ -739,6 +739,8 @@ fn generate_navigate_start_script(node_lookup: &str, target_expr: &str) -> Strin
 }
 
 /// Generate GDScript to check if navigation is finished.
+/// Returns `finished`, `position`, `target`, and `distance` so Rust can apply
+/// distance-based fallback when `is_navigation_finished()` is unreliable.
 fn generate_navigate_poll_script(node_lookup: &str) -> String {
     format!(
         "extends Node\n\
@@ -752,7 +754,9 @@ fn generate_navigate_poll_script(node_lookup: &str) -> String {
          \t\t\tbreak\n\
          \tif agent == null: return \"ERROR: agent lost\"\n\
          \tvar pos = node.global_position\n\
-         \tvar d = {{\"finished\": agent.is_navigation_finished(), \"position\": str(pos)}}\n\
+         \tvar tgt = agent.target_position\n\
+         \tvar dist = pos.distance_to(tgt)\n\
+         \tvar d = {{\"finished\": agent.is_navigation_finished(), \"position\": str(pos), \"target\": str(tgt), \"distance\": dist}}\n\
          \treturn JSON.stringify(d)\n"
     )
 }
@@ -846,6 +850,17 @@ pub fn cmd_navigate(args: &NavigateArgs) -> Result<()> {
     let timeout = Duration::from_secs_f64(args.timeout);
     let interval = Duration::from_millis(args.interval);
 
+    // Distance threshold: consider "arrived" if within this many units of the target.
+    // Godot's is_navigation_finished() uses a very tight tolerance and can return false
+    // even when the node is visually at the destination.
+    let distance_threshold = 25.0_f64;
+
+    // Stall detection: if position doesn't change for N consecutive polls, the node is
+    // either arrived or permanently stuck — either way, stop polling.
+    let mut last_position = String::new();
+    let mut stall_count: u32 = 0;
+    let stall_limit: u32 = 5; // 5 * 200ms = 1s of no movement
+
     loop {
         if start.elapsed() > timeout {
             return Err(miette!(
@@ -860,9 +875,25 @@ pub fn cmd_navigate(args: &NavigateArgs) -> Result<()> {
         let poll_result = run_eval_timeout(&poll_script, AUTO_TIMEOUT)?;
         let poll: serde_json::Value = serde_json::from_str(&poll_result).unwrap_or_default();
 
-        if poll["finished"].as_bool() == Some(true) {
+        let finished = poll["finished"].as_bool() == Some(true);
+        let distance = poll["distance"].as_f64();
+        let close_enough = distance.is_some_and(|d| d < distance_threshold);
+
+        // Stall detection: position unchanged between consecutive polls
+        let current_pos = poll["position"].as_str().unwrap_or("").to_string();
+        if current_pos == last_position && !current_pos.is_empty() {
+            stall_count += 1;
+        } else {
+            stall_count = 0;
+        }
+        last_position = current_pos;
+
+        let stalled = stall_count >= stall_limit && close_enough;
+
+        if finished || close_enough || stalled {
             let elapsed = start.elapsed().as_secs_f64();
             let final_pos = poll["position"].as_str().unwrap_or("?");
+            let final_dist = distance.unwrap_or(0.0);
             match args.format {
                 OutputFormat::Json => {
                     println!(
@@ -872,6 +903,7 @@ pub fn cmd_navigate(args: &NavigateArgs) -> Result<()> {
                             "agent": agent_type,
                             "target": target_str,
                             "final_position": final_pos,
+                            "distance": final_dist,
                             "elapsed_seconds": elapsed,
                             "finished": true,
                         }))

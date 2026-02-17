@@ -134,6 +134,7 @@ fn search_path() -> Option<PathBuf> {
 ///
 /// Uses `_initialize()` + `process_frame` signal instead of overriding `_process()`
 /// to avoid breaking SceneTree's built-in frame processing.
+#[allow(clippy::too_many_lines)]
 pub fn generate_eval_server(scene_path: &str) -> String {
     format!(
         r##"extends SceneTree
@@ -141,9 +142,22 @@ pub fn generate_eval_server(scene_path: &str) -> String {
 var _root: String
 var _runner: Node = null
 var _eval_id: String = ""
+var _pending_eval_id: String = ""
 
 func _initialize():
 	_root = ProjectSettings.globalize_path("res://")
+	# Clean up stale eval files from a previous session (gd stop may not
+	# have been able to delete them if the game was still shutting down).
+	var godot_dir = _root.path_join(".godot")
+	var dir = DirAccess.open(godot_dir)
+	if dir:
+		dir.list_dir_begin()
+		var fname = dir.get_next()
+		while fname != "":
+			if fname.begins_with("gd-eval-request-") or fname.begins_with("gd-eval-result-"):
+				DirAccess.remove_absolute(godot_dir.path_join(fname))
+			fname = dir.get_next()
+		dir.list_dir_end()
 	var f = FileAccess.open(_root.path_join(".godot/gd-eval-ready"), FileAccess.WRITE)
 	if f:
 		f.store_string(str(OS.get_process_id()))
@@ -160,12 +174,26 @@ func _initialize():
 	get_root().call_deferred("add_child", timer)
 
 func _poll():
+	# Watchdog: if a previous run() crashed (GDScript aborts the callback),
+	# _pending_eval_id is still set but _runner is null. Write an error result
+	# so the Rust side doesn't hang waiting for a file that will never appear.
+	if not _pending_eval_id.is_empty() and _runner == null:
+		_eval_id = _pending_eval_id
+		_pending_eval_id = ""
+		_write_result(JSON.stringify({{"result": null, "error": "Script execution failed (runtime error)"}}))
+		return
+
 	# State machine: if a runner is pending, execute it (it's been in tree 1+ frames)
 	if _runner != null:
-		var result = _runner.call("run")
-		if is_instance_valid(_runner):
-			_runner.queue_free()
+		# Clear _runner FIRST so a GDScript error in run() can't leave us stuck.
+		# Set _pending_eval_id so the watchdog can write an error if run() crashes.
+		var runner = _runner
 		_runner = null
+		_pending_eval_id = _eval_id
+		var result = runner.call("run") if is_instance_valid(runner) else null
+		_pending_eval_id = ""
+		if is_instance_valid(runner):
+			runner.queue_free()
 		var result_str = str(result) if result != null else ""
 		_write_result(JSON.stringify({{"result": result_str, "error": ""}}))
 		return
@@ -216,18 +244,25 @@ func _poll():
 		_write_result('{{"result":null,"error":"Script compilation failed"}}')
 		return
 
-	var runner = Node.new()
-	runner.name = "GdEvalRunner"
-	runner.process_mode = Node.PROCESS_MODE_ALWAYS
-	runner.set_script(script)
+	# Instantiate via script.new() — handles both Node and RefCounted scripts.
+	# Using Node.new() + set_script() would crash if the script extends RefCounted.
+	var runner = script.new()
 	if not runner.has_method("run"):
-		runner.queue_free()
+		if runner is Node:
+			runner.queue_free()
 		_write_result('{{"result":null,"error":"Script has no run() method"}}')
 		return
 
-	# Add to tree — run() will be called next poll cycle via state machine
-	get_root().add_child(runner)
-	_runner = runner
+	if runner is Node:
+		runner.name = "GdEvalRunner"
+		runner.process_mode = Node.PROCESS_MODE_ALWAYS
+		get_root().add_child(runner)
+		_runner = runner
+	else:
+		# RefCounted script — call run() immediately (no tree needed)
+		var result = runner.call("run")
+		var result_str = str(result) if result != null else ""
+		_write_result(JSON.stringify({{"result": result_str, "error": ""}}))
 
 func _write_result(json_str: String):
 	var name = "gd-eval-result.json"

@@ -65,16 +65,23 @@ fi
 if $DRY_RUN; then
     echo ""
     echo "[dry-run] Would:"
-    echo "  1. Set Cargo.toml version to $NEW_VERSION"
+    echo "  1. Set Cargo.toml version to $NEW_VERSION (if needed)"
     echo "  2. Run cargo fmt --check, clippy, test"
-    echo "  3. Commit, push, tag $TAG, push tag"
+    echo "  3. Commit (if needed), push, tag $TAG, push tag"
     echo "  4. Build release and install to ~/.local/bin/gd"
     exit 0
 fi
 
-# ── Update Cargo.toml version ────────────────────────────────────────────────
+# ── Update Cargo.toml version (if needed) ────────────────────────────────────
 
-sed -i "0,/^version = \".*\"/s/^version = \".*\"/version = \"${NEW_VERSION}\"/" Cargo.toml
+if [ "$CURRENT" = "$NEW_VERSION" ]; then
+    echo ""
+    echo "Cargo.toml already at $NEW_VERSION, skipping version bump."
+    NEEDS_COMMIT=false
+else
+    sed -i "0,/^version = \".*\"/s/^version = \".*\"/version = \"${NEW_VERSION}\"/" Cargo.toml
+    NEEDS_COMMIT=true
+fi
 
 # ── Run checks ───────────────────────────────────────────────────────────────
 
@@ -88,23 +95,40 @@ cargo clippy --all-targets -- -D warnings
 echo "Running cargo test..."
 cargo test
 
-# ── Update Cargo.lock ────────────────────────────────────────────────────────
+# ── Commit version bump if needed ────────────────────────────────────────────
 
-cargo update --workspace
+if $NEEDS_COMMIT; then
+    echo ""
+    echo "Updating Cargo.lock..."
+    cargo update --workspace
 
-# ── Commit, tag, push ────────────────────────────────────────────────────────
+    echo "Committing version bump..."
+    git add Cargo.toml Cargo.lock
+    git commit -m "Bump version to ${NEW_VERSION}"
+fi
+
+# ── Tag ──────────────────────────────────────────────────────────────────────
 
 echo ""
-echo "Committing..."
-git add Cargo.toml Cargo.lock
-git commit -m "Bump version to ${NEW_VERSION}"
+if git rev-parse "$TAG" >/dev/null 2>&1; then
+    EXISTING=$(git rev-parse "$TAG")
+    if [ "$EXISTING" = "$(git rev-parse HEAD)" ]; then
+        echo "Tag $TAG already on HEAD, keeping it."
+    else
+        echo "Tag $TAG exists on $EXISTING, moving to HEAD..."
+        git tag -d "$TAG"
+        git tag "$TAG"
+    fi
+else
+    echo "Tagging ${TAG}..."
+    git tag "$TAG"
+fi
 
-echo "Tagging ${TAG}..."
-git tag "$TAG"
+# ── Push ─────────────────────────────────────────────────────────────────────
 
 echo "Pushing..."
 git push
-git push origin "$TAG"
+git push origin "$TAG" --force
 
 # ── Build release binary ─────────────────────────────────────────────────────
 

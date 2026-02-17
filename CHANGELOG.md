@@ -21,6 +21,13 @@
 ### Fixed
 - **Node2D screen position** — `mouse-move`/`mouse-drag`/`mouse-hover` targeting a Node2D now apply the viewport canvas transform, so coordinates are correct when a Camera2D has panned or zoomed.
 - **Hold commands detect game exit** — `press/key/click --hold` and `type --delay` now poll the eval-ready file during the hold/delay instead of a blind sleep. If the game exits mid-hold, the command exits immediately with an error instead of lingering as an orphaned process.
+- **Eval server crash recovery** — if a GDScript eval errors during `run()`, the eval server now clears its internal state first, so it never gets permanently stuck. Previously, a runtime error could leave the server in a state where it ignored all subsequent eval requests.
+- **Navigate finish detection** — `gd debug navigate` now uses distance-based finish detection (< 25 units from target) in addition to `is_navigation_finished()`. Also detects stalled position (no movement for 1s while close). Godot's `is_navigation_finished()` uses a very tight tolerance and can return false even when the node is visually at the destination.
+- **Concurrent eval safety** — stale eval file cleanup now only purges files older than 30 seconds, preventing deletion of result files from concurrent eval calls (e.g., agent running navigate polls alongside other eval commands).
+- **Debug break auto-recovery** — when an eval script triggers a GDScript runtime error that pauses the game via the debugger, `gd` now detects the debug break, grabs the stack trace, sends `continue` to resume the game, and returns the error. Previously, a debug break would freeze the eval server indefinitely with a cryptic timeout message.
+- **Eval server RefCounted fix** — the eval server now uses `script.new()` instead of `Node.new()` + `set_script()`, correctly handling scripts that extend RefCounted. Previously, non-Node scripts would crash the eval server with "Script inherits from RefCounted" and trigger a debug break.
+- **Eval server startup cleanup** — the eval server now purges stale request/result files during initialization, preventing leftover files from a previous session (e.g., when `gd stop` couldn't delete them due to Windows file locking on WSL).
+- **WSL file write retry** — eval request file writes retry once on transient `ENOENT` errors, which can occur on WSL under rapid cross-filesystem I/O (e.g., navigate polling every 200ms).
 
 ## [0.2.15] - 2026-02-16
 

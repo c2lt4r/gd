@@ -80,10 +80,19 @@ pub fn send_eval(script: &str, project_root: &Path, timeout: Duration) -> Result
     let eval_id = generate_eval_id();
     let tagged_script = format!("# eval-id: {eval_id}\n{script}");
 
-    // Write to per-ID request file so concurrent evals don't overwrite each other
+    // Write to per-ID request file so concurrent evals don't overwrite each other.
+    // Retry once on ENOENT — WSL cross-filesystem writes to /mnt/c/ can transiently
+    // fail under rapid I/O (e.g., navigate polling every 200ms).
     let request_path = godot_dir.join(format!("gd-eval-request-{eval_id}.gd"));
-    std::fs::write(&request_path, &tagged_script)
-        .map_err(|e| miette!("Failed to write eval request: {e}"))?;
+    if let Err(e) = std::fs::write(&request_path, &tagged_script) {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            std::thread::sleep(Duration::from_millis(50));
+            std::fs::write(&request_path, &tagged_script)
+                .map_err(|e2| miette!("Failed to write eval request (retry): {e2}"))?;
+        } else {
+            return Err(miette!("Failed to write eval request: {e}"));
+        }
+    }
 
     // 5. Poll for the ID-specific result file
     let result_path = godot_dir.join(format!("gd-eval-result-{eval_id}.json"));
@@ -114,12 +123,29 @@ pub fn send_eval(script: &str, project_root: &Path, timeout: Duration) -> Result
             // Check if the request file was consumed (Godot picked it up)
             let consumed = !request_path.is_file();
             let _ = std::fs::remove_file(&request_path);
+
             if consumed {
+                // The eval server picked up the request but never returned a result.
+                // Most likely cause: the eval script triggered a GDScript runtime error
+                // and the debugger broke on it, freezing the main thread.
+                // Try to grab the error from the debug stack and auto-continue.
+                if let Some(error_msg) = try_recover_debug_break() {
+                    return Err(miette!("Eval script error (game auto-resumed):\n{error_msg}"));
+                }
                 return Err(miette!(
                     "Timed out waiting for eval result ({}s)\n\
                      The eval server picked up the request but never returned a result.\n\
                      The game may need to be restarted: gd run",
                     timeout.as_secs()
+                ));
+            }
+
+            // Request file was NOT consumed — eval server isn't scanning.
+            // Could be a previous debug break freezing the main thread.
+            if let Some(error_msg) = try_recover_debug_break() {
+                return Err(miette!(
+                    "Game was paused on a debug error (auto-resumed):\n{error_msg}\n\
+                     Retry your command."
                 ));
             }
             return Err(miette!(
@@ -134,6 +160,57 @@ pub fn send_eval(script: &str, project_root: &Path, timeout: Duration) -> Result
     }
 }
 
+/// Try to recover from a debug break: check if paused, grab stack, continue, return error.
+/// Returns `Some(error_description)` if the game was paused on a debug error/breakpoint.
+fn try_recover_debug_break() -> Option<String> {
+    let timeout = Some(Duration::from_secs(3));
+
+    // Fast check: is the game paused at a breakpoint? (atomic flag, no network round-trip)
+    let bp = crate::lsp::daemon_client::query_daemon(
+        "debug_is_at_breakpoint",
+        serde_json::json!({}),
+        timeout,
+    )?;
+    if bp.get("at_breakpoint").and_then(serde_json::Value::as_bool) != Some(true) {
+        return None;
+    }
+
+    // Game is paused — grab the stack dump for error context
+    let mut msg = String::from("GDScript error paused the game");
+    if let Some(stack) = crate::lsp::daemon_client::query_daemon(
+        "debug_get_stack_dump",
+        serde_json::json!({}),
+        timeout,
+    )
+        && let Some(frames) = stack.as_array()
+        && !frames.is_empty()
+    {
+        use std::fmt::Write;
+        msg = String::new();
+        for frame in frames {
+            let file = frame
+                .get("file")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("?");
+            let line = frame.get("line").and_then(serde_json::Value::as_u64).unwrap_or(0);
+            let func = frame
+                .get("function")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("?");
+            let _ = writeln!(msg, "  {file}:{line} in {func}()");
+        }
+    }
+
+    // Resume the game so it doesn't stay frozen
+    let _ = crate::lsp::daemon_client::query_daemon(
+        "debug_continue",
+        serde_json::json!({}),
+        timeout,
+    );
+
+    Some(msg.trim_end().to_string())
+}
+
 /// Check if the `gd-eval-ready` file is valid (PID inside is still alive).
 fn is_ready_file_valid(ready_path: &Path) -> bool {
     let Ok(content) = std::fs::read_to_string(ready_path) else {
@@ -146,17 +223,25 @@ fn is_ready_file_valid(ready_path: &Path) -> bool {
     crate::lsp::daemon::is_process_alive(pid)
 }
 
-/// Remove any lingering request and result files from `.godot/`.
-/// This prevents stale files from earlier timed-out evals from being
-/// processed before new requests (the eval server picks files in
-/// directory order, not creation order).
+/// Remove stale request/result files from `.godot/` that are older than 30 seconds.
+/// Only purges old files to avoid deleting results from concurrent eval calls
+/// (e.g., agent running navigate polls + describe in parallel).
 fn purge_stale_eval_files(godot_dir: &Path) {
+    let cutoff = std::time::Duration::from_secs(30);
     if let Ok(entries) = std::fs::read_dir(godot_dir) {
         for entry in entries.flatten() {
             let name = entry.file_name();
             let name = name.to_string_lossy();
             if name.starts_with("gd-eval-request-") || name.starts_with("gd-eval-result-") {
-                let _ = std::fs::remove_file(entry.path());
+                let dominated = entry
+                    .metadata()
+                    .ok()
+                    .and_then(|m| m.modified().ok())
+                    .and_then(|t| t.elapsed().ok())
+                    .is_some_and(|age| age > cutoff);
+                if dominated {
+                    let _ = std::fs::remove_file(entry.path());
+                }
             }
         }
     }
