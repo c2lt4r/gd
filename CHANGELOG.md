@@ -19,6 +19,7 @@
 - **References pre-filter** — cross-file reference search skips files that don't contain the target identifier text before parsing, reducing unnecessary tree-sitter parses.
 
 ### Fixed
+- **`safe-delete-file` no longer deletes without `--force`** — previously, unreferenced files were auto-deleted even without `--force`. Now only reports references by default; `--force` is required to actually delete.
 - **Refactor commands preserve annotations** — `replace-symbol`, `delete-symbol`, `move-symbol`, and `insert` now include preceding `@rpc`, `@export`, `@onready`, and other annotations when computing a symbol's full range. Previously, annotations on their own line (e.g. `@rpc("any_peer")` above a function) were orphaned or duplicated during refactoring.
 - **Windows build** — added missing `Win32_System_IO` feature to `windows-sys` dependency.
 

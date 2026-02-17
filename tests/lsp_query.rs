@@ -1389,3 +1389,731 @@ fn test_lsp_symbols_kind_field_alias() {
     assert!(names.contains(&"health"), "should include regular var");
     assert!(names.contains(&"label"), "should include @onready var");
 }
+
+// ─── Safe-delete-file tests ────────────────────────────────────────────────
+
+#[test]
+fn test_lsp_safe_delete_file_does_not_delete_without_force() {
+    let temp = setup_gd_project(&[
+        ("main.gd", "extends Node\n\nfunc _ready():\n\tpass\n"),
+        ("helper.gd", "extends Node\n\nfunc help():\n\tpass\n"),
+    ]);
+
+    // Run safe-delete-file WITHOUT --force — should only report, not delete
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "safe-delete-file",
+            "--file",
+            "helper.gd",
+            "--format",
+            "json",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp safe-delete-file");
+
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["deleted"], false, "should NOT delete without --force");
+
+    // File must still exist on disk
+    assert!(
+        temp.path().join("helper.gd").exists(),
+        "file must NOT be deleted without --force flag"
+    );
+}
+
+#[test]
+fn test_lsp_safe_delete_file_does_not_delete_unreferenced_without_force() {
+    // This is the exact bug scenario: unreferenced file was auto-deleted
+    let temp = setup_gd_project(&[(
+        "orphan.gd",
+        "extends Node\n\nfunc unused():\n\tpass\n",
+    )]);
+
+    // No other file references orphan.gd — previously this would delete it!
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "safe-delete-file",
+            "--file",
+            "orphan.gd",
+            "--format",
+            "json",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp safe-delete-file");
+
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["deleted"], false, "must NOT auto-delete unreferenced files");
+    assert!(
+        temp.path().join("orphan.gd").exists(),
+        "unreferenced file must NOT be deleted without --force"
+    );
+}
+
+#[test]
+fn test_lsp_safe_delete_file_deletes_with_force() {
+    let temp = setup_gd_project(&[(
+        "deleteme.gd",
+        "extends Node\n\nfunc bye():\n\tpass\n",
+    )]);
+
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "safe-delete-file",
+            "--file",
+            "deleteme.gd",
+            "--force",
+            "--format",
+            "json",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp safe-delete-file --force");
+
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["deleted"], true, "should delete with --force");
+    assert!(
+        !temp.path().join("deleteme.gd").exists(),
+        "file should be deleted with --force"
+    );
+}
+
+#[test]
+fn test_lsp_safe_delete_file_dry_run_with_force_does_not_delete() {
+    let temp = setup_gd_project(&[(
+        "keepme.gd",
+        "extends Node\n\nfunc stay():\n\tpass\n",
+    )]);
+
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "safe-delete-file",
+            "--file",
+            "keepme.gd",
+            "--force",
+            "--dry-run",
+            "--format",
+            "json",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp safe-delete-file --force --dry-run");
+
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["deleted"], false, "--dry-run should prevent deletion");
+    assert!(
+        temp.path().join("keepme.gd").exists(),
+        "--dry-run should prevent deletion even with --force"
+    );
+}
+
+#[test]
+fn test_lsp_safe_delete_file_reports_references() {
+    let temp = setup_gd_project(&[
+        ("base.gd", "class_name Base\n\nfunc run():\n\tpass\n"),
+        (
+            "child.gd",
+            "extends \"res://base.gd\"\n\nfunc run():\n\tprint(\"child\")\n",
+        ),
+    ]);
+
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "safe-delete-file",
+            "--file",
+            "base.gd",
+            "--format",
+            "json",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp safe-delete-file");
+
+    // Exit code 1 is expected when references exist (signals "unsafe to delete")
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("should output valid JSON");
+    let refs = json["references"].as_array().unwrap();
+    assert!(!refs.is_empty(), "should find extends reference from child.gd");
+    let files: Vec<&str> = refs.iter().filter_map(|r| r["file"].as_str()).collect();
+    assert!(
+        files.contains(&"child.gd"),
+        "should reference child.gd, got: {files:?}"
+    );
+    assert_eq!(json["deleted"], false, "should not delete");
+    assert!(temp.path().join("base.gd").exists());
+}
+
+// ─── Symbols detail tests ──────────────────────────────────────────────────
+
+#[test]
+fn test_lsp_symbols_detail_shows_declarations() {
+    let temp = setup_gd_project(&[(
+        "player.gd",
+        "var health: int = 100\nconst MAX_HP = 200\nsignal died(player_name: String)\nenum State { IDLE, RUN, JUMP }\n\n\nfunc attack(target: Node, damage: int) -> void:\n\tpass\n",
+    )]);
+
+    let output = gd_bin()
+        .args(["lsp", "symbols", "--file", "player.gd", "--format", "json"])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp symbols");
+
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let arr = json.as_array().unwrap();
+    let by_name: std::collections::HashMap<&str, &serde_json::Value> =
+        arr.iter().map(|s| (s["name"].as_str().unwrap(), s)).collect();
+
+    // Function detail should show signature
+    let attack = by_name["attack"];
+    let detail = attack["detail"].as_str().unwrap_or("");
+    assert!(
+        detail.contains("target"),
+        "func detail should show params, got: {detail}"
+    );
+
+    // Enum detail should show members
+    let state = by_name["State"];
+    let detail = state["detail"].as_str().unwrap_or("");
+    assert!(
+        detail.contains("IDLE"),
+        "enum detail should show members, got: {detail}"
+    );
+
+    // Variable detail should show declaration
+    let health = by_name["health"];
+    let detail = health["detail"].as_str().unwrap_or("");
+    assert!(
+        detail.contains("var health"),
+        "var detail should show declaration, got: {detail}"
+    );
+}
+
+// ─── Cross-file hover tests ────────────────────────────────────────────────
+
+#[test]
+fn test_lsp_hover_cross_file_class_name() {
+    let temp = setup_gd_project(&[
+        (
+            "player.gd",
+            "class_name Player\nextends Node\n\nvar health := 100\n",
+        ),
+        (
+            "game.gd",
+            "var p: Player\n\nfunc run():\n\tprint(p)\n",
+        ),
+    ]);
+
+    // Hover on "Player" type annotation in game.gd (line 1, column 8)
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "--no-godot-proxy",
+            "hover",
+            "--file",
+            "game.gd",
+            "--line",
+            "1",
+            "--column",
+            "8",
+            "--format",
+            "json",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp hover");
+
+    assert!(
+        output.status.success(),
+        "hover on cross-file class_name should work, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let content = json["content"].as_str().unwrap();
+    assert!(
+        content.contains("Player"),
+        "should show class name, got: {content}"
+    );
+}
+
+// ─── Find implementations tests ────────────────────────────────────────────
+
+#[test]
+fn test_lsp_find_implementations_method() {
+    let temp = setup_gd_project(&[
+        ("base.gd", "class_name Base\n\nfunc setup():\n\tpass\n"),
+        (
+            "child_a.gd",
+            "extends Base\n\nfunc setup():\n\tprint(\"A\")\n",
+        ),
+        (
+            "child_b.gd",
+            "extends Base\n\nfunc setup():\n\tprint(\"B\")\n",
+        ),
+    ]);
+
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "find-implementations",
+            "--name",
+            "setup",
+            "--format",
+            "json",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp find-implementations");
+
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let impls = json.as_array().unwrap_or_else(|| {
+        // May be wrapped in { "method": ..., "implementations": [...] }
+        json["implementations"].as_array().unwrap()
+    });
+    assert!(
+        impls.len() >= 3,
+        "should find setup in base + 2 children, got {}",
+        impls.len()
+    );
+}
+
+#[test]
+fn test_lsp_find_implementations_with_base_filter() {
+    let temp = setup_gd_project(&[
+        ("base.gd", "class_name Base\n\nfunc run():\n\tpass\n"),
+        (
+            "child.gd",
+            "extends Base\n\nfunc run():\n\tprint(\"child\")\n",
+        ),
+        (
+            "other.gd",
+            "extends Node\n\nfunc run():\n\tprint(\"other\")\n",
+        ),
+    ]);
+
+    let output = gd_bin()
+        .args([
+            "lsp",
+            "find-implementations",
+            "--name",
+            "run",
+            "--base",
+            "Base",
+            "--format",
+            "json",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd lsp find-implementations --base");
+
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let impls = json.as_array().unwrap_or_else(|| {
+        json["implementations"].as_array().unwrap()
+    });
+    // Only child.gd extends Base — other.gd extends Node
+    assert_eq!(
+        impls.len(),
+        1,
+        "should only find child extending Base, got: {impls:?}"
+    );
+}
+
+// ─── LSP protocol tests for new features ───────────────────────────────────
+
+/// Helper: spawn LSP, send initialize, return (child, stdin, stdout)
+fn spawn_lsp(
+    temp: &tempfile::TempDir,
+) -> (
+    std::process::Child,
+    std::process::ChildStdin,
+    std::process::ChildStdout,
+) {
+    use std::process::Stdio;
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_gd"))
+        .arg("lsp")
+        .current_dir(temp.path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("Failed to spawn gd lsp");
+
+    let stdin = child.stdin.take().unwrap();
+    let stdout = child.stdout.take().unwrap();
+
+    (child, stdin, stdout)
+}
+
+fn lsp_msg(data: &serde_json::Value) -> Vec<u8> {
+    let body = serde_json::to_string(data).unwrap();
+    format!("Content-Length: {}\r\n\r\n{}", body.len(), body).into_bytes()
+}
+
+fn read_lsp_response(stdout: &mut impl Read) -> serde_json::Value {
+    let mut header = Vec::new();
+    let mut buf = [0u8; 1];
+    while !header.ends_with(b"\r\n\r\n") {
+        stdout
+            .read_exact(&mut buf)
+            .expect("Failed to read header byte");
+        header.push(buf[0]);
+    }
+    let header_str = String::from_utf8_lossy(&header);
+    let length: usize = header_str
+        .lines()
+        .find_map(|l| l.strip_prefix("Content-Length: "))
+        .expect("Missing Content-Length")
+        .trim()
+        .parse()
+        .expect("Invalid Content-Length");
+    let mut body = vec![0u8; length];
+    stdout.read_exact(&mut body).expect("Failed to read body");
+    serde_json::from_slice(&body).expect("Invalid JSON response")
+}
+
+fn lsp_initialize(
+    stdin: &mut impl Write,
+    stdout: &mut impl Read,
+    root_uri: &str,
+) -> serde_json::Value {
+    let init = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "capabilities": {},
+            "rootUri": root_uri
+        }
+    });
+    stdin.write_all(&lsp_msg(&init)).unwrap();
+    stdin.flush().unwrap();
+    let resp = read_lsp_response(stdout);
+
+    // Send initialized notification
+    let initialized = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "initialized",
+        "params": {}
+    });
+    stdin.write_all(&lsp_msg(&initialized)).unwrap();
+    stdin.flush().unwrap();
+
+    resp
+}
+
+fn lsp_open_doc(stdin: &mut impl Write, uri: &str, content: &str) {
+    let did_open = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didOpen",
+        "params": {
+            "textDocument": {
+                "uri": uri,
+                "languageId": "gdscript",
+                "version": 1,
+                "text": content
+            }
+        }
+    });
+    stdin.write_all(&lsp_msg(&did_open)).unwrap();
+    stdin.flush().unwrap();
+}
+
+#[allow(clippy::needless_pass_by_value)]
+fn lsp_request(
+    stdin: &mut impl Write,
+    stdout: &mut impl Read,
+    id: u64,
+    method: &str,
+    params: serde_json::Value,
+) -> serde_json::Value {
+    let req = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": method,
+        "params": params
+    });
+    stdin.write_all(&lsp_msg(&req)).unwrap();
+    stdin.flush().unwrap();
+
+    // Read responses until we get the one with our id
+    for _ in 0..10 {
+        let resp = read_lsp_response(stdout);
+        if resp.get("id") == Some(&serde_json::json!(id)) {
+            return resp;
+        }
+        // Otherwise it's a notification (e.g. publishDiagnostics), skip it
+    }
+    panic!("Did not receive response for request id {id}");
+}
+
+#[test]
+fn test_lsp_initialize_reports_new_capabilities() {
+    let temp = setup_gd_project(&[("main.gd", "extends Node\n")]);
+    let (mut child, mut stdin, mut stdout) = spawn_lsp(&temp);
+    let root_uri = format!("file://{}", temp.path().display());
+
+    let resp = lsp_initialize(&mut stdin, &mut stdout, &root_uri);
+    let caps = &resp["result"]["capabilities"];
+
+    // Verify new capabilities are registered
+    assert_eq!(
+        caps["inlayHintProvider"], true,
+        "should advertise inlay hints"
+    );
+    assert!(
+        caps["signatureHelpProvider"].is_object(),
+        "should advertise signature help"
+    );
+    assert!(
+        caps["callHierarchyProvider"].as_bool() == Some(true)
+            || caps["callHierarchyProvider"].is_object(),
+        "should advertise call hierarchy"
+    );
+    assert!(
+        caps["implementationProvider"].as_bool() == Some(true)
+            || caps["implementationProvider"].is_object(),
+        "should advertise implementation provider"
+    );
+    assert!(
+        caps["semanticTokensProvider"].is_object(),
+        "should advertise semantic tokens"
+    );
+    assert!(
+        caps["workspaceSymbolProvider"].as_bool() == Some(true)
+            || caps["workspaceSymbolProvider"].is_object(),
+        "should advertise workspace symbol provider"
+    );
+
+    child.kill().ok();
+    child.wait().ok();
+}
+
+#[test]
+fn test_lsp_inlay_hints() {
+    let temp = setup_gd_project(&[("main.gd", "extends Node\n\nvar x := Vector2(1, 2)\nvar y := 42\nvar z: int = 10\n")]);
+    let (mut child, mut stdin, mut stdout) = spawn_lsp(&temp);
+    let root_uri = format!("file://{}", temp.path().display());
+    let doc_uri = format!("file://{}/main.gd", temp.path().display());
+
+    lsp_initialize(&mut stdin, &mut stdout, &root_uri);
+    std::thread::sleep(std::time::Duration::from_millis(200));
+
+    lsp_open_doc(&mut stdin, &doc_uri, "extends Node\n\nvar x := Vector2(1, 2)\nvar y := 42\nvar z: int = 10\n");
+    std::thread::sleep(std::time::Duration::from_millis(200));
+
+    let resp = lsp_request(&mut stdin, &mut stdout, 10, "textDocument/inlayHint", serde_json::json!({
+        "textDocument": { "uri": doc_uri },
+        "range": {
+            "start": { "line": 0, "character": 0 },
+            "end": { "line": 10, "character": 0 }
+        }
+    }));
+
+    let result = &resp["result"];
+    assert!(result.is_array(), "inlay hints should return array, got: {result}");
+    let hints = result.as_array().unwrap();
+    // Should have hints for x (Vector2) and y (int) but NOT z (explicit type)
+    assert!(
+        !hints.is_empty(),
+        "should have at least one inlay hint for inferred types"
+    );
+
+    // Check that hints contain type information
+    let labels: Vec<String> = hints
+        .iter()
+        .filter_map(|h| {
+            h["label"]
+                .as_str()
+                .map(String::from)
+                .or_else(|| h["label"].as_array().map(|parts| {
+                    parts.iter().filter_map(|p| p["value"].as_str()).collect::<Vec<_>>().join("")
+                }))
+        })
+        .collect();
+    assert!(
+        labels.iter().any(|l| l.contains("Vector2")),
+        "should have Vector2 type hint, got: {labels:?}"
+    );
+
+    child.kill().ok();
+    child.wait().ok();
+}
+
+#[test]
+fn test_lsp_signature_help() {
+    let source = "extends Node\n\nfunc add(a: int, b: int) -> int:\n\treturn a + b\n\nfunc _ready():\n\tadd(1, 2)\n";
+    let temp = setup_gd_project(&[("main.gd", source)]);
+    let (mut child, mut stdin, mut stdout) = spawn_lsp(&temp);
+    let root_uri = format!("file://{}", temp.path().display());
+    let doc_uri = format!("file://{}/main.gd", temp.path().display());
+
+    lsp_initialize(&mut stdin, &mut stdout, &root_uri);
+    std::thread::sleep(std::time::Duration::from_millis(200));
+
+    lsp_open_doc(&mut stdin, &doc_uri, source);
+    std::thread::sleep(std::time::Duration::from_millis(200));
+
+    // Cursor after "add(" — line 6, character 5 (inside the call parens)
+    let resp = lsp_request(&mut stdin, &mut stdout, 11, "textDocument/signatureHelp", serde_json::json!({
+        "textDocument": { "uri": doc_uri },
+        "position": { "line": 6, "character": 5 }
+    }));
+
+    let result = &resp["result"];
+    assert!(
+        !result.is_null(),
+        "should return signature help inside function call, resp: {resp}"
+    );
+    let sigs = result["signatures"].as_array().unwrap();
+    assert!(!sigs.is_empty(), "should have at least one signature");
+    let label = sigs[0]["label"].as_str().unwrap();
+    assert!(
+        label.contains("add"),
+        "signature label should contain function name, got: {label}"
+    );
+    assert!(
+        label.contains("a: int"),
+        "signature label should contain params, got: {label}"
+    );
+
+    child.kill().ok();
+    child.wait().ok();
+}
+
+#[test]
+fn test_lsp_semantic_tokens() {
+    let source = "extends Node\n\nvar speed: float = 10.0\nconst MAX := 100\n\nfunc run():\n\tpass\n";
+    let temp = setup_gd_project(&[("main.gd", source)]);
+    let (mut child, mut stdin, mut stdout) = spawn_lsp(&temp);
+    let root_uri = format!("file://{}", temp.path().display());
+    let doc_uri = format!("file://{}/main.gd", temp.path().display());
+
+    lsp_initialize(&mut stdin, &mut stdout, &root_uri);
+    std::thread::sleep(std::time::Duration::from_millis(200));
+
+    lsp_open_doc(&mut stdin, &doc_uri, source);
+    std::thread::sleep(std::time::Duration::from_millis(200));
+
+    let resp = lsp_request(&mut stdin, &mut stdout, 12, "textDocument/semanticTokens/full", serde_json::json!({
+        "textDocument": { "uri": doc_uri }
+    }));
+
+    let result = &resp["result"];
+    assert!(
+        !result.is_null(),
+        "should return semantic tokens, resp: {resp}"
+    );
+    let data = result["data"].as_array().unwrap();
+    // Semantic tokens data is encoded as groups of 5 integers
+    assert!(
+        data.len() >= 5,
+        "should have at least one token (5 ints per token), got {} ints",
+        data.len()
+    );
+    assert_eq!(
+        data.len() % 5,
+        0,
+        "token data length should be multiple of 5"
+    );
+
+    child.kill().ok();
+    child.wait().ok();
+}
+
+#[test]
+fn test_lsp_workspace_symbol() {
+    let temp = setup_gd_project(&[
+        ("player.gd", "class_name Player\n\nvar health := 100\n\nfunc attack():\n\tpass\n"),
+        ("enemy.gd", "class_name Enemy\n\nvar damage := 50\n\nfunc chase():\n\tpass\n"),
+    ]);
+    let (mut child, mut stdin, mut stdout) = spawn_lsp(&temp);
+    let root_uri = format!("file://{}", temp.path().display());
+
+    lsp_initialize(&mut stdin, &mut stdout, &root_uri);
+    std::thread::sleep(std::time::Duration::from_millis(500));
+
+    // Search for "attack"
+    let resp = lsp_request(&mut stdin, &mut stdout, 13, "workspace/symbol", serde_json::json!({
+        "query": "attack"
+    }));
+
+    let result = &resp["result"];
+    assert!(result.is_array(), "workspace/symbol should return array, got: {resp}");
+    let symbols = result.as_array().unwrap();
+    assert!(
+        !symbols.is_empty(),
+        "should find 'attack' symbol in workspace"
+    );
+    let names: Vec<&str> = symbols.iter().filter_map(|s| s["name"].as_str()).collect();
+    assert!(
+        names.contains(&"attack"),
+        "should contain 'attack', got: {names:?}"
+    );
+
+    // Empty query should return all symbols
+    let resp2 = lsp_request(&mut stdin, &mut stdout, 14, "workspace/symbol", serde_json::json!({
+        "query": ""
+    }));
+    let all_symbols = resp2["result"].as_array().unwrap();
+    assert!(
+        all_symbols.len() >= 4,
+        "empty query should return many symbols (Player, Enemy, health, damage, attack, chase), got {}",
+        all_symbols.len()
+    );
+
+    child.kill().ok();
+    child.wait().ok();
+}
+
+#[test]
+fn test_lsp_call_hierarchy_prepare() {
+    let source = "extends Node\n\nfunc helper():\n\tpass\n\nfunc _ready():\n\thelper()\n";
+    let temp = setup_gd_project(&[("main.gd", source)]);
+    let (mut child, mut stdin, mut stdout) = spawn_lsp(&temp);
+    let root_uri = format!("file://{}", temp.path().display());
+    let doc_uri = format!("file://{}/main.gd", temp.path().display());
+
+    lsp_initialize(&mut stdin, &mut stdout, &root_uri);
+    std::thread::sleep(std::time::Duration::from_millis(200));
+
+    lsp_open_doc(&mut stdin, &doc_uri, source);
+    std::thread::sleep(std::time::Duration::from_millis(200));
+
+    // Prepare call hierarchy on "helper" function definition (line 2, char 5)
+    let resp = lsp_request(&mut stdin, &mut stdout, 15, "textDocument/prepareCallHierarchy", serde_json::json!({
+        "textDocument": { "uri": doc_uri },
+        "position": { "line": 2, "character": 5 }
+    }));
+
+    let result = &resp["result"];
+    assert!(
+        result.is_array(),
+        "prepareCallHierarchy should return array, got: {resp}"
+    );
+    let items = result.as_array().unwrap();
+    assert!(
+        !items.is_empty(),
+        "should find call hierarchy item for 'helper'"
+    );
+    assert_eq!(
+        items[0]["name"].as_str().unwrap(),
+        "helper",
+        "should resolve to 'helper' function"
+    );
+
+    child.kill().ok();
+    child.wait().ok();
+}

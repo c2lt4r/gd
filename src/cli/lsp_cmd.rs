@@ -242,10 +242,10 @@ pub enum LspCommand {
         /// Path to the GDScript file
         #[arg(long)]
         file: String,
-        /// Delete even if references exist
+        /// Actually delete the file (without this flag, only reports references)
         #[arg(long)]
         force: bool,
-        /// Preview without deleting (default when --force is not set)
+        /// Preview references without deleting (this is the default behavior)
         #[arg(long)]
         dry_run: bool,
         /// Output format: json or human (default: human)

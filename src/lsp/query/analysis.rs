@@ -191,7 +191,8 @@ pub fn query_safe_delete_file(
         }
     }
 
-    let deleted = if !dry_run && (force || references.is_empty()) {
+    // Only delete when --force is explicitly passed (never auto-delete)
+    let deleted = if force && !dry_run {
         std::fs::remove_file(&path).map_err(|e| miette::miette!("cannot delete {file}: {e}"))?;
         true
     } else {
