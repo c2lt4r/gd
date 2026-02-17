@@ -61,20 +61,27 @@ const BUILTIN_TYPES: &[&str] = &[
     "StringName",
     "Color",
     "Rect2",
+    "Rect2i",
     "Transform2D",
     "Transform3D",
     "Basis",
     "AABB",
     "Plane",
     "Quaternion",
+    "Projection",
+    "RID",
+    "Callable",
+    "Signal",
     "PackedByteArray",
     "PackedInt32Array",
     "PackedInt64Array",
     "PackedFloat32Array",
     "PackedFloat64Array",
     "PackedStringArray",
+    "PackedColorArray",
     "PackedVector2Array",
     "PackedVector3Array",
+    "PackedVector4Array",
 ];
 
 /// GDScript built-in functions.
@@ -1681,6 +1688,37 @@ func attack(target):
         assert!(
             labels.contains(&"normalized"),
             "should contain Vector2 method 'normalized'"
+        );
+    }
+
+    #[test]
+    fn color_dot_completions() {
+        let source = "extends Node\nfunc run():\n\tColor.\n\tpass\n";
+        let items = provide_completions(source, Position::new(2, 7), None);
+        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(
+            labels.contains(&"lightened"),
+            "should contain Color method 'lightened', got: {labels:?}"
+        );
+        assert!(
+            labels.contains(&"r"),
+            "should contain Color property 'r', got: {labels:?}"
+        );
+    }
+
+    #[test]
+    fn string_dot_completions_generated() {
+        let source = "extends Node\nfunc run():\n\tString.\n\tpass\n";
+        let items = provide_completions(source, Position::new(2, 8), None);
+        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        // Generated methods that weren't in the manual list
+        assert!(
+            labels.contains(&"replace"),
+            "should contain String method 'replace', got: {labels:?}"
+        );
+        assert!(
+            labels.contains(&"is_empty"),
+            "should contain String method 'is_empty', got: {labels:?}"
         );
     }
 

@@ -2019,23 +2019,30 @@ const BUILTIN_MEMBER_DOCS: &[BuiltinMember] = &[
 
 /// Return all built-in members for the given exact class name.
 /// Caller should walk the inheritance chain and call this per ancestor.
+/// Checks both hand-written engine class docs and auto-generated builtin type docs.
 pub fn members_for_class(class: &str) -> Vec<&'static BuiltinMember> {
     BUILTIN_MEMBER_DOCS
         .iter()
+        .chain(super::builtin_generated::GENERATED_MEMBERS.iter())
         .filter(|m| m.class == class)
         .collect()
 }
 
 /// Look up a built-in member by name (e.g. `global_position`, `move_and_slide`).
-/// Returns the first match — most commonly used class listed first.
+/// Returns the first match — hand-written docs take priority over generated.
 pub fn lookup_member(name: &str) -> Option<&'static BuiltinMember> {
-    BUILTIN_MEMBER_DOCS.iter().find(|m| m.name == name)
+    BUILTIN_MEMBER_DOCS
+        .iter()
+        .chain(super::builtin_generated::GENERATED_MEMBERS.iter())
+        .find(|m| m.name == name)
 }
 
 /// Look up a built-in member by class and name (exact class match).
+/// Hand-written docs take priority over generated.
 pub fn lookup_member_for(class: &str, name: &str) -> Option<&'static BuiltinMember> {
     BUILTIN_MEMBER_DOCS
         .iter()
+        .chain(super::builtin_generated::GENERATED_MEMBERS.iter())
         .find(|m| m.class == class && m.name == name)
 }
 

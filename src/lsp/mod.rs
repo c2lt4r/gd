@@ -1,4 +1,5 @@
 mod actions;
+mod builtin_generated;
 pub(crate) mod builtins;
 mod call_hierarchy;
 mod completion;
