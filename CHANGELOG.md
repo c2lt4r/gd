@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.2.19] - Unreleased
+
+### Added
+- **`unnamed-node` lint rule** (godot, opt-in) — detects `add_child()` calls where a dynamically created node (via `.new()`) has no `.name` set, making it harder to find in the scene tree at runtime.
+- **`--rule` flag now force-enables opt-in rules** — `gd lint --rule <name>` activates the specified rule even if it's opt-in or disabled, instead of only post-filtering results.
+
+### Fixed
+- **`use-before-assign` false positives on Node subclasses** — members assigned in `_ready()` or `_init()` (directly or transitively through called methods) are now recognized as initialized in other methods. Previously, procedural UI code that assigned members in `_build_ui()` called from `_ready()` would produce spurious warnings.
+
 ## [0.2.18] - 2026-02-17
 
 ### Added
