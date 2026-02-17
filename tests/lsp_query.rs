@@ -1427,10 +1427,7 @@ fn test_lsp_safe_delete_file_does_not_delete_without_force() {
 #[test]
 fn test_lsp_safe_delete_file_does_not_delete_unreferenced_without_force() {
     // This is the exact bug scenario: unreferenced file was auto-deleted
-    let temp = setup_gd_project(&[(
-        "orphan.gd",
-        "extends Node\n\nfunc unused():\n\tpass\n",
-    )]);
+    let temp = setup_gd_project(&[("orphan.gd", "extends Node\n\nfunc unused():\n\tpass\n")]);
 
     // No other file references orphan.gd — previously this would delete it!
     let output = gd_bin()
@@ -1448,7 +1445,10 @@ fn test_lsp_safe_delete_file_does_not_delete_unreferenced_without_force() {
 
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(json["deleted"], false, "must NOT auto-delete unreferenced files");
+    assert_eq!(
+        json["deleted"], false,
+        "must NOT auto-delete unreferenced files"
+    );
     assert!(
         temp.path().join("orphan.gd").exists(),
         "unreferenced file must NOT be deleted without --force"
@@ -1457,10 +1457,7 @@ fn test_lsp_safe_delete_file_does_not_delete_unreferenced_without_force() {
 
 #[test]
 fn test_lsp_safe_delete_file_deletes_with_force() {
-    let temp = setup_gd_project(&[(
-        "deleteme.gd",
-        "extends Node\n\nfunc bye():\n\tpass\n",
-    )]);
+    let temp = setup_gd_project(&[("deleteme.gd", "extends Node\n\nfunc bye():\n\tpass\n")]);
 
     let output = gd_bin()
         .args([
@@ -1487,10 +1484,7 @@ fn test_lsp_safe_delete_file_deletes_with_force() {
 
 #[test]
 fn test_lsp_safe_delete_file_dry_run_with_force_does_not_delete() {
-    let temp = setup_gd_project(&[(
-        "keepme.gd",
-        "extends Node\n\nfunc stay():\n\tpass\n",
-    )]);
+    let temp = setup_gd_project(&[("keepme.gd", "extends Node\n\nfunc stay():\n\tpass\n")]);
 
     let output = gd_bin()
         .args([
@@ -1543,7 +1537,10 @@ fn test_lsp_safe_delete_file_reports_references() {
     let json: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("should output valid JSON");
     let refs = json["references"].as_array().unwrap();
-    assert!(!refs.is_empty(), "should find extends reference from child.gd");
+    assert!(
+        !refs.is_empty(),
+        "should find extends reference from child.gd"
+    );
     let files: Vec<&str> = refs.iter().filter_map(|r| r["file"].as_str()).collect();
     assert!(
         files.contains(&"child.gd"),
@@ -1571,8 +1568,10 @@ fn test_lsp_symbols_detail_shows_declarations() {
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     let arr = json.as_array().unwrap();
-    let by_name: std::collections::HashMap<&str, &serde_json::Value> =
-        arr.iter().map(|s| (s["name"].as_str().unwrap(), s)).collect();
+    let by_name: std::collections::HashMap<&str, &serde_json::Value> = arr
+        .iter()
+        .map(|s| (s["name"].as_str().unwrap(), s))
+        .collect();
 
     // Function detail should show signature
     let attack = by_name["attack"];
@@ -1608,10 +1607,7 @@ fn test_lsp_hover_cross_file_class_name() {
             "player.gd",
             "class_name Player\nextends Node\n\nvar health := 100\n",
         ),
-        (
-            "game.gd",
-            "var p: Player\n\nfunc run():\n\tprint(p)\n",
-        ),
+        ("game.gd", "var p: Player\n\nfunc run():\n\tprint(p)\n"),
     ]);
 
     // Hover on "Player" type annotation in game.gd (line 1, column 8)
@@ -1719,9 +1715,9 @@ fn test_lsp_find_implementations_with_base_filter() {
 
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    let impls = json.as_array().unwrap_or_else(|| {
-        json["implementations"].as_array().unwrap()
-    });
+    let impls = json
+        .as_array()
+        .unwrap_or_else(|| json["implementations"].as_array().unwrap());
     // Only child.gd extends Base — other.gd extends Node
     assert_eq!(
         impls.len(),
@@ -1903,7 +1899,10 @@ fn test_lsp_initialize_reports_new_capabilities() {
 
 #[test]
 fn test_lsp_inlay_hints() {
-    let temp = setup_gd_project(&[("main.gd", "extends Node\n\nvar x := Vector2(1, 2)\nvar y := 42\nvar z: int = 10\n")]);
+    let temp = setup_gd_project(&[(
+        "main.gd",
+        "extends Node\n\nvar x := Vector2(1, 2)\nvar y := 42\nvar z: int = 10\n",
+    )]);
     let (mut child, mut stdin, mut stdout) = spawn_lsp(&temp);
     let root_uri = format!("file://{}", temp.path().display());
     let doc_uri = format!("file://{}/main.gd", temp.path().display());
@@ -1911,19 +1910,32 @@ fn test_lsp_inlay_hints() {
     lsp_initialize(&mut stdin, &mut stdout, &root_uri);
     std::thread::sleep(std::time::Duration::from_millis(200));
 
-    lsp_open_doc(&mut stdin, &doc_uri, "extends Node\n\nvar x := Vector2(1, 2)\nvar y := 42\nvar z: int = 10\n");
+    lsp_open_doc(
+        &mut stdin,
+        &doc_uri,
+        "extends Node\n\nvar x := Vector2(1, 2)\nvar y := 42\nvar z: int = 10\n",
+    );
     std::thread::sleep(std::time::Duration::from_millis(200));
 
-    let resp = lsp_request(&mut stdin, &mut stdout, 10, "textDocument/inlayHint", serde_json::json!({
-        "textDocument": { "uri": doc_uri },
-        "range": {
-            "start": { "line": 0, "character": 0 },
-            "end": { "line": 10, "character": 0 }
-        }
-    }));
+    let resp = lsp_request(
+        &mut stdin,
+        &mut stdout,
+        10,
+        "textDocument/inlayHint",
+        serde_json::json!({
+            "textDocument": { "uri": doc_uri },
+            "range": {
+                "start": { "line": 0, "character": 0 },
+                "end": { "line": 10, "character": 0 }
+            }
+        }),
+    );
 
     let result = &resp["result"];
-    assert!(result.is_array(), "inlay hints should return array, got: {result}");
+    assert!(
+        result.is_array(),
+        "inlay hints should return array, got: {result}"
+    );
     let hints = result.as_array().unwrap();
     // Should have hints for x (Vector2) and y (int) but NOT z (explicit type)
     assert!(
@@ -1935,12 +1947,15 @@ fn test_lsp_inlay_hints() {
     let labels: Vec<String> = hints
         .iter()
         .filter_map(|h| {
-            h["label"]
-                .as_str()
-                .map(String::from)
-                .or_else(|| h["label"].as_array().map(|parts| {
-                    parts.iter().filter_map(|p| p["value"].as_str()).collect::<Vec<_>>().join("")
-                }))
+            h["label"].as_str().map(String::from).or_else(|| {
+                h["label"].as_array().map(|parts| {
+                    parts
+                        .iter()
+                        .filter_map(|p| p["value"].as_str())
+                        .collect::<Vec<_>>()
+                        .join("")
+                })
+            })
         })
         .collect();
     assert!(
@@ -1967,10 +1982,16 @@ fn test_lsp_signature_help() {
     std::thread::sleep(std::time::Duration::from_millis(200));
 
     // Cursor after "add(" — line 6, character 5 (inside the call parens)
-    let resp = lsp_request(&mut stdin, &mut stdout, 11, "textDocument/signatureHelp", serde_json::json!({
-        "textDocument": { "uri": doc_uri },
-        "position": { "line": 6, "character": 5 }
-    }));
+    let resp = lsp_request(
+        &mut stdin,
+        &mut stdout,
+        11,
+        "textDocument/signatureHelp",
+        serde_json::json!({
+            "textDocument": { "uri": doc_uri },
+            "position": { "line": 6, "character": 5 }
+        }),
+    );
 
     let result = &resp["result"];
     assert!(
@@ -1995,7 +2016,8 @@ fn test_lsp_signature_help() {
 
 #[test]
 fn test_lsp_semantic_tokens() {
-    let source = "extends Node\n\nvar speed: float = 10.0\nconst MAX := 100\n\nfunc run():\n\tpass\n";
+    let source =
+        "extends Node\n\nvar speed: float = 10.0\nconst MAX := 100\n\nfunc run():\n\tpass\n";
     let temp = setup_gd_project(&[("main.gd", source)]);
     let (mut child, mut stdin, mut stdout) = spawn_lsp(&temp);
     let root_uri = format!("file://{}", temp.path().display());
@@ -2007,9 +2029,15 @@ fn test_lsp_semantic_tokens() {
     lsp_open_doc(&mut stdin, &doc_uri, source);
     std::thread::sleep(std::time::Duration::from_millis(200));
 
-    let resp = lsp_request(&mut stdin, &mut stdout, 12, "textDocument/semanticTokens/full", serde_json::json!({
-        "textDocument": { "uri": doc_uri }
-    }));
+    let resp = lsp_request(
+        &mut stdin,
+        &mut stdout,
+        12,
+        "textDocument/semanticTokens/full",
+        serde_json::json!({
+            "textDocument": { "uri": doc_uri }
+        }),
+    );
 
     let result = &resp["result"];
     assert!(
@@ -2036,8 +2064,14 @@ fn test_lsp_semantic_tokens() {
 #[test]
 fn test_lsp_workspace_symbol() {
     let temp = setup_gd_project(&[
-        ("player.gd", "class_name Player\n\nvar health := 100\n\nfunc attack():\n\tpass\n"),
-        ("enemy.gd", "class_name Enemy\n\nvar damage := 50\n\nfunc chase():\n\tpass\n"),
+        (
+            "player.gd",
+            "class_name Player\n\nvar health := 100\n\nfunc attack():\n\tpass\n",
+        ),
+        (
+            "enemy.gd",
+            "class_name Enemy\n\nvar damage := 50\n\nfunc chase():\n\tpass\n",
+        ),
     ]);
     let (mut child, mut stdin, mut stdout) = spawn_lsp(&temp);
     let root_uri = format!("file://{}", temp.path().display());
@@ -2046,12 +2080,21 @@ fn test_lsp_workspace_symbol() {
     std::thread::sleep(std::time::Duration::from_millis(500));
 
     // Search for "attack"
-    let resp = lsp_request(&mut stdin, &mut stdout, 13, "workspace/symbol", serde_json::json!({
-        "query": "attack"
-    }));
+    let resp = lsp_request(
+        &mut stdin,
+        &mut stdout,
+        13,
+        "workspace/symbol",
+        serde_json::json!({
+            "query": "attack"
+        }),
+    );
 
     let result = &resp["result"];
-    assert!(result.is_array(), "workspace/symbol should return array, got: {resp}");
+    assert!(
+        result.is_array(),
+        "workspace/symbol should return array, got: {resp}"
+    );
     let symbols = result.as_array().unwrap();
     assert!(
         !symbols.is_empty(),
@@ -2064,9 +2107,15 @@ fn test_lsp_workspace_symbol() {
     );
 
     // Empty query should return all symbols
-    let resp2 = lsp_request(&mut stdin, &mut stdout, 14, "workspace/symbol", serde_json::json!({
-        "query": ""
-    }));
+    let resp2 = lsp_request(
+        &mut stdin,
+        &mut stdout,
+        14,
+        "workspace/symbol",
+        serde_json::json!({
+            "query": ""
+        }),
+    );
     let all_symbols = resp2["result"].as_array().unwrap();
     assert!(
         all_symbols.len() >= 4,
@@ -2093,10 +2142,16 @@ fn test_lsp_call_hierarchy_prepare() {
     std::thread::sleep(std::time::Duration::from_millis(200));
 
     // Prepare call hierarchy on "helper" function definition (line 2, char 5)
-    let resp = lsp_request(&mut stdin, &mut stdout, 15, "textDocument/prepareCallHierarchy", serde_json::json!({
-        "textDocument": { "uri": doc_uri },
-        "position": { "line": 2, "character": 5 }
-    }));
+    let resp = lsp_request(
+        &mut stdin,
+        &mut stdout,
+        15,
+        "textDocument/prepareCallHierarchy",
+        serde_json::json!({
+            "textDocument": { "uri": doc_uri },
+            "position": { "line": 2, "character": 5 }
+        }),
+    );
 
     let result = &resp["result"];
     assert!(

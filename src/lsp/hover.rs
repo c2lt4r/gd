@@ -667,7 +667,11 @@ fn extract_doc_comment_from_root(root: &tree_sitter::Node, source: &str) -> Opti
             _ => break,
         }
     }
-    if lines.is_empty() { None } else { Some(lines.join("\n")) }
+    if lines.is_empty() {
+        None
+    } else {
+        Some(lines.join("\n"))
+    }
 }
 
 fn make_hover(code: &str, node: &tree_sitter::Node, doc: Option<&str>) -> Hover {

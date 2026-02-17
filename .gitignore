@@ -12,3 +12,7 @@ docs/research/input-automation-api.md
 tools/extract_tests.py
 tools/probe_*.py
 tools/test.sh
+tools/test_lsp_3d_racer.py
+tools/test_oneshot_3d_racer.py
+.planning/
+extension_api.json
