@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use tower_lsp::lsp_types::{
     CompletionItem, CompletionItemKind, Documentation, InsertTextFormat, MarkupContent, MarkupKind,
     Position,
@@ -204,7 +206,7 @@ pub(super) enum ResolvedReceiver {
     ClassName(String),
     /// An enum from a workspace file — provide its members instead of class members.
     WorkspaceEnum {
-        file_content: String,
+        file_content: Arc<String>,
         enum_name: String,
     },
 }
@@ -981,15 +983,29 @@ pub fn provide_completions(
         collect_file_symbols(tree.root_node(), source, &mut items);
     }
 
-    // Symbols from workspace (other files)
+    // Symbols from workspace (other files) — deduplicate by skipping labels
+    // already added from the current file
     if let Some(ws) = workspace {
+        let current_labels: std::collections::HashSet<String> =
+            items.iter().map(|i| i.label.clone()).collect();
         for (path, content) in ws.all_files() {
+            // Skip if this file's content matches the current source (same file)
+            if content.as_ref() == source {
+                continue;
+            }
             if let Ok(tree) = crate::core::parser::parse(&content) {
                 let file_name = path
                     .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or("unknown");
-                collect_workspace_symbols(tree.root_node(), &content, file_name, &mut items);
+                let mut ws_items = Vec::new();
+                collect_workspace_symbols(tree.root_node(), &content, file_name, &mut ws_items);
+                // Only add workspace symbols that don't duplicate current file symbols
+                items.extend(
+                    ws_items
+                        .into_iter()
+                        .filter(|item| !current_labels.contains(&item.label)),
+                );
             }
         }
     }

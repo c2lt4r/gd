@@ -52,6 +52,8 @@ pub struct TextEditOutput {
     pub end_line: u32,
     pub end_column: u32,
     pub new_text: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub context: String,
 }
 
 #[derive(Serialize)]
@@ -258,14 +260,29 @@ fn convert_workspace_edit(edit: &WorkspaceEdit, base: &Path) -> Vec<FileEdits> {
         .iter()
         .map(|(url, edits)| {
             let file = url_to_relative(url, base);
+            // Read file content once for context extraction
+            let file_content = url
+                .to_file_path()
+                .ok()
+                .and_then(|p| std::fs::read_to_string(p).ok())
+                .unwrap_or_default();
+            let lines: Vec<&str> = file_content.lines().collect();
             let edits = edits
                 .iter()
-                .map(|e| TextEditOutput {
-                    line: e.range.start.line + 1,
-                    column: e.range.start.character + 1,
-                    end_line: e.range.end.line + 1,
-                    end_column: e.range.end.character + 1,
-                    new_text: e.new_text.clone(),
+                .map(|e| {
+                    let context = lines
+                        .get(e.range.start.line as usize)
+                        .unwrap_or(&"")
+                        .trim()
+                        .to_string();
+                    TextEditOutput {
+                        line: e.range.start.line + 1,
+                        column: e.range.start.character + 1,
+                        end_line: e.range.end.line + 1,
+                        end_column: e.range.end.character + 1,
+                        new_text: e.new_text.clone(),
+                        context,
+                    }
                 })
                 .collect();
             FileEdits { file, edits }

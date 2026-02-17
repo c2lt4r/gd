@@ -517,13 +517,11 @@ fn extract_output_messages(items: &[GodotVariant], buffer: &Mutex<Vec<CapturedOu
 
     let mut buf = buffer.lock().unwrap();
     for (i, msg) in strings.iter().enumerate() {
-        let type_name = types
-            .and_then(|t| t.get(i))
-            .map_or("log", |&v| match v {
-                1 => "error",
-                2 => "log_rich",
-                _ => "log",
-            });
+        let type_name = types.and_then(|t| t.get(i)).map_or("log", |&v| match v {
+            1 => "error",
+            2 => "log_rich",
+            _ => "log",
+        });
         // Strip trailing null bytes that Godot sometimes appends
         let msg = msg.trim_end_matches('\0');
         if msg.is_empty() {
@@ -587,11 +585,7 @@ fn extract_error_message(items: &[GodotVariant], buffer: &Mutex<Vec<CapturedOutp
 // ---------------------------------------------------------------------------
 
 /// Push output messages to the always-on log ring buffer.
-fn push_output_to_log(
-    items: &[GodotVariant],
-    ring: &Mutex<VecDeque<LogEntry>>,
-    seq: &AtomicU64,
-) {
+fn push_output_to_log(items: &[GodotVariant], ring: &Mutex<VecDeque<LogEntry>>, seq: &AtomicU64) {
     let strings: &[String] = match items.get(1) {
         Some(GodotVariant::PackedStringArray(v)) => v,
         _ => return,
@@ -607,13 +601,11 @@ fn push_output_to_log(
         if msg.is_empty() {
             continue;
         }
-        let type_name = types
-            .and_then(|t| t.get(i))
-            .map_or("log", |&v| match v {
-                1 => "error",
-                2 => "log_rich",
-                _ => "log",
-            });
+        let type_name = types.and_then(|t| t.get(i)).map_or("log", |&v| match v {
+            1 => "error",
+            2 => "log_rich",
+            _ => "log",
+        });
         let id = seq.fetch_add(1, Ordering::Relaxed);
         if ring.len() >= LOG_RING_CAPACITY {
             ring.pop_front();
@@ -627,11 +619,7 @@ fn push_output_to_log(
 }
 
 /// Push an error/warning message to the always-on log ring buffer.
-fn push_error_to_log(
-    items: &[GodotVariant],
-    ring: &Mutex<VecDeque<LogEntry>>,
-    seq: &AtomicU64,
-) {
+fn push_error_to_log(items: &[GodotVariant], ring: &Mutex<VecDeque<LogEntry>>, seq: &AtomicU64) {
     let msg = items
         .get(8)
         .and_then(|v| match v {

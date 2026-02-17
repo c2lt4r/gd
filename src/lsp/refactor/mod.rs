@@ -462,7 +462,10 @@ mod tests {
         let tree = crate::core::parser::parse(src).unwrap();
         let node = find_declaration_by_name(tree.root_node(), src, "sync_pos").unwrap();
         let (start, end) = declaration_full_range(node, src);
-        assert_eq!(&src[start..end], "@rpc(\"any_peer\")\nfunc sync_pos(pos):\n\tpass\n");
+        assert_eq!(
+            &src[start..end],
+            "@rpc(\"any_peer\")\nfunc sync_pos(pos):\n\tpass\n"
+        );
     }
 
     #[test]
@@ -471,7 +474,10 @@ mod tests {
         let tree = crate::core::parser::parse(src).unwrap();
         let node = find_declaration_by_name(tree.root_node(), src, "speed").unwrap();
         let (start, end) = declaration_full_range(node, src);
-        assert_eq!(&src[start..end], "## Speed property\n@export\nvar speed = 10\n");
+        assert_eq!(
+            &src[start..end],
+            "## Speed property\n@export\nvar speed = 10\n"
+        );
     }
 
     #[test]

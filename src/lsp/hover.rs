@@ -171,7 +171,30 @@ fn resolve_hover_for_identifier(
         let code = format!("class {name}");
         return Some(make_hover(&code, current, None));
     }
-    // 10. Nothing found
+    // 10. Workspace class_name (user-defined class referenced as bare identifier,
+    //     e.g. `extends KartEffect` or `VehicleData.get_vehicle()`)
+    if let Some(ws) = workspace
+        && let Some(path) = ws.lookup_class_name(name)
+        && let Some(content) = ws.get_content(&path)
+        && let Ok(tree) = crate::core::parser::parse(&content)
+    {
+        let extends =
+            super::completion::find_extends_class(tree.root_node(), &content).unwrap_or_default();
+        let code = if extends.is_empty() {
+            format!("class_name {name}")
+        } else {
+            format!("class_name {name} extends {extends}")
+        };
+        let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        let doc = extract_doc_comment_from_root(&tree.root_node(), &content);
+        let origin = format!("*{file_name}*");
+        let doc_text = match doc {
+            Some(d) => format!("{origin}\n\n{d}"),
+            None => origin,
+        };
+        return Some(make_hover(&code, current, Some(&doc_text)));
+    }
+    // 11. Nothing found
     None
 }
 
@@ -333,8 +356,12 @@ fn hover_member_on_type(
             .or_else(|| ws.autoload_content(class));
         if let Some(content) = content
             && let Ok(tree) = crate::core::parser::parse(&content)
-            && let Some(hover) = resolve_identifier(&tree.root_node(), member, &content)
+            && let Some(mut hover) = resolve_identifier(&tree.root_node(), member, &content)
         {
+            // Annotate with origin class
+            if let HoverContents::Markup(ref mut markup) = hover.contents {
+                markup.value = format!("{}\n\n*{}*", markup.value, class);
+            }
             return Some(hover);
         }
     }
@@ -619,6 +646,28 @@ fn resolve_identifier(root: &tree_sitter::Node, name: &str, source: &str) -> Opt
         }
     }
     None
+}
+
+/// Extract the `##` doc comment at the top of a file (before class_name or first declaration).
+fn extract_doc_comment_from_root(root: &tree_sitter::Node, source: &str) -> Option<String> {
+    let bytes = source.as_bytes();
+    let mut lines = Vec::new();
+    let mut cursor = root.walk();
+    for child in root.children(&mut cursor) {
+        match child.kind() {
+            "comment" => {
+                if let Ok(text) = child.utf8_text(bytes) {
+                    if let Some(stripped) = text.strip_prefix("##") {
+                        lines.push(stripped.trim().to_string());
+                    } else {
+                        break;
+                    }
+                }
+            }
+            _ => break,
+        }
+    }
+    if lines.is_empty() { None } else { Some(lines.join("\n")) }
 }
 
 fn make_hover(code: &str, node: &tree_sitter::Node, doc: Option<&str>) -> Hover {
