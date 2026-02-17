@@ -186,10 +186,13 @@ pub fn find_references_cross_file(
         &mut locations,
     );
 
-    // All workspace files
+    // Cross-file: only parse files that contain the identifier text
     let current_path = uri.to_file_path().ok();
     for (path, content) in workspace.all_files() {
         if current_path.as_ref() == Some(&path) {
+            continue;
+        }
+        if !content.contains(target_name) {
             continue;
         }
         if let Ok(tree) = crate::core::parser::parse(&content) {
@@ -561,6 +564,11 @@ pub fn find_references_by_name(
         if let Some(filter_path) = file_filter
             && path != filter_path
         {
+            continue;
+        }
+
+        // Skip files that can't contain the identifier (avoids expensive parse)
+        if !content.contains(name) {
             continue;
         }
 

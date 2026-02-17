@@ -248,13 +248,15 @@ pub fn goto_definition_cross_file(
         return Some(result);
     }
 
-    // Search workspace files for the definition
+    // Search declaration index for candidate files (O(K) instead of O(N))
     let current_path = uri.to_file_path().ok();
-    for (path, content) in workspace.all_files() {
+    for path in workspace.lookup_declaration(ident) {
         if current_path.as_ref() == Some(&path) {
             continue;
         }
-        if let Ok(tree) = crate::core::parser::parse(&content) {
+        if let Some(content) = workspace.get_content(&path)
+            && let Ok(tree) = crate::core::parser::parse(&content)
+        {
             let Ok(file_uri) = Url::from_file_path(&path) else {
                 continue;
             };

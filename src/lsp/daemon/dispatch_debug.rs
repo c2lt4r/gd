@@ -519,10 +519,7 @@ pub fn dispatch_output_capture_drain(server: &DaemonServer) -> DaemonResponse {
     ok_response(serde_json::json!({"output": output}))
 }
 
-pub fn dispatch_log_query(
-    server: &DaemonServer,
-    params: &serde_json::Value,
-) -> DaemonResponse {
+pub fn dispatch_log_query(server: &DaemonServer, params: &serde_json::Value) -> DaemonResponse {
     let Some(ds) = get_debug_server(server) else {
         return error_response("No debug server running");
     };

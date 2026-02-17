@@ -85,9 +85,10 @@ fn collect_symbols(node: tree_sitter::Node, source: &str, symbols: &mut Vec<Docu
                     } else {
                         SymbolKind::VARIABLE
                     };
+                    let detail = build_declaration_detail(&child, source);
                     symbols.push(DocumentSymbol {
                         name,
-                        detail: None,
+                        detail: Some(detail),
                         kind,
                         tags: None,
                         deprecated: None,
@@ -100,9 +101,10 @@ fn collect_symbols(node: tree_sitter::Node, source: &str, symbols: &mut Vec<Docu
             "const_statement" => {
                 if let Some(name_node) = child.child_by_field_name("name") {
                     let name = node_text(&name_node, source).to_string();
+                    let detail = build_declaration_detail(&child, source);
                     symbols.push(DocumentSymbol {
                         name,
-                        detail: Some("const".to_string()),
+                        detail: Some(detail),
                         kind: SymbolKind::CONSTANT,
                         tags: None,
                         deprecated: None,
@@ -115,9 +117,10 @@ fn collect_symbols(node: tree_sitter::Node, source: &str, symbols: &mut Vec<Docu
             "signal_statement" => {
                 if let Some(name_node) = child.child_by_field_name("name") {
                     let name = node_text(&name_node, source).to_string();
+                    let detail = build_declaration_detail(&child, source);
                     symbols.push(DocumentSymbol {
                         name,
-                        detail: Some("signal".to_string()),
+                        detail: Some(detail),
                         kind: SymbolKind::EVENT,
                         tags: None,
                         deprecated: None,
@@ -130,9 +133,10 @@ fn collect_symbols(node: tree_sitter::Node, source: &str, symbols: &mut Vec<Docu
             "enum_definition" => {
                 if let Some(name_node) = child.child_by_field_name("name") {
                     let name = node_text(&name_node, source).to_string();
+                    let detail = build_enum_detail(&child, source);
                     symbols.push(DocumentSymbol {
                         name,
-                        detail: Some("enum".to_string()),
+                        detail: Some(detail),
                         kind: SymbolKind::ENUM,
                         tags: None,
                         deprecated: None,
@@ -173,4 +177,37 @@ fn build_function_detail(node: &tree_sitter::Node, source: &str) -> String {
 fn is_onready(node: &tree_sitter::Node, source: &str) -> bool {
     let text = &source[node.byte_range()];
     text.starts_with("@onready")
+}
+
+/// Build detail string from the first line of a declaration node.
+/// Used for var, const, and signal statements.
+fn build_declaration_detail(node: &tree_sitter::Node, source: &str) -> String {
+    let text = node_text(node, source);
+    text.lines().next().unwrap_or(text).trim().to_string()
+}
+
+/// Build detail string for an enum showing its members.
+fn build_enum_detail(node: &tree_sitter::Node, source: &str) -> String {
+    let text = node_text(node, source);
+    // For single-line enums, show the whole thing
+    let first_line = text.lines().next().unwrap_or(text).trim();
+    if text.lines().count() <= 1 {
+        return first_line.to_string();
+    }
+    // For multi-line enums, collect member names
+    if let Some(body) = node.child_by_field_name("body") {
+        let mut members = Vec::new();
+        let mut cursor = body.walk();
+        for member in body.children(&mut cursor) {
+            if member.kind() == "enumerator"
+                && let Some(left) = member.child_by_field_name("left")
+            {
+                members.push(node_text(&left, source).to_string());
+            }
+        }
+        if !members.is_empty() {
+            return format!("{{ {} }}", members.join(", "));
+        }
+    }
+    first_line.to_string()
 }

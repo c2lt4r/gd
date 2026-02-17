@@ -12,7 +12,7 @@ Built with [tree-sitter](https://tree-sitter.github.io/) for accurate parsing an
 - **Watch** for file changes and auto-lint/format on save
 - **Manage addons** from Git or the Godot Asset Library (with lockfile and update support)
 - **Generate CI/CD** configurations for GitHub Actions and GitLab CI
-- **LSP server** with formatting, diagnostics, hover, go-to-definition, references, rename, completion, and 16 refactoring commands
+- **LSP server** with formatting, diagnostics, hover, go-to-definition, references, rename, completion, inlay hints, signature help, call hierarchy, find implementations, semantic tokens, workspace symbol search, and 16 refactoring commands
 - **Scene management** &mdash; create scenes, add/remove nodes, set properties, wire connections, attach/detach scripts &mdash; plus validate `.tscn`/`.tres` files and visualize scene hierarchies
 - **Debug** a running Godot game via Godot's binary debug protocol &mdash; breakpoints, stepping, variable inspection, expression evaluation, live scene tree, node inspection, game speed control, and hot-reload
 - **Godot LSP proxy** &mdash; forward hover, completion, and go-to-definition to Godot's built-in LSP when the editor is running
@@ -766,11 +766,17 @@ Example GitHub Actions step:
 - **Formatting** &mdash; format documents on save
 - **Code actions** &mdash; quick fixes for lint issues
 - **Document symbols** &mdash; outline of classes, functions, signals, and variables
-- **Hover** &mdash; type and documentation info on hover (with built-in Godot docs)
-- **Go to definition** &mdash; jump to function and variable declarations
+- **Hover** &mdash; type and documentation info on hover (with built-in Godot docs, cross-file resolution with origin class)
+- **Go to definition** &mdash; jump to function and variable declarations (indexed cross-file lookup)
 - **Find references** &mdash; find all usages across the project
 - **Rename** &mdash; rename symbols across files with prepare-rename support
 - **Completion** &mdash; context-aware autocomplete for symbols, builtins, and lifecycle methods
+- **Inlay hints** &mdash; ghost text showing inferred types for `:=` variables and parameter names at call sites
+- **Signature help** &mdash; function signature with active parameter highlight as you type
+- **Call hierarchy** &mdash; incoming and outgoing calls for any function
+- **Find implementations** &mdash; find all subclasses and method overrides
+- **Semantic tokens** &mdash; type-aware syntax highlighting (classes, enums, functions, signals)
+- **Workspace symbol search** &mdash; fuzzy search across all project symbols (Ctrl+T)
 - **Godot proxy** &mdash; forwards hover, completion, and definition to Godot's built-in LSP (port 6005) when the editor is running, with `--godot-port` and `--no-godot-proxy` flags
 
 ### One-Shot CLI Queries

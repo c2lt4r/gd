@@ -1,5 +1,6 @@
 mod actions;
 pub(crate) mod builtins;
+mod call_hierarchy;
 mod completion;
 pub mod daemon;
 pub mod daemon_client;
@@ -8,27 +9,37 @@ mod diagnostics;
 mod formatting;
 pub mod godot_client;
 mod hover;
+pub(crate) mod implementations;
+pub(crate) mod inlay_hints;
 pub mod query;
 pub mod refactor;
 mod references;
 pub(crate) mod rename;
+pub(crate) mod semantic_tokens;
+pub(crate) mod signature_help;
 mod symbols;
 mod util;
 mod workspace;
+pub(crate) mod workspace_symbol;
 
 use dashmap::DashMap;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::{
-    CodeActionParams, CodeActionProviderCapability, CodeActionResponse, CompletionItem,
-    CompletionItemKind, CompletionOptions, CompletionParams, CompletionResponse,
-    DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    DidSaveTextDocumentParams, DocumentFormattingParams, DocumentSymbolParams,
-    DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents,
-    HoverParams, HoverProviderCapability, InitializeParams, InitializeResult, InitializedParams,
-    Location, MarkupContent, MarkupKind, MessageType, OneOf, Position, PrepareRenameResponse,
-    Range, ReferenceParams, RenameOptions, RenameParams, ServerCapabilities, ServerInfo,
-    TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, Url,
-    WorkDoneProgressOptions, WorkspaceEdit,
+    CallHierarchyIncomingCall, CallHierarchyIncomingCallsParams, CallHierarchyItem,
+    CallHierarchyOutgoingCall, CallHierarchyOutgoingCallsParams, CallHierarchyPrepareParams,
+    CallHierarchyServerCapability, CodeActionParams, CodeActionProviderCapability,
+    CodeActionResponse, CompletionItem, CompletionItemKind, CompletionOptions, CompletionParams,
+    CompletionResponse, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
+    DidOpenTextDocumentParams, DidSaveTextDocumentParams, DocumentFormattingParams,
+    DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse,
+    Hover, HoverContents, HoverParams, HoverProviderCapability, ImplementationProviderCapability,
+    InitializeParams, InitializeResult, InitializedParams, InlayHint, InlayHintParams, Location,
+    MarkupContent, MarkupKind, MessageType, OneOf, Position, PrepareRenameResponse, Range,
+    ReferenceParams, RenameOptions, RenameParams, SemanticTokensParams, SemanticTokensResult,
+    SemanticTokensServerCapabilities, ServerCapabilities, ServerInfo, SignatureHelp,
+    SignatureHelpOptions, SignatureHelpParams, SymbolInformation, TextDocumentPositionParams,
+    TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, Url, WorkDoneProgressOptions,
+    WorkspaceEdit, WorkspaceSymbolParams,
 };
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
@@ -119,6 +130,20 @@ impl LanguageServer for Backend {
                     prepare_provider: Some(true),
                     work_done_progress_options: WorkDoneProgressOptions::default(),
                 })),
+                inlay_hint_provider: Some(OneOf::Left(true)),
+                signature_help_provider: Some(SignatureHelpOptions {
+                    trigger_characters: Some(vec!["(".to_string(), ",".to_string()]),
+                    retrigger_characters: None,
+                    work_done_progress_options: WorkDoneProgressOptions::default(),
+                }),
+                call_hierarchy_provider: Some(CallHierarchyServerCapability::Simple(true)),
+                implementation_provider: Some(ImplementationProviderCapability::Simple(true)),
+                semantic_tokens_provider: Some(
+                    SemanticTokensServerCapabilities::SemanticTokensOptions(
+                        semantic_tokens::options(),
+                    ),
+                ),
+                workspace_symbol_provider: Some(OneOf::Left(true)),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -177,6 +202,12 @@ impl LanguageServer for Backend {
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         let uri = params.text_document.uri.clone();
         if let Some(change) = params.content_changes.into_iter().last() {
+            // Update workspace symbols from unsaved content
+            if let Some(ws) = self.workspace.get()
+                && let Ok(path) = uri.to_file_path()
+            {
+                ws.update_in_memory(&path, &change.text);
+            }
             self.documents.insert(
                 params.text_document.uri,
                 DocumentState {
@@ -528,6 +559,159 @@ impl LanguageServer for Backend {
             Ok(None)
         } else {
             Ok(Some(CompletionResponse::Array(items)))
+        }
+    }
+
+    async fn inlay_hint(&self, params: InlayHintParams) -> Result<Option<Vec<InlayHint>>> {
+        let uri = &params.text_document.uri;
+        let Some(doc) = self.documents.get(uri) else {
+            return Ok(None);
+        };
+        let source = doc.content.clone();
+        drop(doc);
+
+        let hints = inlay_hints::provide_inlay_hints(&source, params.range, self.workspace.get());
+        if hints.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(hints))
+        }
+    }
+
+    async fn signature_help(&self, params: SignatureHelpParams) -> Result<Option<SignatureHelp>> {
+        let uri = &params.text_document_position_params.text_document.uri;
+        let Some(doc) = self.documents.get(uri) else {
+            return Ok(None);
+        };
+        let source = doc.content.clone();
+        drop(doc);
+
+        Ok(signature_help::provide_signature_help(
+            &source,
+            params.text_document_position_params.position,
+            self.workspace.get(),
+        ))
+    }
+
+    async fn goto_implementation(
+        &self,
+        params: GotoDefinitionParams,
+    ) -> Result<Option<GotoDefinitionResponse>> {
+        let uri = &params.text_document_position_params.text_document.uri;
+        let Some(doc) = self.documents.get(uri) else {
+            return Ok(None);
+        };
+        let source = doc.content.clone();
+        drop(doc);
+
+        let Some(ws) = self.workspace.get() else {
+            return Ok(None);
+        };
+
+        Ok(implementations::find_implementations(
+            &source,
+            uri,
+            params.text_document_position_params.position,
+            ws,
+        ))
+    }
+
+    async fn prepare_call_hierarchy(
+        &self,
+        params: CallHierarchyPrepareParams,
+    ) -> Result<Option<Vec<CallHierarchyItem>>> {
+        let uri = &params.text_document_position_params.text_document.uri;
+        let Some(doc) = self.documents.get(uri) else {
+            return Ok(None);
+        };
+        let source = doc.content.clone();
+        drop(doc);
+
+        Ok(call_hierarchy::prepare(
+            &source,
+            uri,
+            params.text_document_position_params.position,
+        ))
+    }
+
+    async fn incoming_calls(
+        &self,
+        params: CallHierarchyIncomingCallsParams,
+    ) -> Result<Option<Vec<CallHierarchyIncomingCall>>> {
+        let Some(ws) = self.workspace.get() else {
+            return Ok(None);
+        };
+
+        let calls = call_hierarchy::incoming_calls(&params.item, ws);
+        if calls.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(calls))
+        }
+    }
+
+    async fn outgoing_calls(
+        &self,
+        params: CallHierarchyOutgoingCallsParams,
+    ) -> Result<Option<Vec<CallHierarchyOutgoingCall>>> {
+        // Get the source for the file containing the call hierarchy item
+        let Some(doc) = self.documents.get(&params.item.uri) else {
+            // Try workspace content as fallback
+            if let Some(ws) = self.workspace.get()
+                && let Ok(path) = params.item.uri.to_file_path()
+                && let Some(content) = ws.get_content(&path)
+            {
+                let calls = call_hierarchy::outgoing_calls(&params.item, &content);
+                return if calls.is_empty() {
+                    Ok(None)
+                } else {
+                    Ok(Some(calls))
+                };
+            }
+            return Ok(None);
+        };
+        let source = doc.content.clone();
+        drop(doc);
+
+        let calls = call_hierarchy::outgoing_calls(&params.item, &source);
+        if calls.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(calls))
+        }
+    }
+
+    async fn semantic_tokens_full(
+        &self,
+        params: SemanticTokensParams,
+    ) -> Result<Option<SemanticTokensResult>> {
+        let uri = &params.text_document.uri;
+        let Some(doc) = self.documents.get(uri) else {
+            return Ok(None);
+        };
+        let source = doc.content.clone();
+        drop(doc);
+
+        Ok(semantic_tokens::provide_semantic_tokens(
+            &source,
+            self.workspace.get(),
+        ))
+    }
+
+    #[allow(deprecated)] // SymbolInformation is deprecated in LSP spec but required by tower-lsp
+    async fn symbol(
+        &self,
+        params: WorkspaceSymbolParams,
+    ) -> Result<Option<Vec<SymbolInformation>>> {
+        let Some(ws) = self.workspace.get() else {
+            return Ok(None);
+        };
+
+        let symbols = workspace_symbol::workspace_symbols(&params.query, ws);
+        if symbols.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(symbols))
         }
     }
 }

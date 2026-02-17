@@ -38,9 +38,7 @@ pub fn exec(args: &LogArgs) -> Result<()> {
         if resp.is_some() {
             println!("{} Log cleared", "\u{2713}".green());
         } else {
-            return Err(miette!(
-                "No daemon running. Start a game with: gd run"
-            ));
+            return Err(miette!("No daemon running. Start a game with: gd run"));
         }
         return Ok(());
     }
@@ -103,21 +101,14 @@ fn follow_log(args: &LogArgs) -> Result<()> {
     }
 }
 
-fn query_log(
-    after_seq: u64,
-    count: usize,
-    type_filter: Option<&str>,
-) -> Result<Vec<LogEntry>> {
+fn query_log(after_seq: u64, count: usize, type_filter: Option<&str>) -> Result<Vec<LogEntry>> {
     let mut params = serde_json::json!({"after_seq": after_seq, "count": count});
     if let Some(f) = type_filter {
         params["type_filter"] = serde_json::json!(f);
     }
-    let resp = crate::lsp::daemon_client::query_daemon(
-        "log_query",
-        params,
-        Some(Duration::from_secs(2)),
-    )
-    .ok_or_else(|| miette!("No daemon running. Start a game with: gd run"))?;
+    let resp =
+        crate::lsp::daemon_client::query_daemon("log_query", params, Some(Duration::from_secs(2)))
+            .ok_or_else(|| miette!("No daemon running. Start a game with: gd run"))?;
 
     let entries: Vec<LogEntry> = resp
         .get("entries")
@@ -127,10 +118,7 @@ fn query_log(
     Ok(entries)
 }
 
-fn query_log_after(
-    after_seq: u64,
-    type_filter: Option<&str>,
-) -> Result<Vec<LogEntry>> {
+fn query_log_after(after_seq: u64, type_filter: Option<&str>) -> Result<Vec<LogEntry>> {
     query_log(after_seq, 0, type_filter)
 }
 

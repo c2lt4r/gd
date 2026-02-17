@@ -2,8 +2,25 @@
 
 ## [0.2.18] - 2026-02-17
 
+### Added
+- **LSP semantic index** — `WorkspaceIndex` now caches per-file `SymbolTable`, declaration index (symbol name → declaring files), and extends graph. Cross-file operations use indexed lookups instead of re-parsing all files on every request.
+- **Inlay hints** (`textDocument/inlayHint`) — ghost text showing inferred types for `:=` variables and parameter names at call sites.
+- **Signature help** (`textDocument/signatureHelp`) — function signature with active parameter highlight as you type inside `(`. Triggers on `(` and `,`.
+- **Call hierarchy** (`callHierarchy/incomingCalls`, `callHierarchy/outgoingCalls`) — "Who calls this?" and "What does this call?" for any function.
+- **Find implementations** (`textDocument/implementation`) — find all subclasses of a class and all overrides of a method via the extends graph. Also available as `gd lsp find-implementations --name <method> [--base <class>]`.
+- **Semantic tokens** (`textDocument/semanticTokens/full`) — type-aware syntax highlighting: classes, enums, functions, signals, variables, parameters, and engine types get distinct token types.
+- **Workspace symbol search** (`workspace/symbol`) — fuzzy search across all project symbols (Ctrl+T / Cmd+T in VS Code).
+
+### Improved
+- **Hover shows origin** — cross-file member hovers now show which class/file the symbol comes from (e.g., `*VehicleData*`). Hovering `extends ClassName` now resolves to the class definition with file origin.
+- **Symbols show signatures** — `gd lsp symbols` detail field now shows actual declarations (`func(params) -> ret`, `var name: Type`, `signal name(params)`, enum members) instead of just kind names.
+- **Rename includes context** — `gd lsp rename --dry-run` edits now include the source line for each change, matching the references output format.
+- **Completions deduplicated** — symbols from the current file no longer appear twice (once local, once from workspace scan).
+- **References pre-filter** — cross-file reference search skips files that don't contain the target identifier text before parsing, reducing unnecessary tree-sitter parses.
+
 ### Fixed
 - **Refactor commands preserve annotations** — `replace-symbol`, `delete-symbol`, `move-symbol`, and `insert` now include preceding `@rpc`, `@export`, `@onready`, and other annotations when computing a symbol's full range. Previously, annotations on their own line (e.g. `@rpc("any_peer")` above a function) were orphaned or duplicated during refactoring.
+- **Windows build** — added missing `Win32_System_IO` feature to `windows-sys` dependency.
 
 ## [0.2.17] - 2026-02-17
 

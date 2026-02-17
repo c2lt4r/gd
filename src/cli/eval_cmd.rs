@@ -1239,7 +1239,9 @@ mod tests {
         assert!(looks_like_void_call("get_tree().set_pause(false)"));
         // Non-void calls should NOT match
         assert!(!looks_like_void_call("1 + 1"));
-        assert!(!looks_like_void_call("get_tree().get_root().get_child_count()"));
+        assert!(!looks_like_void_call(
+            "get_tree().get_root().get_child_count()"
+        ));
         assert!(!looks_like_void_call("Vector2(1,2).normalized()"));
         assert!(!looks_like_void_call("str(42)"));
     }
