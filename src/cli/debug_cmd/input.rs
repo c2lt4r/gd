@@ -44,7 +44,7 @@ fn hold_sleep(ms: u64, root: &std::path::Path) -> bool {
 /// Run a generated GDScript via live eval and print the result.
 fn run_input_script(script: &str, format: &OutputFormat) -> Result<()> {
     let root = project_root()?;
-    let result = send_eval(script, &root, INPUT_TIMEOUT)?;
+    let result = send_eval(script, &root, INPUT_TIMEOUT)?.result;
     if result.starts_with("ERROR:") {
         return Err(miette!("{result}"));
     }

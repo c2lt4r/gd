@@ -610,19 +610,29 @@ fn try_live_eval(
         print_highlighted_script(&script);
     }
 
-    // 5. Delegate to shared send_eval
-    match crate::core::live_eval::send_eval(&script, project_root, timeout) {
-        Ok(result) => {
+    // 5. Delegate to shared send_eval (with output capture for REPL)
+    match crate::core::live_eval::send_eval_with_output(&script, project_root, timeout) {
+        Ok(response) => {
+            // Show captured print output first
+            if !json_mode {
+                for line in &response.output {
+                    match line.r#type.as_str() {
+                        "error" => eprintln!("{}", line.message.red()),
+                        "warning" => eprintln!("{}", line.message.yellow()),
+                        _ => println!("{}", line.message),
+                    }
+                }
+            }
             if json_mode {
                 let out = EvalOutput {
-                    stdout: result,
+                    stdout: response.result,
                     stderr: String::new(),
                     exit_code: 0,
                     errors: vec![],
                 };
                 println!("{}", serde_json::to_string_pretty(&out).unwrap());
-            } else if !result.is_empty() {
-                println!("{result}");
+            } else if !response.result.is_empty() {
+                println!("{}", response.result);
             }
             Some(Ok(()))
         }

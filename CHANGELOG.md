@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.2.17] - 2026-02-17
+
+### Added
+- **`gd log` ring buffer** — game output (`print()`, `push_error()`, `push_warning()`) is now captured via the debug protocol into a 2000-entry in-memory ring buffer. View with `gd log` (default: last 50 lines), `--follow` for real-time tail, `--errors` for errors/warnings only, `--grep <pattern>` for filtering, `--json` for structured output, `--clear` to reset.
+- **Eval output capture** — `gd eval` in REPL mode now captures and displays `print()` output, `push_error()` (red), and `push_warning()` (yellow) from the evaluated script. Non-void expressions return instantly; void calls poll for up to 1.5s to collect output.
+
+### Changed
+- **TCP eval IPC is non-blocking by default** — `send_eval()` (used by automation commands) does an instant drain (~2ms overhead) instead of polling for output. `send_eval_with_output()` (used by the REPL) polls for captured output on void calls.
+
+### Removed
+- **`gd run --log` flag** — replaced by `gd log` which uses the debug protocol ring buffer instead of file-based stdout/stderr piping. The ring buffer approach is more reliable (no file race conditions on WSL), captures structured output types (errors vs warnings vs log), and works across `gd stop`/restart cycles.
+- **`ctrlc` dependency** — no longer needed after removing `tail_log_file`.
+
 ## [0.2.16] - 2026-02-17
 
 ### Added

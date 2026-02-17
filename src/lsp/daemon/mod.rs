@@ -414,6 +414,12 @@ fn dispatch(server: &DaemonServer, request: &DaemonRequest) -> DaemonResponse {
         "debug_node_select_reset_camera_3d" => {
             dispatch_debug::dispatch_debug_simple(server, "node_select_reset_3d")
         }
+        // Output capture
+        "output_capture_start" => dispatch_debug::dispatch_output_capture_start(server),
+        "output_capture_drain" => dispatch_debug::dispatch_output_capture_drain(server),
+        // Log ring buffer
+        "log_query" => dispatch_debug::dispatch_log_query(server, &request.params),
+        "log_clear" => dispatch_debug::dispatch_log_clear(server),
         // Live editing
         "debug_live_set_root" => {
             dispatch_live::dispatch_debug_live_set_root(server, &request.params)

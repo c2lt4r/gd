@@ -28,16 +28,18 @@ gd check                               # Parse + structural + semantic + .tscn/.
 gd check --format json                 # Machine-readable diagnostics
 
 ## Run & Build
-gd run                                 # Run project (eval server enabled by default, non-blocking, captures to .godot/gd-game.log)
+gd run                                 # Run project (eval server enabled by default, non-blocking)
 gd run --scene <path>                  # Run specific scene
-gd run --log                           # Also stream Godot's stdout/stderr to terminal
 gd run --bare                          # Run without eval server (disables `gd eval` and `gd debug` input commands)
 gd run --file-ipc                      # Use file-based IPC instead of TCP for eval server
 gd stop                                # Stop the running game
-gd log                                 # View game output from last run (cat -n style)
-gd log --tail <N>                      # Last N lines
+gd log                                 # View game output log (ring buffer, via debug protocol)
+gd log --tail <N>                      # Last N lines (default: 50)
 gd log --follow                        # Real-time tail (like tail -f)
-gd log --clear                         # Truncate log file
+gd log --errors                        # Show only errors and warnings
+gd log --grep <pattern>                # Filter lines matching pattern
+gd log --json                          # Output as JSON
+gd log --clear                         # Clear the log buffer
 gd build --preset <name>               # Export project
 gd build --preset <name> --release     # Export release build
 gd clean                               # Remove build artifacts

@@ -82,7 +82,7 @@ pub enum Command {
     Stats(stats_cmd::StatsArgs),
     /// Generate CI/CD pipeline configuration
     Ci(ci_cmd::CiArgs),
-    /// View game output log from the last `gd run`
+    /// View game output log (print, errors, warnings)
     Log(log_cmd::LogArgs),
     /// Start the Language Server Protocol server
     Lsp(lsp_cmd::LspArgs),

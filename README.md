@@ -63,9 +63,9 @@ gd run
 | `gd init` | Initialize gd toolchain in an existing project (detects export paths) |
 | `gd fmt` | Format GDScript files |
 | `gd lint` | Lint GDScript files |
-| `gd run` | Run the Godot project (non-blocking, eval server enabled by default, `--log` to tee to terminal, `--bare` to disable eval, `--file-ipc` for file-based transport) |
+| `gd run` | Run the Godot project (non-blocking, eval server enabled by default, `--bare` to disable eval, `--file-ipc` for file-based transport) |
 | `gd stop` | Stop the running Godot game |
-| `gd log` | View game output from last run (`--tail N`, `--follow`, `--clear`) |
+| `gd log` | View game output log via debug protocol ring buffer (`--tail N`, `--follow`, `--errors`, `--grep`, `--json`, `--clear`) |
 | `gd build` | Build/export the Godot project |
 | `gd check` | Check project for errors (parse, structural, semantic, `.tscn`/`.tres` validation) (`--format json`) |
 | `gd clean` | Clean build artifacts |
@@ -329,13 +329,12 @@ Debug a running Godot game via Godot's native binary debug protocol. The backgro
 # Run the project (auto-wires debug connection)
 gd run
 
-# Run with Godot's stdout/stderr streamed to terminal
-gd run --log
-
-# View game output from the last run (always captured)
+# View game output log (ring buffer via debug protocol)
 gd log
 gd log --tail 20
 gd log --follow
+gd log --errors          # errors and warnings only
+gd log --grep "Player"   # filter by pattern
 
 # Stop the running game
 gd stop

@@ -11,9 +11,6 @@ pub struct RunArgs {
     /// Run in verbose mode
     #[arg(short, long)]
     pub verbose: bool,
-    /// Stream Godot's stdout/stderr to the terminal
-    #[arg(short, long)]
-    pub log: bool,
     /// Run without the eval server (disables `gd eval` and `gd debug` input commands)
     #[arg(long)]
     pub bare: bool,
@@ -30,7 +27,6 @@ pub fn exec(args: &RunArgs) -> Result<()> {
         args.scene.as_deref(),
         args.debug,
         args.verbose,
-        args.log,
         !args.bare,
         args.file_ipc,
         &args.extra,
