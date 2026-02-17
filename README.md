@@ -2,7 +2,7 @@
 
 **The Godot toolchain.** A fast, all-in-one CLI for formatting, linting, building, and managing Godot projects — like `cargo` for GDScript.
 
-Built with [tree-sitter](https://tree-sitter.github.io/) for accurate parsing and [Rayon](https://github.com/rayon-rs/rayon) for parallel file processing.
+Built with [tree-sitter-gdscript](https://github.com/PrestonKnopp/tree-sitter-gdscript) and [tree-sitter-godot-resource](https://github.com/PrestonKnopp/tree-sitter-godot-resource) for accurate parsing, and [Rayon](https://github.com/rayon-rs/rayon) for parallel file processing.
 
 ## Features
 
@@ -26,12 +26,6 @@ Built with [tree-sitter](https://tree-sitter.github.io/) for accurate parsing an
 git clone https://github.com/c2lt4r/gd.git
 cd gd
 cargo install --path .
-```
-
-### With cargo
-
-```sh
-cargo install gd
 ```
 
 ## Quick Start

@@ -150,8 +150,8 @@ When Godot 5.0 ships (no timeline announced), expect:
 ### Third-party parser risk
 
 We depend on two community-maintained tree-sitter grammars:
-- `tree-sitter-gdscript` (crate version 6.1, repo: [PrestonKnoworka/tree-sitter-gdscript](https://github.com/PrestonKnoworka/tree-sitter-gdscript))
-- `tree-sitter-godot-resource` (crate version 0.7, repo: [prestonknowork/tree-sitter-godot-resource](https://github.com/prestonknoworka/tree-sitter-godot-resource))
+- `tree-sitter-gdscript` (crate version 6.1, repo: [PrestonKnopp/tree-sitter-gdscript](https://github.com/PrestonKnopp/tree-sitter-gdscript))
+- `tree-sitter-godot-resource` (crate version 0.7, repo: [PrestonKnopp/tree-sitter-godot-resource](https://github.com/PrestonKnopp/tree-sitter-godot-resource))
 
 **If these maintainers don't update for Godot 5.x syntax/format changes, we'll need to fork and vendor them.** This is the highest-risk dependency in the project — every feature (fmt, lint, LSP, scene commands) depends on these parsers.
 
