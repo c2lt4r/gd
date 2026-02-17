@@ -449,13 +449,52 @@ gd debug type --text "Hello" --delay 100         # 100ms between characters
 
 # Wait for a condition or timeout
 gd debug wait --seconds 2.0
-gd debug wait --signal button_pressed --timeout 10.0
 
 # Take a screenshot
 gd debug screenshot --output frame.png
 ```
 
 The `--hold` flag keeps the input pressed for the specified duration while the game continues running (physics, animations, etc.). Essential for 3D games where single-frame presses barely register.
+
+### Game Automation
+
+Query and control the game world by node name or path — no manual object ID wrangling:
+
+```sh
+# AI-readable game state snapshot (position, nearby nodes, scene, input actions)
+gd debug describe
+gd debug describe --node "Hero" --radius 1000
+
+# Find nodes by name, class, or group
+gd debug find --name "Player"
+gd debug find --type "CharacterBody2D"
+gd debug find --group "enemies"
+
+# Read/write properties by node name or path
+gd debug get-prop --node "Player" --property "health"
+gd debug set --node "Player" --property "speed" --value "200"
+gd debug set --node "Player" --property "position" --value "Vector2(100, 200)"
+
+# Call methods on nodes
+gd debug call --node "Player" --method "take_damage" --args '[10]'
+gd debug call --node "/root/Main/GameManager" --method "start_wave" --args '[3]'
+
+# Navigate via NavigationAgent (pathfinding with animations)
+gd debug navigate --node "Player" --to "500,300"
+gd debug navigate --node "Player" --to-node "Blacksmith" --timeout 30
+
+# Wait for conditions
+gd debug await --node "GameOver"                                  # wait for node to exist
+gd debug await --node "Player" --removed                          # wait for node removal
+gd debug await --node "Player" --property "health" --equals "0"   # wait for property value
+
+# Mouse cursor control (for UI testing)
+gd debug mouse-move --pos 400,300
+gd debug mouse-drag --from "100,200" --to "300,400"
+gd debug mouse-hover --node "MenuItem"
+```
+
+All automation commands support `--format json` for structured output.
 
 ### GitHub Templates
 

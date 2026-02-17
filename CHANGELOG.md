@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.2.16] - Unreleased
+
+### Added
+- **Game automation API (phase 2)** — 10 new `gd debug` subcommands for driving a running game by node name/path:
+  - `describe` — AI-readable snapshot: player position, nearby nodes with class/groups/distance, current scene, input actions. Auto-detects common player names, adjusts radius for 2D vs 3D.
+  - `find` — locate nodes by `--name` (recursive), `--type` (class), or `--group`.
+  - `get-prop` — read a property value by node name/path or object ID.
+  - `set` — set a property using GDScript expressions (`Vector2(100, 200)`, `"Game Over"`, `200`). No object ID needed.
+  - `call` — invoke a method on a node with JSON args array.
+  - `navigate` — pathfind via NavigationAgent2D/3D. Sets target, polls until arrival or timeout. The game's own movement code handles physics and animations.
+  - `await` — poll until a condition is met: node exists/removed, property `--equals`/`--gt`/`--lt`/`--contains`. Configurable `--timeout` and `--interval`.
+  - `mouse-move` — move cursor to screen coordinates or a node's screen position (renamed from `move-to`).
+  - `mouse-drag` — multi-step cursor drag between coordinates or nodes (renamed from `drag`).
+  - `mouse-hover` — hover cursor over a node/position with configurable dwell time (renamed from `hover`).
+
+### Fixed
+- **Node2D screen position** — `mouse-move`/`mouse-drag`/`mouse-hover` targeting a Node2D now apply the viewport canvas transform, so coordinates are correct when a Camera2D has panned or zoomed.
+
 ## [0.2.15] - 2026-02-16
 
 ### Added
