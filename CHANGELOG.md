@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.2.18] - 2026-02-17
+
+### Fixed
+- **Refactor commands preserve annotations** — `replace-symbol`, `delete-symbol`, `move-symbol`, and `insert` now include preceding `@rpc`, `@export`, `@onready`, and other annotations when computing a symbol's full range. Previously, annotations on their own line (e.g. `@rpc("any_peer")` above a function) were orphaned or duplicated during refactoring.
+
 ## [0.2.17] - 2026-02-17
 
 ### Added

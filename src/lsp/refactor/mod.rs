@@ -180,8 +180,8 @@ pub(super) fn line_starts(source: &str) -> Vec<usize> {
 }
 
 /// Expand a declaration node's byte range to include immediately preceding
-/// doc comments (contiguous comment lines with no blank-line gap above the node).
-/// Returns (start_byte, end_byte) covering comments + declaration + trailing newline.
+/// doc comments and annotations (contiguous `#`/`@` lines with no blank-line gap).
+/// Returns (start_byte, end_byte) covering annotations + comments + declaration + trailing newline.
 pub(super) fn declaration_full_range(node: Node, source: &str) -> (usize, usize) {
     let starts = line_starts(source);
     let decl_line = node.start_position().row;
@@ -194,7 +194,7 @@ pub(super) fn declaration_full_range(node: Node, source: &str) -> (usize, usize)
         let line_end = starts.get(check + 1).copied().unwrap_or(source.len());
         let line_text = &source[line_start..line_end];
         let trimmed = line_text.trim();
-        if trimmed.starts_with('#') {
+        if trimmed.starts_with('#') || trimmed.starts_with('@') {
             first_line = check;
         } else {
             break;
@@ -447,13 +447,40 @@ mod tests {
     }
 
     #[test]
-    fn full_range_annotation() {
+    fn full_range_annotation_inline() {
         let src = "@export var speed = 10\n";
         let tree = crate::core::parser::parse(src).unwrap();
         let node = find_declaration_by_name(tree.root_node(), src, "speed").unwrap();
         let (start, end) = declaration_full_range(node, src);
         // Annotation is part of the node, so the range covers it
         assert_eq!(&src[start..end], "@export var speed = 10\n");
+    }
+
+    #[test]
+    fn full_range_annotation_separate_line() {
+        let src = "@rpc(\"any_peer\")\nfunc sync_pos(pos):\n\tpass\n";
+        let tree = crate::core::parser::parse(src).unwrap();
+        let node = find_declaration_by_name(tree.root_node(), src, "sync_pos").unwrap();
+        let (start, end) = declaration_full_range(node, src);
+        assert_eq!(&src[start..end], "@rpc(\"any_peer\")\nfunc sync_pos(pos):\n\tpass\n");
+    }
+
+    #[test]
+    fn full_range_doc_comment_then_annotation() {
+        let src = "## Speed property\n@export\nvar speed = 10\n";
+        let tree = crate::core::parser::parse(src).unwrap();
+        let node = find_declaration_by_name(tree.root_node(), src, "speed").unwrap();
+        let (start, end) = declaration_full_range(node, src);
+        assert_eq!(&src[start..end], "## Speed property\n@export\nvar speed = 10\n");
+    }
+
+    #[test]
+    fn full_range_multiple_annotations() {
+        let src = "@export\n@onready\nvar timer = null\n";
+        let tree = crate::core::parser::parse(src).unwrap();
+        let node = find_declaration_by_name(tree.root_node(), src, "timer").unwrap();
+        let (start, end) = declaration_full_range(node, src);
+        assert_eq!(&src[start..end], "@export\n@onready\nvar timer = null\n");
     }
 
     // ── normalize_blank_lines ────────────────────────────────────────────
