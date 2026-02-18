@@ -233,7 +233,7 @@ pub fn generate_profile(points: &[(f64, f64)], plane: &str) -> String {
 /// convention, which inverts the winding relative to the profile's Y-up math.
 /// So caps swap their if/else branches compared to side walls.
 #[allow(clippy::too_many_lines)]
-pub fn generate_extrude(depth: f64) -> String {
+pub fn generate_extrude(depth: f64, segments: u32) -> String {
     let half = depth / 2.0;
     format!(
         "extends Node\n\
@@ -249,22 +249,22 @@ pub fn generate_extrude(depth: f64) -> String {
          \tvar mesh_inst = helper.get_node_or_null(mesh_name)\n\
          \tif mesh_inst == null: return \"ERROR: mesh node not found\"\n\
          \tvar half = {half}\n\
-         \tvar front = []\n\
-         \tvar back = []\n\
-         \tfor p in points:\n\
-         \t\tvar fv\n\
-         \t\tvar bv\n\
-         \t\tif plane == \"front\":\n\
-         \t\t\tfv = Vector3(p[0], p[1], half)\n\
-         \t\t\tbv = Vector3(p[0], p[1], -half)\n\
-         \t\telif plane == \"side\":\n\
-         \t\t\tfv = Vector3(half, p[1], p[0])\n\
-         \t\t\tbv = Vector3(-half, p[1], p[0])\n\
-         \t\telse:\n\
-         \t\t\tfv = Vector3(p[0], half, p[1])\n\
-         \t\t\tbv = Vector3(p[0], -half, p[1])\n\
-         \t\tfront.append(fv)\n\
-         \t\tback.append(bv)\n\
+         \tvar n_segs = {segments}\n\
+         \tvar sections = []\n\
+         \tfor s in range(n_segs + 1):\n\
+         \t\tvar t = float(s) / n_segs\n\
+         \t\tvar d_val = half - t * {depth}\n\
+         \t\tvar sec = []\n\
+         \t\tfor p in points:\n\
+         \t\t\tvar v\n\
+         \t\t\tif plane == \"front\":\n\
+         \t\t\t\tv = Vector3(p[0], p[1], d_val)\n\
+         \t\t\telif plane == \"side\":\n\
+         \t\t\t\tv = Vector3(d_val, p[1], p[0])\n\
+         \t\t\telse:\n\
+         \t\t\t\tv = Vector3(p[0], d_val, p[1])\n\
+         \t\t\tsec.append(v)\n\
+         \t\tsections.append(sec)\n\
          \tvar pts2d = PackedVector2Array()\n\
          \tfor p in points:\n\
          \t\tpts2d.append(Vector2(p[0], p[1]))\n\
@@ -279,51 +279,55 @@ pub fn generate_extrude(depth: f64) -> String {
          \tst.begin(Mesh.PRIMITIVE_TRIANGLES)\n\
          \tfor ti in range(0, indices.size(), 3):\n\
          \t\tif flip:\n\
-         \t\t\tst.add_vertex(front[indices[ti]])\n\
-         \t\t\tst.add_vertex(front[indices[ti + 1]])\n\
-         \t\t\tst.add_vertex(front[indices[ti + 2]])\n\
+         \t\t\tst.add_vertex(sections[0][indices[ti]])\n\
+         \t\t\tst.add_vertex(sections[0][indices[ti + 1]])\n\
+         \t\t\tst.add_vertex(sections[0][indices[ti + 2]])\n\
          \t\telse:\n\
-         \t\t\tst.add_vertex(front[indices[ti + 2]])\n\
-         \t\t\tst.add_vertex(front[indices[ti + 1]])\n\
-         \t\t\tst.add_vertex(front[indices[ti]])\n\
+         \t\t\tst.add_vertex(sections[0][indices[ti + 2]])\n\
+         \t\t\tst.add_vertex(sections[0][indices[ti + 1]])\n\
+         \t\t\tst.add_vertex(sections[0][indices[ti]])\n\
          \tfor ti in range(0, indices.size(), 3):\n\
          \t\tif flip:\n\
-         \t\t\tst.add_vertex(back[indices[ti + 2]])\n\
-         \t\t\tst.add_vertex(back[indices[ti + 1]])\n\
-         \t\t\tst.add_vertex(back[indices[ti]])\n\
+         \t\t\tst.add_vertex(sections[n_segs][indices[ti + 2]])\n\
+         \t\t\tst.add_vertex(sections[n_segs][indices[ti + 1]])\n\
+         \t\t\tst.add_vertex(sections[n_segs][indices[ti]])\n\
          \t\telse:\n\
-         \t\t\tst.add_vertex(back[indices[ti]])\n\
-         \t\t\tst.add_vertex(back[indices[ti + 1]])\n\
-         \t\t\tst.add_vertex(back[indices[ti + 2]])\n\
-         \tvar n_pts = front.size()\n\
-         \tfor i in n_pts:\n\
-         \t\tvar j = (i + 1) % n_pts\n\
-         \t\tif flip:\n\
-         \t\t\tst.add_vertex(front[i])\n\
-         \t\t\tst.add_vertex(front[j])\n\
-         \t\t\tst.add_vertex(back[i])\n\
-         \t\t\tst.add_vertex(front[j])\n\
-         \t\t\tst.add_vertex(back[j])\n\
-         \t\t\tst.add_vertex(back[i])\n\
-         \t\telse:\n\
-         \t\t\tst.add_vertex(front[i])\n\
-         \t\t\tst.add_vertex(back[i])\n\
-         \t\t\tst.add_vertex(front[j])\n\
-         \t\t\tst.add_vertex(front[j])\n\
-         \t\t\tst.add_vertex(back[i])\n\
-         \t\t\tst.add_vertex(back[j])\n\
+         \t\t\tst.add_vertex(sections[n_segs][indices[ti]])\n\
+         \t\t\tst.add_vertex(sections[n_segs][indices[ti + 1]])\n\
+         \t\t\tst.add_vertex(sections[n_segs][indices[ti + 2]])\n\
+         \tvar n_pts = sections[0].size()\n\
+         \tfor seg in n_segs:\n\
+         \t\tvar fwd = sections[seg]\n\
+         \t\tvar bwd = sections[seg + 1]\n\
+         \t\tfor i in n_pts:\n\
+         \t\t\tvar j = (i + 1) % n_pts\n\
+         \t\t\tif flip:\n\
+         \t\t\t\tst.add_vertex(fwd[i])\n\
+         \t\t\t\tst.add_vertex(fwd[j])\n\
+         \t\t\t\tst.add_vertex(bwd[i])\n\
+         \t\t\t\tst.add_vertex(fwd[j])\n\
+         \t\t\t\tst.add_vertex(bwd[j])\n\
+         \t\t\t\tst.add_vertex(bwd[i])\n\
+         \t\t\telse:\n\
+         \t\t\t\tst.add_vertex(fwd[i])\n\
+         \t\t\t\tst.add_vertex(bwd[i])\n\
+         \t\t\t\tst.add_vertex(fwd[j])\n\
+         \t\t\t\tst.add_vertex(fwd[j])\n\
+         \t\t\t\tst.add_vertex(bwd[i])\n\
+         \t\t\t\tst.add_vertex(bwd[j])\n\
          \tst.generate_normals()\n\
          \tmesh_inst.mesh = st.commit()\n\
          {RESTORE_COLOR}\
          \tvar vc = mesh_inst.mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX].size()\n\
          \tvar fc = vc / 3\n\
-         \tvar d = {{}}\n\
-         \td[\"depth\"] = {depth}\n\
-         \td[\"plane\"] = plane\n\
-         \td[\"depth_range\"] = [-{half}, {half}]\n\
-         \td[\"vertex_count\"] = vc\n\
-         \td[\"face_count\"] = fc\n\
-         \treturn JSON.stringify(d)\n"
+         \tvar d_out = {{}}\n\
+         \td_out[\"depth\"] = {depth}\n\
+         \td_out[\"plane\"] = plane\n\
+         \td_out[\"segments\"] = n_segs\n\
+         \td_out[\"depth_range\"] = [-{half}, {half}]\n\
+         \td_out[\"vertex_count\"] = vc\n\
+         \td_out[\"face_count\"] = fc\n\
+         \treturn JSON.stringify(d_out)\n"
     )
 }
 
@@ -1486,6 +1490,111 @@ pub fn generate_material(part: Option<&str>, color: &str) -> String {
     )
 }
 
+/// Generate the GDScript for `mesh material --parts`.
+///
+/// Applies a color to all parts matching a pattern (glob with `*`/`?`, or comma-separated names).
+pub fn generate_material_multi(pattern: &str, color: &str) -> String {
+    format!(
+        "extends Node\n\
+         \n\
+         func run():\n\
+         \tvar root = get_tree().get_root()\n\
+         \tvar helper = root.get_node_or_null(\"_GdMeshHelper\")\n\
+         \tif helper == null: return \"ERROR: no mesh session — run 'gd mesh create' first\"\n\
+         \tvar pattern = \"{pattern}\"\n\
+         \tvar names = []\n\
+         \tif pattern.contains(\"*\") or pattern.contains(\"?\"):\n\
+         \t\tfor child in helper.get_children():\n\
+         \t\t\tif child is MeshInstance3D and not child.name.begins_with(\"_\"):\n\
+         \t\t\t\tif child.name.match(pattern):\n\
+         \t\t\t\t\tnames.append(child.name)\n\
+         \telse:\n\
+         \t\tfor n in pattern.split(\",\"):\n\
+         \t\t\tnames.append(n.strip_edges())\n\
+         \tvar hex = \"{color}\"\n\
+         \tvar color_val = Color.html(hex)\n\
+         \tvar applied = []\n\
+         \tfor n in names:\n\
+         \t\tvar mi = helper.get_node_or_null(n)\n\
+         \t\tif mi:\n\
+         \t\t\tvar mat = StandardMaterial3D.new()\n\
+         \t\t\tmat.albedo_color = color_val\n\
+         \t\t\tmi.material_override = mat\n\
+         \t\t\tmi.set_meta(\"part_color\", color_val)\n\
+         \t\t\tapplied.append(n)\n\
+         \tvar d = {{}}\n\
+         \td[\"pattern\"] = pattern\n\
+         \td[\"color\"] = hex\n\
+         \td[\"applied\"] = applied\n\
+         \td[\"count\"] = applied.size()\n\
+         \treturn JSON.stringify(d)\n"
+    )
+}
+
+/// Generate the GDScript for `mesh material --parts --preset`.
+pub fn generate_material_preset_multi(pattern: &str, preset: &str, color: Option<&str>) -> String {
+    let default_color = match preset {
+        "glass" => "Color(0.8, 0.9, 1.0)",
+        "metal" => "Color(0.7, 0.7, 0.7)",
+        "chrome" => "Color(0.95, 0.95, 0.95)",
+        "rubber" => "Color(0.15, 0.15, 0.15)",
+        "paint" => "Color(0.8, 0.1, 0.1)",
+        "wood" => "Color(0.55, 0.35, 0.2)",
+        "matte" => "Color(0.5, 0.5, 0.5)",
+        _ => "Color(0.9, 0.9, 0.9)", // plastic
+    };
+    let color_line = if let Some(hex) = color {
+        format!("\tvar base_color = Color.html(\"{hex}\")\n")
+    } else {
+        format!("\tvar base_color = {default_color}\n")
+    };
+    let props = match preset {
+        "glass" => "\t\tmat.metallic = 0.0\n\t\tmat.roughness = 0.05\n\t\tmat.transparency = 1\n\t\tmat.albedo_color.a = 0.3\n",
+        "metal" => "\t\tmat.metallic = 0.9\n\t\tmat.roughness = 0.3\n",
+        "chrome" => "\t\tmat.metallic = 1.0\n\t\tmat.roughness = 0.05\n\t\tmat.specular = 1.0\n",
+        "rubber" => "\t\tmat.metallic = 0.0\n\t\tmat.roughness = 0.95\n",
+        "paint" => "\t\tmat.metallic = 0.1\n\t\tmat.roughness = 0.4\n",
+        "wood" => "\t\tmat.metallic = 0.0\n\t\tmat.roughness = 0.7\n",
+        "matte" => "\t\tmat.metallic = 0.0\n\t\tmat.roughness = 1.0\n",
+        _ => "\t\tmat.metallic = 0.0\n\t\tmat.roughness = 0.4\n", // plastic
+    };
+    format!(
+        "extends Node\n\
+         \n\
+         func run():\n\
+         \tvar root = get_tree().get_root()\n\
+         \tvar helper = root.get_node_or_null(\"_GdMeshHelper\")\n\
+         \tif helper == null: return \"ERROR: no mesh session — run 'gd mesh create' first\"\n\
+         \tvar pattern = \"{pattern}\"\n\
+         \tvar names = []\n\
+         \tif pattern.contains(\"*\") or pattern.contains(\"?\"):\n\
+         \t\tfor child in helper.get_children():\n\
+         \t\t\tif child is MeshInstance3D and not child.name.begins_with(\"_\"):\n\
+         \t\t\t\tif child.name.match(pattern):\n\
+         \t\t\t\t\tnames.append(child.name)\n\
+         \telse:\n\
+         \t\tfor n in pattern.split(\",\"):\n\
+         \t\t\tnames.append(n.strip_edges())\n\
+         {color_line}\
+         \tvar applied = []\n\
+         \tfor n in names:\n\
+         \t\tvar mi = helper.get_node_or_null(n)\n\
+         \t\tif mi:\n\
+         \t\t\tvar mat = StandardMaterial3D.new()\n\
+         \t\t\tmat.albedo_color = base_color\n\
+         {props}\
+         \t\tmi.material_override = mat\n\
+         \t\t\tmi.set_meta(\"part_color\", base_color)\n\
+         \t\t\tapplied.append(n)\n\
+         \tvar d = {{}}\n\
+         \td[\"pattern\"] = pattern\n\
+         \td[\"preset\"] = \"{preset}\"\n\
+         \td[\"applied\"] = applied\n\
+         \td[\"count\"] = applied.size()\n\
+         \treturn JSON.stringify(d)\n"
+    )
+}
+
 /// Generate the GDScript for `mesh loop-cut`.
 ///
 /// Splits all triangles that straddle an axis-aligned plane at the given position.
@@ -1681,6 +1790,8 @@ pub fn generate_normal_debug() -> String {
      \tvar count = 0\n\
      \tfor child in helper.get_children():\n\
      \t\tif child is MeshInstance3D and not child.name.begins_with(\"_\"):\n\
+     \t\t\tif child.material_override and not (child.material_override is ShaderMaterial):\n\
+     \t\t\t\tchild.set_meta(\"_saved_material\", child.material_override.duplicate())\n\
      \t\t\tchild.material_override = mat\n\
      \t\t\tcount += 1\n\
      \tvar d = {}\n\
@@ -1691,6 +1802,10 @@ pub fn generate_normal_debug() -> String {
 }
 
 /// Generate the GDScript to remove the face orientation debug overlay.
+///
+/// Only acts on parts that currently have a `ShaderMaterial` (i.e. the debug overlay).
+/// Restores the original material from `_saved_material` metadata if available,
+/// otherwise falls back to `part_color` metadata.
 pub fn generate_normal_debug_clear() -> String {
     "extends Node\n\
      \n\
@@ -1700,12 +1815,16 @@ pub fn generate_normal_debug_clear() -> String {
      \tif helper == null: return \"ok\"\n\
      \tfor child in helper.get_children():\n\
      \t\tif child is MeshInstance3D and not child.name.begins_with(\"_\"):\n\
-     \t\t\tif child.has_meta(\"part_color\"):\n\
-     \t\t\t\tvar mat = StandardMaterial3D.new()\n\
-     \t\t\t\tmat.albedo_color = child.get_meta(\"part_color\")\n\
-     \t\t\t\tchild.material_override = mat\n\
-     \t\t\telse:\n\
-     \t\t\t\tchild.material_override = null\n\
+     \t\t\tif child.material_override is ShaderMaterial:\n\
+     \t\t\t\tif child.has_meta(\"_saved_material\"):\n\
+     \t\t\t\t\tchild.material_override = child.get_meta(\"_saved_material\")\n\
+     \t\t\t\t\tchild.remove_meta(\"_saved_material\")\n\
+     \t\t\t\telif child.has_meta(\"part_color\"):\n\
+     \t\t\t\t\tvar mat = StandardMaterial3D.new()\n\
+     \t\t\t\t\tmat.albedo_color = child.get_meta(\"part_color\")\n\
+     \t\t\t\t\tchild.material_override = mat\n\
+     \t\t\t\telse:\n\
+     \t\t\t\t\tchild.material_override = null\n\
      \treturn \"ok\"\n"
         .to_string()
 }

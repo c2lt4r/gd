@@ -84,6 +84,13 @@ pub fn cmd_view(args: &ViewArgs) -> Result<()> {
         }
     }
 
+    // Always clear any stale normal-debug overlay from a previous call
+    // (safe no-op if no ShaderMaterial is present)
+    {
+        let clear_script = gdscript::generate_normal_debug_clear();
+        let _ = run_eval(&clear_script);
+    }
+
     // Auto-fit cameras to the combined AABB of all visible parts
     let autofit_script = gdscript::generate_autofit_cameras(args.zoom);
     let autofit_result = run_eval(&autofit_script)?;

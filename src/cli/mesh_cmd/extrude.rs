@@ -5,7 +5,7 @@ use super::gdscript;
 use super::{ExtrudeArgs, OutputFormat, run_eval};
 
 pub fn cmd_extrude(args: &ExtrudeArgs) -> Result<()> {
-    let script = gdscript::generate_extrude(args.depth);
+    let script = gdscript::generate_extrude(args.depth, args.segments);
     let result = run_eval(&script)?;
     let parsed: serde_json::Value =
         serde_json::from_str(&result).map_err(|e| miette::miette!("Failed to parse result: {e}"))?;

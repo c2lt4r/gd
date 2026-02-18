@@ -229,6 +229,9 @@ pub struct ExtrudeArgs {
     /// Extrusion depth
     #[arg(long)]
     pub depth: f64,
+    /// Number of cross-section segments (more = smoother taper/loop-cut results)
+    #[arg(long, default_value = "1")]
+    pub segments: u32,
     /// Output format
     #[arg(long, default_value = "json")]
     pub format: OutputFormat,
@@ -563,6 +566,9 @@ pub struct MaterialArgs {
     /// Part name (defaults to active part)
     #[arg(long)]
     pub part: Option<String>,
+    /// Apply to multiple parts by glob pattern or comma-separated names (e.g. "wheel-*" or "body,roof")
+    #[arg(long)]
+    pub parts: Option<String>,
     /// Color as hex (e.g. "ff0000" or "#ff0000") or named color (red, green, blue, white, black)
     #[arg(long)]
     pub color: Option<String>,

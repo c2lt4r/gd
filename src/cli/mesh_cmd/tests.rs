@@ -54,12 +54,17 @@ fn profile_top_parses() {
 
 #[test]
 fn extrude_parses() {
-    assert_parses(&gdscript::generate_extrude(1.5));
+    assert_parses(&gdscript::generate_extrude(1.5, 1));
 }
 
 #[test]
 fn extrude_small_depth_parses() {
-    assert_parses(&gdscript::generate_extrude(0.1));
+    assert_parses(&gdscript::generate_extrude(0.1, 1));
+}
+
+#[test]
+fn extrude_segments_parses() {
+    assert_parses(&gdscript::generate_extrude(10.0, 6));
 }
 
 // ── Revolve ──────────────────────────────────────────────────────────
@@ -449,6 +454,23 @@ fn material_preset_rubber_parses() {
 #[test]
 fn material_preset_chrome_parses() {
     assert_parses(&gdscript::generate_material_preset(None, "chrome", None));
+}
+
+// ── Material multi ──────────────────────────────────────────────────
+
+#[test]
+fn material_multi_glob_parses() {
+    assert_parses(&gdscript::generate_material_multi("wheel-*", "333333"));
+}
+
+#[test]
+fn material_multi_comma_parses() {
+    assert_parses(&gdscript::generate_material_multi("body,roof", "ff0000"));
+}
+
+#[test]
+fn material_preset_multi_parses() {
+    assert_parses(&gdscript::generate_material_preset_multi("window-*", "glass", None));
 }
 
 // ── Loop cut ────────────────────────────────────────────────────────
