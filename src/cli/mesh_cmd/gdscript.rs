@@ -669,6 +669,7 @@ pub fn generate_taper(
     start_scale: f64,
     end_scale: f64,
     midpoint: Option<f64>,
+    range: Option<(f64, f64)>,
 ) -> String {
     let (axis_component, other1, other2) = match axis {
         "x" => ("x", "y", "z"),
@@ -680,6 +681,7 @@ pub fn generate_taper(
         |p| format!("\tvar mesh_name = \"{p}\"\n"),
     );
     let midpoint_val = midpoint.unwrap_or(-1.0);
+    let (range_from, range_to) = range.unwrap_or((-1.0, -1.0));
     format!(
         "extends Node\n\
          \n\
@@ -710,16 +712,24 @@ pub fn generate_taper(
          \tcenter_{other1} /= verts.size()\n\
          \tcenter_{other2} /= verts.size()\n\
          \tvar mid = {midpoint_val}\n\
+         \tvar r_from = {range_from}\n\
+         \tvar r_to = {range_to}\n\
          \tfor i in verts.size():\n\
          \t\tvar v = verts[i]\n\
          \t\tvar t = (v.{axis_component} - axis_min) / axis_range\n\
          \t\tvar s\n\
-         \t\tif mid < 0:\n\
-         \t\t\ts = start_s + (end_s - start_s) * t\n\
-         \t\telif t <= mid:\n\
-         \t\t\ts = end_s + (start_s - end_s) * (t / mid) if mid > 0.0001 else start_s\n\
+         \t\tif r_from >= 0 and (t < r_from or t > r_to):\n\
+         \t\t\ts = 1.0\n\
          \t\telse:\n\
-         \t\t\ts = start_s + (end_s - start_s) * ((t - mid) / (1.0 - mid)) if (1.0 - mid) > 0.0001 else end_s\n\
+         \t\t\tvar lt = t\n\
+         \t\t\tif r_from >= 0:\n\
+         \t\t\t\tlt = (t - r_from) / (r_to - r_from) if (r_to - r_from) > 0.0001 else 0.0\n\
+         \t\t\tif mid < 0:\n\
+         \t\t\t\ts = start_s + (end_s - start_s) * lt\n\
+         \t\t\telif lt <= mid:\n\
+         \t\t\t\ts = end_s + (start_s - end_s) * (lt / mid) if mid > 0.0001 else start_s\n\
+         \t\t\telse:\n\
+         \t\t\t\ts = start_s + (end_s - start_s) * ((lt - mid) / (1.0 - mid)) if (1.0 - mid) > 0.0001 else end_s\n\
          \t\tv.{other1} = center_{other1} + (v.{other1} - center_{other1}) * s\n\
          \t\tv.{other2} = center_{other2} + (v.{other2} - center_{other2}) * s\n\
          \t\tverts[i] = v\n\
@@ -739,6 +749,8 @@ pub fn generate_taper(
          \td[\"end_scale\"] = end_s\n\
          \tif mid >= 0:\n\
          \t\td[\"midpoint\"] = mid\n\
+         \tif r_from >= 0:\n\
+         \t\td[\"range\"] = [r_from, r_to]\n\
          \td[\"vertex_count\"] = vc\n\
          \treturn JSON.stringify(d)\n"
     )
@@ -886,6 +898,44 @@ pub fn generate_translate(part: Option<&str>, x: f64, y: f64, z: f64, relative: 
          \tvar d = {{}}\n\
          \td[\"name\"] = name\n\
          \td[\"position\"] = [target.position.x, target.position.y, target.position.z]\n\
+         \treturn JSON.stringify(d)\n"
+    )
+}
+
+/// Generate the GDScript for `mesh translate --relative-to`.
+///
+/// Positions the target part at `ref_part_center + offset`.
+pub fn generate_translate_relative_to(
+    part: Option<&str>,
+    ref_part: &str,
+    x: f64,
+    y: f64,
+    z: f64,
+) -> String {
+    let target = part.map_or(
+        String::from("\tvar name = helper.get_meta(\"active_mesh\")\n"),
+        |p| format!("\tvar name = \"{p}\"\n"),
+    );
+    format!(
+        "extends Node\n\
+         \n\
+         func run():\n\
+         \tvar root = get_tree().get_root()\n\
+         \tvar helper = root.get_node_or_null(\"_GdMeshHelper\")\n\
+         \tif helper == null: return \"ERROR: no mesh session — run 'gd mesh create' first\"\n\
+         {target}\
+         \tvar target = helper.get_node_or_null(str(name))\n\
+         \tif target == null: return \"ERROR: part '\" + str(name) + \"' not found\"\n\
+         \tvar ref_part = helper.get_node_or_null(\"{ref_part}\")\n\
+         \tif ref_part == null: return \"ERROR: reference part '{ref_part}' not found\"\n\
+         \tvar ref_aabb = ref_part.transform * ref_part.mesh.get_aabb() if ref_part.mesh else AABB()\n\
+         \tvar ref_center = ref_aabb.get_center()\n\
+         \ttarget.position = ref_center + Vector3({x}, {y}, {z})\n\
+         \tvar d = {{}}\n\
+         \td[\"name\"] = name\n\
+         \td[\"relative_to\"] = \"{ref_part}\"\n\
+         \td[\"ref_center\"] = [snapped(ref_center.x, 0.01), snapped(ref_center.y, 0.01), snapped(ref_center.z, 0.01)]\n\
+         \td[\"position\"] = [snapped(target.position.x, 0.01), snapped(target.position.y, 0.01), snapped(target.position.z, 0.01)]\n\
          \treturn JSON.stringify(d)\n"
     )
 }
@@ -1096,11 +1146,47 @@ pub fn generate_restore() -> String {
 /// Generate the GDScript for `mesh flip-normals`.
 ///
 /// Inverts all triangle winding on the target part, then regenerates normals.
-pub fn generate_flip_normals(part: Option<&str>) -> String {
+pub fn generate_flip_normals(part: Option<&str>, caps: Option<&str>) -> String {
     let target = part.map_or(
         String::from("\tvar mesh_name = helper.get_meta(\"active_mesh\")\n"),
         |p| format!("\tvar mesh_name = \"{p}\"\n"),
     );
+    let caps_axis = match caps {
+        Some("x") => "Vector3(1, 0, 0)",
+        Some("y") => "Vector3(0, 1, 0)",
+        Some("z") => "Vector3(0, 0, 1)",
+        _ => "",
+    };
+    let filter_code = if caps.is_some() {
+        format!(
+            "\tvar cap_axis = {caps_axis}\n\
+             \tvar flipped_count = 0\n\
+             \tvar flipped = PackedVector3Array()\n\
+             \tflipped.resize(verts.size())\n\
+             \tfor i in range(0, verts.size(), 3):\n\
+             \t\tvar e1 = verts[i + 1] - verts[i]\n\
+             \t\tvar e2 = verts[i + 2] - verts[i]\n\
+             \t\tvar fn = e1.cross(e2).normalized()\n\
+             \t\tif abs(fn.dot(cap_axis)) > 0.7:\n\
+             \t\t\tflipped[i] = verts[i + 2]\n\
+             \t\t\tflipped[i + 1] = verts[i + 1]\n\
+             \t\t\tflipped[i + 2] = verts[i]\n\
+             \t\t\tflipped_count += 1\n\
+             \t\telse:\n\
+             \t\t\tflipped[i] = verts[i]\n\
+             \t\t\tflipped[i + 1] = verts[i + 1]\n\
+             \t\t\tflipped[i + 2] = verts[i + 2]\n"
+        )
+    } else {
+        "\tvar flipped_count = verts.size() / 3\n\
+         \tvar flipped = PackedVector3Array()\n\
+         \tflipped.resize(verts.size())\n\
+         \tfor i in range(0, verts.size(), 3):\n\
+         \t\tflipped[i] = verts[i + 2]\n\
+         \t\tflipped[i + 1] = verts[i + 1]\n\
+         \t\tflipped[i + 2] = verts[i]\n"
+            .to_string()
+    };
     format!(
         "extends Node\n\
          \n\
@@ -1113,12 +1199,7 @@ pub fn generate_flip_normals(part: Option<&str>) -> String {
          \tif mesh_inst == null: return \"ERROR: part '\" + str(mesh_name) + \"' not found\"\n\
          \tif mesh_inst.mesh == null or mesh_inst.mesh.get_surface_count() == 0: return \"ERROR: no mesh data\"\n\
          \tvar verts = mesh_inst.mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]\n\
-         \tvar flipped = PackedVector3Array()\n\
-         \tflipped.resize(verts.size())\n\
-         \tfor i in range(0, verts.size(), 3):\n\
-         \t\tflipped[i] = verts[i + 2]\n\
-         \t\tflipped[i + 1] = verts[i + 1]\n\
-         \t\tflipped[i + 2] = verts[i]\n\
+         {filter_code}\
          \tvar st = SurfaceTool.new()\n\
          \tst.begin(Mesh.PRIMITIVE_TRIANGLES)\n\
          \tfor v in flipped:\n\
@@ -1131,6 +1212,7 @@ pub fn generate_flip_normals(part: Option<&str>) -> String {
          \td[\"name\"] = mesh_name\n\
          \td[\"vertex_count\"] = vc\n\
          \td[\"face_count\"] = vc / 3\n\
+         \td[\"flipped_faces\"] = flipped_count\n\
          \treturn JSON.stringify(d)\n"
     )
 }

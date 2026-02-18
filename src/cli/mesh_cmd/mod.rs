@@ -355,6 +355,9 @@ pub struct TranslateArgs {
     /// Treat --to as relative offset instead of absolute position
     #[arg(long)]
     pub relative: bool,
+    /// Position relative to another part's AABB center (offset added to that center)
+    #[arg(long)]
+    pub relative_to: Option<String>,
     /// Output format
     #[arg(long, default_value = "json")]
     pub format: OutputFormat,
@@ -429,6 +432,12 @@ pub struct TaperArgs {
     /// Peak position along axis (0.0-1.0) for two-segment taper (fat middle, thin ends)
     #[arg(long)]
     pub midpoint: Option<f64>,
+    /// Start of taper range as normalized axis position (0.0-1.0, default 0.0)
+    #[arg(long)]
+    pub from: Option<f64>,
+    /// End of taper range as normalized axis position (0.0-1.0, default 1.0)
+    #[arg(long)]
+    pub to: Option<f64>,
     /// Output format
     #[arg(long, default_value = "json")]
     pub format: OutputFormat,
@@ -492,6 +501,9 @@ pub struct FlipNormalsArgs {
     /// Part name (defaults to active part)
     #[arg(long)]
     pub part: Option<String>,
+    /// Only flip faces whose normal aligns with this axis (cap faces from extrude/revolve)
+    #[arg(long, value_enum)]
+    pub caps: Option<Axis>,
     /// Output format
     #[arg(long, default_value = "json")]
     pub format: OutputFormat,

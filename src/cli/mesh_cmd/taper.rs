@@ -5,12 +5,19 @@ use super::gdscript;
 use super::{OutputFormat, TaperArgs, run_eval};
 
 pub fn cmd_taper(args: &TaperArgs) -> Result<()> {
+    let range = match (args.from, args.to) {
+        (Some(f), Some(t)) => Some((f, t)),
+        (Some(f), None) => Some((f, 1.0)),
+        (None, Some(t)) => Some((0.0, t)),
+        (None, None) => None,
+    };
     let script = gdscript::generate_taper(
         args.part.as_deref(),
         args.axis.as_str(),
         args.start,
         args.end,
         args.midpoint,
+        range,
     );
     let result = run_eval(&script)?;
     let parsed: serde_json::Value =

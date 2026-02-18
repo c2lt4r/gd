@@ -182,6 +182,19 @@ fn translate_relative_parses() {
     assert_parses(&gdscript::generate_translate(None, 0.0, 1.5, -3.0, true));
 }
 
+// ── Translate relative-to ────────────────────────────────────────────
+
+#[test]
+fn translate_relative_to_parses() {
+    assert_parses(&gdscript::generate_translate_relative_to(
+        Some("engine-1"),
+        "wing-right",
+        0.0,
+        -2.0,
+        0.0,
+    ));
+}
+
 // ── Rotate ───────────────────────────────────────────────────────────
 
 #[test]
@@ -235,27 +248,37 @@ fn list_vertices_region_parses() {
 
 #[test]
 fn taper_y_parses() {
-    assert_parses(&gdscript::generate_taper(None, "y", 1.0, 0.0, None));
+    assert_parses(&gdscript::generate_taper(None, "y", 1.0, 0.0, None, None));
 }
 
 #[test]
 fn taper_z_parses() {
-    assert_parses(&gdscript::generate_taper(None, "z", 1.0, 0.5, None));
+    assert_parses(&gdscript::generate_taper(None, "z", 1.0, 0.5, None, None));
 }
 
 #[test]
 fn taper_x_parses() {
-    assert_parses(&gdscript::generate_taper(None, "x", 0.5, 1.5, None));
+    assert_parses(&gdscript::generate_taper(None, "x", 0.5, 1.5, None, None));
 }
 
 #[test]
 fn taper_named_part_parses() {
-    assert_parses(&gdscript::generate_taper(Some("wing"), "z", 1.0, 0.0, None));
+    assert_parses(&gdscript::generate_taper(Some("wing"), "z", 1.0, 0.0, None, None));
 }
 
 #[test]
 fn taper_midpoint_parses() {
-    assert_parses(&gdscript::generate_taper(None, "y", 1.0, 0.3, Some(0.5)));
+    assert_parses(&gdscript::generate_taper(None, "y", 1.0, 0.3, Some(0.5), None));
+}
+
+#[test]
+fn taper_range_parses() {
+    assert_parses(&gdscript::generate_taper(None, "z", 1.0, 0.0, None, Some((0.3, 0.7))));
+}
+
+#[test]
+fn taper_midpoint_range_parses() {
+    assert_parses(&gdscript::generate_taper(None, "y", 1.0, 0.2, Some(0.5), Some((0.1, 0.9))));
 }
 
 // ── Bevel ────────────────────────────────────────────────────────────
@@ -344,12 +367,22 @@ fn restore_parses() {
 
 #[test]
 fn flip_normals_active_parses() {
-    assert_parses(&gdscript::generate_flip_normals(None));
+    assert_parses(&gdscript::generate_flip_normals(None, None));
 }
 
 #[test]
 fn flip_normals_named_parses() {
-    assert_parses(&gdscript::generate_flip_normals(Some("receiver")));
+    assert_parses(&gdscript::generate_flip_normals(Some("receiver"), None));
+}
+
+#[test]
+fn flip_normals_caps_x_parses() {
+    assert_parses(&gdscript::generate_flip_normals(None, Some("x")));
+}
+
+#[test]
+fn flip_normals_caps_z_parses() {
+    assert_parses(&gdscript::generate_flip_normals(Some("fuselage"), Some("z")));
 }
 
 // ── Material ─────────────────────────────────────────────────────────
