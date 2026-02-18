@@ -16,6 +16,7 @@ Built with [tree-sitter-gdscript](https://github.com/PrestonKnopp/tree-sitter-gd
 - **Scene management** &mdash; create scenes, add/remove nodes, set properties, wire connections, attach/detach scripts &mdash; plus validate `.tscn`/`.tres` files and visualize scene hierarchies
 - **Debug** a running Godot game via Godot's binary debug protocol &mdash; breakpoints, stepping, variable inspection, expression evaluation, live scene tree, node inspection, game speed control, and hot-reload
 - **Godot LSP proxy** &mdash; forward hover, completion, and go-to-definition to Godot's built-in LSP when the editor is running
+- **3D mesh editing** &mdash; procedural mesh construction from 2D profiles, primitives, and transforms with multi-part assembly, materials, normals tools, and batch execution
 - **Analyze** your project with dependency graphs, class trees, and code statistics
 
 ## Installation
@@ -81,6 +82,7 @@ gd run
 | `gd env` | Show environment info (gd version, Godot version/path, OS, project root) |
 | `gd man` | Generate man page |
 | `gd upgrade` | Self-update to latest release |
+| `gd mesh` | Procedural 3D mesh editing (profiles, extrude, revolve, multi-part, materials, normals, batch) |
 | `gd llm` | Print AI-readable command reference (like llms.txt) |
 
 ### Formatter
@@ -488,6 +490,73 @@ gd debug mouse-hover --node "MenuItem"
 ```
 
 All automation commands support `--format json` for structured output.
+
+### 3D Mesh Editing
+
+Build 3D meshes from 2D profiles, primitives, and transforms — all from the terminal. Designed for AI agent workflows with JSON output and batch execution.
+
+```sh
+# Initialize workspace and create a session with a cube primitive
+gd mesh init
+gd mesh create --name body --from cube
+
+# Define a 2D profile and extrude into 3D
+gd mesh profile --plane front --points "0,0 2,0 2,1 0,1"
+gd mesh extrude --depth 5.0 --segments 4
+
+# Revolve a profile around an axis (with end caps)
+gd mesh revolve --axis z --degrees 360 --segments 12 --cap
+
+# Shape the mesh
+gd mesh taper --axis y --start 1.0 --end 0.3 --from 0.5 --to 1.0
+gd mesh bevel --radius 0.1 --segments 2 --edges depth
+gd mesh subdivide --iterations 2
+gd mesh loop-cut --axis y --at 2.5
+
+# Multi-part assembly
+gd mesh add-part --name wing --from empty
+gd mesh duplicate-part --name wing --as wing-left --mirror x
+gd mesh duplicate-part --name wing --as wing-left --symmetric x  # auto-offset
+gd mesh focus body           # switch to a part
+gd mesh focus --all          # show all parts
+gd mesh remove-part --name old-part
+
+# Transform parts
+gd mesh translate --to "0,2,0" --part wing
+gd mesh translate --relative --to "0,1,0"        # offset from current
+gd mesh translate --relative-to body --to "0,3,0" # offset from another part
+gd mesh rotate --degrees "0,45,0" --part wing
+gd mesh scale --factor "1,0.5,1" --part wing
+
+# Materials (single part, glob, or comma list)
+gd mesh material --color "#ff0000"
+gd mesh material --parts "wing-*" --preset metal
+gd mesh material --parts "body,canopy" --preset glass --color "#aaddff"
+
+# Normals
+gd mesh fix-normals             # auto-detect outward normals
+gd mesh fix-normals --all       # all parts at once
+gd mesh flip-normals            # reverse winding
+gd mesh flip-normals --caps y   # flip only axis-aligned caps
+gd mesh flip-normals --all      # all parts at once
+
+# Viewing and inspection
+gd mesh view                    # 7 orthographic screenshots
+gd mesh view --zoom 2.0 --normals  # zoom in with normal debug overlay
+gd mesh info --all              # part inventory with world-space AABBs
+gd mesh describe                # one-shot debrief (info + composite views)
+gd mesh check --margin 0.5     # detect floating/disconnected parts
+
+# State management
+gd mesh checkpoint --name before-engines
+gd mesh restore --name before-engines
+gd mesh snapshot output.tscn    # export to .tscn with materials and transforms
+
+# Batch execution (JSON command array)
+gd mesh batch --file commands.json
+```
+
+All mesh commands support `--format json` for structured output.
 
 ### GitHub Templates
 

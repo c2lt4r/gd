@@ -214,9 +214,79 @@ pub fn generate_profile(points: &[(f64, f64)], plane: &str) -> String {
          \tif mesh_inst.has_meta(\"part_color\"):\n\
          \t\tmat.albedo_color = mesh_inst.get_meta(\"part_color\")\n\
          \tmesh_inst.material_override = mat\n\
+         \tmesh_inst.set_meta(\"_profile_points\", points)\n\
+         \tmesh_inst.set_meta(\"_profile_plane\", \"{plane}\")\n\
          \tvar d = {{}}\n\
          \td[\"plane\"] = \"{plane}\"\n\
          \td[\"point_count\"] = points.size()\n\
+         \treturn JSON.stringify(d)\n"
+    )
+}
+
+/// Generate the GDScript for `mesh profile --copy-profile-from <part>`.
+///
+/// Reads the stored `_profile_points` and `_profile_plane` metadata from the
+/// source part and applies the same profile to the current active mesh.
+pub fn generate_profile_from_part(src_part: &str) -> String {
+    format!(
+        "extends Node\n\
+         \n\
+         func run():\n\
+         \tvar root = get_tree().get_root()\n\
+         \tvar helper = root.get_node_or_null(\"_GdMeshHelper\")\n\
+         \tif helper == null: return \"ERROR: no mesh session — run 'gd mesh create' first\"\n\
+         \tvar src = helper.get_node_or_null(\"{src_part}\")\n\
+         \tif src == null: return \"ERROR: source part '{src_part}' not found\"\n\
+         \tif not src.has_meta(\"_profile_points\"): return \"ERROR: part '{src_part}' has no stored profile\"\n\
+         \tvar points = src.get_meta(\"_profile_points\")\n\
+         \tvar plane = src.get_meta(\"_profile_plane\")\n\
+         \thelper.set_meta(\"profile_points\", points)\n\
+         \thelper.set_meta(\"profile_plane\", plane)\n\
+         \tvar mesh_name = helper.get_meta(\"active_mesh\")\n\
+         \tvar mesh_inst = helper.get_node_or_null(mesh_name)\n\
+         \tif mesh_inst == null: return \"ERROR: mesh node not found\"\n\
+         \tvar pts3d = []\n\
+         \tfor p in points:\n\
+         \t\tvar v\n\
+         \t\tif plane == \"front\": v = Vector3(p[0], p[1], 0)\n\
+         \t\telif plane == \"side\": v = Vector3(0, p[1], p[0])\n\
+         \t\telse: v = Vector3(p[0], 0, p[1])\n\
+         \t\tpts3d.append(v)\n\
+         \tvar pts2d = PackedVector2Array()\n\
+         \tfor p in points:\n\
+         \t\tpts2d.append(Vector2(p[0], p[1]))\n\
+         \tvar indices = Geometry2D.triangulate_polygon(pts2d)\n\
+         \tif indices.size() == 0: return \"ERROR: could not triangulate polygon\"\n\
+         \tvar face_n_map = {{\"front\": Vector3(0, 0, 1), \"side\": Vector3(1, 0, 0), \"top\": Vector3(0, 1, 0)}}\n\
+         \tvar face_n = face_n_map.get(plane, Vector3(0, 1, 0))\n\
+         \tvar tri_n = (pts3d[indices[1]] - pts3d[indices[0]]).cross(pts3d[indices[2]] - pts3d[indices[0]])\n\
+         \tvar flip = tri_n.dot(face_n) < 0\n\
+         \tvar st = SurfaceTool.new()\n\
+         \tst.begin(Mesh.PRIMITIVE_TRIANGLES)\n\
+         \tif flip:\n\
+         \t\tfor ti in range(0, indices.size(), 3):\n\
+         \t\t\tst.set_normal(face_n)\n\
+         \t\t\tst.add_vertex(pts3d[indices[ti + 2]])\n\
+         \t\t\tst.set_normal(face_n)\n\
+         \t\t\tst.add_vertex(pts3d[indices[ti + 1]])\n\
+         \t\t\tst.set_normal(face_n)\n\
+         \t\t\tst.add_vertex(pts3d[indices[ti]])\n\
+         \telse:\n\
+         \t\tfor i in indices:\n\
+         \t\t\tst.set_normal(face_n)\n\
+         \t\t\tst.add_vertex(pts3d[i])\n\
+         \tmesh_inst.mesh = st.commit()\n\
+         \tvar mat = StandardMaterial3D.new()\n\
+         \tmat.cull_mode = BaseMaterial3D.CULL_DISABLED\n\
+         \tif mesh_inst.has_meta(\"part_color\"):\n\
+         \t\tmat.albedo_color = mesh_inst.get_meta(\"part_color\")\n\
+         \tmesh_inst.material_override = mat\n\
+         \tmesh_inst.set_meta(\"_profile_points\", points)\n\
+         \tmesh_inst.set_meta(\"_profile_plane\", plane)\n\
+         \tvar d = {{}}\n\
+         \td[\"plane\"] = plane\n\
+         \td[\"point_count\"] = points.size()\n\
+         \td[\"copied_from\"] = \"{src_part}\"\n\
          \treturn JSON.stringify(d)\n"
     )
 }
@@ -931,6 +1001,52 @@ pub fn generate_info() -> String {
 }
 
 /// Generate the GDScript for `mesh translate`.
+/// Generate the GDScript for `mesh check`.
+///
+/// Detects floating/disconnected parts by comparing world-space AABBs.
+/// A part is "floating" if its expanded AABB doesn't overlap with any other part's AABB.
+pub fn generate_check_floating(margin: f64) -> String {
+    format!(
+        "extends Node\n\
+         \n\
+         func run():\n\
+         \tvar root = get_tree().get_root()\n\
+         \tvar helper = root.get_node_or_null(\"_GdMeshHelper\")\n\
+         \tif helper == null: return \"ERROR: no mesh session — run 'gd mesh create' first\"\n\
+         \tvar parts = []\n\
+         \tfor child in helper.get_children():\n\
+         \t\tif child is MeshInstance3D and not child.name.begins_with(\"_\"):\n\
+         \t\t\tvar aabb = AABB()\n\
+         \t\t\tif child.mesh and child.mesh.get_surface_count() > 0:\n\
+         \t\t\t\taabb = child.get_aabb()\n\
+         \t\t\t\taabb.position += child.position\n\
+         \t\t\tparts.append({{\"name\": String(child.name), \"aabb\": aabb}})\n\
+         \tvar margin = {margin}\n\
+         \tvar floating = []\n\
+         \tvar connected = []\n\
+         \tfor i in parts.size():\n\
+         \t\tvar p = parts[i]\n\
+         \t\tvar expanded = p.aabb.grow(margin)\n\
+         \t\tvar has_neighbor = false\n\
+         \t\tfor j in parts.size():\n\
+         \t\t\tif i == j: continue\n\
+         \t\t\tif expanded.intersects(parts[j].aabb):\n\
+         \t\t\t\thas_neighbor = true\n\
+         \t\t\t\tbreak\n\
+         \t\tif has_neighbor:\n\
+         \t\t\tconnected.append(p.name)\n\
+         \t\telse:\n\
+         \t\t\tfloating.append(p.name)\n\
+         \tvar d = {{}}\n\
+         \td[\"total_parts\"] = parts.size()\n\
+         \td[\"floating\"] = floating\n\
+         \td[\"connected\"] = connected\n\
+         \td[\"ok\"] = floating.size() == 0\n\
+         \td[\"margin\"] = margin\n\
+         \treturn JSON.stringify(d)\n"
+    )
+}
+
 pub fn generate_translate(part: Option<&str>, x: f64, y: f64, z: f64, relative: bool) -> String {
     let target = part.map_or(
         String::from("\tvar name = helper.get_meta(\"active_mesh\")\n"),
@@ -1378,7 +1494,7 @@ pub fn generate_fix_normals(part: Option<&str>) -> String {
          \t\tvar face_n = (b - a).cross(c - a)\n\
          \t\tvar tri_center = (a + b + c) / 3.0\n\
          \t\tvar outward = tri_center - centroid\n\
-         \t\tif face_n.dot(outward) < 0:\n\
+         \t\tif face_n.dot(outward) > 0:\n\
          \t\t\tfixed[i] = c\n\
          \t\t\tfixed[i + 1] = b\n\
          \t\t\tfixed[i + 2] = a\n\
@@ -1496,7 +1612,7 @@ pub fn generate_fix_normals_all() -> String {
      \t\t\t\tvar face_n = (b - a).cross(c - a)\n\
      \t\t\t\tvar tri_center = (a + b + c) / 3.0\n\
      \t\t\t\tvar outward = tri_center - centroid\n\
-     \t\t\t\tif face_n.dot(outward) < 0:\n\
+     \t\t\t\tif face_n.dot(outward) > 0:\n\
      \t\t\t\t\tfixed[i] = c\n\
      \t\t\t\t\tfixed[i + 1] = b\n\
      \t\t\t\t\tfixed[i + 2] = a\n\
@@ -1531,12 +1647,22 @@ pub fn generate_fix_normals_all() -> String {
 /// and reverses triangle winding to fix normals (flipping one axis inverts handedness).
 /// Also mirrors the transform position on the same axis.
 #[allow(clippy::too_many_lines)]
-pub fn generate_mirror_part(src: &str, dst: &str, axis: &str) -> String {
+pub fn generate_mirror_part(src: &str, dst: &str, axis: &str, symmetric: bool) -> String {
     // Which component to negate: x=0, y=1, z=2
     let axis_idx = match axis {
         "x" => "0",
         "y" => "1",
         _ => "2",
+    };
+    // When --symmetric is used and source position on mirror axis is near 0,
+    // auto-offset by AABB extent so the mirrored part doesn't overlap.
+    let symmetric_offset = if symmetric {
+        "\tif abs(pos[axis_idx]) < 0.01 and src.mesh and src.mesh.get_surface_count() > 0:\n\
+         \t\tvar src_aabb = src.get_aabb()\n\
+         \t\tvar half = src_aabb.size[axis_idx] * 0.5 + abs(src_aabb.get_center()[axis_idx])\n\
+         \t\tpos[axis_idx] = -(half + 0.1)\n"
+    } else {
+        ""
     };
     format!(
         "extends Node\n\
@@ -1567,7 +1693,12 @@ pub fn generate_mirror_part(src: &str, dst: &str, axis: &str) -> String {
          \tvar axis_idx = {axis_idx}\n\
          \tvar pos = mi.position\n\
          \tpos[axis_idx] = -pos[axis_idx]\n\
+         {symmetric_offset}\
          \tmi.position = pos\n\
+         \tvar rot = mi.rotation_degrees\n\
+         \tfor i in 3:\n\
+         \t\tif i != axis_idx: rot[i] = -rot[i]\n\
+         \tmi.rotation_degrees = rot\n\
          \tif src.mesh and src.mesh.get_surface_count() > 0:\n\
          \t\tvar arrays = src.mesh.surface_get_arrays(0)\n\
          \t\tvar verts = arrays[Mesh.ARRAY_VERTEX]\n\
@@ -1613,6 +1744,7 @@ pub fn generate_mirror_part(src: &str, dst: &str, axis: &str) -> String {
          \td[\"name\"] = \"{dst}\"\n\
          \td[\"source\"] = \"{src}\"\n\
          \td[\"mirror\"] = \"{axis}\"\n\
+         \td[\"position\"] = [mi.position.x, mi.position.y, mi.position.z]\n\
          \td[\"part_count\"] = parts.size()\n\
          \td[\"vertex_count\"] = vc\n\
          \treturn JSON.stringify(d)\n"
@@ -1664,26 +1796,28 @@ pub fn generate_material_multi(pattern: &str, color: &str) -> String {
          \tvar helper = root.get_node_or_null(\"_GdMeshHelper\")\n\
          \tif helper == null: return \"ERROR: no mesh session — run 'gd mesh create' first\"\n\
          \tvar pattern = \"{pattern}\"\n\
-         \tvar names = []\n\
-         \tif pattern.contains(\"*\") or pattern.contains(\"?\"):\n\
-         \t\tfor child in helper.get_children():\n\
-         \t\t\tif child is MeshInstance3D and not child.name.begins_with(\"_\"):\n\
-         \t\t\t\tif child.name.match(pattern):\n\
-         \t\t\t\t\tnames.append(child.name)\n\
-         \telse:\n\
-         \t\tfor n in pattern.split(\",\"):\n\
-         \t\t\tnames.append(n.strip_edges())\n\
          \tvar hex = \"{color}\"\n\
          \tvar color_val = Color.html(hex)\n\
          \tvar applied = []\n\
-         \tfor n in names:\n\
-         \t\tvar mi = helper.get_node_or_null(n)\n\
-         \t\tif mi:\n\
-         \t\t\tvar mat = StandardMaterial3D.new()\n\
-         \t\t\tmat.albedo_color = color_val\n\
-         \t\t\tmi.material_override = mat\n\
-         \t\t\tmi.set_meta(\"part_color\", color_val)\n\
-         \t\t\tapplied.append(n)\n\
+         \tif pattern.contains(\"*\") or pattern.contains(\"?\"):\n\
+         \t\tfor child in helper.get_children():\n\
+         \t\t\tif child is MeshInstance3D and not child.name.begins_with(\"_\"):\n\
+         \t\t\t\tif String(child.name).match(pattern):\n\
+         \t\t\t\t\tvar mat = StandardMaterial3D.new()\n\
+         \t\t\t\t\tmat.albedo_color = color_val\n\
+         \t\t\t\t\tchild.material_override = mat\n\
+         \t\t\t\t\tchild.set_meta(\"part_color\", color_val)\n\
+         \t\t\t\t\tapplied.append(String(child.name))\n\
+         \telse:\n\
+         \t\tfor n in pattern.split(\",\"):\n\
+         \t\t\tvar name = n.strip_edges()\n\
+         \t\t\tvar mi = helper.get_node_or_null(NodePath(name))\n\
+         \t\t\tif mi:\n\
+         \t\t\t\tvar mat = StandardMaterial3D.new()\n\
+         \t\t\t\tmat.albedo_color = color_val\n\
+         \t\t\t\tmi.material_override = mat\n\
+         \t\t\t\tmi.set_meta(\"part_color\", color_val)\n\
+         \t\t\t\tapplied.append(name)\n\
          \tvar d = {{}}\n\
          \td[\"pattern\"] = pattern\n\
          \td[\"color\"] = hex\n\
@@ -1710,44 +1844,47 @@ pub fn generate_material_preset_multi(pattern: &str, preset: &str, color: Option
     } else {
         format!("\tvar base_color = {default_color}\n")
     };
-    let props = match preset {
-        "glass" => "\t\t\tmat.metallic = 0.0\n\t\t\tmat.roughness = 0.05\n\t\t\tmat.transparency = 1\n\t\t\tmat.albedo_color.a = 0.3\n",
-        "metal" => "\t\t\tmat.metallic = 0.9\n\t\t\tmat.roughness = 0.3\n",
-        "chrome" => "\t\t\tmat.metallic = 1.0\n\t\t\tmat.roughness = 0.05\n\t\t\tmat.specular = 1.0\n",
-        "rubber" => "\t\t\tmat.metallic = 0.0\n\t\t\tmat.roughness = 0.95\n",
-        "paint" => "\t\t\tmat.metallic = 0.1\n\t\t\tmat.roughness = 0.4\n",
-        "wood" => "\t\t\tmat.metallic = 0.0\n\t\t\tmat.roughness = 0.7\n",
-        "matte" => "\t\t\tmat.metallic = 0.0\n\t\t\tmat.roughness = 1.0\n",
-        _ => "\t\t\tmat.metallic = 0.0\n\t\t\tmat.roughness = 0.4\n", // plastic
+    // Helper function that sets PBR props — called at both nesting levels
+    let props_fn = match preset {
+        "glass" => "\tmat.metallic = 0.0\n\tmat.roughness = 0.05\n\tmat.transparency = 1\n\tmat.albedo_color.a = 0.3\n",
+        "metal" => "\tmat.metallic = 0.9\n\tmat.roughness = 0.3\n",
+        "chrome" => "\tmat.metallic = 1.0\n\tmat.roughness = 0.05\n\tmat.specular = 1.0\n",
+        "rubber" => "\tmat.metallic = 0.0\n\tmat.roughness = 0.95\n",
+        "paint" => "\tmat.metallic = 0.1\n\tmat.roughness = 0.4\n",
+        "wood" => "\tmat.metallic = 0.0\n\tmat.roughness = 0.7\n",
+        "matte" => "\tmat.metallic = 0.0\n\tmat.roughness = 1.0\n",
+        _ => "\tmat.metallic = 0.0\n\tmat.roughness = 0.4\n", // plastic
     };
     format!(
         "extends Node\n\
+         \n\
+         func _apply_preset(target, base_color):\n\
+         \tvar mat = StandardMaterial3D.new()\n\
+         \tmat.albedo_color = base_color\n\
+         {props_fn}\
+         \ttarget.material_override = mat\n\
+         \ttarget.set_meta(\"part_color\", base_color)\n\
          \n\
          func run():\n\
          \tvar root = get_tree().get_root()\n\
          \tvar helper = root.get_node_or_null(\"_GdMeshHelper\")\n\
          \tif helper == null: return \"ERROR: no mesh session — run 'gd mesh create' first\"\n\
          \tvar pattern = \"{pattern}\"\n\
-         \tvar names = []\n\
+         {color_line}\
+         \tvar applied = []\n\
          \tif pattern.contains(\"*\") or pattern.contains(\"?\"):\n\
          \t\tfor child in helper.get_children():\n\
          \t\t\tif child is MeshInstance3D and not child.name.begins_with(\"_\"):\n\
-         \t\t\t\tif child.name.match(pattern):\n\
-         \t\t\t\t\tnames.append(child.name)\n\
+         \t\t\t\tif String(child.name).match(pattern):\n\
+         \t\t\t\t\t_apply_preset(child, base_color)\n\
+         \t\t\t\t\tapplied.append(String(child.name))\n\
          \telse:\n\
          \t\tfor n in pattern.split(\",\"):\n\
-         \t\t\tnames.append(n.strip_edges())\n\
-         {color_line}\
-         \tvar applied = []\n\
-         \tfor n in names:\n\
-         \t\tvar mi = helper.get_node_or_null(n)\n\
-         \t\tif mi:\n\
-         \t\t\tvar mat = StandardMaterial3D.new()\n\
-         \t\t\tmat.albedo_color = base_color\n\
-         {props}\
-         \t\t\tmi.material_override = mat\n\
-         \t\t\tmi.set_meta(\"part_color\", base_color)\n\
-         \t\t\tapplied.append(n)\n\
+         \t\t\tvar name = n.strip_edges()\n\
+         \t\t\tvar mi = helper.get_node_or_null(NodePath(name))\n\
+         \t\t\tif mi:\n\
+         \t\t\t\t_apply_preset(mi, base_color)\n\
+         \t\t\t\tapplied.append(name)\n\
          \tvar d = {{}}\n\
          \td[\"pattern\"] = pattern\n\
          \td[\"preset\"] = \"{preset}\"\n\

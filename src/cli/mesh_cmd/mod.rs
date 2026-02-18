@@ -1,6 +1,7 @@
 mod add_part;
 mod batch;
 mod bevel;
+mod check;
 mod checkpoint;
 mod create;
 mod describe;
@@ -124,6 +125,8 @@ pub enum MeshCommand {
     Subdivide(SubdivideArgs),
     /// Execute a batch of mesh commands from a JSON file
     Batch(BatchArgs),
+    /// Check for floating/disconnected parts
+    Check(CheckArgs),
 }
 
 #[derive(Clone, Debug, ValueEnum)]
@@ -210,7 +213,7 @@ pub struct CreateArgs {
     #[arg(long, value_enum, default_value = "empty")]
     pub from: Primitive,
     /// Name for the mesh node
-    #[arg(long, default_value = "GdMesh")]
+    #[arg(long, default_value = "body")]
     pub name: String,
     /// Output format
     #[arg(long, default_value = "json")]
@@ -220,11 +223,14 @@ pub struct CreateArgs {
 #[derive(Args)]
 pub struct ProfileArgs {
     /// Plane to draw profile on
-    #[arg(long, value_enum)]
-    pub plane: Plane,
+    #[arg(long, value_enum, required_unless_present = "copy_profile_from")]
+    pub plane: Option<Plane>,
     /// 2D points as "x1,y1 x2,y2 x3,y3 ..."
-    #[arg(long, allow_hyphen_values = true)]
-    pub points: String,
+    #[arg(long, allow_hyphen_values = true, required_unless_present = "copy_profile_from")]
+    pub points: Option<String>,
+    /// Copy the profile from another part (reuse its points and plane)
+    #[arg(long)]
+    pub copy_profile_from: Option<String>,
     /// Output format
     #[arg(long, default_value = "json")]
     pub format: OutputFormat,
@@ -348,6 +354,9 @@ pub struct DuplicatePartArgs {
     /// Mirror across an axis (flips mesh vertices and fixes normals)
     #[arg(long, value_enum)]
     pub mirror: Option<Axis>,
+    /// Mirror + auto-position symmetrically (offsets by AABB when source is at origin)
+    #[arg(long, value_enum)]
+    pub symmetric: Option<Axis>,
     /// Output format
     #[arg(long, default_value = "json")]
     pub format: OutputFormat,
@@ -644,6 +653,16 @@ pub struct BatchArgs {
     pub format: OutputFormat,
 }
 
+#[derive(Args)]
+pub struct CheckArgs {
+    /// Margin for AABB overlap detection (parts within this distance are connected)
+    #[arg(long, default_value = "0.5")]
+    pub margin: f64,
+    /// Output format
+    #[arg(long, default_value = "json")]
+    pub format: OutputFormat,
+}
+
 #[derive(Clone, Debug)]
 pub enum OutputFormat {
     Text,
@@ -705,6 +724,7 @@ pub fn exec(args: &MeshArgs) -> Result<()> {
         MeshCommand::LoopCut(ref a) => loop_cut::cmd_loop_cut(a),
         MeshCommand::Subdivide(ref a) => subdivide::cmd_subdivide(a),
         MeshCommand::Batch(ref a) => batch::cmd_batch(a),
+        MeshCommand::Check(ref a) => check::cmd_check(a),
     }
 }
 
@@ -740,6 +760,7 @@ fn command_name(cmd: &MeshCommand) -> &'static str {
         MeshCommand::LoopCut(_) => "loop-cut",
         MeshCommand::Subdivide(_) => "subdivide",
         MeshCommand::Batch(_) => "batch",
+        MeshCommand::Check(_) => "check",
     }
 }
 

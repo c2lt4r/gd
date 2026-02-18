@@ -5,8 +5,10 @@ use super::gdscript;
 use super::{DuplicatePartArgs, OutputFormat, run_eval};
 
 pub fn cmd_duplicate_part(args: &DuplicatePartArgs) -> Result<()> {
-    let script = if let Some(ref axis) = args.mirror {
-        gdscript::generate_mirror_part(&args.name, &args.as_name, axis.as_str())
+    let mirror_axis = args.symmetric.as_ref().or(args.mirror.as_ref());
+    let symmetric = args.symmetric.is_some();
+    let script = if let Some(axis) = mirror_axis {
+        gdscript::generate_mirror_part(&args.name, &args.as_name, axis.as_str(), symmetric)
     } else {
         gdscript::generate_duplicate_part(&args.name, &args.as_name)
     };

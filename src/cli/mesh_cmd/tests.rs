@@ -148,12 +148,24 @@ fn duplicate_part_parses() {
 
 #[test]
 fn mirror_part_x_parses() {
-    assert_parses(&gdscript::generate_mirror_part("wing-right", "wing-left", "x"));
+    assert_parses(&gdscript::generate_mirror_part("wing-right", "wing-left", "x", false));
 }
 
 #[test]
 fn mirror_part_z_parses() {
-    assert_parses(&gdscript::generate_mirror_part("eng1", "eng2", "z"));
+    assert_parses(&gdscript::generate_mirror_part("eng1", "eng2", "z", false));
+}
+
+#[test]
+fn mirror_part_symmetric_x_parses() {
+    assert_parses(&gdscript::generate_mirror_part("wheel-fr", "wheel-fl", "x", true));
+}
+
+// ── Profile copy ────────────────────────────────────────────────────
+
+#[test]
+fn profile_copy_from_part_parses() {
+    assert_parses(&gdscript::generate_profile_from_part("fuselage"));
 }
 
 // ── Focus ────────────────────────────────────────────────────────────

@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.2.20] - Unreleased
+
+### Added
+- **`gd mesh` command** — procedural 3D mesh editing for Godot via CLI. 29 subcommands for building meshes from 2D profiles, primitives, and transforms without leaving the terminal. Designed for AI agent workflows with JSON output and batch execution.
+  - **Workspace**: `init` (create workspace scene), `create` (bootstrap session with camera rig and optional primitive)
+  - **Geometry**: `profile` (define 2D polygon on a plane, `--copy-profile-from` for reuse), `extrude` (with `--segments N`), `revolve` (with `--cap`, `--degrees`), `taper` (with `--from`/`--to` range, `--midpoint`), `bevel` (with `--edges all|depth|profile`), `subdivide` (edge midpoint, each triangle → 4), `loop-cut` (axis-aligned plane cut), `move-vertex`
+  - **Parts**: `add-part` (named sub-parts from empty or primitives), `focus` (switch active / `--all`), `remove-part`, `duplicate-part` (`--mirror x|y|z`, `--symmetric` auto-offset), `info` (`--all` with world-space AABB and transforms), `describe` (one-shot debrief with composite views)
+  - **Transforms**: `translate` (`--relative`, `--relative-to <part>`), `rotate`, `scale` (`--remap` re-center)
+  - **Materials**: `material` (hex/named color, `--preset glass|metal|rubber|chrome|paint|wood|matte|plastic`, `--parts` glob/comma list)
+  - **Normals**: `fix-normals` (auto-detect outward, `--all`), `flip-normals` (reverse winding, `--caps x|y|z`, `--all`)
+  - **Viewing**: `view` (7 orthographic angles, `--zoom`, `--normals` debug overlay, `--focus`), `list-vertices` (`--region` bounding box filter)
+  - **State**: `checkpoint` (`--name`), `restore` (`--name`), `snapshot` (export to `.tscn` with materials and transforms)
+  - **Utilities**: `reference` (validate reference image), `batch` (execute JSON command array), `check` (detect floating/disconnected parts with `--margin`)
+
 ## [0.2.19] - 2026-02-17
 
 ### Added
