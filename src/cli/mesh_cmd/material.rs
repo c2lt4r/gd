@@ -41,11 +41,7 @@ pub fn cmd_material(args: &MaterialArgs) -> Result<()> {
     // Batch mode: --parts pattern
     if let Some(ref pattern) = args.parts {
         let script = if let Some(ref preset) = args.preset {
-            gdscript::generate_material_preset_multi(
-                pattern,
-                preset_name(preset),
-                color.as_deref(),
-            )
+            gdscript::generate_material_preset_multi(pattern, preset_name(preset), color.as_deref())
         } else if let Some(ref hex) = color {
             gdscript::generate_material_multi(pattern, hex)
         } else {
@@ -90,8 +86,8 @@ pub fn cmd_material(args: &MaterialArgs) -> Result<()> {
     };
 
     let result = run_eval(&script)?;
-    let parsed: serde_json::Value =
-        serde_json::from_str(&result).map_err(|e| miette::miette!("Failed to parse result: {e}"))?;
+    let parsed: serde_json::Value = serde_json::from_str(&result)
+        .map_err(|e| miette::miette!("Failed to parse result: {e}"))?;
 
     match args.format {
         OutputFormat::Json => {
@@ -109,11 +105,7 @@ pub fn cmd_material(args: &MaterialArgs) -> Result<()> {
                 );
             } else {
                 let hex = parsed["color"].as_str().unwrap_or("?");
-                println!(
-                    "Material {}: color #{}",
-                    name.green().bold(),
-                    hex.cyan()
-                );
+                println!("Material {}: color #{}", name.green().bold(), hex.cyan());
             }
         }
     }

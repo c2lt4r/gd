@@ -82,7 +82,7 @@ gd run
 | `gd env` | Show environment info (gd version, Godot version/path, OS, project root) |
 | `gd man` | Generate man page |
 | `gd upgrade` | Self-update to latest release |
-| `gd mesh` | Procedural 3D mesh editing (profiles, extrude, revolve, multi-part, materials, normals, batch) |
+| `gd mesh` | Procedural 3D mesh editing (42 subcommands: profiles, extrude, revolve, boolean, inset, solidify, bevel, array, multi-part, materials, shading, batch) |
 | `gd llm` | Print AI-readable command reference (like llms.txt) |
 
 ### Formatter
@@ -493,7 +493,7 @@ All automation commands support `--format json` for structured output.
 
 ### 3D Mesh Editing
 
-Build 3D meshes from 2D profiles, primitives, and transforms — all from the terminal. Designed for AI agent workflows with JSON output and batch execution.
+Build 3D meshes from 2D profiles, primitives, and transforms — all from the terminal. Powered by a Rust-side half-edge mesh engine (15 core modules). Designed for AI agent workflows with JSON output and batch execution.
 
 ```sh
 # Initialize workspace and create a session with a cube primitive
@@ -502,20 +502,32 @@ gd mesh create --name body --from cube
 
 # Define a 2D profile and extrude into 3D
 gd mesh profile --plane front --points "0,0 2,0 2,1 0,1"
+gd mesh profile --shape circle --radius 0.5 --segments 16  # circle/arc profiles
 gd mesh extrude --depth 5.0 --segments 4
 
 # Revolve a profile around an axis (with end caps)
 gd mesh revolve --axis z --degrees 360 --segments 12 --cap
 
 # Shape the mesh
-gd mesh taper --axis y --start 1.0 --end 0.3 --from 0.5 --to 1.0
-gd mesh bevel --radius 0.1 --segments 2 --edges depth
+gd mesh taper --axis y --from-scale 1.0 --to-scale 0.3 --from 0.5 --to 1.0
+gd mesh bevel --radius 0.1 --segments 2 --edges depth --profile 0.5
 gd mesh subdivide --iterations 2
 gd mesh loop-cut --axis y --at 2.5
+gd mesh inset --factor 0.2                      # shrink faces inward
+gd mesh solidify --thickness 0.1                 # add shell thickness
+
+# Boolean operations
+gd mesh boolean --mode subtract --tool hole-cutter
+gd mesh boolean --mode union --tool attachment
+gd mesh boolean --mode intersect --tool clip-volume
+
+# Modifiers
+gd mesh array --count 5 --offset "2,0,0"        # linear duplication
+gd mesh merge-verts --distance 0.001             # remove duplicate vertices
 
 # Multi-part assembly
 gd mesh add-part --name wing --from empty
-gd mesh duplicate-part --name wing --as wing-left --mirror x
+gd mesh duplicate-part --name wing --as wing-left --mirror x    # negates position
 gd mesh duplicate-part --name wing --as wing-left --symmetric x  # auto-offset
 gd mesh focus body           # switch to a part
 gd mesh focus --all          # show all parts
@@ -533,15 +545,18 @@ gd mesh material --color "#ff0000"
 gd mesh material --parts "wing-*" --preset metal
 gd mesh material --parts "body,canopy" --preset glass --color "#aaddff"
 
-# Normals
-gd mesh fix-normals             # auto-detect outward normals
+# Normals and shading
+gd mesh fix-normals             # auto-detect outward normals (majority vote)
 gd mesh fix-normals --all       # all parts at once
 gd mesh flip-normals            # reverse winding
 gd mesh flip-normals --caps y   # flip only axis-aligned caps
 gd mesh flip-normals --all      # all parts at once
+gd mesh shade-smooth            # averaged vertex normals
+gd mesh shade-flat              # per-face faceted look
+gd mesh auto-smooth --angle 35  # smooth below angle threshold
 
 # Viewing and inspection
-gd mesh view                    # 7 orthographic screenshots
+gd mesh view                    # 7 orthographic + 7 isometric screenshots
 gd mesh view --zoom 2.0 --normals  # zoom in with normal debug overlay
 gd mesh info --all              # part inventory with world-space AABBs
 gd mesh describe                # one-shot debrief (info + composite views)

@@ -1,4 +1,5 @@
 mod add_part;
+mod array_cmd;
 mod batch;
 mod bevel;
 mod check;
@@ -13,9 +14,11 @@ mod focus;
 mod gdscript;
 mod info;
 mod init;
+mod inset;
 mod list_vertices;
 mod loop_cut;
 mod material;
+mod merge;
 mod move_vertex;
 mod profile;
 mod reference;
@@ -23,8 +26,11 @@ mod remove_part;
 mod revolve;
 mod rotate;
 mod scale;
+mod shading;
 mod snapshot;
+mod solidify;
 mod subdivide;
+mod subtract;
 mod taper;
 mod translate;
 mod view;
@@ -123,6 +129,26 @@ pub enum MeshCommand {
     LoopCut(LoopCutArgs),
     /// Subdivide mesh triangles into smaller triangles for smoother surfaces
     Subdivide(SubdivideArgs),
+    /// Boolean operation: subtract, union, or intersect with a tool part
+    Boolean(BooleanArgs),
+    /// Inset all faces (create smaller face inside each face, connected by quads)
+    Inset(InsetArgs),
+    /// Give mesh shell thickness (duplicate + offset along inverted normals)
+    Solidify(SolidifyArgs),
+    /// Merge vertices within a distance threshold (remove doubles)
+    #[command(name = "merge-verts")]
+    MergeVerts(MergeArgs),
+    /// Duplicate mesh along an offset vector (linear array)
+    Array(ArrayArgs),
+    /// Set shade smooth on a part (averaged vertex normals)
+    #[command(name = "shade-smooth")]
+    ShadeSmooth(ShadingArgs),
+    /// Set shade flat on a part (per-face normals, faceted look)
+    #[command(name = "shade-flat")]
+    ShadeFlat(ShadingArgs),
+    /// Set auto-smooth: smooth below angle, sharp above
+    #[command(name = "auto-smooth")]
+    AutoSmooth(AutoSmoothArgs),
     /// Execute a batch of mesh commands from a JSON file
     Batch(BatchArgs),
     /// Check for floating/disconnected parts
@@ -142,6 +168,14 @@ impl Plane {
             Self::Front => "front",
             Self::Side => "side",
             Self::Top => "top",
+        }
+    }
+
+    fn to_plane_kind(&self) -> crate::core::mesh::PlaneKind {
+        match self {
+            Self::Front => crate::core::mesh::PlaneKind::Front,
+            Self::Side => crate::core::mesh::PlaneKind::Side,
+            Self::Top => crate::core::mesh::PlaneKind::Top,
         }
     }
 }
@@ -173,8 +207,72 @@ pub enum ViewName {
     Left,
     Top,
     Bottom,
-    Iso,
+    /// Corner perspective: front-right at eye level
+    #[value(name = "front-right")]
+    FrontRight,
+    /// Corner perspective: front-left at eye level
+    #[value(name = "front-left")]
+    FrontLeft,
+    /// Corner perspective: back-right at eye level
+    #[value(name = "back-right")]
+    BackRight,
+    /// Corner perspective: back-left at eye level
+    #[value(name = "back-left")]
+    BackLeft,
+    /// High corner perspective: front-right looking down 45°
+    #[value(name = "high-front-right")]
+    HighFrontRight,
+    /// High corner perspective: front-left looking down 45°
+    #[value(name = "high-front-left")]
+    HighFrontLeft,
+    /// High corner perspective: back-right looking down 45°
+    #[value(name = "high-back-right")]
+    HighBackRight,
+    /// High corner perspective: back-left looking down 45°
+    #[value(name = "high-back-left")]
+    HighBackLeft,
     All,
+}
+
+/// All 14 camera names in the "Golden 14" configuration.
+const ALL_VIEWS: [&str; 14] = [
+    "Front",
+    "Back",
+    "Side",
+    "Left",
+    "Top",
+    "Bottom",
+    "FrontRight",
+    "FrontLeft",
+    "BackRight",
+    "BackLeft",
+    "HighFrontRight",
+    "HighFrontLeft",
+    "HighBackRight",
+    "HighBackLeft",
+];
+
+impl ViewName {
+    /// Return the camera name(s) for this view selection.
+    pub fn camera_names(&self) -> Vec<&'static str> {
+        match self {
+            Self::Front => vec!["Front"],
+            Self::Back => vec!["Back"],
+            Self::Side => vec!["Side"],
+            Self::Left => vec!["Left"],
+            Self::Top => vec!["Top"],
+            Self::Bottom => vec!["Bottom"],
+            Self::FrontRight => vec!["FrontRight"],
+            Self::FrontLeft => vec!["FrontLeft"],
+            Self::BackRight => vec!["BackRight"],
+            Self::BackLeft => vec!["BackLeft"],
+            Self::HighFrontRight => vec!["HighFrontRight"],
+            Self::HighFrontLeft => vec!["HighFrontLeft"],
+            Self::HighBackRight => vec!["HighBackRight"],
+            Self::HighBackLeft => vec!["HighBackLeft"],
+            Self::All => ALL_VIEWS.to_vec(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, ValueEnum)]
@@ -190,6 +288,14 @@ impl Axis {
             Self::X => "x",
             Self::Y => "y",
             Self::Z => "z",
+        }
+    }
+
+    fn as_index(&self) -> usize {
+        match self {
+            Self::X => 0,
+            Self::Y => 1,
+            Self::Z => 2,
         }
     }
 }
@@ -226,14 +332,46 @@ pub struct ProfileArgs {
     #[arg(long, value_enum, required_unless_present = "copy_profile_from")]
     pub plane: Option<Plane>,
     /// 2D points as "x1,y1 x2,y2 x3,y3 ..."
-    #[arg(long, allow_hyphen_values = true, required_unless_present = "copy_profile_from")]
+    #[arg(
+        long,
+        allow_hyphen_values = true,
+        required_unless_present_any = ["copy_profile_from", "shape"]
+    )]
     pub points: Option<String>,
+    /// Built-in shape generator (circle, rectangle, ellipse)
+    #[arg(long, value_enum)]
+    pub shape: Option<ProfileShape>,
+    /// Radius for circle/ellipse shape
+    #[arg(long, requires = "shape")]
+    pub radius: Option<f64>,
+    /// X radius for ellipse shape (overrides --radius for X axis)
+    #[arg(long, requires = "shape")]
+    pub radius_x: Option<f64>,
+    /// Y radius for ellipse shape (overrides --radius for Y axis)
+    #[arg(long, requires = "shape")]
+    pub radius_y: Option<f64>,
+    /// Number of segments for circle/ellipse (default: 32)
+    #[arg(long, requires = "shape", default_value = "32")]
+    pub segments: u32,
+    /// Width for rectangle shape
+    #[arg(long, requires = "shape")]
+    pub width: Option<f64>,
+    /// Height for rectangle shape
+    #[arg(long, requires = "shape")]
+    pub height: Option<f64>,
     /// Copy the profile from another part (reuse its points and plane)
     #[arg(long)]
     pub copy_profile_from: Option<String>,
     /// Output format
     #[arg(long, default_value = "json")]
     pub format: OutputFormat,
+}
+
+#[derive(Clone, Debug, ValueEnum)]
+pub enum ProfileShape {
+    Circle,
+    Rectangle,
+    Ellipse,
 }
 
 #[derive(Args)]
@@ -244,6 +382,10 @@ pub struct ExtrudeArgs {
     /// Number of cross-section segments (more = smoother taper/loop-cut results)
     #[arg(long, default_value = "1")]
     pub segments: u32,
+    /// Cap inset factor (0.0 = no inset, 0.15 = typical quad ring).
+    /// Auto-enabled at 0.15 for circle/ellipse profiles (8+ vertices).
+    #[arg(long)]
+    pub cap_inset: Option<f64>,
     /// Output format
     #[arg(long, default_value = "json")]
     pub format: OutputFormat,
@@ -257,8 +399,8 @@ pub struct RevolveArgs {
     /// Angle in degrees
     #[arg(long, alias = "angle", default_value = "360")]
     pub degrees: f64,
-    /// Number of segments
-    #[arg(long, default_value = "16")]
+    /// Number of segments (default: 32 for smooth silhouettes)
+    #[arg(long, default_value = "32")]
     pub segments: u32,
     /// Cap open ends of partial revolves (angle < 360)
     #[arg(long)]
@@ -454,19 +596,19 @@ pub struct TaperArgs {
     /// Axis along which to taper (the extrusion depth axis)
     #[arg(long, value_enum)]
     pub axis: Axis,
-    /// Scale factor at the start of the axis (1.0 = no change)
-    #[arg(long, default_value = "1.0")]
-    pub start: f64,
-    /// Scale factor at the end of the axis (0.0 = taper to a point)
-    #[arg(long)]
-    pub end: f64,
+    /// Scale factor at --from position (1.0 = no change, 0.0 = pinch to point)
+    #[arg(long, alias = "start", default_value = "1.0")]
+    pub from_scale: f64,
+    /// Scale factor at --to position (1.0 = no change, 0.0 = pinch to point)
+    #[arg(long, alias = "end")]
+    pub to_scale: f64,
     /// Peak position along axis (0.0-1.0) for two-segment taper (fat middle, thin ends)
     #[arg(long)]
     pub midpoint: Option<f64>,
-    /// Start of taper range as normalized axis position (0.0-1.0, default 0.0)
+    /// Start of taper range as normalized axis position (0.0 = min, 1.0 = max)
     #[arg(long)]
     pub from: Option<f64>,
-    /// End of taper range as normalized axis position (0.0-1.0, default 1.0)
+    /// End of taper range as normalized axis position (0.0 = min, 1.0 = max)
     #[arg(long)]
     pub to: Option<f64>,
     /// Output format
@@ -496,12 +638,15 @@ pub struct BevelArgs {
     /// Bevel radius (offset distance from edge)
     #[arg(long)]
     pub radius: f64,
-    /// Number of segments for the bevel curve
-    #[arg(long, default_value = "2")]
+    /// Number of segments for the bevel curve (3 = rail-peak-rail)
+    #[arg(long, default_value = "3")]
     pub segments: u32,
     /// Which edges to bevel (all, depth=extrusion-direction, profile=cap-outline)
     #[arg(long, value_enum, default_value = "all")]
     pub edges: BevelEdges,
+    /// Bevel profile: 0.0 = concave, 0.5 = circular (default), 1.0 = convex chamfer
+    #[arg(long, default_value = "0.5")]
+    pub profile: f64,
     /// Output format
     #[arg(long, default_value = "json")]
     pub format: OutputFormat,
@@ -558,6 +703,9 @@ pub struct FlipNormalsArgs {
     /// Part name (defaults to active part)
     #[arg(long)]
     pub part: Option<String>,
+    /// Flip normals on multiple parts by glob pattern or comma-separated names (e.g. "port-*" or "body,bezel")
+    #[arg(long)]
+    pub parts: Option<String>,
     /// Flip normals on all parts at once
     #[arg(long)]
     pub all: bool,
@@ -643,11 +791,108 @@ pub struct SubdivideArgs {
     pub format: OutputFormat,
 }
 
+#[derive(Clone, Debug, ValueEnum)]
+pub enum BooleanOp {
+    Subtract,
+    Union,
+    Intersect,
+}
+
+#[derive(Args)]
+#[command(allow_hyphen_values = true)]
+pub struct BooleanArgs {
+    /// Boolean operation mode
+    #[arg(long, value_enum, default_value = "subtract")]
+    pub mode: BooleanOp,
+    /// Name of the tool part
+    #[arg(long)]
+    pub tool: String,
+    /// Offset for the tool part as "x,y,z"
+    #[arg(long, allow_hyphen_values = true)]
+    pub offset: Option<String>,
+    /// Output format
+    #[arg(long, default_value = "json")]
+    pub format: OutputFormat,
+}
+
+#[derive(Args)]
+pub struct InsetArgs {
+    /// Inset factor (0.0 = no change, 1.0 = collapse to centroid)
+    #[arg(long, default_value = "0.2")]
+    pub factor: f64,
+    /// Output format
+    #[arg(long, default_value = "json")]
+    pub format: OutputFormat,
+}
+
+#[derive(Args)]
+pub struct SolidifyArgs {
+    /// Shell thickness
+    #[arg(long)]
+    pub thickness: f64,
+    /// Output format
+    #[arg(long, default_value = "json")]
+    pub format: OutputFormat,
+}
+
+#[derive(Args)]
+pub struct MergeArgs {
+    /// Maximum distance to merge vertices
+    #[arg(long, default_value = "0.001")]
+    pub distance: f64,
+    /// Output format
+    #[arg(long, default_value = "json")]
+    pub format: OutputFormat,
+}
+
+#[derive(Args)]
+#[command(allow_hyphen_values = true)]
+pub struct ArrayArgs {
+    /// Number of copies (including the original)
+    #[arg(long)]
+    pub count: u32,
+    /// Offset between copies as "x,y,z"
+    #[arg(long, allow_hyphen_values = true)]
+    pub offset: String,
+    /// Output format
+    #[arg(long, default_value = "json")]
+    pub format: OutputFormat,
+}
+
 #[derive(Args)]
 pub struct BatchArgs {
     /// Path to JSON command file
     #[arg(long)]
     pub file: String,
+    /// Output format
+    #[arg(long, default_value = "json")]
+    pub format: OutputFormat,
+}
+
+#[derive(Args)]
+pub struct ShadingArgs {
+    /// Part name (defaults to active part). Use --all for all parts.
+    #[arg(long)]
+    pub part: Option<String>,
+    /// Apply to all parts
+    #[arg(long)]
+    pub all: bool,
+    /// Output format
+    #[arg(long, default_value = "json")]
+    pub format: OutputFormat,
+}
+
+#[derive(Args)]
+pub struct AutoSmoothArgs {
+    /// Angle threshold in degrees (default: 30). Edges sharper than this are flat.
+    #[arg(long, default_value = "30")]
+    pub angle: f64,
+    /// Part name (defaults to active part). Use --all for all parts.
+    #[arg(long)]
+    pub part: Option<String>,
+    /// Apply to all parts
+    #[arg(long)]
+    pub all: bool,
     /// Output format
     #[arg(long, default_value = "json")]
     pub format: OutputFormat,
@@ -723,6 +968,14 @@ pub fn exec(args: &MeshArgs) -> Result<()> {
         MeshCommand::Material(ref a) => material::cmd_material(a),
         MeshCommand::LoopCut(ref a) => loop_cut::cmd_loop_cut(a),
         MeshCommand::Subdivide(ref a) => subdivide::cmd_subdivide(a),
+        MeshCommand::Boolean(ref a) => subtract::cmd_boolean(a),
+        MeshCommand::Inset(ref a) => inset::cmd_inset(a),
+        MeshCommand::Solidify(ref a) => solidify::cmd_solidify(a),
+        MeshCommand::MergeVerts(ref a) => merge::cmd_merge(a),
+        MeshCommand::Array(ref a) => array_cmd::cmd_array(a),
+        MeshCommand::ShadeSmooth(ref a) => shading::cmd_shade_smooth(a),
+        MeshCommand::ShadeFlat(ref a) => shading::cmd_shade_flat(a),
+        MeshCommand::AutoSmooth(ref a) => shading::cmd_auto_smooth(a),
         MeshCommand::Batch(ref a) => batch::cmd_batch(a),
         MeshCommand::Check(ref a) => check::cmd_check(a),
     }
@@ -759,6 +1012,14 @@ fn command_name(cmd: &MeshCommand) -> &'static str {
         MeshCommand::Material(_) => "material",
         MeshCommand::LoopCut(_) => "loop-cut",
         MeshCommand::Subdivide(_) => "subdivide",
+        MeshCommand::Boolean(_) => "boolean",
+        MeshCommand::Inset(_) => "inset",
+        MeshCommand::Solidify(_) => "solidify",
+        MeshCommand::MergeVerts(_) => "merge-verts",
+        MeshCommand::Array(_) => "array",
+        MeshCommand::ShadeSmooth(_) => "shade-smooth",
+        MeshCommand::ShadeFlat(_) => "shade-flat",
+        MeshCommand::AutoSmooth(_) => "auto-smooth",
         MeshCommand::Batch(_) => "batch",
         MeshCommand::Check(_) => "check",
     }
@@ -771,6 +1032,43 @@ fn project_root() -> Result<std::path::PathBuf> {
     let cwd = std::env::current_dir().unwrap_or_default();
     let project = GodotProject::discover(&cwd)?;
     Ok(project.root)
+}
+
+/// Match part names against a pattern string.
+///
+/// Supports comma-separated sub-patterns where each sub-pattern can be
+/// an exact name or a `*`-glob (e.g. "intake-*,headlight-*,body").
+fn match_part_pattern<'a>(names: &'a [String], pattern: &str) -> Vec<&'a str> {
+    let mut matched: Vec<&str> = Vec::new();
+
+    for sub in pattern.split(',').map(str::trim) {
+        if sub.is_empty() {
+            continue;
+        }
+        if sub.contains('*') {
+            // Glob matching: convert simple glob to prefix/suffix match
+            let parts: Vec<&str> = sub.split('*').collect();
+            for name in names {
+                let hit = if parts.len() == 2 {
+                    name.starts_with(parts[0]) && name.ends_with(parts[1])
+                } else {
+                    name.starts_with(parts[0])
+                };
+                if hit && !matched.contains(&name.as_str()) {
+                    matched.push(name.as_str());
+                }
+            }
+        } else {
+            // Exact name match
+            for name in names {
+                if name == sub && !matched.contains(&name.as_str()) {
+                    matched.push(name.as_str());
+                }
+            }
+        }
+    }
+
+    matched
 }
 
 /// Run a generated GDScript via live eval and return the raw result string.
@@ -880,4 +1178,52 @@ fn parse_3d(s: &str) -> Result<(f64, f64, f64)> {
         .parse()
         .map_err(|_| miette!("Invalid dz: {}", parts[2]))?;
     Ok((x, y, z))
+}
+
+#[cfg(test)]
+mod pattern_tests {
+    use super::match_part_pattern;
+
+    #[test]
+    fn comma_separated_globs() {
+        let names: Vec<String> = vec![
+            "intake-l".into(),
+            "intake-r".into(),
+            "headlight-l".into(),
+            "headlight-r".into(),
+            "taillight-l".into(),
+            "body".into(),
+        ];
+
+        // Single glob
+        let r = match_part_pattern(&names, "intake-*");
+        assert_eq!(r, vec!["intake-l", "intake-r"]);
+
+        // Comma-separated globs
+        let r = match_part_pattern(&names, "intake-*,headlight-*");
+        assert_eq!(r.len(), 4);
+        assert!(r.contains(&"intake-l"));
+        assert!(r.contains(&"headlight-l"));
+
+        // Mix of glob and exact
+        let r = match_part_pattern(&names, "intake-*,body");
+        assert_eq!(r.len(), 3);
+        assert!(r.contains(&"body"));
+
+        // Comma-separated exact names
+        let r = match_part_pattern(&names, "body,intake-l");
+        assert_eq!(r.len(), 2);
+
+        // Three globs
+        let r = match_part_pattern(&names, "intake-*,headlight-*,taillight-*");
+        assert_eq!(r.len(), 5);
+    }
+
+    #[test]
+    fn no_duplicates() {
+        let names: Vec<String> = vec!["a-1".into(), "a-2".into()];
+        // Same pattern repeated should not duplicate
+        let r = match_part_pattern(&names, "a-*,a-*");
+        assert_eq!(r.len(), 2);
+    }
 }

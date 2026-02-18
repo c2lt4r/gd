@@ -1,6 +1,6 @@
 [package]
 name = "gd"
-version = "0.2.20-dev.5"
+version = "0.2.20-dev.6"
 edition = "2024"
 description = "A comprehensive Godot toolchain - format, lint, build, run, and manage Godot projects"
 license = "MIT"
@@ -47,6 +47,11 @@ indicatif = "0.17"
 # Misc
 similar = "2"          # Diffing for fmt --check
 strsim = "0.11"
+
+# Half-edge mesh engine
+earcutr = "0.4"
+bincode = "1"
+indexmap = { version = "2", features = ["serde"] }
 
 # HTTP & Archive support
 ureq = { version = "3", features = ["json"] }

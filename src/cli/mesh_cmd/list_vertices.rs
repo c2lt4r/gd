@@ -21,8 +21,8 @@ pub fn cmd_list_vertices(args: &ListVerticesArgs) -> Result<()> {
 
     let script = gdscript::generate_list_vertices(region.as_ref());
     let result = run_eval(&script)?;
-    let parsed: serde_json::Value =
-        serde_json::from_str(&result).map_err(|e| miette::miette!("Failed to parse result: {e}"))?;
+    let parsed: serde_json::Value = serde_json::from_str(&result)
+        .map_err(|e| miette::miette!("Failed to parse result: {e}"))?;
 
     match args.format {
         OutputFormat::Json => {

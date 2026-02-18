@@ -1,26 +1,35 @@
-use miette::Result;
+use miette::{Result, miette};
 use owo_colors::OwoColorize;
 
-use super::gdscript;
-use super::{CheckpointArgs, OutputFormat, RestoreArgs, run_eval};
+use crate::core::mesh::MeshState;
+
+use super::{CheckpointArgs, OutputFormat, RestoreArgs, project_root, run_eval};
 
 pub fn cmd_checkpoint(args: &CheckpointArgs) -> Result<()> {
-    let script = gdscript::generate_checkpoint(args.name.as_deref());
-    let result = run_eval(&script)?;
-    let parsed: serde_json::Value =
-        serde_json::from_str(&result).map_err(|e| miette::miette!("Failed to parse result: {e}"))?;
+    let root = project_root()?;
+    let mut state = MeshState::load(&root)?;
+
+    let label = args.name.clone().unwrap_or_else(|| "default".to_string());
+
+    let parts_saved = state.parts.len();
+    state.checkpoints.insert(label.clone(), state.parts.clone());
+    state.save(&root)?;
+
+    let result = serde_json::json!({
+        "parts_saved": parts_saved,
+        "name": label,
+        "checkpoints": state.checkpoints.keys().collect::<Vec<_>>(),
+    });
 
     match args.format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&parsed).unwrap());
+            println!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
         OutputFormat::Text => {
-            let count = parsed["parts_saved"].as_u64().unwrap_or(0);
-            let label = parsed["name"].as_str().unwrap_or("(default)");
             println!(
                 "Checkpoint {} saved: {} parts",
                 label.cyan(),
-                count.to_string().green()
+                parts_saved.to_string().green()
             );
         }
     }
@@ -28,21 +37,51 @@ pub fn cmd_checkpoint(args: &CheckpointArgs) -> Result<()> {
 }
 
 pub fn cmd_restore(args: &RestoreArgs) -> Result<()> {
-    let script = gdscript::generate_restore(args.name.as_deref());
-    let result = run_eval(&script)?;
-    let parsed: serde_json::Value =
-        serde_json::from_str(&result).map_err(|e| miette::miette!("Failed to parse result: {e}"))?;
+    let root = project_root()?;
+    let mut state = MeshState::load(&root)?;
+
+    let label = args.name.clone().unwrap_or_else(|| "default".to_string());
+
+    let saved = state
+        .checkpoints
+        .get(&label)
+        .ok_or_else(|| miette!("Checkpoint '{label}' not found"))?
+        .clone();
+
+    let parts_restored = saved.len();
+    state.parts = saved;
+
+    // Ensure active part still exists
+    if !state.parts.contains_key(&state.active)
+        && let Some(first) = state.parts.keys().next()
+    {
+        state.active = first.clone();
+    }
+
+    state.save(&root)?;
+
+    // Push all parts to Godot (skip parts missing from scene)
+    let names: Vec<String> = state.parts.keys().cloned().collect();
+    for name in &names {
+        let push = state.generate_push_script(name)?;
+        if let Err(e) = run_eval(&push) {
+            eprintln!("Warning: skipping push for '{name}': {e}");
+        }
+    }
+
+    let result = serde_json::json!({
+        "parts_restored": parts_restored,
+        "name": label,
+    });
 
     match args.format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&parsed).unwrap());
+            println!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
         OutputFormat::Text => {
-            let count = parsed["parts_restored"].as_u64().unwrap_or(0);
-            let label = parsed["name"].as_str().unwrap_or("(default)");
             println!(
                 "Restored {} parts from checkpoint {}",
-                count.to_string().green(),
+                parts_restored.to_string().green(),
                 label.cyan()
             );
         }

@@ -1,26 +1,69 @@
-use miette::Result;
+use miette::{Result, miette};
 use owo_colors::OwoColorize;
 
-use super::gdscript;
-use super::{ExtrudeArgs, OutputFormat, run_eval};
+use crate::core::mesh::MeshState;
+
+use super::{ExtrudeArgs, OutputFormat, project_root, run_eval};
 
 pub fn cmd_extrude(args: &ExtrudeArgs) -> Result<()> {
-    let script = gdscript::generate_extrude(args.depth, args.segments);
-    let result = run_eval(&script)?;
-    let parsed: serde_json::Value =
-        serde_json::from_str(&result).map_err(|e| miette::miette!("Failed to parse result: {e}"))?;
+    let root = project_root()?;
+    let mut state = MeshState::load(&root)?;
+
+    let (profile, plane) = {
+        let part = state.active_part()?;
+        let profile = part
+            .profile_points
+            .as_ref()
+            .ok_or_else(|| miette!("No profile. Run 'gd mesh profile' first."))?
+            .clone();
+        let plane = part
+            .profile_plane
+            .ok_or_else(|| miette!("No profile plane set."))?;
+        (profile, plane)
+    };
+
+    // Auto-detect cap inset: enable at 0.15 for circle/ellipse profiles (8+ vertices)
+    // unless explicitly set by the user
+    let inset = match args.cap_inset {
+        Some(v) => v,
+        None if profile.len() >= 8 => 0.15,
+        None => 0.0,
+    };
+
+    let mesh =
+        crate::core::mesh::extrude::extrude_with_inset(&profile, plane, args.depth, args.segments, inset)
+            .ok_or_else(|| miette!("Failed to extrude (invalid profile?)"))?;
+
+    let vc = mesh.vertex_count();
+    let fc = mesh.face_count();
+
+    let part = state.active_part_mut()?;
+    part.mesh = mesh;
+    state.save(&root)?;
+
+    // Push to Godot
+    let push = state.generate_push_script(&state.active.clone())?;
+    let _ = run_eval(&push)?;
+
+    let half = args.depth / 2.0;
+    let result = serde_json::json!({
+        "depth": args.depth,
+        "plane": plane.as_str(),
+        "segments": args.segments,
+        "cap_inset": inset,
+        "depth_range": [-half, half],
+        "vertex_count": vc,
+        "face_count": fc,
+    });
 
     match args.format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&parsed).unwrap());
+            println!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
         OutputFormat::Text => {
-            let depth = parsed["depth"].as_f64().unwrap_or(0.0);
-            let vc = parsed["vertex_count"].as_u64().unwrap_or(0);
-            let fc = parsed["face_count"].as_u64().unwrap_or(0);
             println!(
                 "Extruded: depth={}, vertices={vc}, faces={fc}",
-                format!("{depth}").green().bold()
+                format!("{}", args.depth).green().bold()
             );
         }
     }

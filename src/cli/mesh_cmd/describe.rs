@@ -4,7 +4,7 @@ use miette::{Result, miette};
 use owo_colors::OwoColorize;
 
 use super::gdscript;
-use super::{DescribeArgs, OutputFormat, ViewName, run_eval};
+use super::{DescribeArgs, OutputFormat, run_eval};
 
 pub fn cmd_describe(args: &DescribeArgs) -> Result<()> {
     // 1. Focus all parts so composite view works
@@ -23,16 +23,7 @@ pub fn cmd_describe(args: &DescribeArgs) -> Result<()> {
     let autofit: serde_json::Value = serde_json::from_str(&autofit_result)
         .map_err(|e| miette!("Failed to parse autofit result: {e}"))?;
 
-    let views: Vec<&str> = match args.view {
-        ViewName::Front => vec!["Front"],
-        ViewName::Back => vec!["Back"],
-        ViewName::Side => vec!["Side"],
-        ViewName::Left => vec!["Left"],
-        ViewName::Top => vec!["Top"],
-        ViewName::Bottom => vec!["Bottom"],
-        ViewName::Iso => vec!["Iso"],
-        ViewName::All => vec!["Front", "Side", "Top", "Iso"],
-    };
+    let views = args.view.camera_names();
 
     let mut captures = Vec::new();
     for view_name in &views {
@@ -57,10 +48,8 @@ pub fn cmd_describe(args: &DescribeArgs) -> Result<()> {
         let final_path = if let Some(ref dir) = args.output {
             std::fs::create_dir_all(dir)
                 .map_err(|e| miette!("Failed to create output directory: {e}"))?;
-            let dest =
-                std::path::Path::new(dir).join(format!("{}.png", view_name.to_lowercase()));
-            std::fs::copy(path, &dest)
-                .map_err(|e| miette!("Failed to copy screenshot: {e}"))?;
+            let dest = std::path::Path::new(dir).join(format!("{}.png", view_name.to_lowercase()));
+            std::fs::copy(path, &dest).map_err(|e| miette!("Failed to copy screenshot: {e}"))?;
             let _ = std::fs::remove_file(path);
             dest.to_string_lossy().to_string()
         } else {

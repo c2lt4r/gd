@@ -3,16 +3,26 @@
 ## [0.2.20] - Unreleased
 
 ### Added
-- **`gd mesh` command** — procedural 3D mesh editing for Godot via CLI. 29 subcommands for building meshes from 2D profiles, primitives, and transforms without leaving the terminal. Designed for AI agent workflows with JSON output and batch execution.
+- **`gd mesh` command** — procedural 3D mesh editing for Godot via CLI. 42 subcommands for building meshes from 2D profiles, primitives, and transforms without leaving the terminal. Designed for AI agent workflows with JSON output and batch execution.
   - **Workspace**: `init` (create workspace scene), `create` (bootstrap session with camera rig and optional primitive)
-  - **Geometry**: `profile` (define 2D polygon on a plane, `--copy-profile-from` for reuse), `extrude` (with `--segments N`), `revolve` (with `--cap`, `--degrees`), `taper` (with `--from`/`--to` range, `--midpoint`), `bevel` (with `--edges all|depth|profile`), `subdivide` (edge midpoint, each triangle → 4), `loop-cut` (axis-aligned plane cut), `move-vertex`
-  - **Parts**: `add-part` (named sub-parts from empty or primitives), `focus` (switch active / `--all`), `remove-part`, `duplicate-part` (`--mirror x|y|z`, `--symmetric` auto-offset), `info` (`--all` with world-space AABB and transforms), `describe` (one-shot debrief with composite views)
+  - **Geometry**: `profile` (define 2D polygon on a plane, `--copy-profile-from` for reuse, `--shape circle` for circle/arc profiles), `extrude` (with `--segments N`), `revolve` (with `--cap`, `--degrees`), `taper` (with `--from-scale`/`--to-scale`, `--from`/`--to` range, `--midpoint`), `bevel` (with `--edges all|depth|profile`, `--profile 0.0–1.0` for concave→convex), `subdivide` (edge midpoint, each triangle → 4), `loop-cut` (axis-aligned plane cut), `move-vertex`
+  - **Boolean operations**: `boolean --mode subtract|union|intersect --tool <part>` with split-and-classify algorithm, vertex welding, and Moller-Trumbore ray-triangle intersection
+  - **Modifiers**: `inset` (shrink faces inward by factor), `solidify` (shell thickness via offset + stitch), `merge-verts` (remove duplicate vertices within distance threshold), `array` (linear duplication with offset)
+  - **Parts**: `add-part` (named sub-parts from empty or primitives), `focus` (switch active / `--all`), `remove-part`, `duplicate-part` (`--mirror x|y|z` with position negation, `--symmetric` auto-offset), `info` (`--all` with world-space AABB and transforms), `describe` (one-shot debrief with composite views)
   - **Transforms**: `translate` (`--relative`, `--relative-to <part>`), `rotate`, `scale` (`--remap` re-center)
   - **Materials**: `material` (hex/named color, `--preset glass|metal|rubber|chrome|paint|wood|matte|plastic`, `--parts` glob/comma list)
-  - **Normals**: `fix-normals` (auto-detect outward, `--all`), `flip-normals` (reverse winding, `--caps x|y|z`, `--all`)
-  - **Viewing**: `view` (7 orthographic angles, `--zoom`, `--normals` debug overlay, `--focus`), `list-vertices` (`--region` bounding box filter)
+  - **Normals**: `fix-normals` (auto-detect outward via majority vote, `--all`), `flip-normals` (reverse winding, `--caps x|y|z`, `--all`)
+  - **Shading**: `shade-smooth` (averaged vertex normals), `shade-flat` (per-face faceted), `auto-smooth` (smooth below angle threshold)
+  - **Viewing**: `view` (7 orthographic + 7 isometric angles, `--zoom`, `--normals` debug overlay, `--focus`), `list-vertices` (`--region` bounding box filter)
   - **State**: `checkpoint` (`--name`), `restore` (`--name`), `snapshot` (export to `.tscn` with materials and transforms)
   - **Utilities**: `reference` (validate reference image), `batch` (execute JSON command array), `check` (detect floating/disconnected parts with `--margin`)
+  - **Half-edge mesh engine**: 15 core modules — `half_edge`, `profile`, `extrude`, `revolve`, `bevel`, `taper`, `subdivide`, `loop_cut`, `array`, `merge`, `mirror`, `normals`, `boolean`, `inset`, `solidify`, `loft`
+
+### Fixed
+- **`fix-normals` all-inverted detection** — replaced single seed-face centroid heuristic with majority vote across all faces. Now correctly detects and fixes meshes where 100% of normals are inverted.
+- **`remove-part` state desync** — now removes the part from Rust `MeshState` after the Godot node is removed. Prevents `--all` operations (auto-smooth, fix-normals, etc.) from crashing on stale part references.
+- **`duplicate-part --mirror x` position negation** — now negates `transform.position` on the mirror axis, so `--mirror x` places the duplicate at the opposite X position instead of the same position.
+- **`--parts` comma-separated glob patterns** — `--parts "intake-*,headlight-*,taillight-*"` now correctly matches all three patterns. Previously only matched the first glob when the string contained both commas and wildcards.
 
 ## [0.2.19] - 2026-02-17
 

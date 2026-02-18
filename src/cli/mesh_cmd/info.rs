@@ -1,104 +1,131 @@
 use miette::Result;
 use owo_colors::OwoColorize;
 
-use super::gdscript;
-use super::{InfoArgs, OutputFormat, run_eval};
+use crate::core::mesh::MeshState;
+
+use super::{InfoArgs, OutputFormat, project_root};
 
 pub fn cmd_info(args: &InfoArgs) -> Result<()> {
-    let script = if args.all {
-        gdscript::generate_info_all()
+    let root = project_root()?;
+    let state = MeshState::load(&root)?;
+
+    if args.all {
+        print_info_all(&state, args);
     } else {
-        gdscript::generate_info()
-    };
-    let result = run_eval(&script)?;
-    let parsed: serde_json::Value =
-        serde_json::from_str(&result).map_err(|e| miette::miette!("Failed to parse result: {e}"))?;
+        print_info_single(&state, args)?;
+    }
+    Ok(())
+}
+
+fn print_info_single(state: &MeshState, args: &InfoArgs) -> Result<()> {
+    let part = state.active_part()?;
+    let name = &state.active;
+    let vc = part.mesh.vertex_count();
+    let fc = part.mesh.face_count();
+    let (aabb_min, aabb_max) = part.mesh.aabb();
+    let plane = part.profile_plane.map_or("none", |p| p.as_str());
+    let pts = part.profile_points.as_ref().map_or(0, Vec::len);
+
+    let result = serde_json::json!({
+        "name": name,
+        "vertex_count": vc,
+        "face_count": fc,
+        "profile_plane": plane,
+        "profile_point_count": pts,
+        "aabb_position": aabb_min,
+        "aabb_end": aabb_max,
+    });
 
     match args.format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&parsed).unwrap());
+            println!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
         OutputFormat::Text => {
-            if args.all {
-                print_info_all(&parsed);
-            } else {
-                print_info_single(&parsed);
+            println!(
+                "Mesh: {} (vertices: {vc}, faces: {fc})",
+                name.green().bold()
+            );
+            println!(
+                "AABB: ({:.2}, {:.2}, {:.2}) -> ({:.2}, {:.2}, {:.2})",
+                aabb_min[0], aabb_min[1], aabb_min[2], aabb_max[0], aabb_max[1], aabb_max[2],
+            );
+            if pts > 0 {
+                println!("Profile: {plane} ({pts} points)");
             }
         }
     }
     Ok(())
 }
 
-fn print_info_single(parsed: &serde_json::Value) {
-    let name = parsed["name"].as_str().unwrap_or("?");
-    let vc = parsed["vertex_count"].as_u64().unwrap_or(0);
-    let fc = parsed["face_count"].as_u64().unwrap_or(0);
-    let plane = parsed["profile_plane"].as_str().unwrap_or("none");
-    let pts = parsed["profile_point_count"].as_u64().unwrap_or(0);
-    println!(
-        "Mesh: {} (vertices: {vc}, faces: {fc})",
-        name.green().bold()
-    );
-    if let Some(pos) = parsed["aabb_position"].as_array() {
-        let end = parsed["aabb_end"].as_array();
-        if let Some(end) = end {
-            println!(
-                "AABB: ({:.2}, {:.2}, {:.2}) -> ({:.2}, {:.2}, {:.2})",
-                pos[0].as_f64().unwrap_or(0.0),
-                pos[1].as_f64().unwrap_or(0.0),
-                pos[2].as_f64().unwrap_or(0.0),
-                end[0].as_f64().unwrap_or(0.0),
-                end[1].as_f64().unwrap_or(0.0),
-                end[2].as_f64().unwrap_or(0.0),
-            );
-        }
-    }
-    if pts > 0 {
-        println!("Profile: {plane} ({pts} points)");
-    }
-}
+fn print_info_all(state: &MeshState, args: &InfoArgs) {
+    let mut total_vc = 0;
+    let mut total_fc = 0;
+    let mut parts_json = Vec::new();
 
-fn print_info_all(parsed: &serde_json::Value) {
-    let active = parsed["active"].as_str().unwrap_or("?");
-    let count = parsed["part_count"].as_u64().unwrap_or(0);
-    let total_vc = parsed["total_vertex_count"].as_u64().unwrap_or(0);
-    let total_fc = parsed["total_face_count"].as_u64().unwrap_or(0);
-    println!(
-        "{count} parts, {total_vc} vertices, {total_fc} faces (active: {})",
-        active.cyan()
-    );
-    if let Some(parts) = parsed["parts"].as_array() {
-        for p in parts {
-            let name = p["name"].as_str().unwrap_or("?");
-            let vc = p["vertex_count"].as_u64().unwrap_or(0);
-            let fc = p["face_count"].as_u64().unwrap_or(0);
-            let marker = if name == active { " *" } else { "" };
-            println!("  {}{marker}: {vc} vertices, {fc} faces", name.green());
-            let fmt_vec = |arr: &[serde_json::Value]| -> String {
-                format!(
-                    "{:.2}, {:.2}, {:.2}",
-                    arr[0].as_f64().unwrap_or(0.0),
-                    arr[1].as_f64().unwrap_or(0.0),
-                    arr[2].as_f64().unwrap_or(0.0),
-                )
-            };
-            if let Some(pos) = p["position"].as_array() {
-                let rot = p["rotation"].as_array();
-                let scl = p["scale"].as_array();
+    for (name, part) in &state.parts {
+        let vc = part.mesh.vertex_count();
+        let fc = part.mesh.face_count();
+        total_vc += vc;
+        total_fc += fc;
+        let (amin, amax) = part.mesh.aabb();
+        parts_json.push(serde_json::json!({
+            "name": name,
+            "vertex_count": vc,
+            "face_count": fc,
+            "position": part.transform.position,
+            "rotation": part.transform.rotation,
+            "scale": part.transform.scale,
+            "aabb_min": amin,
+            "aabb_max": amax,
+        }));
+    }
+
+    let result = serde_json::json!({
+        "active": state.active,
+        "part_count": state.parts.len(),
+        "total_vertex_count": total_vc,
+        "total_face_count": total_fc,
+        "parts": parts_json,
+    });
+
+    match args.format {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&result).unwrap());
+        }
+        OutputFormat::Text => {
+            let count = state.parts.len();
+            println!(
+                "{count} parts, {total_vc} vertices, {total_fc} faces (active: {})",
+                state.active.cyan()
+            );
+            for p in &parts_json {
+                let name = p["name"].as_str().unwrap_or("?");
+                let vc = p["vertex_count"].as_u64().unwrap_or(0);
+                let fc = p["face_count"].as_u64().unwrap_or(0);
+                let marker = if name == state.active { " *" } else { "" };
+                println!("  {}{marker}: {vc} vertices, {fc} faces", name.green());
+                let fmt_vec = |arr: &serde_json::Value| -> String {
+                    if let Some(a) = arr.as_array() {
+                        format!(
+                            "{:.2}, {:.2}, {:.2}",
+                            a[0].as_f64().unwrap_or(0.0),
+                            a[1].as_f64().unwrap_or(0.0),
+                            a[2].as_f64().unwrap_or(0.0),
+                        )
+                    } else {
+                        "?".to_string()
+                    }
+                };
                 println!(
                     "    pos({})  rot({})  scale({})",
-                    fmt_vec(pos),
-                    rot.map_or_else(|| "?".to_string(), |a| fmt_vec(a)),
-                    scl.map_or_else(|| "?".to_string(), |a| fmt_vec(a)),
+                    fmt_vec(&p["position"]),
+                    fmt_vec(&p["rotation"]),
+                    fmt_vec(&p["scale"]),
                 );
-            }
-            if let (Some(min), Some(max)) =
-                (p["aabb_min"].as_array(), p["aabb_max"].as_array())
-            {
                 println!(
                     "    aabb({}) -> ({})",
-                    fmt_vec(min),
-                    fmt_vec(max),
+                    fmt_vec(&p["aabb_min"]),
+                    fmt_vec(&p["aabb_max"]),
                 );
             }
         }

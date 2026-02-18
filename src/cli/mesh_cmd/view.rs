@@ -4,9 +4,9 @@ use miette::{Result, miette};
 use owo_colors::OwoColorize;
 
 use super::gdscript;
-use super::{OutputFormat, ViewArgs, ViewName, run_eval};
+use super::{OutputFormat, ViewArgs, run_eval};
 
-/// Capture a single orthographic screenshot. Returns (view_name, file_path).
+/// Capture a screenshot from a named camera. Returns (view_name, file_path).
 fn capture_view(
     view_name: &str,
     output_dir: Option<&str>,
@@ -18,13 +18,11 @@ fn capture_view(
         "Front" | "Back" => Some("front"),
         "Side" | "Left" => Some("side"),
         "Top" | "Bottom" => Some("top"),
-        _ => None, // Iso: no grid
+        _ => None, // perspective cameras: no grid
     };
 
     // Add grid if requested (scaled to camera size)
-    if grid
-        && let Some(plane) = grid_plane
-    {
+    if grid && let Some(plane) = grid_plane {
         let grid_script = gdscript::generate_grid(plane, camera_half_size);
         let _ = run_eval(&grid_script);
     }
@@ -107,16 +105,7 @@ pub fn cmd_view(args: &ViewArgs) -> Result<()> {
         run_eval(&debug_script)?;
     }
 
-    let views: Vec<&str> = match args.view {
-        ViewName::Front => vec!["Front"],
-        ViewName::Back => vec!["Back"],
-        ViewName::Side => vec!["Side"],
-        ViewName::Left => vec!["Left"],
-        ViewName::Top => vec!["Top"],
-        ViewName::Bottom => vec!["Bottom"],
-        ViewName::Iso => vec!["Iso"],
-        ViewName::All => vec!["Front", "Back", "Side", "Left", "Top", "Bottom", "Iso"],
-    };
+    let views = args.view.camera_names();
 
     let mut captures = Vec::new();
     for view in &views {
@@ -167,11 +156,7 @@ pub fn cmd_view(args: &ViewArgs) -> Result<()> {
                 );
             }
             for (view, path) in &captures {
-                println!(
-                    "{} {view}: {}",
-                    "Screenshot".green(),
-                    path.cyan()
-                );
+                println!("{} {view}: {}", "Screenshot".green(), path.cyan());
             }
         }
     }

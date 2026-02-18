@@ -1,40 +1,60 @@
 use miette::Result;
 use owo_colors::OwoColorize;
 
-use super::gdscript;
-use super::{OutputFormat, TaperArgs, run_eval};
+use crate::core::mesh::MeshState;
+
+use super::{OutputFormat, TaperArgs, project_root, run_eval};
 
 pub fn cmd_taper(args: &TaperArgs) -> Result<()> {
+    let root = project_root()?;
+    let mut state = MeshState::load(&root)?;
+
+    let axis_idx = args.axis.as_index();
     let range = match (args.from, args.to) {
         (Some(f), Some(t)) => Some((f, t)),
         (Some(f), None) => Some((f, 1.0)),
         (None, Some(t)) => Some((0.0, t)),
         (None, None) => None,
     };
-    let script = gdscript::generate_taper(
-        args.part.as_deref(),
-        args.axis.as_str(),
-        args.start,
-        args.end,
+
+    let part = state.resolve_part_mut(args.part.as_deref())?;
+    let count = crate::core::mesh::taper::taper(
+        &mut part.mesh,
+        axis_idx,
+        args.from_scale,
+        args.to_scale,
         args.midpoint,
         range,
     );
-    let result = run_eval(&script)?;
-    let parsed: serde_json::Value =
-        serde_json::from_str(&result).map_err(|e| miette::miette!("Failed to parse result: {e}"))?;
+    let vc = part.mesh.vertex_count();
+
+    state.save(&root)?;
+
+    // Push to Godot
+    let active = state.active.clone();
+    let push = state.generate_push_script(&active)?;
+    let _ = run_eval(&push)?;
+
+    let result = serde_json::json!({
+        "axis": args.axis.as_str(),
+        "from_scale": args.from_scale,
+        "to_scale": args.to_scale,
+        "midpoint": args.midpoint,
+        "range": range,
+        "vertex_count": vc,
+        "vertices_modified": count,
+    });
 
     match args.format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&parsed).unwrap());
+            println!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
         OutputFormat::Text => {
-            let axis = parsed["axis"].as_str().unwrap_or("?");
-            let start = parsed["start_scale"].as_f64().unwrap_or(0.0);
-            let end = parsed["end_scale"].as_f64().unwrap_or(0.0);
-            let vc = parsed["vertex_count"].as_u64().unwrap_or(0);
+            let from = args.from_scale;
+            let to = args.to_scale;
             println!(
-                "Tapered along {}: {start:.2} -> {end:.2} ({vc} vertices)",
-                axis.cyan()
+                "Tapered along {}: {from:.2} -> {to:.2} ({vc} vertices)",
+                args.axis.as_str().cyan()
             );
         }
     }

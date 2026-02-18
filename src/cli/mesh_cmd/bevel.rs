@@ -1,27 +1,51 @@
 use miette::Result;
 use owo_colors::OwoColorize;
 
-use super::gdscript;
-use super::{BevelArgs, OutputFormat, run_eval};
+use crate::core::mesh::MeshState;
+
+use super::{BevelArgs, OutputFormat, project_root, run_eval};
 
 pub fn cmd_bevel(args: &BevelArgs) -> Result<()> {
-    let script = gdscript::generate_bevel(args.radius, args.segments, args.edges.as_str());
-    let result = run_eval(&script)?;
-    let parsed: serde_json::Value =
-        serde_json::from_str(&result).map_err(|e| miette::miette!("Failed to parse result: {e}"))?;
+    let root = project_root()?;
+    let mut state = MeshState::load(&root)?;
+
+    let part = state.active_part_mut()?;
+    let beveled = crate::core::mesh::bevel::bevel_with_profile(
+        &part.mesh,
+        args.radius,
+        args.segments,
+        args.edges.as_str(),
+        args.profile,
+    );
+
+    let vc = beveled.vertex_count();
+    let fc = beveled.face_count();
+    part.mesh = beveled;
+
+    state.save(&root)?;
+
+    // Push to Godot
+    let push = state.generate_push_script(&state.active.clone())?;
+    let _ = run_eval(&push)?;
+
+    let result = serde_json::json!({
+        "radius": args.radius,
+        "segments": args.segments,
+        "edges": args.edges.as_str(),
+        "vertex_count": vc,
+        "face_count": fc,
+    });
 
     match args.format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&parsed).unwrap());
+            println!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
         OutputFormat::Text => {
-            let r = parsed["radius"].as_f64().unwrap_or(0.0);
-            let segs = parsed["segments"].as_u64().unwrap_or(0);
-            let edges = parsed["sharp_edges"].as_u64().unwrap_or(0);
-            let vc = parsed["vertex_count"].as_u64().unwrap_or(0);
+            let r = args.radius;
+            let segs = args.segments;
             println!(
-                "Beveled: radius {r:.3}, {segs} segments, {} sharp edges, {vc} vertices",
-                edges.to_string().cyan()
+                "Beveled: radius {r:.3}, {segs} segments, {} edges, {vc} vertices",
+                args.edges.as_str().cyan()
             );
         }
     }

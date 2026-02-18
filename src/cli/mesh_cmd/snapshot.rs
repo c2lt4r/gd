@@ -16,7 +16,9 @@ pub fn cmd_snapshot(args: &SnapshotArgs) -> Result<()> {
         .extension()
         .is_some_and(|ext| ext.eq_ignore_ascii_case("tscn"))
     {
-        return Err(miette!("Snapshot path must end with .tscn, got: {tscn_path}"));
+        return Err(miette!(
+            "Snapshot path must end with .tscn, got: {tscn_path}"
+        ));
     }
 
     if args.dry_run {
@@ -29,11 +31,7 @@ pub fn cmd_snapshot(args: &SnapshotArgs) -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&output).unwrap());
             }
             OutputFormat::Text => {
-                println!(
-                    "{} Would save: {}",
-                    "Dry run:".yellow(),
-                    tscn_path.cyan()
-                );
+                println!("{} Would save: {}", "Dry run:".yellow(), tscn_path.cyan());
             }
         }
         return Ok(());

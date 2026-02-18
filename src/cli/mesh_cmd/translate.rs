@@ -1,8 +1,10 @@
 use miette::Result;
 use owo_colors::OwoColorize;
 
+use crate::core::mesh::MeshState;
+
 use super::gdscript;
-use super::{OutputFormat, TranslateArgs, parse_3d, run_eval};
+use super::{OutputFormat, TranslateArgs, parse_3d, project_root, run_eval};
 
 pub fn cmd_translate(args: &TranslateArgs) -> Result<()> {
     let (x, y, z) = parse_3d(&args.to)?;
@@ -12,8 +14,24 @@ pub fn cmd_translate(args: &TranslateArgs) -> Result<()> {
         gdscript::generate_translate(args.part.as_deref(), x, y, z, args.relative)
     };
     let result = run_eval(&script)?;
-    let parsed: serde_json::Value =
-        serde_json::from_str(&result).map_err(|e| miette::miette!("Failed to parse result: {e}"))?;
+    let parsed: serde_json::Value = serde_json::from_str(&result)
+        .map_err(|e| miette::miette!("Failed to parse result: {e}"))?;
+
+    // Update Rust-side transform from Godot result
+    if let Some(pos) = parsed["position"].as_array() {
+        let root = project_root()?;
+        if let Ok(mut state) = MeshState::load(&root) {
+            let part_name = parsed["name"].as_str().unwrap_or(&state.active).to_string();
+            if let Ok(part) = state.resolve_part_mut(Some(&part_name)) {
+                part.transform.position = [
+                    pos[0].as_f64().unwrap_or(0.0),
+                    pos[1].as_f64().unwrap_or(0.0),
+                    pos[2].as_f64().unwrap_or(0.0),
+                ];
+            }
+            let _ = state.save(&root);
+        }
+    }
 
     match args.format {
         OutputFormat::Json => {

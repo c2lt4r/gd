@@ -1,14 +1,23 @@
 use miette::Result;
 use owo_colors::OwoColorize;
 
+use crate::core::mesh::MeshState;
+
 use super::gdscript;
-use super::{CreateArgs, OutputFormat, run_eval};
+use super::{CreateArgs, OutputFormat, project_root, run_eval};
 
 pub fn cmd_create(args: &CreateArgs) -> Result<()> {
+    let root = project_root()?;
+
+    // Initialize Rust mesh state
+    let state = MeshState::new(&args.name);
+    state.save(&root)?;
+
+    // Create Godot scene infrastructure (cameras, lights, HUD, mesh node)
     let script = gdscript::generate_create(&args.name, args.from.as_str());
     let result = run_eval(&script)?;
-    let parsed: serde_json::Value =
-        serde_json::from_str(&result).map_err(|e| miette::miette!("Failed to parse result: {e}"))?;
+    let parsed: serde_json::Value = serde_json::from_str(&result)
+        .map_err(|e| miette::miette!("Failed to parse result: {e}"))?;
 
     match args.format {
         OutputFormat::Json => {

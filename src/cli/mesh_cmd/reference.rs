@@ -29,10 +29,7 @@ pub fn cmd_reference(args: &ReferenceArgs) -> Result<()> {
         OutputFormat::Text => {
             let size_kb = size_bytes / 1024;
             let view_info = view_str.map_or(String::new(), |v| format!(" (view: {v})"));
-            println!(
-                "Reference: {} ({size_kb} KB){view_info}",
-                args.path.green()
-            );
+            println!("Reference: {} ({size_kb} KB){view_info}", args.path.green());
         }
     }
     Ok(())

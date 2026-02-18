@@ -6,6 +6,7 @@ const PALETTE: &str = "[Color(0.69,0.69,0.69),Color(0.88,0.44,0.31),\
 
 /// GDScript snippet to restore part color from metadata after a mesh rebuild.
 /// Assumes `mesh_inst` is in scope.
+#[cfg(test)]
 const RESTORE_COLOR: &str = "\tif mesh_inst.has_meta(\"part_color\"):\n\
      \t\tvar _mat = StandardMaterial3D.new()\n\
      \t\t_mat.albedo_color = mesh_inst.get_meta(\"part_color\")\n\
@@ -40,7 +41,7 @@ pub fn generate_create(name: &str, primitive: &str) -> String {
          \tcam_front.name = \"Front\"\n\
          \tcam_front.projection = Camera3D.PROJECTION_ORTHOGONAL\n\
          \tcam_front.size = 10\n\
-         \tcam_front.position = Vector3(0, 0, 20)\n\
+         \tcam_front.position = Vector3(0, 0, -20)\n\
          \trig.add_child(cam_front)\n\
          \tcam_front.look_at(Vector3.ZERO)\n\
          \tvar cam_side = Camera3D.new()\n\
@@ -61,7 +62,7 @@ pub fn generate_create(name: &str, primitive: &str) -> String {
          \tcam_back.name = \"Back\"\n\
          \tcam_back.projection = Camera3D.PROJECTION_ORTHOGONAL\n\
          \tcam_back.size = 10\n\
-         \tcam_back.position = Vector3(0, 0, -20)\n\
+         \tcam_back.position = Vector3(0, 0, 20)\n\
          \trig.add_child(cam_back)\n\
          \tcam_back.look_at(Vector3.ZERO)\n\
          \tvar cam_left = Camera3D.new()\n\
@@ -78,34 +79,107 @@ pub fn generate_create(name: &str, primitive: &str) -> String {
          \tcam_bottom.position = Vector3(0, -20, 0)\n\
          \trig.add_child(cam_bottom)\n\
          \tcam_bottom.look_at(Vector3.ZERO, Vector3.FORWARD)\n\
-         \tvar cam_iso = Camera3D.new()\n\
-         \tcam_iso.name = \"Iso\"\n\
-         \tcam_iso.projection = Camera3D.PROJECTION_ORTHOGONAL\n\
-         \tcam_iso.size = 10\n\
-         \tcam_iso.position = Vector3(12, 12, 12)\n\
-         \trig.add_child(cam_iso)\n\
-         \tcam_iso.look_at(Vector3.ZERO)\n\
+         \tvar cam_fr = Camera3D.new()\n\
+         \tcam_fr.name = \"FrontRight\"\n\
+         \tcam_fr.fov = 27\n\
+         \tcam_fr.position = Vector3(14, 0, -14)\n\
+         \trig.add_child(cam_fr)\n\
+         \tcam_fr.look_at(Vector3.ZERO)\n\
+         \tvar cam_fl = Camera3D.new()\n\
+         \tcam_fl.name = \"FrontLeft\"\n\
+         \tcam_fl.fov = 27\n\
+         \tcam_fl.position = Vector3(-14, 0, -14)\n\
+         \trig.add_child(cam_fl)\n\
+         \tcam_fl.look_at(Vector3.ZERO)\n\
+         \tvar cam_br = Camera3D.new()\n\
+         \tcam_br.name = \"BackRight\"\n\
+         \tcam_br.fov = 27\n\
+         \tcam_br.position = Vector3(14, 0, 14)\n\
+         \trig.add_child(cam_br)\n\
+         \tcam_br.look_at(Vector3.ZERO)\n\
+         \tvar cam_bl = Camera3D.new()\n\
+         \tcam_bl.name = \"BackLeft\"\n\
+         \tcam_bl.fov = 27\n\
+         \tcam_bl.position = Vector3(-14, 0, 14)\n\
+         \trig.add_child(cam_bl)\n\
+         \tcam_bl.look_at(Vector3.ZERO)\n\
+         \tvar cam_hfr = Camera3D.new()\n\
+         \tcam_hfr.name = \"HighFrontRight\"\n\
+         \tcam_hfr.fov = 27\n\
+         \tcam_hfr.position = Vector3(10, 14, -10)\n\
+         \trig.add_child(cam_hfr)\n\
+         \tcam_hfr.look_at(Vector3.ZERO)\n\
+         \tvar cam_hfl = Camera3D.new()\n\
+         \tcam_hfl.name = \"HighFrontLeft\"\n\
+         \tcam_hfl.fov = 27\n\
+         \tcam_hfl.position = Vector3(-10, 14, -10)\n\
+         \trig.add_child(cam_hfl)\n\
+         \tcam_hfl.look_at(Vector3.ZERO)\n\
+         \tvar cam_hbr = Camera3D.new()\n\
+         \tcam_hbr.name = \"HighBackRight\"\n\
+         \tcam_hbr.fov = 27\n\
+         \tcam_hbr.position = Vector3(10, 14, 10)\n\
+         \trig.add_child(cam_hbr)\n\
+         \tcam_hbr.look_at(Vector3.ZERO)\n\
+         \tvar cam_hbl = Camera3D.new()\n\
+         \tcam_hbl.name = \"HighBackLeft\"\n\
+         \tcam_hbl.fov = 27\n\
+         \tcam_hbl.position = Vector3(-10, 14, 10)\n\
+         \trig.add_child(cam_hbl)\n\
+         \tcam_hbl.look_at(Vector3.ZERO)\n\
          \tvar key_light = DirectionalLight3D.new()\n\
          \tkey_light.name = \"_KeyLight\"\n\
-         \tkey_light.rotation_degrees = Vector3(-45, -30, 0)\n\
-         \tkey_light.light_energy = 0.8\n\
+         \tkey_light.rotation_degrees = Vector3(-45, -45, 0)\n\
+         \tkey_light.light_energy = 1.0\n\
+         \tkey_light.shadow_enabled = true\n\
          \thelper.add_child(key_light)\n\
          \tvar fill_light = DirectionalLight3D.new()\n\
          \tfill_light.name = \"_FillLight\"\n\
-         \tfill_light.rotation_degrees = Vector3(-30, 150, 0)\n\
-         \tfill_light.light_energy = 0.4\n\
+         \tfill_light.rotation_degrees = Vector3(0, 45, 0)\n\
+         \tfill_light.light_energy = 0.5\n\
+         \tfill_light.light_color = Color(0.9, 0.92, 0.95)\n\
          \thelper.add_child(fill_light)\n\
          \tvar rim_light = DirectionalLight3D.new()\n\
          \trim_light.name = \"_RimLight\"\n\
-         \trim_light.rotation_degrees = Vector3(15, 90, 0)\n\
-         \trim_light.light_energy = 0.3\n\
+         \trim_light.rotation_degrees = Vector3(-70, 180, 0)\n\
+         \trim_light.light_energy = 1.0\n\
+         \trim_light.shadow_enabled = true\n\
          \thelper.add_child(rim_light)\n\
+         \tvar top_light = DirectionalLight3D.new()\n\
+         \ttop_light.name = \"_TopLight\"\n\
+         \ttop_light.rotation_degrees = Vector3(-90, 0, 0)\n\
+         \ttop_light.light_energy = 0.2\n\
+         \thelper.add_child(top_light)\n\
+         \tvar cyc = CSGPolygon3D.new()\n\
+         \tcyc.name = \"_Cyclorama\"\n\
+         \tcyc.mode = CSGPolygon3D.MODE_SPIN\n\
+         \tcyc.polygon = PackedVector2Array([Vector2(0,0),Vector2(2000,0),Vector2(2000,50),Vector2(2050,100),Vector2(2050,1000),Vector2(0,1000)])\n\
+         \tcyc.spin_degrees = 360.0\n\
+         \tcyc.spin_sides = 48\n\
+         \tvar cyc_mat = StandardMaterial3D.new()\n\
+         \tcyc_mat.albedo_color = Color.html(\"2A2A2A\")\n\
+         \tcyc_mat.roughness = 1.0\n\
+         \tcyc_mat.metallic_specular = 0.2\n\
+         \tcyc.material = cyc_mat\n\
+         \thelper.add_child(cyc)\n\
+         \tvar probe = ReflectionProbe.new()\n\
+         \tprobe.name = \"_ReflectionProbe\"\n\
+         \tprobe.size = Vector3(200, 100, 200)\n\
+         \tprobe.intensity = 1.0\n\
+         \tprobe.max_distance = 200.0\n\
+         \thelper.add_child(probe)\n\
          \tvar env_res = Environment.new()\n\
          \tenv_res.background_mode = 1\n\
-         \tenv_res.background_color = Color(0.08, 0.12, 0.18)\n\
+         \tenv_res.background_color = Color.html(\"0A0A0A\")\n\
          \tenv_res.ambient_light_source = 1\n\
          \tenv_res.ambient_light_color = Color(0.3, 0.3, 0.3)\n\
-         \tenv_res.tonemap_mode = 3\n\
+         \tenv_res.tonemap_mode = 2\n\
+         \tenv_res.ssao_enabled = true\n\
+         \tenv_res.ssao_radius = 0.3\n\
+         \tenv_res.ssao_intensity = 2.0\n\
+         \tenv_res.glow_enabled = true\n\
+         \tenv_res.glow_intensity = 0.6\n\
+         \tenv_res.glow_bloom = 0.1\n\
          \tvar world_env = WorldEnvironment.new()\n\
          \tworld_env.name = \"_MeshEnv\"\n\
          \tworld_env.environment = env_res\n\
@@ -227,6 +301,7 @@ pub fn generate_profile(points: &[(f64, f64)], plane: &str) -> String {
 ///
 /// Reads the stored `_profile_points` and `_profile_plane` metadata from the
 /// source part and applies the same profile to the current active mesh.
+#[cfg(test)]
 pub fn generate_profile_from_part(src_part: &str) -> String {
     format!(
         "extends Node\n\
@@ -302,6 +377,7 @@ pub fn generate_profile_from_part(src_part: &str) -> String {
 /// `Geometry2D.triangulate_polygon` returns indices in Godot's Y-down 2D
 /// convention, which inverts the winding relative to the profile's Y-up math.
 /// So caps swap their if/else branches compared to side walls.
+#[cfg(test)]
 #[allow(clippy::too_many_lines)]
 pub fn generate_extrude(depth: f64, segments: u32) -> String {
     let half = depth / 2.0;
@@ -406,6 +482,7 @@ pub fn generate_extrude(depth: f64, segments: u32) -> String {
 /// After building the surface of revolution, checks the first triangle's normal
 /// against the "away from revolution axis" direction. If inverted, flips all
 /// triangle windings (all quads share the same winding pattern).
+#[cfg(test)]
 #[allow(clippy::too_many_lines)]
 pub fn generate_revolve(axis: &str, angle: f64, segments: u32, cap: bool) -> String {
     let cap_code = if cap {
@@ -550,6 +627,7 @@ pub fn generate_revolve(axis: &str, angle: f64, segments: u32, cap: bool) -> Str
 }
 
 /// Generate the GDScript for `mesh move-vertex`.
+#[cfg(test)]
 pub fn generate_move_vertex(index: u32, dx: f64, dy: f64, dz: f64) -> String {
     format!(
         "extends Node\n\
@@ -758,6 +836,7 @@ pub fn generate_list_vertices(region: Option<&super::BoundingBox>) -> String {
 /// Vertices at the min extent of the axis get `start_scale`, at the max extent
 /// get `end_scale`, with linear interpolation between. Preserves the input
 /// mesh's winding order (no centroid fix needed — relies on correct extrude).
+#[cfg(test)]
 pub fn generate_taper(
     part: Option<&str>,
     axis: &str,
@@ -857,6 +936,7 @@ pub fn generate_taper(
 /// shared by exactly two triangles with a dihedral angle above a threshold,
 /// then cutting corners by offsetting vertices along edge normals. Preserves
 /// the input mesh's winding order (no centroid fix needed).
+#[cfg(test)]
 #[allow(clippy::too_many_lines)]
 pub fn generate_bevel(radius: f64, segments: u32, edges: &str) -> String {
     // Edge filter: classify edges relative to the extrusion axis from profile_plane.
@@ -967,6 +1047,7 @@ pub fn generate_bevel(radius: f64, segments: u32, edges: &str) -> String {
 }
 
 /// Generate the GDScript for `mesh info`.
+#[cfg(test)]
 pub fn generate_info() -> String {
     "extends Node\n\
      \n\
@@ -1265,6 +1346,7 @@ pub fn generate_info_all() -> String {
 /// Generate the GDScript for `mesh checkpoint`.
 ///
 /// Saves the current surface arrays + material color for every part as metadata.
+#[cfg(test)]
 pub fn generate_checkpoint(name: Option<&str>) -> String {
     let suffix = name.map_or(String::new(), |n| format!("_{n}"));
     format!(
@@ -1303,6 +1385,7 @@ pub fn generate_checkpoint(name: Option<&str>) -> String {
 /// Generate the GDScript for `mesh restore`.
 ///
 /// Rebuilds meshes from saved checkpoint metadata. Supports named checkpoints.
+#[cfg(test)]
 pub fn generate_restore(name: Option<&str>) -> String {
     let suffix = name.map_or(String::new(), |n| format!("_{n}"));
     format!(
@@ -1345,6 +1428,7 @@ pub fn generate_restore(name: Option<&str>) -> String {
 /// Generate the GDScript for `mesh flip-normals`.
 ///
 /// Inverts all triangle winding on the target part, then regenerates normals.
+#[cfg(test)]
 pub fn generate_flip_normals(part: Option<&str>, caps: Option<&str>) -> String {
     let target = part.map_or(
         String::from("\tvar mesh_name = helper.get_meta(\"active_mesh\")\n"),
@@ -1419,6 +1503,7 @@ pub fn generate_flip_normals(part: Option<&str>, caps: Option<&str>) -> String {
 /// Generate the GDScript for `mesh flip-normals --all`.
 ///
 /// Reverses triangle winding on every MeshInstance3D child.
+#[cfg(test)]
 pub fn generate_flip_normals_all() -> String {
     "extends Node\n\
      \n\
@@ -1463,6 +1548,7 @@ pub fn generate_flip_normals_all() -> String {
 /// Recalculates normals to face outward using a centroid heuristic:
 /// for each triangle, compute the face normal and the vector from mesh centroid
 /// to triangle center. If they disagree (dot < 0), flip that triangle's winding.
+#[cfg(test)]
 pub fn generate_fix_normals(part: Option<&str>) -> String {
     let target = part.map_or(
         String::from("\tvar mesh_name = helper.get_meta(\"active_mesh\")\n"),
@@ -1525,6 +1611,7 @@ pub fn generate_fix_normals(part: Option<&str>) -> String {
 ///
 /// Splits each triangle into 4 sub-triangles by inserting edge midpoints.
 /// Each iteration quadruples the face count. Generates smooth normals after.
+#[cfg(test)]
 pub fn generate_subdivide(part: Option<&str>, iterations: u32) -> String {
     let target = part.map_or(
         String::from("\tvar mesh_name = helper.get_meta(\"active_mesh\")\n"),
@@ -1585,6 +1672,7 @@ pub fn generate_subdivide(part: Option<&str>, iterations: u32) -> String {
 /// Generate the GDScript for `mesh fix-normals --all`.
 ///
 /// Applies the centroid-based fix to every MeshInstance3D child.
+#[cfg(test)]
 pub fn generate_fix_normals_all() -> String {
     "extends Node\n\
      \n\
@@ -1672,7 +1760,13 @@ pub fn generate_mirror_part(src: &str, dst: &str, axis: &str, symmetric: bool) -
          \trig.position = center\n\
          \tfor cam in rig.get_children():\n\
          \t\tif cam is Camera3D:\n\
-         \t\t\tcam.size = sz\n\
+         \t\t\tif cam.projection == Camera3D.PROJECTION_ORTHOGONAL:\n\
+         \t\t\t\tcam.size = sz\n\
+         \t\t\telse:\n\
+         \t\t\t\tvar half_fov = deg_to_rad(cam.fov * 0.5)\n\
+         \t\t\t\tvar dist = (sz * 0.5) / tan(half_fov)\n\
+         \t\t\t\tif dist < 1.0: dist = 1.0\n\
+         \t\t\t\tcam.position = cam.position.normalized() * dist\n\
          \t\t\tif cam.name == \"Top\" or cam.name == \"Bottom\":\n\
          \t\t\t\tcam.look_at(center, Vector3.FORWARD)\n\
          \t\t\telse:\n\
@@ -1699,23 +1793,6 @@ pub fn generate_mirror_part(src: &str, dst: &str, axis: &str, symmetric: bool) -
          \tfor i in 3:\n\
          \t\tif i != axis_idx: rot[i] = -rot[i]\n\
          \tmi.rotation_degrees = rot\n\
-         \tif src.mesh and src.mesh.get_surface_count() > 0:\n\
-         \t\tvar arrays = src.mesh.surface_get_arrays(0)\n\
-         \t\tvar verts = arrays[Mesh.ARRAY_VERTEX]\n\
-         \t\tvar st = SurfaceTool.new()\n\
-         \t\tst.begin(Mesh.PRIMITIVE_TRIANGLES)\n\
-         \t\tfor i in range(0, verts.size(), 3):\n\
-         \t\t\tvar v0 = verts[i]\n\
-         \t\t\tvar v1 = verts[i + 1]\n\
-         \t\t\tvar v2 = verts[i + 2]\n\
-         \t\t\tv0[axis_idx] = -v0[axis_idx]\n\
-         \t\t\tv1[axis_idx] = -v1[axis_idx]\n\
-         \t\t\tv2[axis_idx] = -v2[axis_idx]\n\
-         \t\t\tst.add_vertex(v0)\n\
-         \t\t\tst.add_vertex(v2)\n\
-         \t\t\tst.add_vertex(v1)\n\
-         \t\tst.generate_normals()\n\
-         \t\tmi.mesh = st.commit()\n\
          \thelper.add_child(mi)\n\
          \tparts.append(\"{dst}\")\n\
          \thelper.set_meta(\"mesh_parts\", parts)\n\
@@ -1846,7 +1923,9 @@ pub fn generate_material_preset_multi(pattern: &str, preset: &str, color: Option
     };
     // Helper function that sets PBR props — called at both nesting levels
     let props_fn = match preset {
-        "glass" => "\tmat.metallic = 0.0\n\tmat.roughness = 0.05\n\tmat.transparency = 1\n\tmat.albedo_color.a = 0.3\n",
+        "glass" => {
+            "\tmat.metallic = 0.0\n\tmat.roughness = 0.05\n\tmat.transparency = 1\n\tmat.albedo_color.a = 0.3\n"
+        }
         "metal" => "\tmat.metallic = 0.9\n\tmat.roughness = 0.3\n",
         "chrome" => "\tmat.metallic = 1.0\n\tmat.roughness = 0.05\n\tmat.specular = 1.0\n",
         "rubber" => "\tmat.metallic = 0.0\n\tmat.roughness = 0.95\n",
@@ -1899,6 +1978,7 @@ pub fn generate_material_preset_multi(pattern: &str, preset: &str, color: Option
 /// Splits all triangles that straddle an axis-aligned plane at the given position.
 /// Each straddling triangle is split into 2 or 3 sub-triangles by computing edge
 /// intersection points. Triangles fully on one side are preserved unchanged.
+#[cfg(test)]
 #[allow(clippy::too_many_lines)]
 pub fn generate_loop_cut(part: Option<&str>, axis: &str, at: f64) -> String {
     let axis_component = match axis {
@@ -2000,35 +2080,51 @@ pub fn generate_material_preset(part: Option<&str>, preset: &str, color: Option<
     );
     // PBR properties per preset: (metallic, roughness, transparency, alpha, specular, color_default)
     let props = match preset {
-        "glass" => "\tmat.metallic = 0.0\n\
+        "glass" => {
+            "\tmat.metallic = 0.0\n\
                      \tmat.roughness = 0.05\n\
                      \tmat.transparency = 1\n\
                      \tmat.albedo_color.a = 0.3\n\
                      \tmat.specular = 0.5\n\
                      \tmat.refraction_enabled = true\n\
-                     \tmat.refraction_scale = 0.02\n",
-        "metal" => "\tmat.metallic = 0.9\n\
+                     \tmat.refraction_scale = 0.02\n"
+        }
+        "metal" => {
+            "\tmat.metallic = 0.9\n\
                      \tmat.roughness = 0.3\n\
-                     \tmat.specular = 0.8\n",
-        "chrome" => "\tmat.metallic = 1.0\n\
+                     \tmat.specular = 0.8\n"
+        }
+        "chrome" => {
+            "\tmat.metallic = 1.0\n\
                       \tmat.roughness = 0.05\n\
-                      \tmat.specular = 1.0\n",
-        "rubber" => "\tmat.metallic = 0.0\n\
+                      \tmat.specular = 1.0\n"
+        }
+        "rubber" => {
+            "\tmat.metallic = 0.0\n\
                       \tmat.roughness = 0.95\n\
-                      \tmat.specular = 0.1\n",
-        "paint" => "\tmat.metallic = 0.1\n\
+                      \tmat.specular = 0.1\n"
+        }
+        "paint" => {
+            "\tmat.metallic = 0.1\n\
                      \tmat.roughness = 0.4\n\
-                     \tmat.specular = 0.5\n",
-        "wood" => "\tmat.metallic = 0.0\n\
+                     \tmat.specular = 0.5\n"
+        }
+        "wood" => {
+            "\tmat.metallic = 0.0\n\
                     \tmat.roughness = 0.7\n\
-                    \tmat.specular = 0.2\n",
-        "matte" => "\tmat.metallic = 0.0\n\
+                    \tmat.specular = 0.2\n"
+        }
+        "matte" => {
+            "\tmat.metallic = 0.0\n\
                      \tmat.roughness = 1.0\n\
-                     \tmat.specular = 0.0\n",
+                     \tmat.specular = 0.0\n"
+        }
         // plastic
-        _ => "\tmat.metallic = 0.0\n\
+        _ => {
+            "\tmat.metallic = 0.0\n\
               \tmat.roughness = 0.4\n\
-              \tmat.specular = 0.5\n",
+              \tmat.specular = 0.5\n"
+        }
     };
     let default_color = match preset {
         "glass" => "Color(0.8, 0.9, 1.0)",
@@ -2166,7 +2262,13 @@ pub fn generate_autofit_cameras(zoom: f64) -> String {
          \trig.position = center\n\
          \tfor cam in rig.get_children():\n\
          \t\tif cam is Camera3D:\n\
-         \t\t\tcam.size = sz\n\
+         \t\t\tif cam.projection == Camera3D.PROJECTION_ORTHOGONAL:\n\
+         \t\t\t\tcam.size = sz\n\
+         \t\t\telse:\n\
+         \t\t\t\tvar half_fov = deg_to_rad(cam.fov * 0.5)\n\
+         \t\t\t\tvar dist = (sz * 0.5) / tan(half_fov)\n\
+         \t\t\t\tif dist < 1.0: dist = 1.0\n\
+         \t\t\t\tcam.position = cam.position.normalized() * dist\n\
          \t\t\tif cam.name == \"Top\" or cam.name == \"Bottom\":\n\
          \t\t\t\tcam.look_at(center, Vector3.FORWARD)\n\
          \t\t\telse:\n\
@@ -2264,7 +2366,13 @@ pub fn generate_duplicate_part(src: &str, dst: &str) -> String {
          \trig.position = center\n\
          \tfor cam in rig.get_children():\n\
          \t\tif cam is Camera3D:\n\
-         \t\t\tcam.size = sz\n\
+         \t\t\tif cam.projection == Camera3D.PROJECTION_ORTHOGONAL:\n\
+         \t\t\t\tcam.size = sz\n\
+         \t\t\telse:\n\
+         \t\t\t\tvar half_fov = deg_to_rad(cam.fov * 0.5)\n\
+         \t\t\t\tvar dist = (sz * 0.5) / tan(half_fov)\n\
+         \t\t\t\tif dist < 1.0: dist = 1.0\n\
+         \t\t\t\tcam.position = cam.position.normalized() * dist\n\
          \t\t\tif cam.name == \"Top\" or cam.name == \"Bottom\":\n\
          \t\t\t\tcam.look_at(center, Vector3.FORWARD)\n\
          \t\t\telse:\n\

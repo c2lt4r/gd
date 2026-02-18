@@ -1,22 +1,47 @@
-use miette::Result;
+use miette::{Result, miette};
 use owo_colors::OwoColorize;
 
-use super::gdscript;
-use super::{MoveVertexArgs, OutputFormat, parse_3d, run_eval};
+use crate::core::mesh::MeshState;
+
+use super::{MoveVertexArgs, OutputFormat, parse_3d, project_root, run_eval};
 
 pub fn cmd_move_vertex(args: &MoveVertexArgs) -> Result<()> {
+    let root = project_root()?;
+    let mut state = MeshState::load(&root)?;
+
     let (dx, dy, dz) = parse_3d(&args.delta)?;
-    let script = gdscript::generate_move_vertex(args.index, dx, dy, dz);
-    let result = run_eval(&script)?;
-    let parsed: serde_json::Value =
-        serde_json::from_str(&result).map_err(|e| miette::miette!("Failed to parse result: {e}"))?;
+    let idx = args.index as usize;
+
+    let part = state.active_part_mut()?;
+    if idx >= part.mesh.vertices.len() {
+        return Err(miette!(
+            "Vertex index {idx} out of range (mesh has {} vertices)",
+            part.mesh.vertices.len()
+        ));
+    }
+
+    part.mesh.vertices[idx].position[0] += dx;
+    part.mesh.vertices[idx].position[1] += dy;
+    part.mesh.vertices[idx].position[2] += dz;
+
+    let new_pos = part.mesh.vertices[idx].position;
+
+    state.save(&root)?;
+
+    // Push to Godot
+    let push = state.generate_push_script(&state.active.clone())?;
+    let _ = run_eval(&push)?;
+
+    let result = serde_json::json!({
+        "index": idx,
+        "position": new_pos,
+    });
 
     match args.format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&parsed).unwrap());
+            println!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
         OutputFormat::Text => {
-            let idx = parsed["index"].as_u64().unwrap_or(0);
             println!(
                 "Moved vertex {}: delta=({dx}, {dy}, {dz})",
                 idx.to_string().green().bold()

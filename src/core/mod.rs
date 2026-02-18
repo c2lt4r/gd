@@ -1,6 +1,7 @@
 pub mod config;
 pub mod fs;
 pub mod live_eval;
+pub mod mesh;
 pub mod parser;
 pub mod project;
 pub mod resource_parser;
