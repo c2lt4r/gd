@@ -6,7 +6,7 @@ use super::{OutputFormat, ScaleArgs, parse_scale, run_eval};
 
 pub fn cmd_scale(args: &ScaleArgs) -> Result<()> {
     let (sx, sy, sz) = parse_scale(&args.factor)?;
-    let script = gdscript::generate_scale(args.part.as_deref(), sx, sy, sz);
+    let script = gdscript::generate_scale(args.part.as_deref(), sx, sy, sz, args.remap);
     let result = run_eval(&script)?;
     let parsed: serde_json::Value =
         serde_json::from_str(&result).map_err(|e| miette::miette!("Failed to parse result: {e}"))?;

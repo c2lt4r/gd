@@ -5,7 +5,7 @@ use super::gdscript;
 use super::{OutputFormat, RevolveArgs, run_eval};
 
 pub fn cmd_revolve(args: &RevolveArgs) -> Result<()> {
-    let script = gdscript::generate_revolve(args.axis.as_str(), args.degrees, args.segments);
+    let script = gdscript::generate_revolve(args.axis.as_str(), args.degrees, args.segments, args.cap);
     let result = run_eval(&script)?;
     let parsed: serde_json::Value =
         serde_json::from_str(&result).map_err(|e| miette::miette!("Failed to parse result: {e}"))?;

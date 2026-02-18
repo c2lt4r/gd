@@ -66,17 +66,22 @@ fn extrude_small_depth_parses() {
 
 #[test]
 fn revolve_y_360_parses() {
-    assert_parses(&gdscript::generate_revolve("y", 360.0, 16));
+    assert_parses(&gdscript::generate_revolve("y", 360.0, 16, false));
 }
 
 #[test]
 fn revolve_x_180_parses() {
-    assert_parses(&gdscript::generate_revolve("x", 180.0, 8));
+    assert_parses(&gdscript::generate_revolve("x", 180.0, 8, false));
 }
 
 #[test]
 fn revolve_z_90_parses() {
-    assert_parses(&gdscript::generate_revolve("z", 90.0, 4));
+    assert_parses(&gdscript::generate_revolve("z", 90.0, 4, false));
+}
+
+#[test]
+fn revolve_capped_parses() {
+    assert_parses(&gdscript::generate_revolve("y", 180.0, 16, true));
 }
 
 // ── Move vertex ──────────────────────────────────────────────────────
@@ -134,6 +139,18 @@ fn duplicate_part_parses() {
     assert_parses(&gdscript::generate_duplicate_part("eng1", "eng2"));
 }
 
+// ── Mirror part ─────────────────────────────────────────────────────
+
+#[test]
+fn mirror_part_x_parses() {
+    assert_parses(&gdscript::generate_mirror_part("wing-right", "wing-left", "x"));
+}
+
+#[test]
+fn mirror_part_z_parses() {
+    assert_parses(&gdscript::generate_mirror_part("eng1", "eng2", "z"));
+}
+
 // ── Focus ────────────────────────────────────────────────────────────
 
 #[test]
@@ -181,12 +198,17 @@ fn rotate_active_parses() {
 
 #[test]
 fn scale_part_parses() {
-    assert_parses(&gdscript::generate_scale(Some("engine"), 0.15, 0.15, 1.0));
+    assert_parses(&gdscript::generate_scale(Some("engine"), 0.15, 0.15, 1.0, false));
 }
 
 #[test]
 fn scale_active_parses() {
-    assert_parses(&gdscript::generate_scale(None, 2.0, 2.0, 2.0));
+    assert_parses(&gdscript::generate_scale(None, 2.0, 2.0, 2.0, false));
+}
+
+#[test]
+fn scale_remap_parses() {
+    assert_parses(&gdscript::generate_scale(Some("wing"), 1.0, 0.5, 1.0, true));
 }
 
 // ── Remove part ──────────────────────────────────────────────────────
@@ -213,22 +235,27 @@ fn list_vertices_region_parses() {
 
 #[test]
 fn taper_y_parses() {
-    assert_parses(&gdscript::generate_taper(None, "y", 1.0, 0.0));
+    assert_parses(&gdscript::generate_taper(None, "y", 1.0, 0.0, None));
 }
 
 #[test]
 fn taper_z_parses() {
-    assert_parses(&gdscript::generate_taper(None, "z", 1.0, 0.5));
+    assert_parses(&gdscript::generate_taper(None, "z", 1.0, 0.5, None));
 }
 
 #[test]
 fn taper_x_parses() {
-    assert_parses(&gdscript::generate_taper(None, "x", 0.5, 1.5));
+    assert_parses(&gdscript::generate_taper(None, "x", 0.5, 1.5, None));
 }
 
 #[test]
 fn taper_named_part_parses() {
-    assert_parses(&gdscript::generate_taper(Some("wing"), "z", 1.0, 0.0));
+    assert_parses(&gdscript::generate_taper(Some("wing"), "z", 1.0, 0.0, None));
+}
+
+#[test]
+fn taper_midpoint_parses() {
+    assert_parses(&gdscript::generate_taper(None, "y", 1.0, 0.3, Some(0.5)));
 }
 
 // ── Bevel ────────────────────────────────────────────────────────────
@@ -323,6 +350,18 @@ fn flip_normals_active_parses() {
 #[test]
 fn flip_normals_named_parses() {
     assert_parses(&gdscript::generate_flip_normals(Some("receiver")));
+}
+
+// ── Material ─────────────────────────────────────────────────────────
+
+#[test]
+fn material_hex_parses() {
+    assert_parses(&gdscript::generate_material(Some("body"), "ff3300"));
+}
+
+#[test]
+fn material_active_parses() {
+    assert_parses(&gdscript::generate_material(None, "00ff00"));
 }
 
 // ── Parse helpers ────────────────────────────────────────────────────

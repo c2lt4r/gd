@@ -11,6 +11,7 @@ mod gdscript;
 mod info;
 mod init;
 mod list_vertices;
+mod material;
 mod move_vertex;
 mod profile;
 mod reference;
@@ -102,6 +103,8 @@ pub enum MeshCommand {
     /// Flip triangle winding to fix inverted normals
     #[command(name = "flip-normals")]
     FlipNormals(FlipNormalsArgs),
+    /// Set material color on a part
+    Material(MaterialArgs),
 }
 
 #[derive(Clone, Debug, ValueEnum)]
@@ -229,6 +232,9 @@ pub struct RevolveArgs {
     /// Number of segments
     #[arg(long, default_value = "16")]
     pub segments: u32,
+    /// Cap open ends of partial revolves (angle < 360)
+    #[arg(long)]
+    pub cap: bool,
     /// Output format
     #[arg(long, default_value = "json")]
     pub format: OutputFormat,
@@ -317,6 +323,9 @@ pub struct DuplicatePartArgs {
     /// Name for the new copy
     #[arg(long = "as")]
     pub as_name: String,
+    /// Mirror across an axis (flips mesh vertices and fixes normals)
+    #[arg(long, value_enum)]
+    pub mirror: Option<Axis>,
     /// Output format
     #[arg(long, default_value = "json")]
     pub format: OutputFormat,
@@ -335,6 +344,7 @@ pub struct FocusArgs {
 }
 
 #[derive(Args)]
+#[command(allow_hyphen_values = true)]
 pub struct TranslateArgs {
     /// Part name (defaults to active part)
     #[arg(long)]
@@ -351,6 +361,7 @@ pub struct TranslateArgs {
 }
 
 #[derive(Args)]
+#[command(allow_hyphen_values = true)]
 pub struct RotateArgs {
     /// Part name (defaults to active part)
     #[arg(long)]
@@ -364,6 +375,7 @@ pub struct RotateArgs {
 }
 
 #[derive(Args)]
+#[command(allow_hyphen_values = true)]
 pub struct ScaleArgs {
     /// Part name (defaults to active part)
     #[arg(long)]
@@ -371,6 +383,9 @@ pub struct ScaleArgs {
     /// Scale factor as "sx,sy,sz" or a single uniform value
     #[arg(long)]
     pub factor: String,
+    /// Re-center after scaling (keeps AABB center at the same position)
+    #[arg(long)]
+    pub remap: bool,
     /// Output format
     #[arg(long, default_value = "json")]
     pub format: OutputFormat,
@@ -397,6 +412,7 @@ pub struct ListVerticesArgs {
 }
 
 #[derive(Args)]
+#[command(allow_hyphen_values = true)]
 pub struct TaperArgs {
     /// Part name (defaults to active part)
     #[arg(long)]
@@ -410,6 +426,9 @@ pub struct TaperArgs {
     /// Scale factor at the end of the axis (0.0 = taper to a point)
     #[arg(long)]
     pub end: f64,
+    /// Peak position along axis (0.0-1.0) for two-segment taper (fat middle, thin ends)
+    #[arg(long)]
+    pub midpoint: Option<f64>,
     /// Output format
     #[arg(long, default_value = "json")]
     pub format: OutputFormat,
@@ -478,6 +497,19 @@ pub struct FlipNormalsArgs {
     pub format: OutputFormat,
 }
 
+#[derive(Args)]
+pub struct MaterialArgs {
+    /// Part name (defaults to active part)
+    #[arg(long)]
+    pub part: Option<String>,
+    /// Color as hex (e.g. "ff0000" or "#ff0000") or named color (red, green, blue, white, black)
+    #[arg(long)]
+    pub color: String,
+    /// Output format
+    #[arg(long, default_value = "json")]
+    pub format: OutputFormat,
+}
+
 #[derive(Clone, Debug)]
 pub enum OutputFormat {
     Text,
@@ -530,6 +562,7 @@ pub fn exec(args: &MeshArgs) -> Result<()> {
         MeshCommand::Checkpoint(ref a) => checkpoint::cmd_checkpoint(a),
         MeshCommand::Restore(ref a) => checkpoint::cmd_restore(a),
         MeshCommand::FlipNormals(ref a) => flip_normals::cmd_flip_normals(a),
+        MeshCommand::Material(ref a) => material::cmd_material(a),
     }
 }
 

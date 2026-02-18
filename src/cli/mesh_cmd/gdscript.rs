@@ -321,7 +321,56 @@ pub fn generate_extrude(depth: f64) -> String {
 /// After building the surface of revolution, checks the first triangle's normal
 /// against the "away from revolution axis" direction. If inverted, flips all
 /// triangle windings (all quads share the same winding pattern).
-pub fn generate_revolve(axis: &str, angle: f64, segments: u32) -> String {
+#[allow(clippy::too_many_lines)]
+pub fn generate_revolve(axis: &str, angle: f64, segments: u32, cap: bool) -> String {
+    let cap_code = if cap {
+        "\tif angle_deg < 360.0:\n\
+         \t\tvar wall_arr = mesh_inst.mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]\n\
+         \t\tvar st3 = SurfaceTool.new()\n\
+         \t\tst3.begin(Mesh.PRIMITIVE_TRIANGLES)\n\
+         \t\tfor v in wall_arr:\n\
+         \t\t\tst3.add_vertex(v)\n\
+         \t\tvar c0 = Vector3.ZERO\n\
+         \t\tfor v in rings[0]: c0 += v\n\
+         \t\tc0 /= pn\n\
+         \t\tvar tang0 = rings[1][0] - rings[0][0]\n\
+         \t\tvar e1 = rings[0][0] - c0\n\
+         \t\tvar e2 = rings[0][1] - c0\n\
+         \t\tvar tn = e1.cross(e2)\n\
+         \t\tvar flip0 = tn.dot(-tang0) < 0\n\
+         \t\tfor i in pn:\n\
+         \t\t\tvar j = (i + 1) % pn\n\
+         \t\t\tif flip0:\n\
+         \t\t\t\tst3.add_vertex(c0)\n\
+         \t\t\t\tst3.add_vertex(rings[0][j])\n\
+         \t\t\t\tst3.add_vertex(rings[0][i])\n\
+         \t\t\telse:\n\
+         \t\t\t\tst3.add_vertex(c0)\n\
+         \t\t\t\tst3.add_vertex(rings[0][i])\n\
+         \t\t\t\tst3.add_vertex(rings[0][j])\n\
+         \t\tvar cN = Vector3.ZERO\n\
+         \t\tfor v in rings[segments]: cN += v\n\
+         \t\tcN /= pn\n\
+         \t\tvar tangN = rings[segments][0] - rings[segments - 1][0]\n\
+         \t\te1 = rings[segments][0] - cN\n\
+         \t\te2 = rings[segments][1] - cN\n\
+         \t\ttn = e1.cross(e2)\n\
+         \t\tvar flipN = tn.dot(tangN) < 0\n\
+         \t\tfor i in pn:\n\
+         \t\t\tvar j = (i + 1) % pn\n\
+         \t\t\tif flipN:\n\
+         \t\t\t\tst3.add_vertex(cN)\n\
+         \t\t\t\tst3.add_vertex(rings[segments][j])\n\
+         \t\t\t\tst3.add_vertex(rings[segments][i])\n\
+         \t\t\telse:\n\
+         \t\t\t\tst3.add_vertex(cN)\n\
+         \t\t\t\tst3.add_vertex(rings[segments][i])\n\
+         \t\t\t\tst3.add_vertex(rings[segments][j])\n\
+         \t\tst3.generate_normals()\n\
+         \t\tmesh_inst.mesh = st3.commit()\n"
+    } else {
+        ""
+    };
     format!(
         "extends Node\n\
          \n\
@@ -393,6 +442,7 @@ pub fn generate_revolve(axis: &str, angle: f64, segments: u32) -> String {
          \t\tmesh_inst.mesh = st2.commit()\n\
          \telse:\n\
          \t\tmesh_inst.mesh = mesh\n\
+         {cap_code}\
          {RESTORE_COLOR}\
          \tvar vc = mesh_inst.mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX].size()\n\
          \tvar d = {{}}\n\
@@ -618,6 +668,7 @@ pub fn generate_taper(
     axis: &str,
     start_scale: f64,
     end_scale: f64,
+    midpoint: Option<f64>,
 ) -> String {
     let (axis_component, other1, other2) = match axis {
         "x" => ("x", "y", "z"),
@@ -628,6 +679,7 @@ pub fn generate_taper(
         String::from("\tvar mesh_name = helper.get_meta(\"active_mesh\")\n"),
         |p| format!("\tvar mesh_name = \"{p}\"\n"),
     );
+    let midpoint_val = midpoint.unwrap_or(-1.0);
     format!(
         "extends Node\n\
          \n\
@@ -657,10 +709,17 @@ pub fn generate_taper(
          \t\tcenter_{other2} += v.{other2}\n\
          \tcenter_{other1} /= verts.size()\n\
          \tcenter_{other2} /= verts.size()\n\
+         \tvar mid = {midpoint_val}\n\
          \tfor i in verts.size():\n\
          \t\tvar v = verts[i]\n\
          \t\tvar t = (v.{axis_component} - axis_min) / axis_range\n\
-         \t\tvar s = start_s + (end_s - start_s) * t\n\
+         \t\tvar s\n\
+         \t\tif mid < 0:\n\
+         \t\t\ts = start_s + (end_s - start_s) * t\n\
+         \t\telif t <= mid:\n\
+         \t\t\ts = end_s + (start_s - end_s) * (t / mid) if mid > 0.0001 else start_s\n\
+         \t\telse:\n\
+         \t\t\ts = start_s + (end_s - start_s) * ((t - mid) / (1.0 - mid)) if (1.0 - mid) > 0.0001 else end_s\n\
          \t\tv.{other1} = center_{other1} + (v.{other1} - center_{other1}) * s\n\
          \t\tv.{other2} = center_{other2} + (v.{other2} - center_{other2}) * s\n\
          \t\tverts[i] = v\n\
@@ -678,6 +737,8 @@ pub fn generate_taper(
          \td[\"axis\"] = \"{axis}\"\n\
          \td[\"start_scale\"] = start_s\n\
          \td[\"end_scale\"] = end_s\n\
+         \tif mid >= 0:\n\
+         \t\td[\"midpoint\"] = mid\n\
          \td[\"vertex_count\"] = vc\n\
          \treturn JSON.stringify(d)\n"
     )
@@ -854,11 +915,25 @@ pub fn generate_rotate(part: Option<&str>, rx: f64, ry: f64, rz: f64) -> String 
 }
 
 /// Generate the GDScript for `mesh scale`.
-pub fn generate_scale(part: Option<&str>, sx: f64, sy: f64, sz: f64) -> String {
+pub fn generate_scale(part: Option<&str>, sx: f64, sy: f64, sz: f64, remap: bool) -> String {
     let target = part.map_or(
         String::from("\tvar name = helper.get_meta(\"active_mesh\")\n"),
         |p| format!("\tvar name = \"{p}\"\n"),
     );
+    let remap_code = if remap {
+        "\tvar aabb_before = target.transform * target.mesh.get_aabb() if target.mesh else AABB()\n\
+         \tvar center_before = aabb_before.get_center()\n"
+    } else {
+        ""
+    };
+    let remap_after = if remap {
+        "\tif target.mesh:\n\
+         \t\tvar aabb_after = target.transform * target.mesh.get_aabb()\n\
+         \t\tvar center_after = aabb_after.get_center()\n\
+         \t\ttarget.position += center_before - center_after\n"
+    } else {
+        ""
+    };
     format!(
         "extends Node\n\
          \n\
@@ -869,11 +944,17 @@ pub fn generate_scale(part: Option<&str>, sx: f64, sy: f64, sz: f64) -> String {
          {target}\
          \tvar target = helper.get_node_or_null(str(name))\n\
          \tif target == null: return \"ERROR: part '\" + str(name) + \"' not found\"\n\
+         {remap_code}\
          \ttarget.scale = Vector3({sx}, {sy}, {sz})\n\
+         {remap_after}\
          \tvar d = {{}}\n\
          \td[\"name\"] = name\n\
          \td[\"scale\"] = [{sx}, {sy}, {sz}]\n\
-         \treturn JSON.stringify(d)\n"
+         \td[\"remap\"] = {remap}\n\
+         \tvar pos = target.position\n\
+         \td[\"position\"] = [snapped(pos.x, 0.01), snapped(pos.y, 0.01), snapped(pos.z, 0.01)]\n\
+         \treturn JSON.stringify(d)\n",
+        remap = if remap { "true" } else { "false" },
     )
 }
 
@@ -1050,6 +1131,133 @@ pub fn generate_flip_normals(part: Option<&str>) -> String {
          \td[\"name\"] = mesh_name\n\
          \td[\"vertex_count\"] = vc\n\
          \td[\"face_count\"] = vc / 3\n\
+         \treturn JSON.stringify(d)\n"
+    )
+}
+
+/// Generate the GDScript for `mesh duplicate-part --mirror`.
+///
+/// Duplicates the source part, then mirrors all mesh vertices across the given axis
+/// and reverses triangle winding to fix normals (flipping one axis inverts handedness).
+/// Also mirrors the transform position on the same axis.
+#[allow(clippy::too_many_lines)]
+pub fn generate_mirror_part(src: &str, dst: &str, axis: &str) -> String {
+    // Which component to negate: x=0, y=1, z=2
+    let axis_idx = match axis {
+        "x" => "0",
+        "y" => "1",
+        _ => "2",
+    };
+    format!(
+        "extends Node\n\
+         \n\
+         func _retarget(helper, center, sz):\n\
+         \tvar rig = helper.get_node(\"_CameraRig\")\n\
+         \trig.position = center\n\
+         \tfor cam in rig.get_children():\n\
+         \t\tif cam is Camera3D:\n\
+         \t\t\tcam.size = sz\n\
+         \t\t\tif cam.name == \"Top\" or cam.name == \"Bottom\":\n\
+         \t\t\t\tcam.look_at(center, Vector3.FORWARD)\n\
+         \t\t\telse:\n\
+         \t\t\t\tcam.look_at(center)\n\
+         \n\
+         func run():\n\
+         \tvar root = get_tree().get_root()\n\
+         \tvar helper = root.get_node_or_null(\"_GdMeshHelper\")\n\
+         \tif helper == null: return \"ERROR: no mesh session — run 'gd mesh create' first\"\n\
+         \tvar src = helper.get_node_or_null(\"{src}\")\n\
+         \tif src == null: return \"ERROR: source part '{src}' not found\"\n\
+         \tvar parts = helper.get_meta(\"mesh_parts\", [])\n\
+         \tfor p in parts:\n\
+         \t\tif p == \"{dst}\": return \"ERROR: part '{dst}' already exists\"\n\
+         \tvar mi = MeshInstance3D.new()\n\
+         \tmi.name = \"{dst}\"\n\
+         \tmi.transform = src.transform\n\
+         \tvar axis_idx = {axis_idx}\n\
+         \tvar pos = mi.position\n\
+         \tpos[axis_idx] = -pos[axis_idx]\n\
+         \tmi.position = pos\n\
+         \tif src.mesh and src.mesh.get_surface_count() > 0:\n\
+         \t\tvar arrays = src.mesh.surface_get_arrays(0)\n\
+         \t\tvar verts = arrays[Mesh.ARRAY_VERTEX]\n\
+         \t\tvar st = SurfaceTool.new()\n\
+         \t\tst.begin(Mesh.PRIMITIVE_TRIANGLES)\n\
+         \t\tfor i in range(0, verts.size(), 3):\n\
+         \t\t\tvar v0 = verts[i]\n\
+         \t\t\tvar v1 = verts[i + 1]\n\
+         \t\t\tvar v2 = verts[i + 2]\n\
+         \t\t\tv0[axis_idx] = -v0[axis_idx]\n\
+         \t\t\tv1[axis_idx] = -v1[axis_idx]\n\
+         \t\t\tv2[axis_idx] = -v2[axis_idx]\n\
+         \t\t\tst.add_vertex(v0)\n\
+         \t\t\tst.add_vertex(v2)\n\
+         \t\t\tst.add_vertex(v1)\n\
+         \t\tst.generate_normals()\n\
+         \t\tmi.mesh = st.commit()\n\
+         \thelper.add_child(mi)\n\
+         \tparts.append(\"{dst}\")\n\
+         \thelper.set_meta(\"mesh_parts\", parts)\n\
+         \thelper.set_meta(\"active_mesh\", \"{dst}\")\n\
+         \thelper.set_meta(\"profile_points\", [])\n\
+         \thelper.set_meta(\"profile_plane\", \"\")\n\
+         \tfor child in helper.get_children():\n\
+         \t\tif child is MeshInstance3D and not child.name.begins_with(\"_\"):\n\
+         \t\t\tchild.visible = (child.name == \"{dst}\")\n\
+         \tvar aabb = mi.get_aabb() if mi.mesh else AABB(Vector3.ZERO, Vector3(2, 2, 2))\n\
+         \tvar center = aabb.get_center()\n\
+         \tvar dims = aabb.size\n\
+         \tvar sz = max(max(dims.x, dims.y), dims.z) * 1.5\n\
+         \tif sz < 2.0: sz = 2.0\n\
+         \t_retarget(helper, center, sz)\n\
+         \tvar _palette = {PALETTE}\n\
+         \tvar _color = _palette[(parts.size() - 1) % _palette.size()]\n\
+         \tmi.set_meta(\"part_color\", _color)\n\
+         \tvar _mat = StandardMaterial3D.new()\n\
+         \t_mat.albedo_color = _color\n\
+         \tmi.material_override = _mat\n\
+         \tvar vc = 0\n\
+         \tif mi.mesh and mi.mesh.get_surface_count() > 0:\n\
+         \t\tvc = mi.mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX].size()\n\
+         \tvar d = {{}}\n\
+         \td[\"name\"] = \"{dst}\"\n\
+         \td[\"source\"] = \"{src}\"\n\
+         \td[\"mirror\"] = \"{axis}\"\n\
+         \td[\"part_count\"] = parts.size()\n\
+         \td[\"vertex_count\"] = vc\n\
+         \treturn JSON.stringify(d)\n"
+    )
+}
+
+/// Generate the GDScript for `mesh material --color`.
+///
+/// Parses hex color or named color, creates `StandardMaterial3D`, sets `albedo_color`,
+/// and stores the color in `part_color` metadata so other commands can restore it.
+pub fn generate_material(part: Option<&str>, color: &str) -> String {
+    let target = part.map_or(
+        String::from("\tvar mesh_name = helper.get_meta(\"active_mesh\")\n"),
+        |p| format!("\tvar mesh_name = \"{p}\"\n"),
+    );
+    format!(
+        "extends Node\n\
+         \n\
+         func run():\n\
+         \tvar root = get_tree().get_root()\n\
+         \tvar helper = root.get_node_or_null(\"_GdMeshHelper\")\n\
+         \tif helper == null: return \"ERROR: no mesh session — run 'gd mesh create' first\"\n\
+         {target}\
+         \tvar mesh_inst = helper.get_node_or_null(mesh_name)\n\
+         \tif mesh_inst == null: return \"ERROR: part '\" + str(mesh_name) + \"' not found\"\n\
+         \tvar hex = \"{color}\"\n\
+         \tvar color = Color.html(hex)\n\
+         \tvar mat = StandardMaterial3D.new()\n\
+         \tmat.albedo_color = color\n\
+         \tmesh_inst.material_override = mat\n\
+         \tmesh_inst.set_meta(\"part_color\", [color.r, color.g, color.b])\n\
+         \tvar d = {{}}\n\
+         \td[\"name\"] = mesh_name\n\
+         \td[\"color\"] = hex\n\
+         \td[\"rgb\"] = [snapped(color.r, 0.01), snapped(color.g, 0.01), snapped(color.b, 0.01)]\n\
          \treturn JSON.stringify(d)\n"
     )
 }
