@@ -17,16 +17,11 @@ pub fn cmd_duplicate_part(args: &DuplicatePartArgs) -> Result<()> {
         OutputFormat::Text => {
             let src = parsed["source"].as_str().unwrap_or("?");
             let dst = parsed["name"].as_str().unwrap_or("?");
-            let vc = parsed["vertex_count"].as_u64().unwrap_or(0);
-            let parts: Vec<&str> = parsed["parts"]
-                .as_array()
-                .map(|a| a.iter().filter_map(serde_json::Value::as_str).collect())
-                .unwrap_or_default();
+            let pc = parsed["part_count"].as_u64().unwrap_or(0);
             println!(
-                "Duplicated {} -> {} ({vc} vertices, parts: {})",
+                "Duplicated {} -> {} ({pc} parts total)",
                 src.cyan(),
                 dst.green().bold(),
-                parts.join(", ").cyan()
             );
         }
     }

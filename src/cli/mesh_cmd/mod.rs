@@ -1,6 +1,7 @@
 mod add_part;
 mod bevel;
 mod create;
+mod describe;
 mod duplicate_part;
 mod extrude;
 mod focus;
@@ -90,6 +91,8 @@ pub enum MeshCommand {
     Bevel(BevelArgs),
     /// Show current mesh session info (vertices, AABB, profile state)
     Info(InfoArgs),
+    /// One-shot session debrief: part inventory + composite screenshots
+    Describe(DescribeArgs),
 }
 
 #[derive(Clone, Debug, ValueEnum)]
@@ -248,6 +251,12 @@ pub struct ViewArgs {
     /// Zoom multiplier (1.0 = auto-fit to model, 2.0 = zoom out 2x)
     #[arg(long, default_value = "1.0")]
     pub zoom: f64,
+    /// Show face orientation overlay (blue = front-facing, red = back-facing)
+    #[arg(long)]
+    pub normals: bool,
+    /// Focus a specific part or "all" parts before capturing
+    #[arg(long)]
+    pub focus: Option<String>,
     /// Output format
     #[arg(long, default_value = "json")]
     pub format: OutputFormat,
@@ -417,6 +426,22 @@ pub struct InfoArgs {
     pub format: OutputFormat,
 }
 
+#[derive(Args)]
+pub struct DescribeArgs {
+    /// View to capture (front, side, top, iso, or all)
+    #[arg(value_enum, default_value = "all")]
+    pub view: ViewName,
+    /// Output directory for screenshots
+    #[arg(short, long)]
+    pub output: Option<String>,
+    /// Zoom multiplier (1.0 = auto-fit to model)
+    #[arg(long, default_value = "1.0")]
+    pub zoom: f64,
+    /// Output format
+    #[arg(long, default_value = "json")]
+    pub format: OutputFormat,
+}
+
 #[derive(Clone, Debug)]
 pub enum OutputFormat {
     Text,
@@ -465,6 +490,7 @@ pub fn exec(args: &MeshArgs) -> Result<()> {
         MeshCommand::Taper(ref a) => taper::cmd_taper(a),
         MeshCommand::Bevel(ref a) => bevel::cmd_bevel(a),
         MeshCommand::Info(ref a) => info::cmd_info(a),
+        MeshCommand::Describe(ref a) => describe::cmd_describe(a),
     }
 }
 

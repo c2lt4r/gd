@@ -6,13 +6,13 @@ use owo_colors::OwoColorize;
 use super::gdscript;
 use super::{OutputFormat, ViewArgs, ViewName, run_eval};
 
-/// Take a single orthographic screenshot for a given view.
+/// Capture a single orthographic screenshot. Returns (view_name, file_path).
 fn capture_view(
     view_name: &str,
     output_dir: Option<&str>,
     grid: bool,
     camera_half_size: f64,
-) -> Result<serde_json::Value> {
+) -> Result<(String, String)> {
     // Determine grid plane for this view
     let grid_plane = match view_name {
         "Front" | "Back" => Some("front"),
@@ -56,8 +56,6 @@ fn capture_view(
     let path = screenshot["path"]
         .as_str()
         .ok_or_else(|| miette!("No screenshot path in result"))?;
-    let width = screenshot["width"].as_u64().unwrap_or(0);
-    let height = screenshot["height"].as_u64().unwrap_or(0);
 
     // Copy to output directory if specified
     let final_path = if let Some(dir) = output_dir {
@@ -71,27 +69,33 @@ fn capture_view(
         path.to_string()
     };
 
-    let bounds = serde_json::json!({
-        "x_min": -camera_half_size, "x_max": camera_half_size,
-        "y_min": -camera_half_size, "y_max": camera_half_size,
-    });
-
-    Ok(serde_json::json!({
-        "view": view_name.to_lowercase(),
-        "path": final_path,
-        "width": width,
-        "height": height,
-        "bounds": bounds,
-    }))
+    Ok((view_name.to_lowercase(), final_path))
 }
 
 pub fn cmd_view(args: &ViewArgs) -> Result<()> {
+    // If --focus is set, switch visibility before capturing
+    if let Some(ref focus) = args.focus {
+        if focus.eq_ignore_ascii_case("all") {
+            let script = gdscript::generate_focus_all();
+            run_eval(&script)?;
+        } else {
+            let script = gdscript::generate_focus(focus);
+            run_eval(&script)?;
+        }
+    }
+
     // Auto-fit cameras to the combined AABB of all visible parts
     let autofit_script = gdscript::generate_autofit_cameras(args.zoom);
     let autofit_result = run_eval(&autofit_script)?;
     let autofit: serde_json::Value = serde_json::from_str(&autofit_result)
         .map_err(|e| miette!("Failed to parse autofit result: {e}"))?;
     let camera_half_size = autofit["camera_size"].as_f64().unwrap_or(10.0) / 2.0;
+
+    // Apply face-orientation debug shader if --normals
+    if args.normals {
+        let debug_script = gdscript::generate_normal_debug();
+        run_eval(&debug_script)?;
+    }
 
     let views: Vec<&str> = match args.view {
         ViewName::Front => vec!["Front"],
@@ -104,10 +108,16 @@ pub fn cmd_view(args: &ViewArgs) -> Result<()> {
         ViewName::All => vec!["Front", "Back", "Side", "Left", "Top", "Bottom", "Iso"],
     };
 
-    let mut screenshots = Vec::new();
+    let mut captures = Vec::new();
     for view in &views {
-        let info = capture_view(view, args.output.as_deref(), args.grid, camera_half_size)?;
-        screenshots.push(info);
+        let pair = capture_view(view, args.output.as_deref(), args.grid, camera_half_size)?;
+        captures.push(pair);
+    }
+
+    // Remove face-orientation debug shader
+    if args.normals {
+        let clear_script = gdscript::generate_normal_debug_clear();
+        let _ = run_eval(&clear_script);
     }
 
     // Restore original camera
@@ -116,21 +126,27 @@ pub fn cmd_view(args: &ViewArgs) -> Result<()> {
 
     match args.format {
         OutputFormat::Json => {
-            let output = serde_json::json!({
-                "screenshots": screenshots,
+            // Flat view→path map instead of repeated per-screenshot objects
+            let views_map: serde_json::Map<String, serde_json::Value> = captures
+                .iter()
+                .map(|(v, p)| (v.clone(), serde_json::Value::String(p.clone())))
+                .collect();
+
+            let mut output = serde_json::json!({
                 "camera_size": autofit["camera_size"],
                 "center": autofit["center"],
+                "bounds": [-camera_half_size, camera_half_size],
+                "views": views_map,
             });
+            if args.normals {
+                output["mode"] = serde_json::json!("normal_debug");
+            }
             println!("{}", serde_json::to_string_pretty(&output).unwrap());
         }
         OutputFormat::Text => {
-            for s in &screenshots {
-                let view = s["view"].as_str().unwrap_or("?");
-                let path = s["path"].as_str().unwrap_or("?");
-                let w = s["width"].as_u64().unwrap_or(0);
-                let h = s["height"].as_u64().unwrap_or(0);
+            for (view, path) in &captures {
                 println!(
-                    "{} {view}: {w}x{h} -> {}",
+                    "{} {view}: {}",
                     "Screenshot".green(),
                     path.cyan()
                 );

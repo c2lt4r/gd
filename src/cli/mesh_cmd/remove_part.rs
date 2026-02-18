@@ -17,19 +17,11 @@ pub fn cmd_remove_part(args: &RemovePartArgs) -> Result<()> {
         OutputFormat::Text => {
             let removed = parsed["removed"].as_str().unwrap_or("?");
             let active = parsed["active"].as_str().unwrap_or("none");
-            let parts: Vec<&str> = parsed["parts"]
-                .as_array()
-                .map(|a| a.iter().filter_map(serde_json::Value::as_str).collect())
-                .unwrap_or_default();
+            let pc = parsed["part_count"].as_u64().unwrap_or(0);
             println!(
-                "Removed: {} (active: {}, remaining: {})",
+                "Removed: {} (active: {}, {pc} remaining)",
                 removed.red().bold(),
                 active.cyan(),
-                if parts.is_empty() {
-                    "none".to_string()
-                } else {
-                    parts.join(", ")
-                }
             );
         }
     }

@@ -284,6 +284,18 @@ fn remove_grid_parses() {
     assert_parses(&gdscript::generate_remove_grid());
 }
 
+// ── Normal debug ────────────────────────────────────────────────────
+
+#[test]
+fn normal_debug_parses() {
+    assert_parses(&gdscript::generate_normal_debug());
+}
+
+#[test]
+fn normal_debug_clear_parses() {
+    assert_parses(&gdscript::generate_normal_debug_clear());
+}
+
 // ── Parse helpers ────────────────────────────────────────────────────
 
 #[test]

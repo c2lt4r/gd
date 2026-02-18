@@ -17,7 +17,7 @@ pub fn cmd_translate(args: &TranslateArgs) -> Result<()> {
         }
         OutputFormat::Text => {
             let name = parsed["name"].as_str().unwrap_or("?");
-            let new_pos = parsed["new_position"].as_array();
+            let new_pos = parsed["position"].as_array();
             if let Some(pos) = new_pos {
                 println!(
                     "Translated {}: ({:.2}, {:.2}, {:.2})",

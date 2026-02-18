@@ -16,17 +16,11 @@ pub fn cmd_add_part(args: &AddPartArgs) -> Result<()> {
         }
         OutputFormat::Text => {
             let name = parsed["name"].as_str().unwrap_or("?");
-            let active = parsed["active"].as_str().unwrap_or("?");
+            let pc = parsed["part_count"].as_u64().unwrap_or(0);
             let vc = parsed["vertex_count"].as_u64().unwrap_or(0);
-            let parts: Vec<&str> = parsed["parts"]
-                .as_array()
-                .map(|a| a.iter().filter_map(serde_json::Value::as_str).collect())
-                .unwrap_or_default();
             println!(
-                "Added part: {} (active: {}, vertices: {vc}, parts: {})",
+                "Added part: {} ({vc} vertices, {pc} parts total)",
                 name.green().bold(),
-                active.cyan(),
-                parts.join(", ").cyan()
             );
         }
     }

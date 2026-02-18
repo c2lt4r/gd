@@ -1,3 +1,18 @@
+/// GDScript array literal — 8 distinct medium-saturation colors for auto-assignment.
+const PALETTE: &str = "[Color(0.69,0.69,0.69),Color(0.88,0.44,0.31),\
+     Color(0.31,0.63,0.88),Color(0.38,0.75,0.38),\
+     Color(0.88,0.75,0.31),Color(0.63,0.38,0.75),\
+     Color(0.31,0.75,0.69),Color(0.88,0.50,0.56)]";
+
+/// GDScript snippet to restore part color from metadata after a mesh rebuild.
+/// Assumes `mesh_inst` is in scope.
+const RESTORE_COLOR: &str = "\tif mesh_inst.has_meta(\"part_color\"):\n\
+     \t\tvar _mat = StandardMaterial3D.new()\n\
+     \t\t_mat.albedo_color = mesh_inst.get_meta(\"part_color\")\n\
+     \t\tmesh_inst.material_override = _mat\n\
+     \telse:\n\
+     \t\tmesh_inst.material_override = null\n";
+
 /// Generate the GDScript for `mesh create`.
 #[allow(clippy::too_many_lines)]
 pub fn generate_create(name: &str, primitive: &str) -> String {
@@ -87,7 +102,7 @@ pub fn generate_create(name: &str, primitive: &str) -> String {
          \thelper.add_child(rim_light)\n\
          \tvar env_res = Environment.new()\n\
          \tenv_res.background_mode = 1\n\
-         \tenv_res.background_color = Color(0.15, 0.15, 0.15)\n\
+         \tenv_res.background_color = Color(0.08, 0.12, 0.18)\n\
          \tenv_res.ambient_light_source = 1\n\
          \tenv_res.ambient_light_color = Color(0.3, 0.3, 0.3)\n\
          \tvar world_env = WorldEnvironment.new()\n\
@@ -102,13 +117,18 @@ pub fn generate_create(name: &str, primitive: &str) -> String {
          \thelper.set_meta(\"mesh_parts\", [\"{name}\"])\n\
          \thelper.set_meta(\"profile_points\", [])\n\
          \thelper.set_meta(\"profile_plane\", \"\")\n\
+         \tvar _palette = {PALETTE}\n\
+         \tvar _color = _palette[0]\n\
+         \tmesh_inst.set_meta(\"part_color\", _color)\n\
+         \tvar _mat = StandardMaterial3D.new()\n\
+         \t_mat.albedo_color = _color\n\
+         \tmesh_inst.material_override = _mat\n\
          \tvar vc = 0\n\
          \tif mesh_inst.mesh and mesh_inst.mesh.get_surface_count() > 0:\n\
          \t\tvc = mesh_inst.mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX].size()\n\
          \tvar d = {{}}\n\
          \td[\"name\"] = \"{name}\"\n\
          \td[\"primitive\"] = \"{primitive}\"\n\
-         \td[\"cameras\"] = [\"Front\", \"Back\", \"Side\", \"Left\", \"Top\", \"Bottom\", \"Iso\"]\n\
          \td[\"vertex_count\"] = vc\n\
          \treturn JSON.stringify(d)\n"
     )
@@ -178,11 +198,12 @@ pub fn generate_profile(points: &[(f64, f64)], plane: &str) -> String {
          \tmesh_inst.mesh = st.commit()\n\
          \tvar mat = StandardMaterial3D.new()\n\
          \tmat.cull_mode = BaseMaterial3D.CULL_DISABLED\n\
+         \tif mesh_inst.has_meta(\"part_color\"):\n\
+         \t\tmat.albedo_color = mesh_inst.get_meta(\"part_color\")\n\
          \tmesh_inst.material_override = mat\n\
          \tvar d = {{}}\n\
          \td[\"plane\"] = \"{plane}\"\n\
          \td[\"point_count\"] = points.size()\n\
-         \td[\"points\"] = points\n\
          \treturn JSON.stringify(d)\n"
     )
 }
@@ -193,6 +214,11 @@ pub fn generate_profile(points: &[(f64, f64)], plane: &str) -> String {
 /// plane's coordinate handedness. The "front" plane maps (X,Y) right-handed,
 /// while "side" and "top" produce a parity flip, so we XOR the two conditions:
 /// `flip = (ccw_profile) != (plane == "front")`.
+///
+/// Caps and side walls use the SAME `flip` variable but with OPPOSITE sense:
+/// `Geometry2D.triangulate_polygon` returns indices in Godot's Y-down 2D
+/// convention, which inverts the winding relative to the profile's Y-up math.
+/// So caps swap their if/else branches compared to side walls.
 #[allow(clippy::too_many_lines)]
 pub fn generate_extrude(depth: f64) -> String {
     let half = depth / 2.0;
@@ -240,22 +266,22 @@ pub fn generate_extrude(depth: f64) -> String {
          \tst.begin(Mesh.PRIMITIVE_TRIANGLES)\n\
          \tfor ti in range(0, indices.size(), 3):\n\
          \t\tif flip:\n\
-         \t\t\tst.add_vertex(front[indices[ti + 2]])\n\
-         \t\t\tst.add_vertex(front[indices[ti + 1]])\n\
          \t\t\tst.add_vertex(front[indices[ti]])\n\
+         \t\t\tst.add_vertex(front[indices[ti + 1]])\n\
+         \t\t\tst.add_vertex(front[indices[ti + 2]])\n\
          \t\telse:\n\
-         \t\t\tst.add_vertex(front[indices[ti]])\n\
-         \t\t\tst.add_vertex(front[indices[ti + 1]])\n\
          \t\t\tst.add_vertex(front[indices[ti + 2]])\n\
+         \t\t\tst.add_vertex(front[indices[ti + 1]])\n\
+         \t\t\tst.add_vertex(front[indices[ti]])\n\
          \tfor ti in range(0, indices.size(), 3):\n\
          \t\tif flip:\n\
-         \t\t\tst.add_vertex(back[indices[ti]])\n\
-         \t\t\tst.add_vertex(back[indices[ti + 1]])\n\
          \t\t\tst.add_vertex(back[indices[ti + 2]])\n\
+         \t\t\tst.add_vertex(back[indices[ti + 1]])\n\
+         \t\t\tst.add_vertex(back[indices[ti]])\n\
          \t\telse:\n\
-         \t\t\tst.add_vertex(back[indices[ti + 2]])\n\
-         \t\t\tst.add_vertex(back[indices[ti + 1]])\n\
          \t\t\tst.add_vertex(back[indices[ti]])\n\
+         \t\t\tst.add_vertex(back[indices[ti + 1]])\n\
+         \t\t\tst.add_vertex(back[indices[ti + 2]])\n\
          \tvar n_pts = front.size()\n\
          \tfor i in n_pts:\n\
          \t\tvar j = (i + 1) % n_pts\n\
@@ -275,7 +301,7 @@ pub fn generate_extrude(depth: f64) -> String {
          \t\t\tst.add_vertex(back[j])\n\
          \tst.generate_normals()\n\
          \tmesh_inst.mesh = st.commit()\n\
-         \tmesh_inst.material_override = null\n\
+         {RESTORE_COLOR}\
          \tvar vc = mesh_inst.mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX].size()\n\
          \tvar fc = vc / 3\n\
          \tvar d = {{}}\n\
@@ -364,7 +390,7 @@ pub fn generate_revolve(axis: &str, angle: f64, segments: u32) -> String {
          \t\tmesh_inst.mesh = st2.commit()\n\
          \telse:\n\
          \t\tmesh_inst.mesh = mesh\n\
-         \tmesh_inst.material_override = null\n\
+         {RESTORE_COLOR}\
          \tvar vc = mesh_inst.mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX].size()\n\
          \tvar d = {{}}\n\
          \td[\"axis\"] = axis\n\
@@ -403,16 +429,14 @@ pub fn generate_move_vertex(index: u32, dx: f64, dy: f64, dz: f64) -> String {
          \tvar idx = {index}\n\
          \tif idx < 0 or idx >= verts.size():\n\
          \t\treturn \"ERROR: vertex index %d out of range (0..%d)\" % [idx, verts.size() - 1]\n\
-         \tvar old = verts[idx]\n\
-         \tverts[idx] = old + Vector3({dx}, {dy}, {dz})\n\
+         \tverts[idx] = verts[idx] + Vector3({dx}, {dy}, {dz})\n\
          \tvar am = ArrayMesh.new()\n\
          \tarrays[Mesh.ARRAY_VERTEX] = verts\n\
          \tam.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)\n\
          \tmesh_inst.mesh = am\n\
          \tvar d = {{}}\n\
          \td[\"index\"] = idx\n\
-         \td[\"old_position\"] = [old.x, old.y, old.z]\n\
-         \td[\"new_position\"] = [verts[idx].x, verts[idx].y, verts[idx].z]\n\
+         \td[\"position\"] = [verts[idx].x, verts[idx].y, verts[idx].z]\n\
          \treturn JSON.stringify(d)\n"
     )
 }
@@ -636,7 +660,7 @@ pub fn generate_taper(axis: &str, start_scale: f64, end_scale: f64) -> String {
          \t\tst.add_vertex(v)\n\
          \tst.generate_normals()\n\
          \tmesh_inst.mesh = st.commit()\n\
-         \tmesh_inst.material_override = null\n\
+         {RESTORE_COLOR}\
          \tvar vc = mesh_inst.mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX].size()\n\
          \tvar d = {{}}\n\
          \td[\"axis\"] = \"{axis}\"\n\
@@ -719,7 +743,7 @@ pub fn generate_bevel(radius: f64, segments: u32) -> String {
          \t\tst.add_vertex(v)\n\
          \tst.generate_normals()\n\
          \tmesh_inst.mesh = st.commit()\n\
-         \tmesh_inst.material_override = null\n\
+         {RESTORE_COLOR}\
          \tvar vc = mesh_inst.mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX].size()\n\
          \tvar d = {{}}\n\
          \td[\"radius\"] = radius\n\
@@ -785,12 +809,10 @@ pub fn generate_translate(part: Option<&str>, x: f64, y: f64, z: f64, relative: 
          {target}\
          \tvar target = helper.get_node_or_null(str(name))\n\
          \tif target == null: return \"ERROR: part '\" + str(name) + \"' not found\"\n\
-         \tvar old_pos = target.position\n\
          {position_line}\
          \tvar d = {{}}\n\
          \td[\"name\"] = name\n\
-         \td[\"old_position\"] = [old_pos.x, old_pos.y, old_pos.z]\n\
-         \td[\"new_position\"] = [target.position.x, target.position.y, target.position.z]\n\
+         \td[\"position\"] = [target.position.x, target.position.y, target.position.z]\n\
          \treturn JSON.stringify(d)\n"
     )
 }
@@ -811,12 +833,10 @@ pub fn generate_rotate(part: Option<&str>, rx: f64, ry: f64, rz: f64) -> String 
          {target}\
          \tvar target = helper.get_node_or_null(str(name))\n\
          \tif target == null: return \"ERROR: part '\" + str(name) + \"' not found\"\n\
-         \tvar old_rot = target.rotation_degrees\n\
          \ttarget.rotation_degrees = Vector3({rx}, {ry}, {rz})\n\
          \tvar d = {{}}\n\
          \td[\"name\"] = name\n\
-         \td[\"old_rotation\"] = [old_rot.x, old_rot.y, old_rot.z]\n\
-         \td[\"new_rotation\"] = [{rx}, {ry}, {rz}]\n\
+         \td[\"rotation\"] = [{rx}, {ry}, {rz}]\n\
          \treturn JSON.stringify(d)\n"
     )
 }
@@ -837,12 +857,10 @@ pub fn generate_scale(part: Option<&str>, sx: f64, sy: f64, sz: f64) -> String {
          {target}\
          \tvar target = helper.get_node_or_null(str(name))\n\
          \tif target == null: return \"ERROR: part '\" + str(name) + \"' not found\"\n\
-         \tvar old_scale = target.scale\n\
          \ttarget.scale = Vector3({sx}, {sy}, {sz})\n\
          \tvar d = {{}}\n\
          \td[\"name\"] = name\n\
-         \td[\"old_scale\"] = [old_scale.x, old_scale.y, old_scale.z]\n\
-         \td[\"new_scale\"] = [{sx}, {sy}, {sz}]\n\
+         \td[\"scale\"] = [{sx}, {sy}, {sz}]\n\
          \treturn JSON.stringify(d)\n"
     )
 }
@@ -873,8 +891,8 @@ pub fn generate_remove_part(name: &str) -> String {
          \t\t\thelper.set_meta(\"active_mesh\", \"\")\n\
          \tvar d = {{}}\n\
          \td[\"removed\"] = \"{name}\"\n\
-         \td[\"parts\"] = new_parts\n\
          \td[\"active\"] = helper.get_meta(\"active_mesh\", \"\")\n\
+         \td[\"part_count\"] = new_parts.size()\n\
          \treturn JSON.stringify(d)\n"
     )
 }
@@ -910,9 +928,10 @@ pub fn generate_info_all() -> String {
      \t\t\tpd[\"face_count\"] = verts.size() / 3\n\
      \t\t\ttotal_vc += verts.size()\n\
      \t\t\ttotal_fc += verts.size() / 3\n\
-     \t\t\tvar aabb = mi.mesh.get_aabb()\n\
-     \t\t\tpd[\"aabb_position\"] = [aabb.position.x, aabb.position.y, aabb.position.z]\n\
-     \t\t\tpd[\"aabb_size\"] = [aabb.size.x, aabb.size.y, aabb.size.z]\n\
+     \t\t\tvar waabb = mi.transform * mi.mesh.get_aabb()\n\
+     \t\t\tvar wend = waabb.position + waabb.size\n\
+     \t\t\tpd[\"aabb_min\"] = [snapped(waabb.position.x, 0.01), snapped(waabb.position.y, 0.01), snapped(waabb.position.z, 0.01)]\n\
+     \t\t\tpd[\"aabb_max\"] = [snapped(wend.x, 0.01), snapped(wend.y, 0.01), snapped(wend.z, 0.01)]\n\
      \t\telse:\n\
      \t\t\tpd[\"vertex_count\"] = 0\n\
      \t\t\tpd[\"face_count\"] = 0\n\
@@ -924,6 +943,53 @@ pub fn generate_info_all() -> String {
      \td[\"total_face_count\"] = total_fc\n\
      \td[\"parts\"] = parts\n\
      \treturn JSON.stringify(d)\n"
+        .to_string()
+}
+
+/// Generate the GDScript to apply a face orientation debug overlay.
+///
+/// Blue = front-facing (correct outward winding), Red = back-facing (inverted).
+/// Uses the GPU's `FRONT_FACING` built-in which matches culling behaviour exactly.
+pub fn generate_normal_debug() -> String {
+    "extends Node\n\
+     \n\
+     func run():\n\
+     \tvar root = get_tree().get_root()\n\
+     \tvar helper = root.get_node_or_null(\"_GdMeshHelper\")\n\
+     \tif helper == null: return \"ERROR: no mesh session\"\n\
+     \tvar shader = Shader.new()\n\
+     \tshader.code = \"shader_type spatial;\\nrender_mode unshaded, cull_disabled;\\n\\nvoid fragment() {\\n\\tALBEDO = FRONT_FACING ? vec3(0.2, 0.4, 1.0) : vec3(1.0, 0.2, 0.2);\\n}\\n\"\n\
+     \tvar mat = ShaderMaterial.new()\n\
+     \tmat.shader = shader\n\
+     \tvar count = 0\n\
+     \tfor child in helper.get_children():\n\
+     \t\tif child is MeshInstance3D and not child.name.begins_with(\"_\"):\n\
+     \t\t\tchild.material_override = mat\n\
+     \t\t\tcount += 1\n\
+     \tvar d = {}\n\
+     \td[\"mode\"] = \"normal_debug\"\n\
+     \td[\"parts_affected\"] = count\n\
+     \treturn JSON.stringify(d)\n"
+        .to_string()
+}
+
+/// Generate the GDScript to remove the face orientation debug overlay.
+pub fn generate_normal_debug_clear() -> String {
+    "extends Node\n\
+     \n\
+     func run():\n\
+     \tvar root = get_tree().get_root()\n\
+     \tvar helper = root.get_node_or_null(\"_GdMeshHelper\")\n\
+     \tif helper == null: return \"ok\"\n\
+     \tfor child in helper.get_children():\n\
+     \t\tif child is MeshInstance3D and not child.name.begins_with(\"_\"):\n\
+     \t\t\tif child.has_meta(\"part_color\"):\n\
+     \t\t\t\tvar mat = StandardMaterial3D.new()\n\
+     \t\t\t\tmat.albedo_color = child.get_meta(\"part_color\")\n\
+     \t\t\t\tchild.material_override = mat\n\
+     \t\t\telse:\n\
+     \t\t\t\tchild.material_override = null\n\
+     \treturn \"ok\"\n"
         .to_string()
 }
 
@@ -1076,8 +1142,6 @@ pub fn generate_duplicate_part(src: &str, dst: &str) -> String {
          \tif src.mesh:\n\
          \t\tmi.mesh = src.mesh.duplicate()\n\
          \tmi.transform = src.transform\n\
-         \tif src.material_override:\n\
-         \t\tmi.material_override = src.material_override.duplicate()\n\
          \thelper.add_child(mi)\n\
          \tparts.append(\"{dst}\")\n\
          \thelper.set_meta(\"mesh_parts\", parts)\n\
@@ -1093,21 +1157,20 @@ pub fn generate_duplicate_part(src: &str, dst: &str) -> String {
          \tvar sz = max(max(dims.x, dims.y), dims.z) * 1.5\n\
          \tif sz < 2.0: sz = 2.0\n\
          \t_retarget(helper, center, sz)\n\
+         \tvar _palette = {PALETTE}\n\
+         \tvar _color = _palette[(parts.size() - 1) % _palette.size()]\n\
+         \tmi.set_meta(\"part_color\", _color)\n\
+         \tvar _mat = StandardMaterial3D.new()\n\
+         \t_mat.albedo_color = _color\n\
+         \tmi.material_override = _mat\n\
          \tvar vc = 0\n\
          \tif mi.mesh and mi.mesh.get_surface_count() > 0:\n\
          \t\tvc = mi.mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX].size()\n\
-         \tvar part_names = []\n\
-         \tfor p in parts:\n\
-         \t\tpart_names.append(p)\n\
          \tvar d = {{}}\n\
-         \td[\"source\"] = \"{src}\"\n\
          \td[\"name\"] = \"{dst}\"\n\
-         \td[\"parts\"] = part_names\n\
-         \td[\"active\"] = \"{dst}\"\n\
+         \td[\"source\"] = \"{src}\"\n\
+         \td[\"part_count\"] = parts.size()\n\
          \td[\"vertex_count\"] = vc\n\
-         \td[\"position\"] = [mi.position.x, mi.position.y, mi.position.z]\n\
-         \td[\"rotation\"] = [mi.rotation_degrees.x, mi.rotation_degrees.y, mi.rotation_degrees.z]\n\
-         \td[\"scale\"] = [mi.scale.x, mi.scale.y, mi.scale.z]\n\
          \treturn JSON.stringify(d)\n"
     )
 }
@@ -1160,16 +1223,18 @@ pub fn generate_add_part(name: &str, primitive: &str) -> String {
          \tvar sz = max(max(dims.x, dims.y), dims.z) * 1.5\n\
          \tif sz < 2.0: sz = 2.0\n\
          \t_retarget(helper, center, sz)\n\
+         \tvar _palette = {PALETTE}\n\
+         \tvar _color = _palette[(parts.size() - 1) % _palette.size()]\n\
+         \tmesh_inst.set_meta(\"part_color\", _color)\n\
+         \tvar _mat = StandardMaterial3D.new()\n\
+         \t_mat.albedo_color = _color\n\
+         \tmesh_inst.material_override = _mat\n\
          \tvar vc = 0\n\
          \tif mesh_inst.mesh and mesh_inst.mesh.get_surface_count() > 0:\n\
          \t\tvc = mesh_inst.mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX].size()\n\
-         \tvar part_names = []\n\
-         \tfor p in parts:\n\
-         \t\tpart_names.append(p)\n\
          \tvar d = {{}}\n\
          \td[\"name\"] = \"{name}\"\n\
-         \td[\"parts\"] = part_names\n\
-         \td[\"active\"] = \"{name}\"\n\
+         \td[\"part_count\"] = parts.size()\n\
          \td[\"vertex_count\"] = vc\n\
          \treturn JSON.stringify(d)\n"
     )
@@ -1212,17 +1277,9 @@ pub fn generate_focus(name: &str) -> String {
          \tvar vc = 0\n\
          \tif target.mesh and target.mesh.get_surface_count() > 0:\n\
          \t\tvc = target.mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX].size()\n\
-         \tvar parts = helper.get_meta(\"mesh_parts\", [])\n\
-         \tvar part_names = []\n\
-         \tfor p in parts:\n\
-         \t\tpart_names.append(p)\n\
          \tvar d = {{}}\n\
          \td[\"active\"] = \"{name}\"\n\
-         \td[\"parts\"] = part_names\n\
          \td[\"vertex_count\"] = vc\n\
-         \tvar ab = target.get_aabb() if target.mesh else AABB()\n\
-         \td[\"aabb_position\"] = [ab.position.x, ab.position.y, ab.position.z]\n\
-         \td[\"aabb_size\"] = [ab.size.x, ab.size.y, ab.size.z]\n\
          \treturn JSON.stringify(d)\n"
     )
 }
@@ -1267,12 +1324,9 @@ pub fn generate_focus_all() -> String {
      \t_retarget(helper, center, sz)\n\
      \tvar active = helper.get_meta(\"active_mesh\", \"\")\n\
      \tvar parts = helper.get_meta(\"mesh_parts\", [])\n\
-     \tvar part_names = []\n\
-     \tfor p in parts:\n\
-     \t\tpart_names.append(p)\n\
      \tvar d = {}\n\
      \td[\"active\"] = active\n\
-     \td[\"parts\"] = part_names\n\
+     \td[\"part_count\"] = parts.size()\n\
      \td[\"visible\"] = \"all\"\n\
      \treturn JSON.stringify(d)\n"
         .to_string()

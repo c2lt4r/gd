@@ -27,22 +27,18 @@ pub fn cmd_focus(args: &FocusArgs) -> Result<()> {
         }
         OutputFormat::Text => {
             let active = parsed["active"].as_str().unwrap_or("?");
-            let parts: Vec<&str> = parsed["parts"]
-                .as_array()
-                .map(|a| a.iter().filter_map(serde_json::Value::as_str).collect())
-                .unwrap_or_default();
             if args.all {
+                let pc = parsed["part_count"].as_u64().unwrap_or(0);
                 println!(
                     "Showing {} parts (active: {})",
-                    "all".green().bold(),
+                    pc.to_string().green().bold(),
                     active.cyan()
                 );
             } else {
                 let vc = parsed["vertex_count"].as_u64().unwrap_or(0);
                 println!(
-                    "Focused: {} (vertices: {vc}, parts: {})",
+                    "Focused: {} ({vc} vertices)",
                     active.green().bold(),
-                    parts.join(", ").cyan()
                 );
             }
         }

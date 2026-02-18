@@ -9,7 +9,7 @@ const WORKSPACE_SCENE: &str = "\
 
 [sub_resource type=\"Environment\" id=\"Environment_mesh\"]
 background_mode = 1
-background_color = Color(0.15, 0.15, 0.15, 1)
+background_color = Color(0.08, 0.12, 0.18, 1)
 ambient_light_source = 1
 ambient_light_color = Color(0.3, 0.3, 0.3, 1)
 
@@ -46,23 +46,6 @@ pub fn cmd_init(args: &InitArgs) -> Result<()> {
             let output = serde_json::json!({
                 "scene": args.scene,
                 "main_scene": res_scene,
-                "created": true,
-                "coordinate_system": {
-                    "x": "right (+) / left (-)",
-                    "y": "up (+) / down (-)",
-                    "z": "toward camera (+) / away from camera (-)",
-                    "forward": "-Z (into the screen)",
-                    "back": "+Z (out of the screen)",
-                    "right": "+X",
-                    "left": "-X",
-                    "up": "+Y",
-                    "down": "-Y",
-                    "front_view": "XY plane (looking along -Z)",
-                    "side_view": "ZY plane (looking along -X)",
-                    "top_view": "XZ plane (looking along -Y)",
-                    "winding": "counter-clockwise = front face",
-                    "units": "1 unit = 1 meter (Godot convention)"
-                }
             });
             println!("{}", serde_json::to_string_pretty(&output).unwrap());
         }
