@@ -1,6 +1,7 @@
 mod add_part;
 mod bevel;
 mod create;
+mod duplicate_part;
 mod extrude;
 mod focus;
 mod gdscript;
@@ -66,6 +67,9 @@ pub enum MeshCommand {
     /// Add a named sub-part to the current mesh session
     #[command(name = "add-part")]
     AddPart(AddPartArgs),
+    /// Clone an existing part's mesh and transform to a new name
+    #[command(name = "duplicate-part")]
+    DuplicatePart(DuplicatePartArgs),
     /// Switch active part (or show all parts)
     Focus(FocusArgs),
     /// Move a part to an absolute position or by a relative offset
@@ -241,6 +245,9 @@ pub struct ViewArgs {
     /// Show coordinate grid overlay
     #[arg(long)]
     pub grid: bool,
+    /// Zoom multiplier (1.0 = auto-fit to model, 2.0 = zoom out 2x)
+    #[arg(long, default_value = "1.0")]
+    pub zoom: f64,
     /// Output format
     #[arg(long, default_value = "json")]
     pub format: OutputFormat,
@@ -279,6 +286,19 @@ pub struct AddPartArgs {
     /// Starting primitive mesh
     #[arg(long, value_enum, default_value = "empty")]
     pub from: Primitive,
+    /// Output format
+    #[arg(long, default_value = "json")]
+    pub format: OutputFormat,
+}
+
+#[derive(Args)]
+pub struct DuplicatePartArgs {
+    /// Source part to clone
+    #[arg(long)]
+    pub name: String,
+    /// Name for the new copy
+    #[arg(long = "as")]
+    pub as_name: String,
     /// Output format
     #[arg(long, default_value = "json")]
     pub format: OutputFormat,
@@ -435,6 +455,7 @@ pub fn exec(args: &MeshArgs) -> Result<()> {
         MeshCommand::Snapshot(ref a) => snapshot::cmd_snapshot(a),
         MeshCommand::Reference(ref a) => reference::cmd_reference(a),
         MeshCommand::AddPart(ref a) => add_part::cmd_add_part(a),
+        MeshCommand::DuplicatePart(ref a) => duplicate_part::cmd_duplicate_part(a),
         MeshCommand::Focus(ref a) => focus::cmd_focus(a),
         MeshCommand::Translate(ref a) => translate::cmd_translate(a),
         MeshCommand::Rotate(ref a) => rotate::cmd_rotate(a),

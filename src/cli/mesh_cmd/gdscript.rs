@@ -189,9 +189,10 @@ pub fn generate_profile(points: &[(f64, f64)], plane: &str) -> String {
 
 /// Generate the GDScript for `mesh extrude`.
 ///
-/// Emits raw geometry (caps + side walls) without manual normals, then uses a
-/// per-triangle centroid check to fix any inverted winding before generating
-/// normals from the corrected winding order.
+/// Uses analytic winding based on the 2D signed area of the profile and the
+/// plane's coordinate handedness. The "front" plane maps (X,Y) right-handed,
+/// while "side" and "top" produce a parity flip, so we XOR the two conditions:
+/// `flip = (ccw_profile) != (plane == "front")`.
 #[allow(clippy::too_many_lines)]
 pub fn generate_extrude(depth: f64) -> String {
     let half = depth / 2.0;
@@ -230,49 +231,50 @@ pub fn generate_extrude(depth: f64) -> String {
          \t\tpts2d.append(Vector2(p[0], p[1]))\n\
          \tvar indices = Geometry2D.triangulate_polygon(pts2d)\n\
          \tif indices.size() == 0: return \"ERROR: could not triangulate polygon\"\n\
+         \tvar area2 = 0.0\n\
+         \tfor i in points.size():\n\
+         \t\tvar jw = (i + 1) % points.size()\n\
+         \t\tarea2 += points[i][0] * points[jw][1] - points[jw][0] * points[i][1]\n\
+         \tvar flip = (area2 > 0) != (plane == \"front\")\n\
          \tvar st = SurfaceTool.new()\n\
          \tst.begin(Mesh.PRIMITIVE_TRIANGLES)\n\
-         \tfor i in indices:\n\
-         \t\tst.add_vertex(front[i])\n\
-         \tfor i in indices:\n\
-         \t\tst.add_vertex(back[i])\n\
+         \tfor ti in range(0, indices.size(), 3):\n\
+         \t\tif flip:\n\
+         \t\t\tst.add_vertex(front[indices[ti + 2]])\n\
+         \t\t\tst.add_vertex(front[indices[ti + 1]])\n\
+         \t\t\tst.add_vertex(front[indices[ti]])\n\
+         \t\telse:\n\
+         \t\t\tst.add_vertex(front[indices[ti]])\n\
+         \t\t\tst.add_vertex(front[indices[ti + 1]])\n\
+         \t\t\tst.add_vertex(front[indices[ti + 2]])\n\
+         \tfor ti in range(0, indices.size(), 3):\n\
+         \t\tif flip:\n\
+         \t\t\tst.add_vertex(back[indices[ti]])\n\
+         \t\t\tst.add_vertex(back[indices[ti + 1]])\n\
+         \t\t\tst.add_vertex(back[indices[ti + 2]])\n\
+         \t\telse:\n\
+         \t\t\tst.add_vertex(back[indices[ti + 2]])\n\
+         \t\t\tst.add_vertex(back[indices[ti + 1]])\n\
+         \t\t\tst.add_vertex(back[indices[ti]])\n\
          \tvar n_pts = front.size()\n\
          \tfor i in n_pts:\n\
          \t\tvar j = (i + 1) % n_pts\n\
-         \t\tst.add_vertex(front[i])\n\
-         \t\tst.add_vertex(front[j])\n\
-         \t\tst.add_vertex(back[i])\n\
-         \t\tst.add_vertex(front[j])\n\
-         \t\tst.add_vertex(back[j])\n\
-         \t\tst.add_vertex(back[i])\n\
+         \t\tif flip:\n\
+         \t\t\tst.add_vertex(front[i])\n\
+         \t\t\tst.add_vertex(front[j])\n\
+         \t\t\tst.add_vertex(back[i])\n\
+         \t\t\tst.add_vertex(front[j])\n\
+         \t\t\tst.add_vertex(back[j])\n\
+         \t\t\tst.add_vertex(back[i])\n\
+         \t\telse:\n\
+         \t\t\tst.add_vertex(front[i])\n\
+         \t\t\tst.add_vertex(back[i])\n\
+         \t\t\tst.add_vertex(front[j])\n\
+         \t\t\tst.add_vertex(front[j])\n\
+         \t\t\tst.add_vertex(back[i])\n\
+         \t\t\tst.add_vertex(back[j])\n\
          \tst.generate_normals()\n\
-         \tvar mesh = st.commit()\n\
-         \tvar arrays = mesh.surface_get_arrays(0)\n\
-         \tvar verts = arrays[Mesh.ARRAY_VERTEX]\n\
-         \tvar centroid = Vector3.ZERO\n\
-         \tfor v in verts:\n\
-         \t\tcentroid += v\n\
-         \tcentroid /= verts.size()\n\
-         \tvar need_fix = false\n\
-         \tfor ti in range(0, verts.size(), 3):\n\
-         \t\tvar a = verts[ti]\n\
-         \t\tvar b = verts[ti + 1]\n\
-         \t\tvar c = verts[ti + 2]\n\
-         \t\tvar face_n = (b - a).cross(c - a)\n\
-         \t\tvar tri_center = (a + b + c) / 3.0\n\
-         \t\tif face_n.dot(tri_center - centroid) < 0:\n\
-         \t\t\tverts[ti + 1] = c\n\
-         \t\t\tverts[ti + 2] = b\n\
-         \t\t\tneed_fix = true\n\
-         \tif need_fix:\n\
-         \t\tvar st2 = SurfaceTool.new()\n\
-         \t\tst2.begin(Mesh.PRIMITIVE_TRIANGLES)\n\
-         \t\tfor v in verts:\n\
-         \t\t\tst2.add_vertex(v)\n\
-         \t\tst2.generate_normals()\n\
-         \t\tmesh_inst.mesh = st2.commit()\n\
-         \telse:\n\
-         \t\tmesh_inst.mesh = mesh\n\
+         \tmesh_inst.mesh = st.commit()\n\
          \tmesh_inst.material_override = null\n\
          \tvar vc = mesh_inst.mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX].size()\n\
          \tvar fc = vc / 3\n\
@@ -287,7 +289,9 @@ pub fn generate_extrude(depth: f64) -> String {
 
 /// Generate the GDScript for `mesh revolve`.
 ///
-/// Uses per-triangle centroid check to fix winding, then generates normals.
+/// After building the surface of revolution, checks the first triangle's normal
+/// against the "away from revolution axis" direction. If inverted, flips all
+/// triangle windings (all quads share the same winding pattern).
 pub fn generate_revolve(axis: &str, angle: f64, segments: u32) -> String {
     format!(
         "extends Node\n\
@@ -338,28 +342,24 @@ pub fn generate_revolve(axis: &str, angle: f64, segments: u32) -> String {
          \t\t\tst.add_vertex(rings[s + 1][i])\n\
          \tst.generate_normals()\n\
          \tvar mesh = st.commit()\n\
-         \tvar arrays = mesh.surface_get_arrays(0)\n\
-         \tvar verts = arrays[Mesh.ARRAY_VERTEX]\n\
-         \tvar centroid = Vector3.ZERO\n\
-         \tfor v in verts:\n\
-         \t\tcentroid += v\n\
-         \tcentroid /= verts.size()\n\
-         \tvar need_fix = false\n\
-         \tfor ti in range(0, verts.size(), 3):\n\
-         \t\tvar a = verts[ti]\n\
-         \t\tvar b = verts[ti + 1]\n\
-         \t\tvar c = verts[ti + 2]\n\
-         \t\tvar face_n = (b - a).cross(c - a)\n\
-         \t\tvar tri_center = (a + b + c) / 3.0\n\
-         \t\tif face_n.dot(tri_center - centroid) < 0:\n\
-         \t\t\tverts[ti + 1] = c\n\
-         \t\t\tverts[ti + 2] = b\n\
-         \t\t\tneed_fix = true\n\
-         \tif need_fix:\n\
+         \tvar arr = mesh.surface_get_arrays(0)\n\
+         \tvar verts = arr[Mesh.ARRAY_VERTEX]\n\
+         \tvar norms = arr[Mesh.ARRAY_NORMAL]\n\
+         \tvar tc = (verts[0] + verts[1] + verts[2]) / 3.0\n\
+         \tvar outward\n\
+         \tif axis == \"x\":\n\
+         \t\toutward = Vector3(0, tc.y, tc.z)\n\
+         \telif axis == \"y\":\n\
+         \t\toutward = Vector3(tc.x, 0, tc.z)\n\
+         \telse:\n\
+         \t\toutward = Vector3(tc.x, tc.y, 0)\n\
+         \tif outward.length() > 0.001 and norms[0].dot(outward) < 0:\n\
          \t\tvar st2 = SurfaceTool.new()\n\
          \t\tst2.begin(Mesh.PRIMITIVE_TRIANGLES)\n\
-         \t\tfor v in verts:\n\
-         \t\t\tst2.add_vertex(v)\n\
+         \t\tfor ti in range(0, verts.size(), 3):\n\
+         \t\t\tst2.add_vertex(verts[ti + 2])\n\
+         \t\t\tst2.add_vertex(verts[ti + 1])\n\
+         \t\t\tst2.add_vertex(verts[ti])\n\
          \t\tst2.generate_normals()\n\
          \t\tmesh_inst.mesh = st2.commit()\n\
          \telse:\n\
@@ -584,7 +584,8 @@ pub fn generate_list_vertices(region: Option<&super::BoundingBox>) -> String {
 ///
 /// Scales vertices along the taper axis between `start_scale` and `end_scale`.
 /// Vertices at the min extent of the axis get `start_scale`, at the max extent
-/// get `end_scale`, with linear interpolation between.
+/// get `end_scale`, with linear interpolation between. Preserves the input
+/// mesh's winding order (no centroid fix needed — relies on correct extrude).
 pub fn generate_taper(axis: &str, start_scale: f64, end_scale: f64) -> String {
     let (axis_component, other1, other2) = match axis {
         "x" => ("x", "y", "z"),
@@ -634,32 +635,7 @@ pub fn generate_taper(axis: &str, start_scale: f64, end_scale: f64) -> String {
          \tfor v in verts:\n\
          \t\tst.add_vertex(v)\n\
          \tst.generate_normals()\n\
-         \tvar mesh = st.commit()\n\
-         \tvar norms = mesh.surface_get_arrays(0)[Mesh.ARRAY_NORMAL]\n\
-         \tvar centroid = Vector3.ZERO\n\
-         \tfor v in verts:\n\
-         \t\tcentroid += v\n\
-         \tcentroid /= verts.size()\n\
-         \tvar need_fix = false\n\
-         \tfor ti in range(0, verts.size(), 3):\n\
-         \t\tvar a = verts[ti]\n\
-         \t\tvar b = verts[ti + 1]\n\
-         \t\tvar c = verts[ti + 2]\n\
-         \t\tvar face_n = (b - a).cross(c - a)\n\
-         \t\tvar tri_center = (a + b + c) / 3.0\n\
-         \t\tif face_n.dot(tri_center - centroid) < 0:\n\
-         \t\t\tverts[ti + 1] = c\n\
-         \t\t\tverts[ti + 2] = b\n\
-         \t\t\tneed_fix = true\n\
-         \tif need_fix:\n\
-         \t\tvar st2 = SurfaceTool.new()\n\
-         \t\tst2.begin(Mesh.PRIMITIVE_TRIANGLES)\n\
-         \t\tfor v in verts:\n\
-         \t\t\tst2.add_vertex(v)\n\
-         \t\tst2.generate_normals()\n\
-         \t\tmesh_inst.mesh = st2.commit()\n\
-         \telse:\n\
-         \t\tmesh_inst.mesh = mesh\n\
+         \tmesh_inst.mesh = st.commit()\n\
          \tmesh_inst.material_override = null\n\
          \tvar vc = mesh_inst.mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX].size()\n\
          \tvar d = {{}}\n\
@@ -675,7 +651,8 @@ pub fn generate_taper(axis: &str, start_scale: f64, end_scale: f64) -> String {
 ///
 /// Chamfers all sharp edges by inserting new faces. Works by detecting edges
 /// shared by exactly two triangles with a dihedral angle above a threshold,
-/// then cutting corners by offsetting vertices along edge normals.
+/// then cutting corners by offsetting vertices along edge normals. Preserves
+/// the input mesh's winding order (no centroid fix needed).
 #[allow(clippy::too_many_lines)]
 pub fn generate_bevel(radius: f64, segments: u32) -> String {
     format!(
@@ -741,32 +718,7 @@ pub fn generate_bevel(radius: f64, segments: u32) -> String {
          \tfor v in new_verts:\n\
          \t\tst.add_vertex(v)\n\
          \tst.generate_normals()\n\
-         \tvar mesh = st.commit()\n\
-         \tvar final_verts = mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]\n\
-         \tvar centroid = Vector3.ZERO\n\
-         \tfor v in final_verts:\n\
-         \t\tcentroid += v\n\
-         \tcentroid /= final_verts.size()\n\
-         \tvar need_fix = false\n\
-         \tfor ti in range(0, final_verts.size(), 3):\n\
-         \t\tvar a = final_verts[ti]\n\
-         \t\tvar b = final_verts[ti + 1]\n\
-         \t\tvar c = final_verts[ti + 2]\n\
-         \t\tvar face_n = (b - a).cross(c - a)\n\
-         \t\tvar tri_center = (a + b + c) / 3.0\n\
-         \t\tif face_n.dot(tri_center - centroid) < 0:\n\
-         \t\t\tfinal_verts[ti + 1] = c\n\
-         \t\t\tfinal_verts[ti + 2] = b\n\
-         \t\t\tneed_fix = true\n\
-         \tif need_fix:\n\
-         \t\tvar st2 = SurfaceTool.new()\n\
-         \t\tst2.begin(Mesh.PRIMITIVE_TRIANGLES)\n\
-         \t\tfor v in final_verts:\n\
-         \t\t\tst2.add_vertex(v)\n\
-         \t\tst2.generate_normals()\n\
-         \t\tmesh_inst.mesh = st2.commit()\n\
-         \telse:\n\
-         \t\tmesh_inst.mesh = mesh\n\
+         \tmesh_inst.mesh = st.commit()\n\
          \tmesh_inst.material_override = null\n\
          \tvar vc = mesh_inst.mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX].size()\n\
          \tvar d = {{}}\n\
@@ -928,6 +880,9 @@ pub fn generate_remove_part(name: &str) -> String {
 }
 
 /// Generate the GDScript for `mesh info --all`.
+///
+/// Includes per-part transforms (position, rotation, scale) so the agent can
+/// verify transforms after applying them.
 pub fn generate_info_all() -> String {
     "extends Node\n\
      \n\
@@ -945,6 +900,10 @@ pub fn generate_info_all() -> String {
      \t\tvar pd = {}\n\
      \t\tpd[\"name\"] = pname\n\
      \t\tpd[\"visible\"] = mi.visible if mi else false\n\
+     \t\tif mi:\n\
+     \t\t\tpd[\"position\"] = [mi.position.x, mi.position.y, mi.position.z]\n\
+     \t\t\tpd[\"rotation\"] = [mi.rotation_degrees.x, mi.rotation_degrees.y, mi.rotation_degrees.z]\n\
+     \t\t\tpd[\"scale\"] = [mi.scale.x, mi.scale.y, mi.scale.z]\n\
      \t\tif mi and mi.mesh and mi.mesh.get_surface_count() > 0:\n\
      \t\t\tvar verts = mi.mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]\n\
      \t\t\tpd[\"vertex_count\"] = verts.size()\n\
@@ -966,6 +925,52 @@ pub fn generate_info_all() -> String {
      \td[\"parts\"] = parts\n\
      \treturn JSON.stringify(d)\n"
         .to_string()
+}
+
+/// Generate the GDScript to auto-fit all cameras to the combined AABB of
+/// visible `MeshInstance3D` children. Returns the computed camera size as JSON
+/// so the view command can report accurate bounds.
+pub fn generate_autofit_cameras(zoom: f64) -> String {
+    format!(
+        "extends Node\n\
+         \n\
+         func run():\n\
+         \tvar root = get_tree().get_root()\n\
+         \tvar helper = root.get_node_or_null(\"_GdMeshHelper\")\n\
+         \tif helper == null: return \"ERROR: no mesh session\"\n\
+         \tvar rig = helper.get_node_or_null(\"_CameraRig\")\n\
+         \tif rig == null: return \"ERROR: camera rig not found\"\n\
+         \tvar combined = AABB()\n\
+         \tvar first = true\n\
+         \tfor child in helper.get_children():\n\
+         \t\tif child is MeshInstance3D and not child.name.begins_with(\"_\"):\n\
+         \t\t\tif child.visible and child.mesh:\n\
+         \t\t\t\tvar ab = child.transform * child.mesh.get_aabb()\n\
+         \t\t\t\tif first:\n\
+         \t\t\t\t\tcombined = ab\n\
+         \t\t\t\t\tfirst = false\n\
+         \t\t\t\telse:\n\
+         \t\t\t\t\tcombined = combined.merge(ab)\n\
+         \tif first:\n\
+         \t\tcombined = AABB(Vector3(-5, -5, -5), Vector3(10, 10, 10))\n\
+         \tvar center = combined.get_center()\n\
+         \tvar dims = combined.size\n\
+         \tvar sz = max(max(dims.x, dims.y), dims.z) * 1.5 * {zoom}\n\
+         \tif sz < 2.0: sz = 2.0\n\
+         \trig.position = center\n\
+         \tfor cam in rig.get_children():\n\
+         \t\tif cam is Camera3D:\n\
+         \t\t\tcam.size = sz\n\
+         \t\t\tif cam.name == \"Top\" or cam.name == \"Bottom\":\n\
+         \t\t\t\tcam.look_at(center, Vector3.FORWARD)\n\
+         \t\t\telse:\n\
+         \t\t\t\tcam.look_at(center)\n\
+         \tvar d = {{}}\n\
+         \td[\"camera_size\"] = sz\n\
+         \td[\"center\"] = [center.x, center.y, center.z]\n\
+         \td[\"aabb_size\"] = [dims.x, dims.y, dims.z]\n\
+         \treturn JSON.stringify(d)\n"
+    )
 }
 
 /// Generate the GDScript to add a coordinate grid overlay.
@@ -1036,6 +1041,75 @@ pub fn generate_remove_grid() -> String {
      \tif grid: grid.queue_free()\n\
      \treturn \"ok\"\n"
         .to_string()
+}
+
+/// Generate the GDScript for `mesh duplicate-part`.
+///
+/// Clones the source part's mesh and transform to a new named part. Sets the
+/// new part as active, hides others, retargets cameras.
+pub fn generate_duplicate_part(src: &str, dst: &str) -> String {
+    format!(
+        "extends Node\n\
+         \n\
+         func _retarget(helper, center, sz):\n\
+         \tvar rig = helper.get_node(\"_CameraRig\")\n\
+         \trig.position = center\n\
+         \tfor cam in rig.get_children():\n\
+         \t\tif cam is Camera3D:\n\
+         \t\t\tcam.size = sz\n\
+         \t\t\tif cam.name == \"Top\" or cam.name == \"Bottom\":\n\
+         \t\t\t\tcam.look_at(center, Vector3.FORWARD)\n\
+         \t\t\telse:\n\
+         \t\t\t\tcam.look_at(center)\n\
+         \n\
+         func run():\n\
+         \tvar root = get_tree().get_root()\n\
+         \tvar helper = root.get_node_or_null(\"_GdMeshHelper\")\n\
+         \tif helper == null: return \"ERROR: no mesh session — run 'gd mesh create' first\"\n\
+         \tvar src = helper.get_node_or_null(\"{src}\")\n\
+         \tif src == null: return \"ERROR: source part '{src}' not found\"\n\
+         \tvar parts = helper.get_meta(\"mesh_parts\", [])\n\
+         \tfor p in parts:\n\
+         \t\tif p == \"{dst}\": return \"ERROR: part '{dst}' already exists\"\n\
+         \tvar mi = MeshInstance3D.new()\n\
+         \tmi.name = \"{dst}\"\n\
+         \tif src.mesh:\n\
+         \t\tmi.mesh = src.mesh.duplicate()\n\
+         \tmi.transform = src.transform\n\
+         \tif src.material_override:\n\
+         \t\tmi.material_override = src.material_override.duplicate()\n\
+         \thelper.add_child(mi)\n\
+         \tparts.append(\"{dst}\")\n\
+         \thelper.set_meta(\"mesh_parts\", parts)\n\
+         \thelper.set_meta(\"active_mesh\", \"{dst}\")\n\
+         \thelper.set_meta(\"profile_points\", [])\n\
+         \thelper.set_meta(\"profile_plane\", \"\")\n\
+         \tfor child in helper.get_children():\n\
+         \t\tif child is MeshInstance3D and not child.name.begins_with(\"_\"):\n\
+         \t\t\tchild.visible = (child.name == \"{dst}\")\n\
+         \tvar aabb = mi.get_aabb() if mi.mesh else AABB(Vector3.ZERO, Vector3(2, 2, 2))\n\
+         \tvar center = aabb.get_center()\n\
+         \tvar dims = aabb.size\n\
+         \tvar sz = max(max(dims.x, dims.y), dims.z) * 1.5\n\
+         \tif sz < 2.0: sz = 2.0\n\
+         \t_retarget(helper, center, sz)\n\
+         \tvar vc = 0\n\
+         \tif mi.mesh and mi.mesh.get_surface_count() > 0:\n\
+         \t\tvc = mi.mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX].size()\n\
+         \tvar part_names = []\n\
+         \tfor p in parts:\n\
+         \t\tpart_names.append(p)\n\
+         \tvar d = {{}}\n\
+         \td[\"source\"] = \"{src}\"\n\
+         \td[\"name\"] = \"{dst}\"\n\
+         \td[\"parts\"] = part_names\n\
+         \td[\"active\"] = \"{dst}\"\n\
+         \td[\"vertex_count\"] = vc\n\
+         \td[\"position\"] = [mi.position.x, mi.position.y, mi.position.z]\n\
+         \td[\"rotation\"] = [mi.rotation_degrees.x, mi.rotation_degrees.y, mi.rotation_degrees.z]\n\
+         \td[\"scale\"] = [mi.scale.x, mi.scale.y, mi.scale.z]\n\
+         \treturn JSON.stringify(d)\n"
+    )
 }
 
 /// Generate the GDScript for `mesh add-part`.

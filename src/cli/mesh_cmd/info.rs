@@ -74,6 +74,24 @@ fn print_info_all(parsed: &serde_json::Value) {
             let fc = p["face_count"].as_u64().unwrap_or(0);
             let marker = if name == active { " *" } else { "" };
             println!("  {}{marker}: {vc} vertices, {fc} faces", name.green());
+            if let Some(pos) = p["position"].as_array() {
+                let fmt_vec = |arr: &[serde_json::Value]| -> String {
+                    format!(
+                        "{:.2}, {:.2}, {:.2}",
+                        arr[0].as_f64().unwrap_or(0.0),
+                        arr[1].as_f64().unwrap_or(0.0),
+                        arr[2].as_f64().unwrap_or(0.0),
+                    )
+                };
+                let rot = p["rotation"].as_array();
+                let scl = p["scale"].as_array();
+                println!(
+                    "    pos({})  rot({})  scale({})",
+                    fmt_vec(pos),
+                    rot.map_or_else(|| "?".to_string(), |a| fmt_vec(a)),
+                    scl.map_or_else(|| "?".to_string(), |a| fmt_vec(a)),
+                );
+            }
         }
     }
 }

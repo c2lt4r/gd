@@ -6,14 +6,12 @@ use owo_colors::OwoColorize;
 use super::gdscript;
 use super::{OutputFormat, ViewArgs, ViewName, run_eval};
 
-/// Ortho camera half-size (matching the cameras created by `mesh create`).
-const ORTHO_HALF: f64 = 5.0;
-
 /// Take a single orthographic screenshot for a given view.
 fn capture_view(
     view_name: &str,
     output_dir: Option<&str>,
     grid: bool,
+    camera_half_size: f64,
 ) -> Result<serde_json::Value> {
     // Determine grid plane for this view
     let grid_plane = match view_name {
@@ -23,11 +21,11 @@ fn capture_view(
         _ => None, // Iso: no grid
     };
 
-    // Add grid if requested
+    // Add grid if requested (scaled to camera size)
     if grid
         && let Some(plane) = grid_plane
     {
-        let grid_script = gdscript::generate_grid(plane, ORTHO_HALF);
+        let grid_script = gdscript::generate_grid(plane, camera_half_size);
         let _ = run_eval(&grid_script);
     }
 
@@ -73,10 +71,9 @@ fn capture_view(
         path.to_string()
     };
 
-    // Bounds from ortho camera (all views use the same ortho size)
     let bounds = serde_json::json!({
-        "x_min": -ORTHO_HALF, "x_max": ORTHO_HALF,
-        "y_min": -ORTHO_HALF, "y_max": ORTHO_HALF,
+        "x_min": -camera_half_size, "x_max": camera_half_size,
+        "y_min": -camera_half_size, "y_max": camera_half_size,
     });
 
     Ok(serde_json::json!({
@@ -89,6 +86,13 @@ fn capture_view(
 }
 
 pub fn cmd_view(args: &ViewArgs) -> Result<()> {
+    // Auto-fit cameras to the combined AABB of all visible parts
+    let autofit_script = gdscript::generate_autofit_cameras(args.zoom);
+    let autofit_result = run_eval(&autofit_script)?;
+    let autofit: serde_json::Value = serde_json::from_str(&autofit_result)
+        .map_err(|e| miette!("Failed to parse autofit result: {e}"))?;
+    let camera_half_size = autofit["camera_size"].as_f64().unwrap_or(10.0) / 2.0;
+
     let views: Vec<&str> = match args.view {
         ViewName::Front => vec!["Front"],
         ViewName::Back => vec!["Back"],
@@ -102,7 +106,7 @@ pub fn cmd_view(args: &ViewArgs) -> Result<()> {
 
     let mut screenshots = Vec::new();
     for view in &views {
-        let info = capture_view(view, args.output.as_deref(), args.grid)?;
+        let info = capture_view(view, args.output.as_deref(), args.grid, camera_half_size)?;
         screenshots.push(info);
     }
 
@@ -112,7 +116,11 @@ pub fn cmd_view(args: &ViewArgs) -> Result<()> {
 
     match args.format {
         OutputFormat::Json => {
-            let output = serde_json::json!({ "screenshots": screenshots });
+            let output = serde_json::json!({
+                "screenshots": screenshots,
+                "camera_size": autofit["camera_size"],
+                "center": autofit["center"],
+            });
             println!("{}", serde_json::to_string_pretty(&output).unwrap());
         }
         OutputFormat::Text => {

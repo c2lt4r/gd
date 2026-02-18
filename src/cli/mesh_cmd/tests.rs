@@ -127,6 +127,13 @@ fn add_part_cube_parses() {
     assert_parses(&gdscript::generate_add_part("door", "cube"));
 }
 
+// ── Duplicate part ──────────────────────────────────────────────────
+
+#[test]
+fn duplicate_part_parses() {
+    assert_parses(&gdscript::generate_duplicate_part("eng1", "eng2"));
+}
+
 // ── Focus ────────────────────────────────────────────────────────────
 
 #[test]
@@ -241,6 +248,18 @@ fn info_parses() {
 #[test]
 fn info_all_parses() {
     assert_parses(&gdscript::generate_info_all());
+}
+
+// ── Autofit camera ──────────────────────────────────────────────────
+
+#[test]
+fn autofit_cameras_parses() {
+    assert_parses(&gdscript::generate_autofit_cameras(1.0));
+}
+
+#[test]
+fn autofit_cameras_zoom_parses() {
+    assert_parses(&gdscript::generate_autofit_cameras(2.5));
 }
 
 // ── Grid ─────────────────────────────────────────────────────────────
