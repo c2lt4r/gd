@@ -1,4 +1,5 @@
 /// Generate the GDScript for `mesh create`.
+#[allow(clippy::too_many_lines)]
 pub fn generate_create(name: &str, primitive: &str) -> String {
     let primitive_line = match primitive {
         "cube" => "\tmesh_inst.mesh = BoxMesh.new()\n",
@@ -41,6 +42,27 @@ pub fn generate_create(name: &str, primitive: &str) -> String {
          \tcam_top.position = Vector3(0, 20, 0)\n\
          \trig.add_child(cam_top)\n\
          \tcam_top.look_at(Vector3.ZERO, Vector3.FORWARD)\n\
+         \tvar cam_back = Camera3D.new()\n\
+         \tcam_back.name = \"Back\"\n\
+         \tcam_back.projection = Camera3D.PROJECTION_ORTHOGONAL\n\
+         \tcam_back.size = 10\n\
+         \tcam_back.position = Vector3(0, 0, -20)\n\
+         \trig.add_child(cam_back)\n\
+         \tcam_back.look_at(Vector3.ZERO)\n\
+         \tvar cam_left = Camera3D.new()\n\
+         \tcam_left.name = \"Left\"\n\
+         \tcam_left.projection = Camera3D.PROJECTION_ORTHOGONAL\n\
+         \tcam_left.size = 10\n\
+         \tcam_left.position = Vector3(-20, 0, 0)\n\
+         \trig.add_child(cam_left)\n\
+         \tcam_left.look_at(Vector3.ZERO)\n\
+         \tvar cam_bottom = Camera3D.new()\n\
+         \tcam_bottom.name = \"Bottom\"\n\
+         \tcam_bottom.projection = Camera3D.PROJECTION_ORTHOGONAL\n\
+         \tcam_bottom.size = 10\n\
+         \tcam_bottom.position = Vector3(0, -20, 0)\n\
+         \trig.add_child(cam_bottom)\n\
+         \tcam_bottom.look_at(Vector3.ZERO, Vector3.FORWARD)\n\
          \tvar cam_iso = Camera3D.new()\n\
          \tcam_iso.name = \"Iso\"\n\
          \tcam_iso.projection = Camera3D.PROJECTION_ORTHOGONAL\n\
@@ -86,7 +108,7 @@ pub fn generate_create(name: &str, primitive: &str) -> String {
          \tvar d = {{}}\n\
          \td[\"name\"] = \"{name}\"\n\
          \td[\"primitive\"] = \"{primitive}\"\n\
-         \td[\"cameras\"] = [\"Front\", \"Side\", \"Top\", \"Iso\"]\n\
+         \td[\"cameras\"] = [\"Front\", \"Back\", \"Side\", \"Left\", \"Top\", \"Bottom\", \"Iso\"]\n\
          \td[\"vertex_count\"] = vc\n\
          \treturn JSON.stringify(d)\n"
     )
@@ -507,6 +529,251 @@ pub fn generate_snapshot(tscn_path: &str) -> String {
          \td[\"path\"] = \"{tscn_path}\"\n\
          \td[\"parts\"] = resources\n\
          \td[\"part_count\"] = mesh_children.size()\n\
+         \treturn JSON.stringify(d)\n"
+    )
+}
+
+/// Generate the GDScript for `mesh list-vertices`.
+///
+/// Returns vertex positions as a JSON array. Optionally filtered to a bounding box.
+pub fn generate_list_vertices(region: Option<&super::BoundingBox>) -> String {
+    let filter = if let Some(((x1, y1, z1), (x2, y2, z2))) = region {
+        // Compute min/max for each axis
+        let (min_x, max_x) = if x1 < x2 { (x1, x2) } else { (x2, x1) };
+        let (min_y, max_y) = if y1 < y2 { (y1, y2) } else { (y2, y1) };
+        let (min_z, max_z) = if z1 < z2 { (z1, z2) } else { (z2, z1) };
+        format!(
+            "\tvar min_b = Vector3({min_x}, {min_y}, {min_z})\n\
+             \tvar max_b = Vector3({max_x}, {max_y}, {max_z})\n\
+             \tfor i in verts.size():\n\
+             \t\tvar v = verts[i]\n\
+             \t\tif v.x >= min_b.x and v.x <= max_b.x and v.y >= min_b.y and v.y <= max_b.y and v.z >= min_b.z and v.z <= max_b.z:\n\
+             \t\t\tresult.append({{\"index\": i, \"position\": [v.x, v.y, v.z]}})\n"
+        )
+    } else {
+        "\tfor i in verts.size():\n\
+         \t\tvar v = verts[i]\n\
+         \t\tresult.append({\"index\": i, \"position\": [v.x, v.y, v.z]})\n"
+            .to_string()
+    };
+    format!(
+        "extends Node\n\
+         \n\
+         func run():\n\
+         \tvar root = get_tree().get_root()\n\
+         \tvar helper = root.get_node_or_null(\"_GdMeshHelper\")\n\
+         \tif helper == null: return \"ERROR: no mesh session — run 'gd mesh create' first\"\n\
+         \tvar mesh_name = helper.get_meta(\"active_mesh\")\n\
+         \tvar mesh_inst = helper.get_node_or_null(mesh_name)\n\
+         \tif mesh_inst == null: return \"ERROR: mesh node not found\"\n\
+         \tif mesh_inst.mesh == null: return \"ERROR: no mesh data\"\n\
+         \tvar arrays = mesh_inst.mesh.surface_get_arrays(0)\n\
+         \tvar verts = arrays[Mesh.ARRAY_VERTEX]\n\
+         \tvar result = []\n\
+         {filter}\
+         \tvar d = {{}}\n\
+         \td[\"name\"] = mesh_name\n\
+         \td[\"total_vertices\"] = verts.size()\n\
+         \td[\"returned\"] = result.size()\n\
+         \td[\"vertices\"] = result\n\
+         \treturn JSON.stringify(d)\n"
+    )
+}
+
+/// Generate the GDScript for `mesh taper`.
+///
+/// Scales vertices along the taper axis between `start_scale` and `end_scale`.
+/// Vertices at the min extent of the axis get `start_scale`, at the max extent
+/// get `end_scale`, with linear interpolation between.
+pub fn generate_taper(axis: &str, start_scale: f64, end_scale: f64) -> String {
+    let (axis_component, other1, other2) = match axis {
+        "x" => ("x", "y", "z"),
+        "z" => ("z", "x", "y"),
+        _ => ("y", "x", "z"), // y default
+    };
+    format!(
+        "extends Node\n\
+         \n\
+         func run():\n\
+         \tvar root = get_tree().get_root()\n\
+         \tvar helper = root.get_node_or_null(\"_GdMeshHelper\")\n\
+         \tif helper == null: return \"ERROR: no mesh session — run 'gd mesh create' first\"\n\
+         \tvar mesh_name = helper.get_meta(\"active_mesh\")\n\
+         \tvar mesh_inst = helper.get_node_or_null(mesh_name)\n\
+         \tif mesh_inst == null: return \"ERROR: mesh node not found\"\n\
+         \tif mesh_inst.mesh == null: return \"ERROR: no mesh data\"\n\
+         \tvar arrays = mesh_inst.mesh.surface_get_arrays(0)\n\
+         \tvar verts = arrays[Mesh.ARRAY_VERTEX]\n\
+         \tvar axis_min = INF\n\
+         \tvar axis_max = -INF\n\
+         \tfor v in verts:\n\
+         \t\tif v.{axis_component} < axis_min: axis_min = v.{axis_component}\n\
+         \t\tif v.{axis_component} > axis_max: axis_max = v.{axis_component}\n\
+         \tvar axis_range = axis_max - axis_min\n\
+         \tif axis_range < 0.0001: return \"ERROR: mesh has no extent along {axis} axis\"\n\
+         \tvar start_s = {start_scale}\n\
+         \tvar end_s = {end_scale}\n\
+         \tvar center_{other1} = 0.0\n\
+         \tvar center_{other2} = 0.0\n\
+         \tfor v in verts:\n\
+         \t\tcenter_{other1} += v.{other1}\n\
+         \t\tcenter_{other2} += v.{other2}\n\
+         \tcenter_{other1} /= verts.size()\n\
+         \tcenter_{other2} /= verts.size()\n\
+         \tfor i in verts.size():\n\
+         \t\tvar v = verts[i]\n\
+         \t\tvar t = (v.{axis_component} - axis_min) / axis_range\n\
+         \t\tvar s = start_s + (end_s - start_s) * t\n\
+         \t\tv.{other1} = center_{other1} + (v.{other1} - center_{other1}) * s\n\
+         \t\tv.{other2} = center_{other2} + (v.{other2} - center_{other2}) * s\n\
+         \t\tverts[i] = v\n\
+         \tarrays[Mesh.ARRAY_VERTEX] = verts\n\
+         \tarrays[Mesh.ARRAY_NORMAL] = null\n\
+         \tvar st = SurfaceTool.new()\n\
+         \tst.begin(Mesh.PRIMITIVE_TRIANGLES)\n\
+         \tfor v in verts:\n\
+         \t\tst.add_vertex(v)\n\
+         \tst.generate_normals()\n\
+         \tvar mesh = st.commit()\n\
+         \tvar norms = mesh.surface_get_arrays(0)[Mesh.ARRAY_NORMAL]\n\
+         \tvar centroid = Vector3.ZERO\n\
+         \tfor v in verts:\n\
+         \t\tcentroid += v\n\
+         \tcentroid /= verts.size()\n\
+         \tvar need_fix = false\n\
+         \tfor ti in range(0, verts.size(), 3):\n\
+         \t\tvar a = verts[ti]\n\
+         \t\tvar b = verts[ti + 1]\n\
+         \t\tvar c = verts[ti + 2]\n\
+         \t\tvar face_n = (b - a).cross(c - a)\n\
+         \t\tvar tri_center = (a + b + c) / 3.0\n\
+         \t\tif face_n.dot(tri_center - centroid) < 0:\n\
+         \t\t\tverts[ti + 1] = c\n\
+         \t\t\tverts[ti + 2] = b\n\
+         \t\t\tneed_fix = true\n\
+         \tif need_fix:\n\
+         \t\tvar st2 = SurfaceTool.new()\n\
+         \t\tst2.begin(Mesh.PRIMITIVE_TRIANGLES)\n\
+         \t\tfor v in verts:\n\
+         \t\t\tst2.add_vertex(v)\n\
+         \t\tst2.generate_normals()\n\
+         \t\tmesh_inst.mesh = st2.commit()\n\
+         \telse:\n\
+         \t\tmesh_inst.mesh = mesh\n\
+         \tmesh_inst.material_override = null\n\
+         \tvar vc = mesh_inst.mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX].size()\n\
+         \tvar d = {{}}\n\
+         \td[\"axis\"] = \"{axis}\"\n\
+         \td[\"start_scale\"] = start_s\n\
+         \td[\"end_scale\"] = end_s\n\
+         \td[\"vertex_count\"] = vc\n\
+         \treturn JSON.stringify(d)\n"
+    )
+}
+
+/// Generate the GDScript for `mesh bevel`.
+///
+/// Chamfers all sharp edges by inserting new faces. Works by detecting edges
+/// shared by exactly two triangles with a dihedral angle above a threshold,
+/// then cutting corners by offsetting vertices along edge normals.
+#[allow(clippy::too_many_lines)]
+pub fn generate_bevel(radius: f64, segments: u32) -> String {
+    format!(
+        "extends Node\n\
+         \n\
+         func run():\n\
+         \tvar root = get_tree().get_root()\n\
+         \tvar helper = root.get_node_or_null(\"_GdMeshHelper\")\n\
+         \tif helper == null: return \"ERROR: no mesh session — run 'gd mesh create' first\"\n\
+         \tvar mesh_name = helper.get_meta(\"active_mesh\")\n\
+         \tvar mesh_inst = helper.get_node_or_null(mesh_name)\n\
+         \tif mesh_inst == null: return \"ERROR: mesh node not found\"\n\
+         \tif mesh_inst.mesh == null: return \"ERROR: no mesh data\"\n\
+         \tvar arrays = mesh_inst.mesh.surface_get_arrays(0)\n\
+         \tvar verts = arrays[Mesh.ARRAY_VERTEX]\n\
+         \tvar radius = {radius}\n\
+         \tvar segments = {segments}\n\
+         \tvar edge_map = {{}}\n\
+         \tfor ti in range(0, verts.size(), 3):\n\
+         \t\tvar tri_n = (verts[ti+1] - verts[ti]).cross(verts[ti+2] - verts[ti]).normalized()\n\
+         \t\tfor ei in 3:\n\
+         \t\t\tvar a = verts[ti + ei]\n\
+         \t\t\tvar b = verts[ti + (ei + 1) % 3]\n\
+         \t\t\tvar ka = \"%0.4f,%0.4f,%0.4f\" % [a.x, a.y, a.z]\n\
+         \t\t\tvar kb = \"%0.4f,%0.4f,%0.4f\" % [b.x, b.y, b.z]\n\
+         \t\t\tvar key = ka + \"|\" + kb if ka < kb else kb + \"|\" + ka\n\
+         \t\t\tif not edge_map.has(key):\n\
+         \t\t\t\tedge_map[key] = []\n\
+         \t\t\tedge_map[key].append({{\"normal\": tri_n, \"a\": a, \"b\": b}})\n\
+         \tvar sharp_edges = []\n\
+         \tfor key in edge_map:\n\
+         \t\tvar faces = edge_map[key]\n\
+         \t\tif faces.size() == 2:\n\
+         \t\t\tvar dot = faces[0][\"normal\"].dot(faces[1][\"normal\"])\n\
+         \t\t\tif dot < 0.95:\n\
+         \t\t\t\tsharp_edges.append({{\"a\": faces[0][\"a\"], \"b\": faces[0][\"b\"], \"n1\": faces[0][\"normal\"], \"n2\": faces[1][\"normal\"]}})\n\
+         \tvar new_verts = []\n\
+         \tfor v in verts:\n\
+         \t\tnew_verts.append(v)\n\
+         \tfor edge in sharp_edges:\n\
+         \t\tvar ea = edge[\"a\"]\n\
+         \t\tvar eb = edge[\"b\"]\n\
+         \t\tvar n1 = edge[\"n1\"]\n\
+         \t\tvar n2 = edge[\"n2\"]\n\
+         \t\tvar edge_dir = (eb - ea).normalized()\n\
+         \t\tvar off1 = n1 * radius\n\
+         \t\tvar off2 = n2 * radius\n\
+         \t\tfor s in segments:\n\
+         \t\t\tvar t0 = float(s) / segments\n\
+         \t\t\tvar t1 = float(s + 1) / segments\n\
+         \t\t\tvar p0a = ea + off1.lerp(off2, t0)\n\
+         \t\t\tvar p0b = eb + off1.lerp(off2, t0)\n\
+         \t\t\tvar p1a = ea + off1.lerp(off2, t1)\n\
+         \t\t\tvar p1b = eb + off1.lerp(off2, t1)\n\
+         \t\t\tnew_verts.append(p0a)\n\
+         \t\t\tnew_verts.append(p0b)\n\
+         \t\t\tnew_verts.append(p1a)\n\
+         \t\t\tnew_verts.append(p0b)\n\
+         \t\t\tnew_verts.append(p1b)\n\
+         \t\t\tnew_verts.append(p1a)\n\
+         \tvar st = SurfaceTool.new()\n\
+         \tst.begin(Mesh.PRIMITIVE_TRIANGLES)\n\
+         \tfor v in new_verts:\n\
+         \t\tst.add_vertex(v)\n\
+         \tst.generate_normals()\n\
+         \tvar mesh = st.commit()\n\
+         \tvar final_verts = mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]\n\
+         \tvar centroid = Vector3.ZERO\n\
+         \tfor v in final_verts:\n\
+         \t\tcentroid += v\n\
+         \tcentroid /= final_verts.size()\n\
+         \tvar need_fix = false\n\
+         \tfor ti in range(0, final_verts.size(), 3):\n\
+         \t\tvar a = final_verts[ti]\n\
+         \t\tvar b = final_verts[ti + 1]\n\
+         \t\tvar c = final_verts[ti + 2]\n\
+         \t\tvar face_n = (b - a).cross(c - a)\n\
+         \t\tvar tri_center = (a + b + c) / 3.0\n\
+         \t\tif face_n.dot(tri_center - centroid) < 0:\n\
+         \t\t\tfinal_verts[ti + 1] = c\n\
+         \t\t\tfinal_verts[ti + 2] = b\n\
+         \t\t\tneed_fix = true\n\
+         \tif need_fix:\n\
+         \t\tvar st2 = SurfaceTool.new()\n\
+         \t\tst2.begin(Mesh.PRIMITIVE_TRIANGLES)\n\
+         \t\tfor v in final_verts:\n\
+         \t\t\tst2.add_vertex(v)\n\
+         \t\tst2.generate_normals()\n\
+         \t\tmesh_inst.mesh = st2.commit()\n\
+         \telse:\n\
+         \t\tmesh_inst.mesh = mesh\n\
+         \tmesh_inst.material_override = null\n\
+         \tvar vc = mesh_inst.mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX].size()\n\
+         \tvar d = {{}}\n\
+         \td[\"radius\"] = radius\n\
+         \td[\"segments\"] = segments\n\
+         \td[\"sharp_edges\"] = sharp_edges.size()\n\
+         \td[\"vertex_count\"] = vc\n\
          \treturn JSON.stringify(d)\n"
     )
 }

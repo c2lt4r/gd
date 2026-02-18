@@ -17,9 +17,9 @@ fn capture_view(
 ) -> Result<serde_json::Value> {
     // Determine grid plane for this view
     let grid_plane = match view_name {
-        "Front" => Some("front"),
-        "Side" => Some("side"),
-        "Top" => Some("top"),
+        "Front" | "Back" => Some("front"),
+        "Side" | "Left" => Some("side"),
+        "Top" | "Bottom" => Some("top"),
         _ => None, // Iso: no grid
     };
 
@@ -91,10 +91,13 @@ fn capture_view(
 pub fn cmd_view(args: &ViewArgs) -> Result<()> {
     let views: Vec<&str> = match args.view {
         ViewName::Front => vec!["Front"],
+        ViewName::Back => vec!["Back"],
         ViewName::Side => vec!["Side"],
+        ViewName::Left => vec!["Left"],
         ViewName::Top => vec!["Top"],
+        ViewName::Bottom => vec!["Bottom"],
         ViewName::Iso => vec!["Iso"],
-        ViewName::All => vec!["Front", "Side", "Top", "Iso"],
+        ViewName::All => vec!["Front", "Back", "Side", "Left", "Top", "Bottom", "Iso"],
     };
 
     let mut screenshots = Vec::new();

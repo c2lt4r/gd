@@ -189,6 +189,48 @@ fn remove_part_parses() {
     assert_parses(&gdscript::generate_remove_part("engine_1"));
 }
 
+// ── List vertices ────────────────────────────────────────────────────
+
+#[test]
+fn list_vertices_all_parses() {
+    assert_parses(&gdscript::generate_list_vertices(None));
+}
+
+#[test]
+fn list_vertices_region_parses() {
+    let region: super::BoundingBox = ((-1.0, -1.0, -1.0), (1.0, 1.0, 1.0));
+    assert_parses(&gdscript::generate_list_vertices(Some(&region)));
+}
+
+// ── Taper ────────────────────────────────────────────────────────────
+
+#[test]
+fn taper_y_parses() {
+    assert_parses(&gdscript::generate_taper("y", 1.0, 0.0));
+}
+
+#[test]
+fn taper_z_parses() {
+    assert_parses(&gdscript::generate_taper("z", 1.0, 0.5));
+}
+
+#[test]
+fn taper_x_parses() {
+    assert_parses(&gdscript::generate_taper("x", 0.5, 1.5));
+}
+
+// ── Bevel ────────────────────────────────────────────────────────────
+
+#[test]
+fn bevel_parses() {
+    assert_parses(&gdscript::generate_bevel(0.1, 2));
+}
+
+#[test]
+fn bevel_high_segments_parses() {
+    assert_parses(&gdscript::generate_bevel(0.05, 4));
+}
+
 // ── Info ─────────────────────────────────────────────────────────────
 
 #[test]

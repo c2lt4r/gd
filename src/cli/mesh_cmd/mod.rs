@@ -1,10 +1,12 @@
 mod add_part;
+mod bevel;
 mod create;
 mod extrude;
 mod focus;
 mod gdscript;
 mod info;
 mod init;
+mod list_vertices;
 mod move_vertex;
 mod profile;
 mod reference;
@@ -13,6 +15,7 @@ mod revolve;
 mod rotate;
 mod scale;
 mod snapshot;
+mod taper;
 mod translate;
 mod view;
 
@@ -29,6 +32,9 @@ use crate::core::project::GodotProject;
 
 /// Default timeout for mesh eval commands.
 const MESH_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Bounding box defined by two corner points.
+type BoundingBox = ((f64, f64, f64), (f64, f64, f64));
 
 #[derive(Args)]
 pub struct MeshArgs {
@@ -71,6 +77,13 @@ pub enum MeshCommand {
     /// Remove a part from the session
     #[command(name = "remove-part")]
     RemovePart(RemovePartArgs),
+    /// List vertex positions of the active mesh
+    #[command(name = "list-vertices")]
+    ListVertices(ListVerticesArgs),
+    /// Taper an extruded mesh along its depth axis
+    Taper(TaperArgs),
+    /// Bevel (chamfer) edges of the active mesh
+    Bevel(BevelArgs),
     /// Show current mesh session info (vertices, AABB, profile state)
     Info(InfoArgs),
 }
@@ -114,8 +127,11 @@ impl Primitive {
 #[derive(Clone, Debug, ValueEnum)]
 pub enum ViewName {
     Front,
+    Back,
     Side,
+    Left,
     Top,
+    Bottom,
     Iso,
     All,
 }
@@ -333,6 +349,45 @@ pub struct RemovePartArgs {
 }
 
 #[derive(Args)]
+pub struct ListVerticesArgs {
+    /// Filter to bounding box as "x1,y1,z1 x2,y2,z2"
+    #[arg(long, allow_hyphen_values = true)]
+    pub region: Option<String>,
+    /// Output format
+    #[arg(long, default_value = "json")]
+    pub format: OutputFormat,
+}
+
+#[derive(Args)]
+pub struct TaperArgs {
+    /// Axis along which to taper (the extrusion depth axis)
+    #[arg(long, value_enum)]
+    pub axis: Axis,
+    /// Scale factor at the start of the axis (1.0 = no change)
+    #[arg(long, default_value = "1.0")]
+    pub start: f64,
+    /// Scale factor at the end of the axis (0.0 = taper to a point)
+    #[arg(long)]
+    pub end: f64,
+    /// Output format
+    #[arg(long, default_value = "json")]
+    pub format: OutputFormat,
+}
+
+#[derive(Args)]
+pub struct BevelArgs {
+    /// Bevel radius (offset distance from edge)
+    #[arg(long)]
+    pub radius: f64,
+    /// Number of segments for the bevel curve
+    #[arg(long, default_value = "2")]
+    pub segments: u32,
+    /// Output format
+    #[arg(long, default_value = "json")]
+    pub format: OutputFormat,
+}
+
+#[derive(Args)]
 pub struct InfoArgs {
     /// Show summary of all parts instead of just active
     #[arg(long)]
@@ -385,6 +440,9 @@ pub fn exec(args: &MeshArgs) -> Result<()> {
         MeshCommand::Rotate(ref a) => rotate::cmd_rotate(a),
         MeshCommand::Scale(ref a) => scale::cmd_scale(a),
         MeshCommand::RemovePart(ref a) => remove_part::cmd_remove_part(a),
+        MeshCommand::ListVertices(ref a) => list_vertices::cmd_list_vertices(a),
+        MeshCommand::Taper(ref a) => taper::cmd_taper(a),
+        MeshCommand::Bevel(ref a) => bevel::cmd_bevel(a),
         MeshCommand::Info(ref a) => info::cmd_info(a),
     }
 }
