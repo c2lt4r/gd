@@ -1,4 +1,5 @@
 mod add_part;
+mod batch;
 mod bevel;
 mod checkpoint;
 mod create;
@@ -22,6 +23,7 @@ mod revolve;
 mod rotate;
 mod scale;
 mod snapshot;
+mod subdivide;
 mod taper;
 mod translate;
 mod view;
@@ -118,6 +120,10 @@ pub enum MeshCommand {
     /// Subdivide mesh by inserting an axis-aligned cut plane
     #[command(name = "loop-cut")]
     LoopCut(LoopCutArgs),
+    /// Subdivide mesh triangles into smaller triangles for smoother surfaces
+    Subdivide(SubdivideArgs),
+    /// Execute a batch of mesh commands from a JSON file
+    Batch(BatchArgs),
 }
 
 #[derive(Clone, Debug, ValueEnum)]
@@ -543,6 +549,9 @@ pub struct FlipNormalsArgs {
     /// Part name (defaults to active part)
     #[arg(long)]
     pub part: Option<String>,
+    /// Flip normals on all parts at once
+    #[arg(long)]
+    pub all: bool,
     /// Only flip faces whose normal aligns with this axis (cap faces from extrude/revolve)
     #[arg(long, value_enum)]
     pub caps: Option<Axis>,
@@ -556,6 +565,9 @@ pub struct FixNormalsArgs {
     /// Part name (defaults to active part)
     #[arg(long)]
     pub part: Option<String>,
+    /// Fix normals on all parts at once
+    #[arg(long)]
+    pub all: bool,
     /// Output format
     #[arg(long, default_value = "json")]
     pub format: OutputFormat,
@@ -604,6 +616,29 @@ pub struct LoopCutArgs {
     /// Position along the axis to cut (world-space coordinate)
     #[arg(long)]
     pub at: f64,
+    /// Output format
+    #[arg(long, default_value = "json")]
+    pub format: OutputFormat,
+}
+
+#[derive(Args)]
+pub struct SubdivideArgs {
+    /// Part name (defaults to active part)
+    #[arg(long)]
+    pub part: Option<String>,
+    /// Number of subdivision iterations (each multiplies face count by 4)
+    #[arg(long, default_value = "1")]
+    pub iterations: u32,
+    /// Output format
+    #[arg(long, default_value = "json")]
+    pub format: OutputFormat,
+}
+
+#[derive(Args)]
+pub struct BatchArgs {
+    /// Path to JSON command file
+    #[arg(long)]
+    pub file: String,
     /// Output format
     #[arg(long, default_value = "json")]
     pub format: OutputFormat,
@@ -668,6 +703,8 @@ pub fn exec(args: &MeshArgs) -> Result<()> {
         MeshCommand::FixNormals(ref a) => fix_normals::cmd_fix_normals(a),
         MeshCommand::Material(ref a) => material::cmd_material(a),
         MeshCommand::LoopCut(ref a) => loop_cut::cmd_loop_cut(a),
+        MeshCommand::Subdivide(ref a) => subdivide::cmd_subdivide(a),
+        MeshCommand::Batch(ref a) => batch::cmd_batch(a),
     }
 }
 
@@ -701,6 +738,8 @@ fn command_name(cmd: &MeshCommand) -> &'static str {
         MeshCommand::FixNormals(_) => "fix-normals",
         MeshCommand::Material(_) => "material",
         MeshCommand::LoopCut(_) => "loop-cut",
+        MeshCommand::Subdivide(_) => "subdivide",
+        MeshCommand::Batch(_) => "batch",
     }
 }
 

@@ -1300,6 +1300,48 @@ pub fn generate_flip_normals(part: Option<&str>, caps: Option<&str>) -> String {
     )
 }
 
+/// Generate the GDScript for `mesh flip-normals --all`.
+///
+/// Reverses triangle winding on every MeshInstance3D child.
+pub fn generate_flip_normals_all() -> String {
+    "extends Node\n\
+     \n\
+     func run():\n\
+     \tvar root = get_tree().get_root()\n\
+     \tvar helper = root.get_node_or_null(\"_GdMeshHelper\")\n\
+     \tif helper == null: return \"ERROR: no mesh session — run 'gd mesh create' first\"\n\
+     \tvar results = []\n\
+     \tfor child in helper.get_children():\n\
+     \t\tif child is MeshInstance3D and not child.name.begins_with(\"_\"):\n\
+     \t\t\tif child.mesh == null or child.mesh.get_surface_count() == 0:\n\
+     \t\t\t\tcontinue\n\
+     \t\t\tvar verts = child.mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]\n\
+     \t\t\tvar flipped = PackedVector3Array()\n\
+     \t\t\tflipped.resize(verts.size())\n\
+     \t\t\tfor i in range(0, verts.size(), 3):\n\
+     \t\t\t\tflipped[i] = verts[i + 2]\n\
+     \t\t\t\tflipped[i + 1] = verts[i + 1]\n\
+     \t\t\t\tflipped[i + 2] = verts[i]\n\
+     \t\t\tvar st = SurfaceTool.new()\n\
+     \t\t\tst.begin(Mesh.PRIMITIVE_TRIANGLES)\n\
+     \t\t\tfor v in flipped:\n\
+     \t\t\t\tst.add_vertex(v)\n\
+     \t\t\tst.generate_normals()\n\
+     \t\t\tchild.mesh = st.commit()\n\
+     \t\t\tif child.has_meta(\"part_color\"):\n\
+     \t\t\t\tvar _mat = StandardMaterial3D.new()\n\
+     \t\t\t\t_mat.albedo_color = child.get_meta(\"part_color\")\n\
+     \t\t\t\tchild.material_override = _mat\n\
+     \t\t\telse:\n\
+     \t\t\t\tchild.material_override = null\n\
+     \t\t\tresults.append({\"name\": child.name, \"face_count\": verts.size() / 3})\n\
+     \tvar d = {}\n\
+     \td[\"parts_flipped\"] = results.size()\n\
+     \td[\"results\"] = results\n\
+     \treturn JSON.stringify(d)\n"
+        .to_string()
+}
+
 /// Generate the GDScript for `mesh fix-normals`.
 ///
 /// Recalculates normals to face outward using a centroid heuristic:
@@ -1361,6 +1403,126 @@ pub fn generate_fix_normals(part: Option<&str>) -> String {
          \td[\"total_faces\"] = vc / 3\n\
          \treturn JSON.stringify(d)\n"
     )
+}
+
+/// Generate the GDScript for `mesh subdivide`.
+///
+/// Splits each triangle into 4 sub-triangles by inserting edge midpoints.
+/// Each iteration quadruples the face count. Generates smooth normals after.
+pub fn generate_subdivide(part: Option<&str>, iterations: u32) -> String {
+    let target = part.map_or(
+        String::from("\tvar mesh_name = helper.get_meta(\"active_mesh\")\n"),
+        |p| format!("\tvar mesh_name = \"{p}\"\n"),
+    );
+    format!(
+        "extends Node\n\
+         \n\
+         func run():\n\
+         \tvar root = get_tree().get_root()\n\
+         \tvar helper = root.get_node_or_null(\"_GdMeshHelper\")\n\
+         \tif helper == null: return \"ERROR: no mesh session — run 'gd mesh create' first\"\n\
+         {target}\
+         \tvar mesh_inst = helper.get_node_or_null(mesh_name)\n\
+         \tif mesh_inst == null: return \"ERROR: part '\" + str(mesh_name) + \"' not found\"\n\
+         \tif mesh_inst.mesh == null or mesh_inst.mesh.get_surface_count() == 0: return \"ERROR: no mesh data\"\n\
+         \tvar verts = mesh_inst.mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]\n\
+         \tvar iters = {iterations}\n\
+         \tfor _it in iters:\n\
+         \t\tvar new_v = []\n\
+         \t\tfor i in range(0, verts.size(), 3):\n\
+         \t\t\tvar a = verts[i]\n\
+         \t\t\tvar b = verts[i + 1]\n\
+         \t\t\tvar c = verts[i + 2]\n\
+         \t\t\tvar ab = (a + b) * 0.5\n\
+         \t\t\tvar bc = (b + c) * 0.5\n\
+         \t\t\tvar ca = (c + a) * 0.5\n\
+         \t\t\tnew_v.append(a)\n\
+         \t\t\tnew_v.append(ab)\n\
+         \t\t\tnew_v.append(ca)\n\
+         \t\t\tnew_v.append(ab)\n\
+         \t\t\tnew_v.append(b)\n\
+         \t\t\tnew_v.append(bc)\n\
+         \t\t\tnew_v.append(ca)\n\
+         \t\t\tnew_v.append(bc)\n\
+         \t\t\tnew_v.append(c)\n\
+         \t\t\tnew_v.append(ab)\n\
+         \t\t\tnew_v.append(bc)\n\
+         \t\t\tnew_v.append(ca)\n\
+         \t\tverts = PackedVector3Array(new_v)\n\
+         \tvar st = SurfaceTool.new()\n\
+         \tst.begin(Mesh.PRIMITIVE_TRIANGLES)\n\
+         \tfor v in verts:\n\
+         \t\tst.add_vertex(v)\n\
+         \tst.generate_normals()\n\
+         \tmesh_inst.mesh = st.commit()\n\
+         {RESTORE_COLOR}\
+         \tvar vc = verts.size()\n\
+         \tvar d = {{}}\n\
+         \td[\"name\"] = mesh_name\n\
+         \td[\"iterations\"] = iters\n\
+         \td[\"vertex_count\"] = vc\n\
+         \td[\"face_count\"] = vc / 3\n\
+         \treturn JSON.stringify(d)\n"
+    )
+}
+
+/// Generate the GDScript for `mesh fix-normals --all`.
+///
+/// Applies the centroid-based fix to every MeshInstance3D child.
+pub fn generate_fix_normals_all() -> String {
+    "extends Node\n\
+     \n\
+     func run():\n\
+     \tvar root = get_tree().get_root()\n\
+     \tvar helper = root.get_node_or_null(\"_GdMeshHelper\")\n\
+     \tif helper == null: return \"ERROR: no mesh session — run 'gd mesh create' first\"\n\
+     \tvar results = []\n\
+     \tfor child in helper.get_children():\n\
+     \t\tif child is MeshInstance3D and not child.name.begins_with(\"_\"):\n\
+     \t\t\tif child.mesh == null or child.mesh.get_surface_count() == 0:\n\
+     \t\t\t\tcontinue\n\
+     \t\t\tvar verts = child.mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]\n\
+     \t\t\tvar centroid = Vector3.ZERO\n\
+     \t\t\tfor v in verts:\n\
+     \t\t\t\tcentroid += v\n\
+     \t\t\tcentroid /= verts.size()\n\
+     \t\t\tvar fixed = PackedVector3Array()\n\
+     \t\t\tfixed.resize(verts.size())\n\
+     \t\t\tvar fc = 0\n\
+     \t\t\tfor i in range(0, verts.size(), 3):\n\
+     \t\t\t\tvar a = verts[i]\n\
+     \t\t\t\tvar b = verts[i + 1]\n\
+     \t\t\t\tvar c = verts[i + 2]\n\
+     \t\t\t\tvar face_n = (b - a).cross(c - a)\n\
+     \t\t\t\tvar tri_center = (a + b + c) / 3.0\n\
+     \t\t\t\tvar outward = tri_center - centroid\n\
+     \t\t\t\tif face_n.dot(outward) < 0:\n\
+     \t\t\t\t\tfixed[i] = c\n\
+     \t\t\t\t\tfixed[i + 1] = b\n\
+     \t\t\t\t\tfixed[i + 2] = a\n\
+     \t\t\t\t\tfc += 1\n\
+     \t\t\t\telse:\n\
+     \t\t\t\t\tfixed[i] = a\n\
+     \t\t\t\t\tfixed[i + 1] = b\n\
+     \t\t\t\t\tfixed[i + 2] = c\n\
+     \t\t\tvar st = SurfaceTool.new()\n\
+     \t\t\tst.begin(Mesh.PRIMITIVE_TRIANGLES)\n\
+     \t\t\tfor v in fixed:\n\
+     \t\t\t\tst.add_vertex(v)\n\
+     \t\t\tst.generate_normals()\n\
+     \t\t\tchild.mesh = st.commit()\n\
+     \t\t\tif child.has_meta(\"part_color\"):\n\
+     \t\t\t\tvar _mat = StandardMaterial3D.new()\n\
+     \t\t\t\t_mat.albedo_color = child.get_meta(\"part_color\")\n\
+     \t\t\t\tchild.material_override = _mat\n\
+     \t\t\telse:\n\
+     \t\t\t\tchild.material_override = null\n\
+     \t\t\tresults.append({\"name\": child.name, \"faces_flipped\": fc, \"total_faces\": fixed.size() / 3})\n\
+     \tvar d = {}\n\
+     \td[\"parts_fixed\"] = results.size()\n\
+     \td[\"results\"] = results\n\
+     \treturn JSON.stringify(d)\n"
+        .to_string()
 }
 
 /// Generate the GDScript for `mesh duplicate-part --mirror`.
@@ -1549,14 +1711,14 @@ pub fn generate_material_preset_multi(pattern: &str, preset: &str, color: Option
         format!("\tvar base_color = {default_color}\n")
     };
     let props = match preset {
-        "glass" => "\t\tmat.metallic = 0.0\n\t\tmat.roughness = 0.05\n\t\tmat.transparency = 1\n\t\tmat.albedo_color.a = 0.3\n",
-        "metal" => "\t\tmat.metallic = 0.9\n\t\tmat.roughness = 0.3\n",
-        "chrome" => "\t\tmat.metallic = 1.0\n\t\tmat.roughness = 0.05\n\t\tmat.specular = 1.0\n",
-        "rubber" => "\t\tmat.metallic = 0.0\n\t\tmat.roughness = 0.95\n",
-        "paint" => "\t\tmat.metallic = 0.1\n\t\tmat.roughness = 0.4\n",
-        "wood" => "\t\tmat.metallic = 0.0\n\t\tmat.roughness = 0.7\n",
-        "matte" => "\t\tmat.metallic = 0.0\n\t\tmat.roughness = 1.0\n",
-        _ => "\t\tmat.metallic = 0.0\n\t\tmat.roughness = 0.4\n", // plastic
+        "glass" => "\t\t\tmat.metallic = 0.0\n\t\t\tmat.roughness = 0.05\n\t\t\tmat.transparency = 1\n\t\t\tmat.albedo_color.a = 0.3\n",
+        "metal" => "\t\t\tmat.metallic = 0.9\n\t\t\tmat.roughness = 0.3\n",
+        "chrome" => "\t\t\tmat.metallic = 1.0\n\t\t\tmat.roughness = 0.05\n\t\t\tmat.specular = 1.0\n",
+        "rubber" => "\t\t\tmat.metallic = 0.0\n\t\t\tmat.roughness = 0.95\n",
+        "paint" => "\t\t\tmat.metallic = 0.1\n\t\t\tmat.roughness = 0.4\n",
+        "wood" => "\t\t\tmat.metallic = 0.0\n\t\t\tmat.roughness = 0.7\n",
+        "matte" => "\t\t\tmat.metallic = 0.0\n\t\t\tmat.roughness = 1.0\n",
+        _ => "\t\t\tmat.metallic = 0.0\n\t\t\tmat.roughness = 0.4\n", // plastic
     };
     format!(
         "extends Node\n\
@@ -1583,7 +1745,7 @@ pub fn generate_material_preset_multi(pattern: &str, preset: &str, color: Option
          \t\t\tvar mat = StandardMaterial3D.new()\n\
          \t\t\tmat.albedo_color = base_color\n\
          {props}\
-         \t\tmi.material_override = mat\n\
+         \t\t\tmi.material_override = mat\n\
          \t\t\tmi.set_meta(\"part_color\", base_color)\n\
          \t\t\tapplied.append(n)\n\
          \tvar d = {{}}\n\

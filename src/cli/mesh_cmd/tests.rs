@@ -403,6 +403,11 @@ fn fix_normals_named_parses() {
 // ── Flip normals ────────────────────────────────────────────────────
 
 #[test]
+fn flip_normals_all_parses() {
+    assert_parses(&gdscript::generate_flip_normals_all());
+}
+
+#[test]
 fn flip_normals_active_parses() {
     assert_parses(&gdscript::generate_flip_normals(None, None));
 }
@@ -473,6 +478,18 @@ fn material_preset_multi_parses() {
     assert_parses(&gdscript::generate_material_preset_multi("window-*", "glass", None));
 }
 
+// ── Material preset multi (indentation regression) ──────────────────
+
+#[test]
+fn material_preset_multi_glass_with_color_parses() {
+    assert_parses(&gdscript::generate_material_preset_multi("windshield,rear-window", "glass", Some("8ab8d0")));
+}
+
+#[test]
+fn material_preset_multi_metal_parses() {
+    assert_parses(&gdscript::generate_material_preset_multi("wheel-*", "metal", None));
+}
+
 // ── Loop cut ────────────────────────────────────────────────────────
 
 #[test]
@@ -488,6 +505,30 @@ fn loop_cut_x_parses() {
 #[test]
 fn loop_cut_z_parses() {
     assert_parses(&gdscript::generate_loop_cut(None, "z", 0.0));
+}
+
+// ── Subdivide ────────────────────────────────────────────────────────
+
+#[test]
+fn subdivide_active_parses() {
+    assert_parses(&gdscript::generate_subdivide(None, 1));
+}
+
+#[test]
+fn subdivide_named_parses() {
+    assert_parses(&gdscript::generate_subdivide(Some("hull"), 1));
+}
+
+#[test]
+fn subdivide_multiple_iterations_parses() {
+    assert_parses(&gdscript::generate_subdivide(None, 3));
+}
+
+// ── Fix normals all ─────────────────────────────────────────────────
+
+#[test]
+fn fix_normals_all_parses() {
+    assert_parses(&gdscript::generate_fix_normals_all());
 }
 
 // ── Parse helpers ────────────────────────────────────────────────────
