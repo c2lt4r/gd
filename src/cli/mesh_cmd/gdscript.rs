@@ -16,11 +16,11 @@ const RESTORE_COLOR: &str = "\tif mesh_inst.has_meta(\"part_color\"):\n\
 /// Generate the GDScript for `mesh create`.
 #[allow(clippy::too_many_lines)]
 pub fn generate_create(name: &str, primitive: &str) -> String {
-    let primitive_line = match primitive {
-        "cube" => "\tmesh_inst.mesh = BoxMesh.new()\n",
-        "sphere" => "\tmesh_inst.mesh = SphereMesh.new()\n",
-        "cylinder" => "\tmesh_inst.mesh = CylinderMesh.new()\n",
-        _ => "",
+    let (primitive_line, primitive_size) = match primitive {
+        "cube" => ("\tmesh_inst.mesh = BoxMesh.new()\n", "[1, 1, 1]"),
+        "sphere" => ("\tmesh_inst.mesh = SphereMesh.new()\n", "[2, 2, 2]"),
+        "cylinder" => ("\tmesh_inst.mesh = CylinderMesh.new()\n", "[2, 2, 2]"),
+        _ => ("", "[0, 0, 0]"),
     };
 
     format!(
@@ -105,6 +105,7 @@ pub fn generate_create(name: &str, primitive: &str) -> String {
          \tenv_res.background_color = Color(0.08, 0.12, 0.18)\n\
          \tenv_res.ambient_light_source = 1\n\
          \tenv_res.ambient_light_color = Color(0.3, 0.3, 0.3)\n\
+         \tenv_res.tonemap_mode = 3\n\
          \tvar world_env = WorldEnvironment.new()\n\
          \tworld_env.name = \"_MeshEnv\"\n\
          \tworld_env.environment = env_res\n\
@@ -129,6 +130,7 @@ pub fn generate_create(name: &str, primitive: &str) -> String {
          \tvar d = {{}}\n\
          \td[\"name\"] = \"{name}\"\n\
          \td[\"primitive\"] = \"{primitive}\"\n\
+         \td[\"default_size\"] = {primitive_size}\n\
          \td[\"vertex_count\"] = vc\n\
          \treturn JSON.stringify(d)\n"
     )
@@ -307,6 +309,7 @@ pub fn generate_extrude(depth: f64) -> String {
          \tvar d = {{}}\n\
          \td[\"depth\"] = {depth}\n\
          \td[\"plane\"] = plane\n\
+         \td[\"depth_range\"] = [-{half}, {half}]\n\
          \td[\"vertex_count\"] = vc\n\
          \td[\"face_count\"] = fc\n\
          \treturn JSON.stringify(d)\n"
@@ -610,12 +613,21 @@ pub fn generate_list_vertices(region: Option<&super::BoundingBox>) -> String {
 /// Vertices at the min extent of the axis get `start_scale`, at the max extent
 /// get `end_scale`, with linear interpolation between. Preserves the input
 /// mesh's winding order (no centroid fix needed — relies on correct extrude).
-pub fn generate_taper(axis: &str, start_scale: f64, end_scale: f64) -> String {
+pub fn generate_taper(
+    part: Option<&str>,
+    axis: &str,
+    start_scale: f64,
+    end_scale: f64,
+) -> String {
     let (axis_component, other1, other2) = match axis {
         "x" => ("x", "y", "z"),
         "z" => ("z", "x", "y"),
         _ => ("y", "x", "z"), // y default
     };
+    let target = part.map_or(
+        String::from("\tvar mesh_name = helper.get_meta(\"active_mesh\")\n"),
+        |p| format!("\tvar mesh_name = \"{p}\"\n"),
+    );
     format!(
         "extends Node\n\
          \n\
@@ -623,7 +635,7 @@ pub fn generate_taper(axis: &str, start_scale: f64, end_scale: f64) -> String {
          \tvar root = get_tree().get_root()\n\
          \tvar helper = root.get_node_or_null(\"_GdMeshHelper\")\n\
          \tif helper == null: return \"ERROR: no mesh session — run 'gd mesh create' first\"\n\
-         \tvar mesh_name = helper.get_meta(\"active_mesh\")\n\
+         {target}\
          \tvar mesh_inst = helper.get_node_or_null(mesh_name)\n\
          \tif mesh_inst == null: return \"ERROR: mesh node not found\"\n\
          \tif mesh_inst.mesh == null: return \"ERROR: no mesh data\"\n\
@@ -946,6 +958,102 @@ pub fn generate_info_all() -> String {
         .to_string()
 }
 
+/// Generate the GDScript for `mesh checkpoint`.
+///
+/// Saves the current surface arrays + material color for every part as metadata.
+pub fn generate_checkpoint() -> String {
+    "extends Node\n\
+     \n\
+     func run():\n\
+     \tvar root = get_tree().get_root()\n\
+     \tvar helper = root.get_node_or_null(\"_GdMeshHelper\")\n\
+     \tif helper == null: return \"ERROR: no mesh session — run 'gd mesh create' first\"\n\
+     \tvar count = 0\n\
+     \tfor child in helper.get_children():\n\
+     \t\tif child is MeshInstance3D and not child.name.begins_with(\"_\"):\n\
+     \t\t\tif child.mesh and child.mesh.get_surface_count() > 0:\n\
+     \t\t\t\tvar arrays = child.mesh.surface_get_arrays(0)\n\
+     \t\t\t\tchild.set_meta(\"checkpoint_verts\", arrays[Mesh.ARRAY_VERTEX])\n\
+     \t\t\t\tchild.set_meta(\"checkpoint_normals\", arrays[Mesh.ARRAY_NORMAL])\n\
+     \t\t\tcount += 1\n\
+     \tvar d = {}\n\
+     \td[\"parts_saved\"] = count\n\
+     \treturn JSON.stringify(d)\n"
+        .to_string()
+}
+
+/// Generate the GDScript for `mesh restore`.
+///
+/// Rebuilds meshes from saved checkpoint metadata.
+pub fn generate_restore() -> String {
+    format!(
+        "extends Node\n\
+         \n\
+         func run():\n\
+         \tvar root = get_tree().get_root()\n\
+         \tvar helper = root.get_node_or_null(\"_GdMeshHelper\")\n\
+         \tif helper == null: return \"ERROR: no mesh session — run 'gd mesh create' first\"\n\
+         \tvar count = 0\n\
+         \tfor child in helper.get_children():\n\
+         \t\tif child is MeshInstance3D and not child.name.begins_with(\"_\"):\n\
+         \t\t\tif child.has_meta(\"checkpoint_verts\"):\n\
+         \t\t\t\tvar verts = child.get_meta(\"checkpoint_verts\")\n\
+         \t\t\t\tvar st = SurfaceTool.new()\n\
+         \t\t\t\tst.begin(Mesh.PRIMITIVE_TRIANGLES)\n\
+         \t\t\t\tfor v in verts:\n\
+         \t\t\t\t\tst.add_vertex(v)\n\
+         \t\t\t\tst.generate_normals()\n\
+         \t\t\t\tchild.mesh = st.commit()\n\
+         {RESTORE_COLOR}\
+         \t\t\t\tcount += 1\n\
+         \tvar d = {{}}\n\
+         \td[\"parts_restored\"] = count\n\
+         \treturn JSON.stringify(d)\n"
+    )
+}
+
+/// Generate the GDScript for `mesh flip-normals`.
+///
+/// Inverts all triangle winding on the target part, then regenerates normals.
+pub fn generate_flip_normals(part: Option<&str>) -> String {
+    let target = part.map_or(
+        String::from("\tvar mesh_name = helper.get_meta(\"active_mesh\")\n"),
+        |p| format!("\tvar mesh_name = \"{p}\"\n"),
+    );
+    format!(
+        "extends Node\n\
+         \n\
+         func run():\n\
+         \tvar root = get_tree().get_root()\n\
+         \tvar helper = root.get_node_or_null(\"_GdMeshHelper\")\n\
+         \tif helper == null: return \"ERROR: no mesh session — run 'gd mesh create' first\"\n\
+         {target}\
+         \tvar mesh_inst = helper.get_node_or_null(mesh_name)\n\
+         \tif mesh_inst == null: return \"ERROR: part '\" + str(mesh_name) + \"' not found\"\n\
+         \tif mesh_inst.mesh == null or mesh_inst.mesh.get_surface_count() == 0: return \"ERROR: no mesh data\"\n\
+         \tvar verts = mesh_inst.mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]\n\
+         \tvar flipped = PackedVector3Array()\n\
+         \tflipped.resize(verts.size())\n\
+         \tfor i in range(0, verts.size(), 3):\n\
+         \t\tflipped[i] = verts[i + 2]\n\
+         \t\tflipped[i + 1] = verts[i + 1]\n\
+         \t\tflipped[i + 2] = verts[i]\n\
+         \tvar st = SurfaceTool.new()\n\
+         \tst.begin(Mesh.PRIMITIVE_TRIANGLES)\n\
+         \tfor v in flipped:\n\
+         \t\tst.add_vertex(v)\n\
+         \tst.generate_normals()\n\
+         \tmesh_inst.mesh = st.commit()\n\
+         {RESTORE_COLOR}\
+         \tvar vc = flipped.size()\n\
+         \tvar d = {{}}\n\
+         \td[\"name\"] = mesh_name\n\
+         \td[\"vertex_count\"] = vc\n\
+         \td[\"face_count\"] = vc / 3\n\
+         \treturn JSON.stringify(d)\n"
+    )
+}
+
 /// Generate the GDScript to apply a face orientation debug overlay.
 ///
 /// Blue = front-facing (correct outward winding), Red = back-facing (inverted).
@@ -1008,9 +1116,13 @@ pub fn generate_autofit_cameras(zoom: f64) -> String {
          \tif rig == null: return \"ERROR: camera rig not found\"\n\
          \tvar combined = AABB()\n\
          \tvar first = true\n\
+         \tvar visible_count = 0\n\
+         \tvar total_count = 0\n\
          \tfor child in helper.get_children():\n\
          \t\tif child is MeshInstance3D and not child.name.begins_with(\"_\"):\n\
+         \t\t\ttotal_count += 1\n\
          \t\t\tif child.visible and child.mesh:\n\
+         \t\t\t\tvisible_count += 1\n\
          \t\t\t\tvar ab = child.transform * child.mesh.get_aabb()\n\
          \t\t\t\tif first:\n\
          \t\t\t\t\tcombined = ab\n\
@@ -1021,8 +1133,9 @@ pub fn generate_autofit_cameras(zoom: f64) -> String {
          \t\tcombined = AABB(Vector3(-5, -5, -5), Vector3(10, 10, 10))\n\
          \tvar center = combined.get_center()\n\
          \tvar dims = combined.size\n\
-         \tvar sz = max(max(dims.x, dims.y), dims.z) * 1.5 * {zoom}\n\
+         \tvar sz = max(max(dims.x, dims.y), dims.z) * 1.5\n\
          \tif sz < 2.0: sz = 2.0\n\
+         \tsz /= {zoom}\n\
          \trig.position = center\n\
          \tfor cam in rig.get_children():\n\
          \t\tif cam is Camera3D:\n\
@@ -1035,6 +1148,8 @@ pub fn generate_autofit_cameras(zoom: f64) -> String {
          \td[\"camera_size\"] = sz\n\
          \td[\"center\"] = [center.x, center.y, center.z]\n\
          \td[\"aabb_size\"] = [dims.x, dims.y, dims.z]\n\
+         \td[\"visible_parts\"] = visible_count\n\
+         \td[\"total_parts\"] = total_count\n\
          \treturn JSON.stringify(d)\n"
     )
 }

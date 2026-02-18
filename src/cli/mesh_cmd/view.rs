@@ -90,6 +90,9 @@ pub fn cmd_view(args: &ViewArgs) -> Result<()> {
     let autofit: serde_json::Value = serde_json::from_str(&autofit_result)
         .map_err(|e| miette!("Failed to parse autofit result: {e}"))?;
     let camera_half_size = autofit["camera_size"].as_f64().unwrap_or(10.0) / 2.0;
+    let visible_parts = autofit["visible_parts"].as_u64().unwrap_or(0);
+    let total_parts = autofit["total_parts"].as_u64().unwrap_or(0);
+    let has_hidden = total_parts > 0 && visible_parts < total_parts;
 
     // Apply face-orientation debug shader if --normals
     if args.normals {
@@ -141,9 +144,21 @@ pub fn cmd_view(args: &ViewArgs) -> Result<()> {
             if args.normals {
                 output["mode"] = serde_json::json!("normal_debug");
             }
+            if has_hidden {
+                output["warning"] = serde_json::json!(format!(
+                    "Only {visible_parts}/{total_parts} parts visible. Use --focus all to show all parts."
+                ));
+            }
             println!("{}", serde_json::to_string_pretty(&output).unwrap());
         }
         OutputFormat::Text => {
+            if has_hidden {
+                eprintln!(
+                    "{}: only {visible_parts}/{total_parts} parts visible — use {} to show all",
+                    "Warning".yellow(),
+                    "--focus all".cyan()
+                );
+            }
             for (view, path) in &captures {
                 println!(
                     "{} {view}: {}",

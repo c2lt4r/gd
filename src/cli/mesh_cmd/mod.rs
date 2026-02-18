@@ -1,9 +1,11 @@
 mod add_part;
 mod bevel;
+mod checkpoint;
 mod create;
 mod describe;
 mod duplicate_part;
 mod extrude;
+mod flip_normals;
 mod focus;
 mod gdscript;
 mod info;
@@ -93,6 +95,13 @@ pub enum MeshCommand {
     Info(InfoArgs),
     /// One-shot session debrief: part inventory + composite screenshots
     Describe(DescribeArgs),
+    /// Save a checkpoint of all part meshes for later restore
+    Checkpoint(CheckpointArgs),
+    /// Restore all part meshes from the last checkpoint
+    Restore(RestoreArgs),
+    /// Flip triangle winding to fix inverted normals
+    #[command(name = "flip-normals")]
+    FlipNormals(FlipNormalsArgs),
 }
 
 #[derive(Clone, Debug, ValueEnum)]
@@ -215,8 +224,8 @@ pub struct RevolveArgs {
     #[arg(long, value_enum)]
     pub axis: Axis,
     /// Angle in degrees
-    #[arg(long, default_value = "360")]
-    pub angle: f64,
+    #[arg(long, alias = "angle", default_value = "360")]
+    pub degrees: f64,
     /// Number of segments
     #[arg(long, default_value = "16")]
     pub segments: u32,
@@ -248,7 +257,7 @@ pub struct ViewArgs {
     /// Show coordinate grid overlay
     #[arg(long)]
     pub grid: bool,
-    /// Zoom multiplier (1.0 = auto-fit to model, 2.0 = zoom out 2x)
+    /// Zoom level (1.0 = auto-fit, 2.0 = 2x closer, 0.5 = 2x farther)
     #[arg(long, default_value = "1.0")]
     pub zoom: f64,
     /// Show face orientation overlay (blue = front-facing, red = back-facing)
@@ -389,6 +398,9 @@ pub struct ListVerticesArgs {
 
 #[derive(Args)]
 pub struct TaperArgs {
+    /// Part name (defaults to active part)
+    #[arg(long)]
+    pub part: Option<String>,
     /// Axis along which to taper (the extrusion depth axis)
     #[arg(long, value_enum)]
     pub axis: Axis,
@@ -434,9 +446,33 @@ pub struct DescribeArgs {
     /// Output directory for screenshots
     #[arg(short, long)]
     pub output: Option<String>,
-    /// Zoom multiplier (1.0 = auto-fit to model)
+    /// Zoom level (1.0 = auto-fit, 2.0 = 2x closer, 0.5 = 2x farther)
     #[arg(long, default_value = "1.0")]
     pub zoom: f64,
+    /// Output format
+    #[arg(long, default_value = "json")]
+    pub format: OutputFormat,
+}
+
+#[derive(Args)]
+pub struct CheckpointArgs {
+    /// Output format
+    #[arg(long, default_value = "json")]
+    pub format: OutputFormat,
+}
+
+#[derive(Args)]
+pub struct RestoreArgs {
+    /// Output format
+    #[arg(long, default_value = "json")]
+    pub format: OutputFormat,
+}
+
+#[derive(Args)]
+pub struct FlipNormalsArgs {
+    /// Part name (defaults to active part)
+    #[arg(long)]
+    pub part: Option<String>,
     /// Output format
     #[arg(long, default_value = "json")]
     pub format: OutputFormat,
@@ -491,6 +527,9 @@ pub fn exec(args: &MeshArgs) -> Result<()> {
         MeshCommand::Bevel(ref a) => bevel::cmd_bevel(a),
         MeshCommand::Info(ref a) => info::cmd_info(a),
         MeshCommand::Describe(ref a) => describe::cmd_describe(a),
+        MeshCommand::Checkpoint(ref a) => checkpoint::cmd_checkpoint(a),
+        MeshCommand::Restore(ref a) => checkpoint::cmd_restore(a),
+        MeshCommand::FlipNormals(ref a) => flip_normals::cmd_flip_normals(a),
     }
 }
 

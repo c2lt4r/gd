@@ -12,6 +12,7 @@ background_mode = 1
 background_color = Color(0.08, 0.12, 0.18, 1)
 ambient_light_source = 1
 ambient_light_color = Color(0.3, 0.3, 0.3, 1)
+tonemap_mode = 3
 
 [node name=\"MeshWorkspace\" type=\"Node3D\"]
 

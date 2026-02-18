@@ -213,17 +213,22 @@ fn list_vertices_region_parses() {
 
 #[test]
 fn taper_y_parses() {
-    assert_parses(&gdscript::generate_taper("y", 1.0, 0.0));
+    assert_parses(&gdscript::generate_taper(None, "y", 1.0, 0.0));
 }
 
 #[test]
 fn taper_z_parses() {
-    assert_parses(&gdscript::generate_taper("z", 1.0, 0.5));
+    assert_parses(&gdscript::generate_taper(None, "z", 1.0, 0.5));
 }
 
 #[test]
 fn taper_x_parses() {
-    assert_parses(&gdscript::generate_taper("x", 0.5, 1.5));
+    assert_parses(&gdscript::generate_taper(None, "x", 0.5, 1.5));
+}
+
+#[test]
+fn taper_named_part_parses() {
+    assert_parses(&gdscript::generate_taper(Some("wing"), "z", 1.0, 0.0));
 }
 
 // ── Bevel ────────────────────────────────────────────────────────────
@@ -294,6 +299,30 @@ fn normal_debug_parses() {
 #[test]
 fn normal_debug_clear_parses() {
     assert_parses(&gdscript::generate_normal_debug_clear());
+}
+
+// ── Checkpoint / Restore ─────────────────────────────────────────────
+
+#[test]
+fn checkpoint_parses() {
+    assert_parses(&gdscript::generate_checkpoint());
+}
+
+#[test]
+fn restore_parses() {
+    assert_parses(&gdscript::generate_restore());
+}
+
+// ── Flip normals ────────────────────────────────────────────────────
+
+#[test]
+fn flip_normals_active_parses() {
+    assert_parses(&gdscript::generate_flip_normals(None));
+}
+
+#[test]
+fn flip_normals_named_parses() {
+    assert_parses(&gdscript::generate_flip_normals(Some("receiver")));
 }
 
 // ── Parse helpers ────────────────────────────────────────────────────

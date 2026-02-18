@@ -5,7 +5,7 @@ use super::gdscript;
 use super::{OutputFormat, TaperArgs, run_eval};
 
 pub fn cmd_taper(args: &TaperArgs) -> Result<()> {
-    let script = gdscript::generate_taper(args.axis.as_str(), args.start, args.end);
+    let script = gdscript::generate_taper(args.part.as_deref(), args.axis.as_str(), args.start, args.end);
     let result = run_eval(&script)?;
     let parsed: serde_json::Value =
         serde_json::from_str(&result).map_err(|e| miette::miette!("Failed to parse result: {e}"))?;
