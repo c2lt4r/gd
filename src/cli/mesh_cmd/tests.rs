@@ -397,6 +397,45 @@ fn material_active_parses() {
     assert_parses(&gdscript::generate_material(None, "00ff00"));
 }
 
+// ── Material preset ─────────────────────────────────────────────────
+
+#[test]
+fn material_preset_glass_parses() {
+    assert_parses(&gdscript::generate_material_preset(None, "glass", None));
+}
+
+#[test]
+fn material_preset_metal_with_color_parses() {
+    assert_parses(&gdscript::generate_material_preset(Some("body"), "metal", Some("aaaaaa")));
+}
+
+#[test]
+fn material_preset_rubber_parses() {
+    assert_parses(&gdscript::generate_material_preset(None, "rubber", None));
+}
+
+#[test]
+fn material_preset_chrome_parses() {
+    assert_parses(&gdscript::generate_material_preset(None, "chrome", None));
+}
+
+// ── Loop cut ────────────────────────────────────────────────────────
+
+#[test]
+fn loop_cut_y_parses() {
+    assert_parses(&gdscript::generate_loop_cut(None, "y", 0.5));
+}
+
+#[test]
+fn loop_cut_x_parses() {
+    assert_parses(&gdscript::generate_loop_cut(Some("wing"), "x", -2.0));
+}
+
+#[test]
+fn loop_cut_z_parses() {
+    assert_parses(&gdscript::generate_loop_cut(None, "z", 0.0));
+}
+
 // ── Parse helpers ────────────────────────────────────────────────────
 
 #[test]

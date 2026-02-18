@@ -2,7 +2,7 @@ use miette::Result;
 use owo_colors::OwoColorize;
 
 use super::gdscript;
-use super::{MaterialArgs, OutputFormat, run_eval};
+use super::{MaterialArgs, MaterialPreset, OutputFormat, run_eval};
 
 /// Normalize a color string: strip leading '#', expand named colors to hex.
 fn normalize_color(input: &str) -> String {
@@ -22,9 +22,36 @@ fn normalize_color(input: &str) -> String {
     }
 }
 
+fn preset_name(preset: &MaterialPreset) -> &'static str {
+    match preset {
+        MaterialPreset::Glass => "glass",
+        MaterialPreset::Metal => "metal",
+        MaterialPreset::Rubber => "rubber",
+        MaterialPreset::Chrome => "chrome",
+        MaterialPreset::Paint => "paint",
+        MaterialPreset::Wood => "wood",
+        MaterialPreset::Matte => "matte",
+        MaterialPreset::Plastic => "plastic",
+    }
+}
+
 pub fn cmd_material(args: &MaterialArgs) -> Result<()> {
-    let color = normalize_color(&args.color);
-    let script = gdscript::generate_material(args.part.as_deref(), &color);
+    let color = args.color.as_ref().map(|c| normalize_color(c));
+
+    let script = if let Some(ref preset) = args.preset {
+        gdscript::generate_material_preset(
+            args.part.as_deref(),
+            preset_name(preset),
+            color.as_deref(),
+        )
+    } else if let Some(ref hex) = color {
+        gdscript::generate_material(args.part.as_deref(), hex)
+    } else {
+        return Err(miette::miette!(
+            "Provide --color or --preset (e.g. --preset glass, --color ff0000)"
+        ));
+    };
+
     let result = run_eval(&script)?;
     let parsed: serde_json::Value =
         serde_json::from_str(&result).map_err(|e| miette::miette!("Failed to parse result: {e}"))?;
@@ -35,12 +62,22 @@ pub fn cmd_material(args: &MaterialArgs) -> Result<()> {
         }
         OutputFormat::Text => {
             let name = parsed["name"].as_str().unwrap_or("?");
-            let hex = parsed["color"].as_str().unwrap_or("?");
-            println!(
-                "Material {}: color #{}",
-                name.green().bold(),
-                hex.cyan()
-            );
+            if let Some(preset) = parsed["preset"].as_str() {
+                let metallic = parsed["metallic"].as_f64().unwrap_or(0.0);
+                let roughness = parsed["roughness"].as_f64().unwrap_or(0.0);
+                println!(
+                    "Material {}: preset={}, metallic={metallic:.1}, roughness={roughness:.1}",
+                    name.green().bold(),
+                    preset.cyan(),
+                );
+            } else {
+                let hex = parsed["color"].as_str().unwrap_or("?");
+                println!(
+                    "Material {}: color #{}",
+                    name.green().bold(),
+                    hex.cyan()
+                );
+            }
         }
     }
     Ok(())

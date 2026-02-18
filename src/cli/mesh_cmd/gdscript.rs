@@ -110,6 +110,17 @@ pub fn generate_create(name: &str, primitive: &str) -> String {
          \tworld_env.name = \"_MeshEnv\"\n\
          \tworld_env.environment = env_res\n\
          \thelper.add_child(world_env)\n\
+         \tvar hud_layer = CanvasLayer.new()\n\
+         \thud_layer.name = \"_HudLayer\"\n\
+         \thud_layer.layer = 100\n\
+         \thelper.add_child(hud_layer)\n\
+         \tvar hud_label = Label.new()\n\
+         \thud_label.name = \"_HudLabel\"\n\
+         \thud_label.text = \"gd mesh create\"\n\
+         \thud_label.add_theme_font_size_override(\"font_size\", 16)\n\
+         \thud_label.add_theme_color_override(\"font_color\", Color(0.6, 0.8, 1.0, 0.7))\n\
+         \thud_label.position = Vector2(10, 10)\n\
+         \thud_layer.add_child(hud_label)\n\
          \tvar mesh_inst = MeshInstance3D.new()\n\
          \tmesh_inst.name = \"{name}\"\n\
          {primitive_line}\
@@ -574,18 +585,26 @@ pub fn generate_snapshot(tscn_path: &str) -> String {
          \tif mesh_children.size() == 0: return \"ERROR: no mesh data in any part\"\n\
          \tvar resources = []\n\
          \tvar transforms = {{}}\n\
+         \tvar materials = {{}}\n\
          \tfor mi in mesh_children:\n\
          \t\tvar res_path = \"{base_path}_\" + mi.name + \".tres\"\n\
          \t\tvar err = ResourceSaver.save(mi.mesh, res_path)\n\
          \t\tif err != OK: return \"ERROR: failed to save mesh '\" + mi.name + \"': \" + str(err)\n\
          \t\tresources.append({{\"name\": mi.name, \"resource\": res_path}})\n\
          \t\ttransforms[mi.name] = mi.transform\n\
+         \t\tif mi.material_override:\n\
+         \t\t\tvar mat_path = \"{base_path}_\" + mi.name + \"_mat.tres\"\n\
+         \t\t\tvar merr = ResourceSaver.save(mi.material_override, mat_path)\n\
+         \t\t\tif merr == OK:\n\
+         \t\t\t\tmaterials[mi.name] = mat_path\n\
          \tvar scene_root\n\
          \tif mesh_children.size() == 1:\n\
          \t\tvar node = MeshInstance3D.new()\n\
          \t\tnode.name = mesh_children[0].name\n\
          \t\tnode.mesh = load(resources[0][\"resource\"])\n\
          \t\tnode.transform = transforms[node.name]\n\
+         \t\tif materials.has(node.name):\n\
+         \t\t\tnode.material_override = load(materials[node.name])\n\
          \t\tscene_root = node\n\
          \telse:\n\
          \t\tscene_root = Node3D.new()\n\
@@ -595,6 +614,8 @@ pub fn generate_snapshot(tscn_path: &str) -> String {
          \t\t\tnode.name = r[\"name\"]\n\
          \t\t\tnode.mesh = load(r[\"resource\"])\n\
          \t\t\tnode.transform = transforms[r[\"name\"]]\n\
+         \t\t\tif materials.has(r[\"name\"]):\n\
+         \t\t\t\tnode.material_override = load(materials[r[\"name\"]])\n\
          \t\t\tscene_root.add_child(node)\n\
          \t\t\tnode.owner = scene_root\n\
          \tvar scene = PackedScene.new()\n\
@@ -1340,6 +1361,183 @@ pub fn generate_material(part: Option<&str>, color: &str) -> String {
          \td[\"name\"] = mesh_name\n\
          \td[\"color\"] = hex\n\
          \td[\"rgb\"] = [snapped(color.r, 0.01), snapped(color.g, 0.01), snapped(color.b, 0.01)]\n\
+         \treturn JSON.stringify(d)\n"
+    )
+}
+
+/// Generate the GDScript for `mesh loop-cut`.
+///
+/// Splits all triangles that straddle an axis-aligned plane at the given position.
+/// Each straddling triangle is split into 2 or 3 sub-triangles by computing edge
+/// intersection points. Triangles fully on one side are preserved unchanged.
+#[allow(clippy::too_many_lines)]
+pub fn generate_loop_cut(part: Option<&str>, axis: &str, at: f64) -> String {
+    let axis_component = match axis {
+        "x" => "x",
+        "z" => "z",
+        _ => "y",
+    };
+    let target = part.map_or(
+        String::from("\tvar mesh_name = helper.get_meta(\"active_mesh\")\n"),
+        |p| format!("\tvar mesh_name = \"{p}\"\n"),
+    );
+    format!(
+        "extends Node\n\
+         \n\
+         func _lerp_edge(a, b, plane_val, axis):\n\
+         \tvar da = a[axis] - plane_val\n\
+         \tvar db = b[axis] - plane_val\n\
+         \tvar t = da / (da - db)\n\
+         \treturn a.lerp(b, t)\n\
+         \n\
+         func run():\n\
+         \tvar root = get_tree().get_root()\n\
+         \tvar helper = root.get_node_or_null(\"_GdMeshHelper\")\n\
+         \tif helper == null: return \"ERROR: no mesh session — run 'gd mesh create' first\"\n\
+         {target}\
+         \tvar mesh_inst = helper.get_node_or_null(mesh_name)\n\
+         \tif mesh_inst == null: return \"ERROR: mesh node not found\"\n\
+         \tif mesh_inst.mesh == null or mesh_inst.mesh.get_surface_count() == 0: return \"ERROR: no mesh data\"\n\
+         \tvar verts = mesh_inst.mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]\n\
+         \tvar plane_val = {at}\n\
+         \tvar axis = \"{axis_component}\"\n\
+         \tvar ai\n\
+         \tif axis == \"x\": ai = 0\n\
+         \telif axis == \"y\": ai = 1\n\
+         \telse: ai = 2\n\
+         \tvar new_verts = PackedVector3Array()\n\
+         \tvar splits = 0\n\
+         \tfor ti in range(0, verts.size(), 3):\n\
+         \t\tvar v0 = verts[ti]\n\
+         \t\tvar v1 = verts[ti + 1]\n\
+         \t\tvar v2 = verts[ti + 2]\n\
+         \t\tvar s0 = v0[ai] - plane_val\n\
+         \t\tvar s1 = v1[ai] - plane_val\n\
+         \t\tvar s2 = v2[ai] - plane_val\n\
+         \t\tvar pos = (1 if s0 > 0 else 0) + (1 if s1 > 0 else 0) + (1 if s2 > 0 else 0)\n\
+         \t\tvar neg = (1 if s0 < 0 else 0) + (1 if s1 < 0 else 0) + (1 if s2 < 0 else 0)\n\
+         \t\tif pos == 0 or neg == 0 or (pos + neg) < 2:\n\
+         \t\t\tnew_verts.append(v0)\n\
+         \t\t\tnew_verts.append(v1)\n\
+         \t\t\tnew_verts.append(v2)\n\
+         \t\t\tcontinue\n\
+         \t\tsplits += 1\n\
+         \t\tvar alone\n\
+         \t\tvar pair0\n\
+         \t\tvar pair1\n\
+         \t\tif (s0 >= 0) != (s1 >= 0) and (s0 >= 0) != (s2 >= 0):\n\
+         \t\t\talone = v0; pair0 = v1; pair1 = v2\n\
+         \t\telif (s1 >= 0) != (s0 >= 0) and (s1 >= 0) != (s2 >= 0):\n\
+         \t\t\talone = v1; pair0 = v2; pair1 = v0\n\
+         \t\telse:\n\
+         \t\t\talone = v2; pair0 = v0; pair1 = v1\n\
+         \t\tvar m0 = _lerp_edge(alone, pair0, plane_val, ai)\n\
+         \t\tvar m1 = _lerp_edge(alone, pair1, plane_val, ai)\n\
+         \t\tnew_verts.append(alone)\n\
+         \t\tnew_verts.append(m0)\n\
+         \t\tnew_verts.append(m1)\n\
+         \t\tnew_verts.append(m0)\n\
+         \t\tnew_verts.append(pair0)\n\
+         \t\tnew_verts.append(pair1)\n\
+         \t\tnew_verts.append(m0)\n\
+         \t\tnew_verts.append(pair1)\n\
+         \t\tnew_verts.append(m1)\n\
+         \tvar st = SurfaceTool.new()\n\
+         \tst.begin(Mesh.PRIMITIVE_TRIANGLES)\n\
+         \tfor v in new_verts:\n\
+         \t\tst.add_vertex(v)\n\
+         \tst.generate_normals()\n\
+         \tmesh_inst.mesh = st.commit()\n\
+         {RESTORE_COLOR}\
+         \tvar d = {{}}\n\
+         \td[\"name\"] = mesh_name\n\
+         \td[\"axis\"] = axis\n\
+         \td[\"at\"] = plane_val\n\
+         \td[\"triangles_split\"] = splits\n\
+         \td[\"vertex_count\"] = new_verts.size()\n\
+         \td[\"face_count\"] = new_verts.size() / 3\n\
+         \treturn JSON.stringify(d)\n"
+    )
+}
+
+/// Generate the GDScript for `mesh material --preset`.
+///
+/// Creates a `StandardMaterial3D` with PBR properties appropriate for the preset
+/// (metallic, roughness, transparency, specular, etc.).
+pub fn generate_material_preset(part: Option<&str>, preset: &str, color: Option<&str>) -> String {
+    let target = part.map_or(
+        String::from("\tvar mesh_name = helper.get_meta(\"active_mesh\")\n"),
+        |p| format!("\tvar mesh_name = \"{p}\"\n"),
+    );
+    // PBR properties per preset: (metallic, roughness, transparency, alpha, specular, color_default)
+    let props = match preset {
+        "glass" => "\tmat.metallic = 0.0\n\
+                     \tmat.roughness = 0.05\n\
+                     \tmat.transparency = 1\n\
+                     \tmat.albedo_color.a = 0.3\n\
+                     \tmat.specular = 0.5\n\
+                     \tmat.refraction_enabled = true\n\
+                     \tmat.refraction_scale = 0.02\n",
+        "metal" => "\tmat.metallic = 0.9\n\
+                     \tmat.roughness = 0.3\n\
+                     \tmat.specular = 0.8\n",
+        "chrome" => "\tmat.metallic = 1.0\n\
+                      \tmat.roughness = 0.05\n\
+                      \tmat.specular = 1.0\n",
+        "rubber" => "\tmat.metallic = 0.0\n\
+                      \tmat.roughness = 0.95\n\
+                      \tmat.specular = 0.1\n",
+        "paint" => "\tmat.metallic = 0.1\n\
+                     \tmat.roughness = 0.4\n\
+                     \tmat.specular = 0.5\n",
+        "wood" => "\tmat.metallic = 0.0\n\
+                    \tmat.roughness = 0.7\n\
+                    \tmat.specular = 0.2\n",
+        "matte" => "\tmat.metallic = 0.0\n\
+                     \tmat.roughness = 1.0\n\
+                     \tmat.specular = 0.0\n",
+        // plastic
+        _ => "\tmat.metallic = 0.0\n\
+              \tmat.roughness = 0.4\n\
+              \tmat.specular = 0.5\n",
+    };
+    let default_color = match preset {
+        "glass" => "Color(0.8, 0.9, 1.0)",
+        "metal" => "Color(0.7, 0.7, 0.75)",
+        "chrome" => "Color(0.95, 0.95, 0.97)",
+        "rubber" => "Color(0.15, 0.15, 0.15)",
+        "paint" => "Color(0.8, 0.1, 0.1)",
+        "wood" => "Color(0.55, 0.35, 0.2)",
+        "matte" => "Color(0.5, 0.5, 0.5)",
+        _ => "Color(0.9, 0.9, 0.9)", // plastic
+    };
+    let color_line = if let Some(hex) = color {
+        format!("\tmat.albedo_color = Color.html(\"{hex}\")\n")
+    } else {
+        format!("\tmat.albedo_color = {default_color}\n")
+    };
+    format!(
+        "extends Node\n\
+         \n\
+         func run():\n\
+         \tvar root = get_tree().get_root()\n\
+         \tvar helper = root.get_node_or_null(\"_GdMeshHelper\")\n\
+         \tif helper == null: return \"ERROR: no mesh session — run 'gd mesh create' first\"\n\
+         {target}\
+         \tvar mesh_inst = helper.get_node_or_null(mesh_name)\n\
+         \tif mesh_inst == null: return \"ERROR: part '\" + str(mesh_name) + \"' not found\"\n\
+         \tvar mat = StandardMaterial3D.new()\n\
+         {color_line}\
+         {props}\
+         \tmesh_inst.material_override = mat\n\
+         \tvar c = mat.albedo_color\n\
+         \tmesh_inst.set_meta(\"part_color\", [c.r, c.g, c.b])\n\
+         \tvar d = {{}}\n\
+         \td[\"name\"] = mesh_name\n\
+         \td[\"preset\"] = \"{preset}\"\n\
+         \td[\"rgb\"] = [snapped(c.r, 0.01), snapped(c.g, 0.01), snapped(c.b, 0.01)]\n\
+         \td[\"metallic\"] = mat.metallic\n\
+         \td[\"roughness\"] = mat.roughness\n\
          \treturn JSON.stringify(d)\n"
     )
 }

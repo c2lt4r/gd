@@ -11,6 +11,7 @@ mod gdscript;
 mod info;
 mod init;
 mod list_vertices;
+mod loop_cut;
 mod material;
 mod move_vertex;
 mod profile;
@@ -27,6 +28,7 @@ mod view;
 #[cfg(test)]
 mod tests;
 
+use std::cell::RefCell;
 use std::time::Duration;
 
 use clap::{Args, Subcommand, ValueEnum};
@@ -34,6 +36,10 @@ use miette::{Result, miette};
 
 use crate::core::live_eval::send_eval;
 use crate::core::project::GodotProject;
+
+thread_local! {
+    static CURRENT_COMMAND: RefCell<String> = const { RefCell::new(String::new()) };
+}
 
 /// Default timeout for mesh eval commands.
 const MESH_TIMEOUT: Duration = Duration::from_secs(10);
@@ -105,6 +111,9 @@ pub enum MeshCommand {
     FlipNormals(FlipNormalsArgs),
     /// Set material color on a part
     Material(MaterialArgs),
+    /// Subdivide mesh by inserting an axis-aligned cut plane
+    #[command(name = "loop-cut")]
+    LoopCut(LoopCutArgs),
 }
 
 #[derive(Clone, Debug, ValueEnum)]
@@ -516,7 +525,39 @@ pub struct MaterialArgs {
     pub part: Option<String>,
     /// Color as hex (e.g. "ff0000" or "#ff0000") or named color (red, green, blue, white, black)
     #[arg(long)]
-    pub color: String,
+    pub color: Option<String>,
+    /// PBR material preset (glass, metal, rubber, chrome, paint, wood, matte, plastic)
+    #[arg(long, value_enum)]
+    pub preset: Option<MaterialPreset>,
+    /// Output format
+    #[arg(long, default_value = "json")]
+    pub format: OutputFormat,
+}
+
+#[derive(Clone, Debug, ValueEnum)]
+pub enum MaterialPreset {
+    Glass,
+    Metal,
+    Rubber,
+    Chrome,
+    Paint,
+    Wood,
+    Matte,
+    Plastic,
+}
+
+#[derive(Args)]
+#[command(allow_hyphen_values = true)]
+pub struct LoopCutArgs {
+    /// Part name (defaults to active part)
+    #[arg(long)]
+    pub part: Option<String>,
+    /// Axis perpendicular to the cut plane
+    #[arg(long, value_enum)]
+    pub axis: Axis,
+    /// Position along the axis to cut (world-space coordinate)
+    #[arg(long)]
+    pub at: f64,
     /// Output format
     #[arg(long, default_value = "json")]
     pub format: OutputFormat,
@@ -549,6 +590,10 @@ impl std::fmt::Display for OutputFormat {
 }
 
 pub fn exec(args: &MeshArgs) -> Result<()> {
+    // Set the command name for HUD display
+    let cmd_name = format!("gd mesh {}", command_name(&args.command));
+    CURRENT_COMMAND.with(|c| *c.borrow_mut() = cmd_name);
+
     match args.command {
         MeshCommand::Init(ref a) => init::cmd_init(a),
         MeshCommand::Create(ref a) => create::cmd_create(a),
@@ -575,6 +620,39 @@ pub fn exec(args: &MeshArgs) -> Result<()> {
         MeshCommand::Restore(ref a) => checkpoint::cmd_restore(a),
         MeshCommand::FlipNormals(ref a) => flip_normals::cmd_flip_normals(a),
         MeshCommand::Material(ref a) => material::cmd_material(a),
+        MeshCommand::LoopCut(ref a) => loop_cut::cmd_loop_cut(a),
+    }
+}
+
+/// Map a `MeshCommand` variant to its CLI subcommand name for HUD display.
+fn command_name(cmd: &MeshCommand) -> &'static str {
+    match cmd {
+        MeshCommand::Init(_) => "init",
+        MeshCommand::Create(_) => "create",
+        MeshCommand::Profile(_) => "profile",
+        MeshCommand::Extrude(_) => "extrude",
+        MeshCommand::Revolve(_) => "revolve",
+        MeshCommand::MoveVertex(_) => "move-vertex",
+        MeshCommand::View(_) => "view",
+        MeshCommand::Snapshot(_) => "snapshot",
+        MeshCommand::Reference(_) => "reference",
+        MeshCommand::AddPart(_) => "add-part",
+        MeshCommand::DuplicatePart(_) => "duplicate-part",
+        MeshCommand::Focus(_) => "focus",
+        MeshCommand::Translate(_) => "translate",
+        MeshCommand::Rotate(_) => "rotate",
+        MeshCommand::Scale(_) => "scale",
+        MeshCommand::RemovePart(_) => "remove-part",
+        MeshCommand::ListVertices(_) => "list-vertices",
+        MeshCommand::Taper(_) => "taper",
+        MeshCommand::Bevel(_) => "bevel",
+        MeshCommand::Info(_) => "info",
+        MeshCommand::Describe(_) => "describe",
+        MeshCommand::Checkpoint(_) => "checkpoint",
+        MeshCommand::Restore(_) => "restore",
+        MeshCommand::FlipNormals(_) => "flip-normals",
+        MeshCommand::Material(_) => "material",
+        MeshCommand::LoopCut(_) => "loop-cut",
     }
 }
 
@@ -588,13 +666,53 @@ fn project_root() -> Result<std::path::PathBuf> {
 }
 
 /// Run a generated GDScript via live eval and return the raw result string.
+///
+/// Injects a HUD overlay update at the start of `func run():` so the human
+/// can see which command the agent is executing in the Godot viewport.
 fn run_eval(script: &str) -> Result<String> {
+    run_eval_hud(script, None)
+}
+
+/// Like `run_eval` but with an explicit HUD label override (for internal scripts
+/// like camera switch where the auto-detected label would be confusing).
+fn run_eval_hud(script: &str, hud_label: Option<&str>) -> Result<String> {
     let root = project_root()?;
-    let result = send_eval(script, &root, MESH_TIMEOUT)?.result;
+
+    // Inject HUD update into the script's run() function
+    let injected = inject_hud(script, hud_label);
+    let result = send_eval(&injected, &root, MESH_TIMEOUT)?.result;
     if result.starts_with("ERROR:") {
         return Err(miette!("{result}"));
     }
     Ok(result)
+}
+
+/// Inject HUD overlay update code after `func run():` in a generated GDScript.
+/// If the script doesn't contain `func run():`, returns it unchanged.
+fn inject_hud(script: &str, label_override: Option<&str>) -> String {
+    let label = label_override.map_or_else(
+        || CURRENT_COMMAND.with(|c| c.borrow().clone()),
+        String::from,
+    );
+
+    // Find "func run():\n" and inject HUD update lines after it
+    let marker = "func run():\n";
+    if let Some(pos) = script.find(marker) {
+        let insert_at = pos + marker.len();
+        let hud_code = format!(
+            "\tvar _hud_helper = get_tree().get_root().get_node_or_null(\"_GdMeshHelper\")\n\
+             \tif _hud_helper:\n\
+             \t\tvar _hud = _hud_helper.get_node_or_null(\"_HudLayer/_HudLabel\")\n\
+             \t\tif _hud: _hud.text = \"{label}\"\n"
+        );
+        let mut result = String::with_capacity(script.len() + hud_code.len());
+        result.push_str(&script[..insert_at]);
+        result.push_str(&hud_code);
+        result.push_str(&script[insert_at..]);
+        result
+    } else {
+        script.to_string()
+    }
 }
 
 /// Parse "x1,y1 x2,y2 ..." into a Vec of (f64, f64) pairs.
