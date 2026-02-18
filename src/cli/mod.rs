@@ -15,6 +15,7 @@ pub mod init_cmd;
 pub mod lint_cmd;
 pub mod llm_cmd;
 pub mod log_cmd;
+pub mod mesh_cmd;
 pub mod lsp_cmd;
 pub mod man_cmd;
 pub mod new_cmd;
@@ -86,6 +87,8 @@ pub enum Command {
     Log(log_cmd::LogArgs),
     /// Start the Language Server Protocol server
     Lsp(lsp_cmd::LspArgs),
+    /// AI-assisted 3D mesh building (experimental)
+    Mesh(mesh_cmd::MeshArgs),
     /// Evaluate a GDScript expression or run a script
     Eval(eval_cmd::EvalArgs),
     /// Show environment info (gd version, Godot version, paths)
@@ -125,6 +128,7 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Ci(args) => ci_cmd::exec(args),
         Command::Log(ref args) => log_cmd::exec(args),
         Command::Lsp(args) => lsp_cmd::exec(args),
+        Command::Mesh(ref args) => mesh_cmd::exec(args),
         Command::Eval(ref args) => eval_cmd::exec(args),
         Command::Env(ref args) => env_cmd::exec(args),
         Command::Deps(ref args) => deps_cmd::exec(args),
