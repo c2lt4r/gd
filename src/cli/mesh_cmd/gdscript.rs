@@ -784,7 +784,14 @@ pub fn generate_taper(
 /// then cutting corners by offsetting vertices along edge normals. Preserves
 /// the input mesh's winding order (no centroid fix needed).
 #[allow(clippy::too_many_lines)]
-pub fn generate_bevel(radius: f64, segments: u32) -> String {
+pub fn generate_bevel(radius: f64, segments: u32, edges: &str) -> String {
+    // Edge filter: classify edges relative to the extrusion axis from profile_plane.
+    // "depth" = edges parallel to extrude axis, "profile" = edges on same cap face.
+    let edge_filter = match edges {
+        "depth" => "\tvar _filter = \"depth\"\n",
+        "profile" => "\tvar _filter = \"profile\"\n",
+        _ => "\tvar _filter = \"all\"\n",
+    };
     format!(
         "extends Node\n\
          \n\
@@ -800,6 +807,8 @@ pub fn generate_bevel(radius: f64, segments: u32) -> String {
          \tvar verts = arrays[Mesh.ARRAY_VERTEX]\n\
          \tvar radius = {radius}\n\
          \tvar segments = {segments}\n\
+         {edge_filter}\
+         \tvar plane = helper.get_meta(\"profile_plane\", \"\")\n\
          \tvar edge_map = {{}}\n\
          \tfor ti in range(0, verts.size(), 3):\n\
          \t\tvar tri_n = (verts[ti+1] - verts[ti]).cross(verts[ti+2] - verts[ti]).normalized()\n\
@@ -818,7 +827,29 @@ pub fn generate_bevel(radius: f64, segments: u32) -> String {
          \t\tif faces.size() == 2:\n\
          \t\t\tvar dot = faces[0][\"normal\"].dot(faces[1][\"normal\"])\n\
          \t\t\tif dot < 0.95:\n\
-         \t\t\t\tsharp_edges.append({{\"a\": faces[0][\"a\"], \"b\": faces[0][\"b\"], \"n1\": faces[0][\"normal\"], \"n2\": faces[1][\"normal\"]}})\n\
+         \t\t\t\tvar ea = faces[0][\"a\"]\n\
+         \t\t\t\tvar eb = faces[0][\"b\"]\n\
+         \t\t\t\tvar include = true\n\
+         \t\t\t\tif _filter != \"all\" and plane != \"\":\n\
+         \t\t\t\t\tvar da = eb - ea\n\
+         \t\t\t\t\tvar eps = 0.001\n\
+         \t\t\t\t\tvar is_depth = false\n\
+         \t\t\t\t\tvar is_profile = false\n\
+         \t\t\t\t\tif plane == \"front\":\n\
+         \t\t\t\t\t\tis_depth = abs(da.x) < eps and abs(da.y) < eps\n\
+         \t\t\t\t\t\tis_profile = abs(da.z) < eps\n\
+         \t\t\t\t\telif plane == \"side\":\n\
+         \t\t\t\t\t\tis_depth = abs(da.y) < eps and abs(da.z) < eps\n\
+         \t\t\t\t\t\tis_profile = abs(da.x) < eps\n\
+         \t\t\t\t\telse:\n\
+         \t\t\t\t\t\tis_depth = abs(da.x) < eps and abs(da.z) < eps\n\
+         \t\t\t\t\t\tis_profile = abs(da.y) < eps\n\
+         \t\t\t\t\tif _filter == \"depth\":\n\
+         \t\t\t\t\t\tinclude = is_depth\n\
+         \t\t\t\t\telif _filter == \"profile\":\n\
+         \t\t\t\t\t\tinclude = is_profile\n\
+         \t\t\t\tif include:\n\
+         \t\t\t\t\tsharp_edges.append({{\"a\": ea, \"b\": eb, \"n1\": faces[0][\"normal\"], \"n2\": faces[1][\"normal\"]}})\n\
          \tvar new_verts = []\n\
          \tfor v in verts:\n\
          \t\tnew_verts.append(v)\n\
@@ -854,6 +885,7 @@ pub fn generate_bevel(radius: f64, segments: u32) -> String {
          \tvar d = {{}}\n\
          \td[\"radius\"] = radius\n\
          \td[\"segments\"] = segments\n\
+         \td[\"edges\"] = _filter\n\
          \td[\"sharp_edges\"] = sharp_edges.size()\n\
          \td[\"vertex_count\"] = vc\n\
          \treturn JSON.stringify(d)\n"
@@ -1113,31 +1145,8 @@ pub fn generate_info_all() -> String {
 /// Generate the GDScript for `mesh checkpoint`.
 ///
 /// Saves the current surface arrays + material color for every part as metadata.
-pub fn generate_checkpoint() -> String {
-    "extends Node\n\
-     \n\
-     func run():\n\
-     \tvar root = get_tree().get_root()\n\
-     \tvar helper = root.get_node_or_null(\"_GdMeshHelper\")\n\
-     \tif helper == null: return \"ERROR: no mesh session — run 'gd mesh create' first\"\n\
-     \tvar count = 0\n\
-     \tfor child in helper.get_children():\n\
-     \t\tif child is MeshInstance3D and not child.name.begins_with(\"_\"):\n\
-     \t\t\tif child.mesh and child.mesh.get_surface_count() > 0:\n\
-     \t\t\t\tvar arrays = child.mesh.surface_get_arrays(0)\n\
-     \t\t\t\tchild.set_meta(\"checkpoint_verts\", arrays[Mesh.ARRAY_VERTEX])\n\
-     \t\t\t\tchild.set_meta(\"checkpoint_normals\", arrays[Mesh.ARRAY_NORMAL])\n\
-     \t\t\tcount += 1\n\
-     \tvar d = {}\n\
-     \td[\"parts_saved\"] = count\n\
-     \treturn JSON.stringify(d)\n"
-        .to_string()
-}
-
-/// Generate the GDScript for `mesh restore`.
-///
-/// Rebuilds meshes from saved checkpoint metadata.
-pub fn generate_restore() -> String {
+pub fn generate_checkpoint(name: Option<&str>) -> String {
+    let suffix = name.map_or(String::new(), |n| format!("_{n}"));
     format!(
         "extends Node\n\
          \n\
@@ -1148,19 +1157,68 @@ pub fn generate_restore() -> String {
          \tvar count = 0\n\
          \tfor child in helper.get_children():\n\
          \t\tif child is MeshInstance3D and not child.name.begins_with(\"_\"):\n\
-         \t\t\tif child.has_meta(\"checkpoint_verts\"):\n\
-         \t\t\t\tvar verts = child.get_meta(\"checkpoint_verts\")\n\
+         \t\t\tif child.mesh and child.mesh.get_surface_count() > 0:\n\
+         \t\t\t\tvar arrays = child.mesh.surface_get_arrays(0)\n\
+         \t\t\t\tchild.set_meta(\"checkpoint{suffix}_verts\", arrays[Mesh.ARRAY_VERTEX])\n\
+         \t\t\t\tchild.set_meta(\"checkpoint{suffix}_normals\", arrays[Mesh.ARRAY_NORMAL])\n\
+         \t\t\tif child.material_override:\n\
+         \t\t\t\tchild.set_meta(\"checkpoint{suffix}_material\", child.material_override.duplicate())\n\
+         \t\t\tchild.set_meta(\"checkpoint{suffix}_transform\", child.transform)\n\
+         \t\t\tcount += 1\n\
+         \tvar names = helper.get_meta(\"checkpoint_names\", [])\n\
+         \tvar label = \"{label}\"\n\
+         \tif label != \"\" and not names.has(label):\n\
+         \t\tnames.append(label)\n\
+         \t\thelper.set_meta(\"checkpoint_names\", names)\n\
+         \tvar d = {{}}\n\
+         \td[\"parts_saved\"] = count\n\
+         \tif label != \"\": d[\"name\"] = label\n\
+         \td[\"checkpoints\"] = names\n\
+         \treturn JSON.stringify(d)\n",
+        suffix = suffix,
+        label = name.unwrap_or(""),
+    )
+}
+
+/// Generate the GDScript for `mesh restore`.
+///
+/// Rebuilds meshes from saved checkpoint metadata. Supports named checkpoints.
+pub fn generate_restore(name: Option<&str>) -> String {
+    let suffix = name.map_or(String::new(), |n| format!("_{n}"));
+    format!(
+        "extends Node\n\
+         \n\
+         func run():\n\
+         \tvar root = get_tree().get_root()\n\
+         \tvar helper = root.get_node_or_null(\"_GdMeshHelper\")\n\
+         \tif helper == null: return \"ERROR: no mesh session — run 'gd mesh create' first\"\n\
+         \tvar count = 0\n\
+         \tfor child in helper.get_children():\n\
+         \t\tif child is MeshInstance3D and not child.name.begins_with(\"_\"):\n\
+         \t\t\tif child.has_meta(\"checkpoint{suffix}_verts\"):\n\
+         \t\t\t\tvar verts = child.get_meta(\"checkpoint{suffix}_verts\")\n\
          \t\t\t\tvar st = SurfaceTool.new()\n\
          \t\t\t\tst.begin(Mesh.PRIMITIVE_TRIANGLES)\n\
          \t\t\t\tfor v in verts:\n\
          \t\t\t\t\tst.add_vertex(v)\n\
          \t\t\t\tst.generate_normals()\n\
          \t\t\t\tchild.mesh = st.commit()\n\
-         {RESTORE_COLOR}\
+         \t\t\tif child.has_meta(\"checkpoint{suffix}_material\"):\n\
+         \t\t\t\tchild.material_override = child.get_meta(\"checkpoint{suffix}_material\")\n\
+         \t\t\telif child.has_meta(\"part_color\"):\n\
+         \t\t\t\tvar _mat = StandardMaterial3D.new()\n\
+         \t\t\t\t_mat.albedo_color = child.get_meta(\"part_color\")\n\
+         \t\t\t\tchild.material_override = _mat\n\
+         \t\t\tif child.has_meta(\"checkpoint{suffix}_transform\"):\n\
+         \t\t\t\tchild.transform = child.get_meta(\"checkpoint{suffix}_transform\")\n\
          \t\t\t\tcount += 1\n\
          \tvar d = {{}}\n\
          \td[\"parts_restored\"] = count\n\
-         \treturn JSON.stringify(d)\n"
+         \tvar label = \"{label}\"\n\
+         \tif label != \"\": d[\"name\"] = label\n\
+         \treturn JSON.stringify(d)\n",
+        suffix = suffix,
+        label = name.unwrap_or(""),
     )
 }
 
@@ -1234,6 +1292,69 @@ pub fn generate_flip_normals(part: Option<&str>, caps: Option<&str>) -> String {
          \td[\"vertex_count\"] = vc\n\
          \td[\"face_count\"] = vc / 3\n\
          \td[\"flipped_faces\"] = flipped_count\n\
+         \treturn JSON.stringify(d)\n"
+    )
+}
+
+/// Generate the GDScript for `mesh fix-normals`.
+///
+/// Recalculates normals to face outward using a centroid heuristic:
+/// for each triangle, compute the face normal and the vector from mesh centroid
+/// to triangle center. If they disagree (dot < 0), flip that triangle's winding.
+pub fn generate_fix_normals(part: Option<&str>) -> String {
+    let target = part.map_or(
+        String::from("\tvar mesh_name = helper.get_meta(\"active_mesh\")\n"),
+        |p| format!("\tvar mesh_name = \"{p}\"\n"),
+    );
+    format!(
+        "extends Node\n\
+         \n\
+         func run():\n\
+         \tvar root = get_tree().get_root()\n\
+         \tvar helper = root.get_node_or_null(\"_GdMeshHelper\")\n\
+         \tif helper == null: return \"ERROR: no mesh session — run 'gd mesh create' first\"\n\
+         {target}\
+         \tvar mesh_inst = helper.get_node_or_null(mesh_name)\n\
+         \tif mesh_inst == null: return \"ERROR: part '\" + str(mesh_name) + \"' not found\"\n\
+         \tif mesh_inst.mesh == null or mesh_inst.mesh.get_surface_count() == 0: return \"ERROR: no mesh data\"\n\
+         \tvar verts = mesh_inst.mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]\n\
+         \tvar centroid = Vector3.ZERO\n\
+         \tfor v in verts:\n\
+         \t\tcentroid += v\n\
+         \tcentroid /= verts.size()\n\
+         \tvar fixed = PackedVector3Array()\n\
+         \tfixed.resize(verts.size())\n\
+         \tvar flipped_count = 0\n\
+         \tfor i in range(0, verts.size(), 3):\n\
+         \t\tvar a = verts[i]\n\
+         \t\tvar b = verts[i + 1]\n\
+         \t\tvar c = verts[i + 2]\n\
+         \t\tvar face_n = (b - a).cross(c - a)\n\
+         \t\tvar tri_center = (a + b + c) / 3.0\n\
+         \t\tvar outward = tri_center - centroid\n\
+         \t\tif face_n.dot(outward) < 0:\n\
+         \t\t\tfixed[i] = c\n\
+         \t\t\tfixed[i + 1] = b\n\
+         \t\t\tfixed[i + 2] = a\n\
+         \t\t\tflipped_count += 1\n\
+         \t\telse:\n\
+         \t\t\tfixed[i] = a\n\
+         \t\t\tfixed[i + 1] = b\n\
+         \t\t\tfixed[i + 2] = c\n\
+         \tvar st = SurfaceTool.new()\n\
+         \tst.begin(Mesh.PRIMITIVE_TRIANGLES)\n\
+         \tfor v in fixed:\n\
+         \t\tst.add_vertex(v)\n\
+         \tst.generate_normals()\n\
+         \tmesh_inst.mesh = st.commit()\n\
+         {RESTORE_COLOR}\
+         \tvar vc = fixed.size()\n\
+         \tvar d = {{}}\n\
+         \td[\"name\"] = mesh_name\n\
+         \td[\"vertex_count\"] = vc\n\
+         \td[\"face_count\"] = vc / 3\n\
+         \td[\"faces_flipped\"] = flipped_count\n\
+         \td[\"total_faces\"] = vc / 3\n\
          \treturn JSON.stringify(d)\n"
     )
 }
@@ -1356,7 +1477,7 @@ pub fn generate_material(part: Option<&str>, color: &str) -> String {
          \tvar mat = StandardMaterial3D.new()\n\
          \tmat.albedo_color = color\n\
          \tmesh_inst.material_override = mat\n\
-         \tmesh_inst.set_meta(\"part_color\", [color.r, color.g, color.b])\n\
+         \tmesh_inst.set_meta(\"part_color\", color)\n\
          \tvar d = {{}}\n\
          \td[\"name\"] = mesh_name\n\
          \td[\"color\"] = hex\n\
@@ -1531,7 +1652,7 @@ pub fn generate_material_preset(part: Option<&str>, preset: &str, color: Option<
          {props}\
          \tmesh_inst.material_override = mat\n\
          \tvar c = mat.albedo_color\n\
-         \tmesh_inst.set_meta(\"part_color\", [c.r, c.g, c.b])\n\
+         \tmesh_inst.set_meta(\"part_color\", c)\n\
          \tvar d = {{}}\n\
          \td[\"name\"] = mesh_name\n\
          \td[\"preset\"] = \"{preset}\"\n\

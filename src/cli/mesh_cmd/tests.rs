@@ -285,12 +285,22 @@ fn taper_midpoint_range_parses() {
 
 #[test]
 fn bevel_parses() {
-    assert_parses(&gdscript::generate_bevel(0.1, 2));
+    assert_parses(&gdscript::generate_bevel(0.1, 2, "all"));
 }
 
 #[test]
 fn bevel_high_segments_parses() {
-    assert_parses(&gdscript::generate_bevel(0.05, 4));
+    assert_parses(&gdscript::generate_bevel(0.05, 4, "all"));
+}
+
+#[test]
+fn bevel_depth_edges_parses() {
+    assert_parses(&gdscript::generate_bevel(0.1, 2, "depth"));
+}
+
+#[test]
+fn bevel_profile_edges_parses() {
+    assert_parses(&gdscript::generate_bevel(0.1, 3, "profile"));
 }
 
 // ── Info ─────────────────────────────────────────────────────────────
@@ -355,12 +365,34 @@ fn normal_debug_clear_parses() {
 
 #[test]
 fn checkpoint_parses() {
-    assert_parses(&gdscript::generate_checkpoint());
+    assert_parses(&gdscript::generate_checkpoint(None));
+}
+
+#[test]
+fn checkpoint_named_parses() {
+    assert_parses(&gdscript::generate_checkpoint(Some("before-engines")));
 }
 
 #[test]
 fn restore_parses() {
-    assert_parses(&gdscript::generate_restore());
+    assert_parses(&gdscript::generate_restore(None));
+}
+
+#[test]
+fn restore_named_parses() {
+    assert_parses(&gdscript::generate_restore(Some("before-engines")));
+}
+
+// ── Fix normals ─────────────────────────────────────────────────────
+
+#[test]
+fn fix_normals_active_parses() {
+    assert_parses(&gdscript::generate_fix_normals(None));
+}
+
+#[test]
+fn fix_normals_named_parses() {
+    assert_parses(&gdscript::generate_fix_normals(Some("body")));
 }
 
 // ── Flip normals ────────────────────────────────────────────────────

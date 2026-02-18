@@ -5,7 +5,7 @@ use super::gdscript;
 use super::{BevelArgs, OutputFormat, run_eval};
 
 pub fn cmd_bevel(args: &BevelArgs) -> Result<()> {
-    let script = gdscript::generate_bevel(args.radius, args.segments);
+    let script = gdscript::generate_bevel(args.radius, args.segments, args.edges.as_str());
     let result = run_eval(&script)?;
     let parsed: serde_json::Value =
         serde_json::from_str(&result).map_err(|e| miette::miette!("Failed to parse result: {e}"))?;

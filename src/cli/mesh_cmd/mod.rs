@@ -5,6 +5,7 @@ mod create;
 mod describe;
 mod duplicate_part;
 mod extrude;
+mod fix_normals;
 mod flip_normals;
 mod focus;
 mod gdscript;
@@ -109,6 +110,9 @@ pub enum MeshCommand {
     /// Flip triangle winding to fix inverted normals
     #[command(name = "flip-normals")]
     FlipNormals(FlipNormalsArgs),
+    /// Auto-detect and fix inverted normals (recalculate outward)
+    #[command(name = "fix-normals")]
+    FixNormals(FixNormalsArgs),
     /// Set material color on a part
     Material(MaterialArgs),
     /// Subdivide mesh by inserting an axis-aligned cut plane
@@ -452,6 +456,23 @@ pub struct TaperArgs {
     pub format: OutputFormat,
 }
 
+#[derive(Clone, Debug, ValueEnum)]
+pub enum BevelEdges {
+    All,
+    Depth,
+    Profile,
+}
+
+impl BevelEdges {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Depth => "depth",
+            Self::Profile => "profile",
+        }
+    }
+}
+
 #[derive(Args)]
 pub struct BevelArgs {
     /// Bevel radius (offset distance from edge)
@@ -460,6 +481,9 @@ pub struct BevelArgs {
     /// Number of segments for the bevel curve
     #[arg(long, default_value = "2")]
     pub segments: u32,
+    /// Which edges to bevel (all, depth=extrusion-direction, profile=cap-outline)
+    #[arg(long, value_enum, default_value = "all")]
+    pub edges: BevelEdges,
     /// Output format
     #[arg(long, default_value = "json")]
     pub format: OutputFormat,
@@ -493,6 +517,9 @@ pub struct DescribeArgs {
 
 #[derive(Args)]
 pub struct CheckpointArgs {
+    /// Named checkpoint label (omit for default unnamed checkpoint)
+    #[arg(long)]
+    pub name: Option<String>,
     /// Output format
     #[arg(long, default_value = "json")]
     pub format: OutputFormat,
@@ -500,6 +527,9 @@ pub struct CheckpointArgs {
 
 #[derive(Args)]
 pub struct RestoreArgs {
+    /// Named checkpoint to restore (omit for default unnamed checkpoint)
+    #[arg(long)]
+    pub name: Option<String>,
     /// Output format
     #[arg(long, default_value = "json")]
     pub format: OutputFormat,
@@ -513,6 +543,16 @@ pub struct FlipNormalsArgs {
     /// Only flip faces whose normal aligns with this axis (cap faces from extrude/revolve)
     #[arg(long, value_enum)]
     pub caps: Option<Axis>,
+    /// Output format
+    #[arg(long, default_value = "json")]
+    pub format: OutputFormat,
+}
+
+#[derive(Args)]
+pub struct FixNormalsArgs {
+    /// Part name (defaults to active part)
+    #[arg(long)]
+    pub part: Option<String>,
     /// Output format
     #[arg(long, default_value = "json")]
     pub format: OutputFormat,
@@ -619,6 +659,7 @@ pub fn exec(args: &MeshArgs) -> Result<()> {
         MeshCommand::Checkpoint(ref a) => checkpoint::cmd_checkpoint(a),
         MeshCommand::Restore(ref a) => checkpoint::cmd_restore(a),
         MeshCommand::FlipNormals(ref a) => flip_normals::cmd_flip_normals(a),
+        MeshCommand::FixNormals(ref a) => fix_normals::cmd_fix_normals(a),
         MeshCommand::Material(ref a) => material::cmd_material(a),
         MeshCommand::LoopCut(ref a) => loop_cut::cmd_loop_cut(a),
     }
@@ -651,6 +692,7 @@ fn command_name(cmd: &MeshCommand) -> &'static str {
         MeshCommand::Checkpoint(_) => "checkpoint",
         MeshCommand::Restore(_) => "restore",
         MeshCommand::FlipNormals(_) => "flip-normals",
+        MeshCommand::FixNormals(_) => "fix-normals",
         MeshCommand::Material(_) => "material",
         MeshCommand::LoopCut(_) => "loop-cut",
     }
