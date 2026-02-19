@@ -100,7 +100,11 @@ fn find_godot_from_daemon() -> Option<String> {
     if path.is_empty() {
         return None;
     }
-    Some(fs::windows_to_wsl_path(path))
+    if fs::is_wsl() {
+        Some(fs::windows_to_wsl_path(path))
+    } else {
+        Some(path.to_string())
+    }
 }
 
 /// Get a path argument for Godot, translating WSL paths for Windows binaries.
@@ -183,7 +187,9 @@ func _poll():
 		_runner = null
 		var peer = _pending_peer
 		_pending_peer = null
+		print("__GD_EVAL_BEGIN__")
 		var result = runner.call("run") if is_instance_valid(runner) else null
+		print("__GD_EVAL_END__")
 		if is_instance_valid(runner):
 			runner.queue_free()
 		var result_str = str(result) if result != null else ""
@@ -243,7 +249,9 @@ func _poll():
 		_pending_peer = peer
 	else:
 		# RefCounted: execute immediately
+		print("__GD_EVAL_BEGIN__")
 		var result = obj.call("run")
+		print("__GD_EVAL_END__")
 		var result_str = str(result) if result != null else ""
 		_send_result(peer, result_str, "")
 

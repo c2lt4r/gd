@@ -133,13 +133,18 @@ fn send_eval_tcp(
         serde_json::from_str(&data).map_err(|e| miette!("Failed to parse eval result: {e}"))?;
 
     if !eval_result.error.is_empty() {
-        // Drain output even on error (there may be prints before the error)
-        let _ = crate::lsp::daemon_client::query_daemon(
-            "output_capture_drain",
-            serde_json::json!({}),
-            Some(Duration::from_secs(1)),
-        );
-        return Err(miette!("{}", eval_result.error));
+        // Drain output on error — may contain compilation error details from Godot
+        let error_output = drain_output_quick();
+        let mut error_msg = eval_result.error.clone();
+        for line in &error_output {
+            if line.r#type == "error" {
+                if !error_msg.ends_with('\n') {
+                    error_msg.push('\n');
+                }
+                error_msg.push_str(&line.message);
+            }
+        }
+        return Err(miette!("{}", error_msg));
     }
 
     let result_str = eval_result.result.unwrap_or_default();
@@ -147,16 +152,43 @@ fn send_eval_tcp(
     // Drain captured output. Godot batches print() via the debug protocol (~1s).
     // - poll_output + void result: poll up to 1.5s (REPL: user expects to see print output)
     // - otherwise: single instant drain (non-blocking, captures anything already arrived)
+    // Filter to only include output between eval markers (strips game log noise).
     let output = if poll_output && result_str.is_empty() {
-        drain_output_with_poll(Duration::from_millis(1500))
+        filter_eval_output(drain_output_with_poll(Duration::from_millis(1500)))
     } else {
-        drain_output_quick()
+        filter_eval_output(drain_output_quick())
     };
 
     Ok(EvalResponse {
         result: result_str,
         output,
     })
+}
+
+/// Markers printed by the GDScript eval server around `run()` execution.
+/// Used to filter captured output so only eval-originated prints are shown.
+const EVAL_OUTPUT_BEGIN: &str = "__GD_EVAL_BEGIN__";
+const EVAL_OUTPUT_END: &str = "__GD_EVAL_END__";
+
+/// Filter captured output to only include lines between eval markers.
+/// This strips game log messages (from other nodes) that aren't from the eval script.
+fn filter_eval_output(output: Vec<CapturedOutput>) -> Vec<CapturedOutput> {
+    let mut inside = false;
+    let mut result = Vec::new();
+    for line in output {
+        if line.message.contains(EVAL_OUTPUT_BEGIN) {
+            inside = true;
+            continue;
+        }
+        if line.message.contains(EVAL_OUTPUT_END) {
+            inside = false;
+            continue;
+        }
+        if inside {
+            result.push(line);
+        }
+    }
+    result
 }
 
 /// Single instant drain — no waiting. Returns whatever output has already arrived.
@@ -405,6 +437,24 @@ fn try_recover_debug_break() -> Option<String> {
         }
     }
 
+    // Include any captured error output (runtime error details from Godot)
+    let error_output: Vec<CapturedOutput> = crate::lsp::daemon_client::query_daemon(
+        "output_capture_drain",
+        serde_json::json!({}),
+        timeout,
+    )
+    .and_then(|r| r.get("output").cloned())
+    .and_then(|v| serde_json::from_value(v).ok())
+    .unwrap_or_default();
+    for line in &error_output {
+        if line.r#type == "error" {
+            if !msg.ends_with('\n') {
+                msg.push('\n');
+            }
+            msg.push_str(&line.message);
+        }
+    }
+
     let _ =
         crate::lsp::daemon_client::query_daemon("debug_continue", serde_json::json!({}), timeout);
 
@@ -542,5 +592,60 @@ mod tests {
         let decoded_len = u32::from_le_bytes([frame[0], frame[1], frame[2], frame[3]]) as usize;
         assert_eq!(decoded_len, payload.len());
         assert_eq!(&frame[4..], payload);
+    }
+
+    #[test]
+    fn filter_eval_output_strips_game_logs() {
+        let output = vec![
+            CapturedOutput {
+                message: "[ClientController] frame=466500".to_string(),
+                r#type: "log".to_string(),
+            },
+            CapturedOutput {
+                message: "__GD_EVAL_BEGIN__".to_string(),
+                r#type: "log".to_string(),
+            },
+            CapturedOutput {
+                message: "hello from eval".to_string(),
+                r#type: "log".to_string(),
+            },
+            CapturedOutput {
+                message: "__GD_EVAL_END__".to_string(),
+                r#type: "log".to_string(),
+            },
+            CapturedOutput {
+                message: "[LagCompensator] tick=9743".to_string(),
+                r#type: "log".to_string(),
+            },
+        ];
+        let filtered = filter_eval_output(output);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].message, "hello from eval");
+    }
+
+    #[test]
+    fn filter_eval_output_no_markers_returns_empty() {
+        let output = vec![CapturedOutput {
+            message: "[ClientController] frame=100".to_string(),
+            r#type: "log".to_string(),
+        }];
+        let filtered = filter_eval_output(output);
+        assert!(filtered.is_empty());
+    }
+
+    #[test]
+    fn filter_eval_output_empty_eval() {
+        let output = vec![
+            CapturedOutput {
+                message: "__GD_EVAL_BEGIN__".to_string(),
+                r#type: "log".to_string(),
+            },
+            CapturedOutput {
+                message: "__GD_EVAL_END__".to_string(),
+                r#type: "log".to_string(),
+            },
+        ];
+        let filtered = filter_eval_output(output);
+        assert!(filtered.is_empty());
     }
 }

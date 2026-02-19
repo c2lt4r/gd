@@ -126,7 +126,13 @@ pub fn dispatch_debug_request_screenshot(
     };
     match ds.cmd_request_screenshot(id) {
         Some(result) => {
-            let file_path = crate::core::fs::windows_to_wsl_path(&result.path);
+            // Only translate Windows→WSL paths when running under WSL.
+            // On native Windows, the path is already correct.
+            let file_path = if crate::core::fs::is_wsl() {
+                crate::core::fs::windows_to_wsl_path(&result.path)
+            } else {
+                result.path.clone()
+            };
             ok_response(serde_json::json!({
                 "width": result.width,
                 "height": result.height,
