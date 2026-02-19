@@ -84,23 +84,37 @@ fn collect_validated(node: Node, src: &[u8], validated: &mut HashSet<String>) {
     }
 }
 
+/// Recursively collect all identifiers within a node.
+fn collect_all_identifiers<'a>(node: Node<'a>, src: &[u8], out: &mut Vec<(String, Node<'a>)>) {
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            let child = cursor.node();
+            if child.kind() == "identifier"
+                && let Ok(text) = child.utf8_text(src)
+            {
+                out.push((text.to_string(), child));
+            } else if child.kind() != "attribute_call" {
+                // Recurse into everything except attribute_call (don't collect method name)
+                collect_all_identifiers(child, src, out);
+            }
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+    }
+}
+
 fn check_is_valid(node: Node, src: &[u8], validated: &mut HashSet<String>) {
     let mut cursor = node.walk();
     if !cursor.goto_first_child() {
         return;
     }
 
-    let mut identifiers: Vec<String> = Vec::new();
     let mut has_is_valid = false;
 
     loop {
         let child = cursor.node();
-
-        if child.kind() == "identifier"
-            && let Ok(text) = child.utf8_text(src)
-        {
-            identifiers.push(text.to_string());
-        }
 
         if child.kind() == "attribute_call"
             && let Some(method) = child
@@ -117,8 +131,12 @@ fn check_is_valid(node: Node, src: &[u8], validated: &mut HashSet<String>) {
         }
     }
 
-    if has_is_valid && let Some(obj) = identifiers.last() {
-        validated.insert(obj.clone());
+    if has_is_valid {
+        let mut ids = Vec::new();
+        collect_all_identifiers(node, src, &mut ids);
+        if let Some((name, _)) = ids.last() {
+            validated.insert(name.clone());
+        }
     }
 }
 
@@ -209,17 +227,10 @@ fn check_callable_call(
         return;
     }
 
-    let mut identifiers: Vec<(String, Node)> = Vec::new();
     let mut call_method = None;
 
     loop {
         let child = cursor.node();
-
-        if child.kind() == "identifier"
-            && let Ok(text) = child.utf8_text(src)
-        {
-            identifiers.push((text.to_string(), child));
-        }
 
         if child.kind() == "attribute_call"
             && let Some(method) = child
@@ -236,23 +247,26 @@ fn check_callable_call(
         }
     }
 
-    if let Some(method) = call_method
-        && let Some((obj_name, obj_node)) = identifiers.last()
-        && obj_name != "self"
-        && !validated.contains(obj_name)
-    {
-        diags.push(LintDiagnostic {
-            rule: "callable-null-check",
-            message: format!(
-                "`{obj_name}.{method}()` called without `{obj_name}.is_valid()` check"
-            ),
-            severity: Severity::Warning,
-            line: obj_node.start_position().row,
-            column: obj_node.start_position().column,
-            end_column: None,
-            fix: None,
-            context_lines: None,
-        });
+    if let Some(method) = call_method {
+        let mut ids = Vec::new();
+        collect_all_identifiers(node, src, &mut ids);
+        if let Some((obj_name, obj_node)) = ids.last()
+            && obj_name != "self"
+            && !validated.contains(obj_name)
+        {
+            diags.push(LintDiagnostic {
+                rule: "callable-null-check",
+                message: format!(
+                    "`{obj_name}.{method}()` called without `{obj_name}.is_valid()` check"
+                ),
+                severity: Severity::Warning,
+                line: obj_node.start_position().row,
+                column: obj_node.start_position().column,
+                end_column: None,
+                fix: None,
+                context_lines: None,
+            });
+        }
     }
 }
 
@@ -323,6 +337,24 @@ mod tests {
     fn no_warning_without_callable_call() {
         let source = "func f(node: Node) -> void:\n\tnode.process()\n";
         assert!(check(source).is_empty());
+    }
+
+    #[test]
+    fn chained_is_valid_guards_chained_call() {
+        // Pattern from user report: server.hitscan_validator.is_valid() guards
+        // server.hitscan_validator.call() across if/body boundary
+        let source = "func f(server) -> void:\n\tif server and server.hitscan_validator.is_valid():\n\t\tserver.hitscan_validator.call(1, 2)\n";
+        assert!(check(source).is_empty());
+    }
+
+    #[test]
+    fn chained_call_without_is_valid_warns() {
+        // Same chained pattern but WITHOUT the is_valid guard — should warn
+        let source =
+            "func f(server) -> void:\n\tserver.hitscan_validator.call(1, 2)\n";
+        let diags = check(source);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("hitscan_validator"));
     }
 
     #[test]
