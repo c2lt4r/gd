@@ -10,6 +10,7 @@
 - **ClassDB signals table** — the generated class database now includes signal names (e.g., `value_changed`, `pressed`), used by lint rules to distinguish signals from unknown members.
 
 ### Improved
+- **Concurrent eval server** — the TCP eval server now accepts multiple simultaneous connections via a queue. One instance can install a persistent node (e.g., walk controller) while another queries game state. Node-based scripts are queued and executed next frame; RefCounted scripts execute immediately. Previously, the server only handled one eval at a time.
 - **Dot-completions for builtin types** — `position.x`, `diff.length()`, `dir.normalized()` and other member accesses on inherited properties, binary expressions, and chained method calls now return correct completions. Type inference follows the full chain: inherited member → ClassDB property type → builtin member return type → progressive local variable resolution.
 
 ### Fixed

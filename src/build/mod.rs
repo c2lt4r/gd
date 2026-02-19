@@ -142,8 +142,10 @@ pub fn generate_eval_server(scene_path: &str, tcp: bool) -> String {
     }
 }
 
-/// TCP-based eval server: listens on a random port, accepts one connection per eval.
+/// TCP-based eval server: listens on a random port, accepts multiple concurrent connections.
 /// Wire protocol: 4-byte LE length prefix + payload (same as debug server).
+/// Node-based scripts are queued and executed on the next poll tick (one frame delay
+/// for `_ready()` to fire). RefCounted scripts execute immediately in the accept loop.
 #[allow(clippy::too_many_lines)]
 fn generate_eval_server_tcp(scene_path: &str) -> String {
     format!(
@@ -151,8 +153,8 @@ fn generate_eval_server_tcp(scene_path: &str) -> String {
 
 var _root: String
 var _tcp: TCPServer
-var _runner: Node = null
-var _pending_peer: StreamPeerTCP = null
+var _queue: Array = []
+var _eval_id: int = 0
 
 func _initialize():
 	_root = ProjectSettings.globalize_path("res://")
@@ -175,18 +177,11 @@ func _initialize():
 	get_root().call_deferred("add_child", timer)
 
 func _poll():
-	# Watchdog: if previous run() crashed, send error to waiting peer
-	if _pending_peer != null and _runner == null:
-		_send_result(_pending_peer, null, "Script execution failed (runtime error)")
-		_pending_peer = null
-		return
-
-	# Execute pending runner (Node script, deferred from last tick)
-	if _runner != null:
-		var runner = _runner
-		_runner = null
-		var peer = _pending_peer
-		_pending_peer = null
+	# 1. Execute all queued runners from previous tick
+	while _queue.size() > 0:
+		var entry = _queue.pop_front()
+		var runner = entry.runner
+		var peer = entry.peer
 		print("__GD_EVAL_BEGIN__")
 		var result = runner.call("run") if is_instance_valid(runner) else null
 		print("__GD_EVAL_END__")
@@ -194,15 +189,14 @@ func _poll():
 			runner.queue_free()
 		var result_str = str(result) if result != null else ""
 		_send_result(peer, result_str, "")
-		return
 
-	# Accept new connection (non-blocking)
-	if not _tcp.is_connection_available():
-		return
-	var peer = _tcp.take_connection()
-	if peer == null:
-		return
+	# 2. Accept and process all available connections
+	while _tcp.is_connection_available():
+		var peer = _tcp.take_connection()
+		if peer != null:
+			_accept_eval(peer)
 
+func _accept_eval(peer: StreamPeerTCP):
 	# Read request: [4 bytes LE length][script bytes]
 	# StreamPeerTCP.get_data() may return partial data if the full
 	# payload hasn't arrived yet (especially on WSL cross-VM TCP).
@@ -242,13 +236,13 @@ func _poll():
 		return
 
 	if obj is Node:
-		obj.name = "GdEvalRunner"
+		_eval_id += 1
+		obj.name = "GdEvalRunner_%d" % _eval_id
 		obj.process_mode = Node.PROCESS_MODE_ALWAYS
 		get_root().add_child(obj)
-		_runner = obj
-		_pending_peer = peer
+		_queue.append({{runner = obj, peer = peer}})
 	else:
-		# RefCounted: execute immediately
+		# RefCounted: execute immediately (no scene tree needed)
 		print("__GD_EVAL_BEGIN__")
 		var result = obj.call("run")
 		print("__GD_EVAL_END__")
@@ -849,5 +843,21 @@ mod tests {
         let script = generate_eval_server("res://main.tscn", false);
         assert!(script.contains("_finalize"));
         assert!(script.contains("gd-eval-ready"));
+    }
+
+    #[test]
+    fn eval_server_tcp_concurrent_queue() {
+        let script = generate_eval_server("res://main.tscn", true);
+        // Uses queue instead of single runner slot
+        assert!(script.contains("var _queue: Array"));
+        assert!(script.contains("_queue.pop_front()"));
+        assert!(script.contains("_queue.append("));
+        // Accepts all available connections per poll
+        assert!(script.contains("while _tcp.is_connection_available()"));
+        // Unique runner names
+        assert!(script.contains("GdEvalRunner_%d"));
+        // Output markers
+        assert!(script.contains("__GD_EVAL_BEGIN__"));
+        assert!(script.contains("__GD_EVAL_END__"));
     }
 }
