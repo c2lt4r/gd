@@ -471,18 +471,41 @@ pub fn generate_live_eval_script(input: &str) -> String {
         return input.to_string();
     }
 
-    // Check if it looks like multi-statement (contains ; or newlines)
-    let statements: Vec<&str> = if input.contains(';') {
+    // Check if it looks like multi-statement (contains newlines or ;)
+    // Newlines take priority: --file content and multi-line --expr should split on
+    // lines, not semicolons (which may appear inside comments like `# for x; do y`).
+    let statements: Vec<&str> = if input.contains('\n') {
+        input.lines().collect()
+    } else if input.contains(';') {
         input
             .split(';')
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .collect()
-    } else if input.contains('\n') {
-        input.lines().collect()
     } else {
-        // Single expression — wrap with return, unless it's a void call
-        return if looks_like_void_call(input) {
+        // Single expression
+        let trimmed = input.trim();
+        return if is_assignment(trimmed) {
+            // Assignment: execute as statement. Special-case `result = ...`
+            // convention: declare `result`, assign, and return it.
+            if trimmed.starts_with("result ") || trimmed.starts_with("result=") {
+                format!(
+                    "extends Node\n\
+                     \n\
+                     func run():\n\
+                     \tvar result\n\
+                     \t{trimmed}\n\
+                     \treturn result\n"
+                )
+            } else {
+                format!(
+                    "extends Node\n\
+                     \n\
+                     func run():\n\
+                     \t{trimmed}\n"
+                )
+            }
+        } else if looks_like_void_call(input) {
             format!(
                 "extends Node\n\
                  \n\
@@ -1439,6 +1462,25 @@ mod tests {
 
         // Ignores = inside parentheses (default params, kwargs)
         assert!(!is_assignment("func(x = 42)"));
+    }
+
+    #[test]
+    fn live_script_file_with_semicolons_in_comments() {
+        // Bug: file content with `;` in a comment was split on semicolons instead of newlines.
+        // With newline-first splitting, the comment is preserved as-is (valid GDScript comment).
+        let file_content = "# Usage: for i in 1 2 3; do gd eval; done\nvar x = 42\nx";
+        let script = generate_live_eval_script(file_content);
+        assert!(
+            script.contains("# Usage: for i in 1 2 3; do gd eval; done"),
+            "Comment line should be preserved intact, got:\n{script}"
+        );
+        assert!(script.contains("return x"), "Should return last expression");
+        // The script should parse cleanly (comment doesn't corrupt code)
+        let tree = crate::core::parser::parse(&script).unwrap();
+        assert!(
+            !tree.root_node().has_error(),
+            "Script with comment containing semicolons should parse cleanly:\n{script}"
+        );
     }
 
     #[test]

@@ -129,6 +129,8 @@ pub struct GodotDebugServer {
     running: Arc<Mutex<bool>>,
     /// Tracks whether the game is paused at a breakpoint (debug_enter/debug_exit).
     at_breakpoint: Arc<AtomicBool>,
+    /// Reason string from the last `debug_enter` (e.g. "Breakpoint", error message).
+    breakpoint_reason: Arc<Mutex<String>>,
     /// Set to true when the reader thread exits (game disconnected).
     disconnected: Arc<AtomicBool>,
     /// Callback invoked when the game disconnects (reader thread exits).
@@ -161,6 +163,7 @@ impl GodotDebugServer {
             inbox: Arc::new(Inbox::new()),
             running: Arc::new(Mutex::new(true)),
             at_breakpoint: Arc::new(AtomicBool::new(false)),
+            breakpoint_reason: Arc::new(Mutex::new(String::new())),
             disconnected: Arc::new(AtomicBool::new(false)),
             on_disconnect: Arc::new(Mutex::new(None)),
             capturing_output: Arc::new(AtomicBool::new(false)),
@@ -225,6 +228,12 @@ impl GodotDebugServer {
     /// so it returns instantly without any network round-trip.
     pub fn is_at_breakpoint(&self) -> bool {
         self.at_breakpoint.load(Ordering::Relaxed)
+    }
+
+    /// Get the reason string from the last `debug_enter` message.
+    /// Returns the error message or "Breakpoint" for user breakpoints.
+    pub fn breakpoint_reason(&self) -> String {
+        self.breakpoint_reason.lock().unwrap().clone()
     }
 
     /// Start capturing output messages from Godot (print, push_error, etc.).
@@ -332,6 +341,7 @@ impl GodotDebugServer {
         let inbox = Arc::clone(&self.inbox);
         let running = Arc::clone(&self.running);
         let at_breakpoint = Arc::clone(&self.at_breakpoint);
+        let breakpoint_reason = Arc::clone(&self.breakpoint_reason);
         let disconnected = Arc::clone(&self.disconnected);
         let on_disconnect = Arc::clone(&self.on_disconnect);
         let capturing_output = Arc::clone(&self.capturing_output);
@@ -345,6 +355,7 @@ impl GodotDebugServer {
                 &inbox,
                 &running,
                 &at_breakpoint,
+                &breakpoint_reason,
                 &capturing_output,
                 &output_buffer,
                 &log_ring,
@@ -375,6 +386,7 @@ fn reader_loop(
     inbox: &Inbox,
     running: &Mutex<bool>,
     at_breakpoint: &AtomicBool,
+    breakpoint_reason: &Mutex<String>,
     capturing_output: &AtomicBool,
     output_buffer: &Mutex<Vec<CapturedOutput>>,
     log_ring: &Mutex<VecDeque<LogEntry>>,
@@ -422,7 +434,13 @@ fn reader_loop(
             // Track breakpoint state and capture output/error messages
             if let Some(GodotVariant::String(cmd)) = items.first() {
                 match cmd.as_str() {
-                    "debug_enter" => at_breakpoint.store(true, Ordering::Relaxed),
+                    "debug_enter" => {
+                        at_breakpoint.store(true, Ordering::Relaxed);
+                        // Godot sends: ["debug_enter", bool(can_continue), String(reason)]
+                        if let Some(GodotVariant::String(reason)) = items.get(2) {
+                            breakpoint_reason.lock().unwrap().clone_from(reason);
+                        }
+                    }
                     "debug_exit" => at_breakpoint.store(false, Ordering::Relaxed),
                     "output" => {
                         // Always push to the log ring buffer

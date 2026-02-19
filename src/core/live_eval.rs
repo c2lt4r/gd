@@ -410,7 +410,16 @@ fn try_recover_debug_break() -> Option<String> {
         return None;
     }
 
-    let mut msg = String::from("GDScript error paused the game");
+    // Use the reason from debug_enter if available (e.g. "Breakpoint", error text)
+    let reason = bp
+        .get("reason")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    let mut msg = if reason.is_empty() {
+        String::from("GDScript error paused the game")
+    } else {
+        format!("GDScript error: {reason}")
+    };
     if let Some(stack) = crate::lsp::daemon_client::query_daemon(
         "debug_get_stack_dump",
         serde_json::json!({}),

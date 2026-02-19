@@ -8,6 +8,7 @@
 - **`--rule` flag now force-enables opt-in rules** — `gd lint --rule <name>` activates the specified rule even if it's opt-in or disabled, instead of only post-filtering results.
 - **Inline suppression docs** — `gd lint --help` and `gd man lint` now document the `# gd:ignore` / `# gd:ignore-next-line` / `# gd:ignore[rule]` suppression comment syntax. Also added to `gd llm` output for AI agent discoverability.
 - **ClassDB signals table** — the generated class database now includes signal names (e.g., `value_changed`, `pressed`), used by lint rules to distinguish signals from unknown members.
+- **`gd debug eval --file`** — read eval script from a file instead of `--expr`. Supports `--file -` for stdin. Preserves tabs and indentation, enabling loops/if/else blocks that can't be expressed in single-line `--expr`.
 
 ### Improved
 - **Concurrent eval server** — the TCP eval server now accepts multiple simultaneous connections via a queue. One instance can install a persistent node (e.g., walk controller) while another queries game state. Node-based scripts are queued and executed next frame; RefCounted scripts execute immediately. Previously, the server only handled one eval at a time.
@@ -21,6 +22,9 @@
 - **`callable-null-check` false positive on chained access** — `server.validator.is_valid()` guarding `server.validator.call()` no longer triggers a warning. The rule now recursively collects identifiers from nested attribute chains.
 - **`parameter-shadows-field` false positive on static functions** — static factory methods like `static func from_box(id: int)` matching a field name no longer warn, since static methods have no `self`.
 - **`replace-symbol` preserves indentation in inner classes** — replacing a symbol inside an inner class now re-indents the new content to match the original depth.
+- **`result = ...` eval convention restored** — `gd debug eval --expr "result = 'hello'"` works again. Single-expression assignments to `result` are detected and wrapped with `var result` + `return result` instead of invalid `return result = ...`.
+- **Eval semicolons in comments no longer corrupt `--file` scripts** — files with `;` in GDScript comments (e.g. bash loop examples) are now split on newlines, not semicolons. Newline splitting takes priority for multi-line input.
+- **Breakpoint reason included in eval error messages** — when an eval script triggers a GDScript error, the `debug_enter` reason from Godot (e.g. the actual error text) is now captured and shown instead of generic "GDScript error paused the game".
 - **Daemon startup race on Windows** — state file is now written immediately after port binding (before building workspace index), and the client retries for up to 5s instead of failing on first connection error.
 - **`use-before-assign` false positives on Node subclasses** — members assigned in `_ready()` or `_init()` (directly or transitively through called methods) are now recognized as initialized in other methods. Previously, procedural UI code that assigned members in `_build_ui()` called from `_ready()` would produce spurious warnings.
 - **`use-before-assign` false positives on null-guarded members** — bare identifier reads (`if member:`, `if not member: return`, `if x == member`) are no longer flagged as use-before-assign. Only dereference reads (`.prop`, `[idx]`) are reported. Additionally, members that are null-checked before being dereferenced are automatically suppressed.
