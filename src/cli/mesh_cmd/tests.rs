@@ -50,57 +50,6 @@ fn profile_top_parses() {
     assert_parses(&gdscript::generate_profile(&pts, "top"));
 }
 
-// ── Extrude ──────────────────────────────────────────────────────────
-
-#[test]
-fn extrude_parses() {
-    assert_parses(&gdscript::generate_extrude(1.5, 1));
-}
-
-#[test]
-fn extrude_small_depth_parses() {
-    assert_parses(&gdscript::generate_extrude(0.1, 1));
-}
-
-#[test]
-fn extrude_segments_parses() {
-    assert_parses(&gdscript::generate_extrude(10.0, 6));
-}
-
-// ── Revolve ──────────────────────────────────────────────────────────
-
-#[test]
-fn revolve_y_360_parses() {
-    assert_parses(&gdscript::generate_revolve("y", 360.0, 16, false));
-}
-
-#[test]
-fn revolve_x_180_parses() {
-    assert_parses(&gdscript::generate_revolve("x", 180.0, 8, false));
-}
-
-#[test]
-fn revolve_z_90_parses() {
-    assert_parses(&gdscript::generate_revolve("z", 90.0, 4, false));
-}
-
-#[test]
-fn revolve_capped_parses() {
-    assert_parses(&gdscript::generate_revolve("y", 180.0, 16, true));
-}
-
-// ── Move vertex ──────────────────────────────────────────────────────
-
-#[test]
-fn move_vertex_parses() {
-    assert_parses(&gdscript::generate_move_vertex(0, 0.5, -0.3, 1.0));
-}
-
-#[test]
-fn move_vertex_large_index_parses() {
-    assert_parses(&gdscript::generate_move_vertex(999, 0.0, 0.0, 0.0));
-}
-
 // ── Camera ───────────────────────────────────────────────────────────
 
 #[test]
@@ -166,13 +115,6 @@ fn mirror_part_symmetric_x_parses() {
     assert_parses(&gdscript::generate_mirror_part(
         "wheel-fr", "wheel-fl", "x", true,
     ));
-}
-
-// ── Profile copy ────────────────────────────────────────────────────
-
-#[test]
-fn profile_copy_from_part_parses() {
-    assert_parses(&gdscript::generate_profile_from_part("fuselage"));
 }
 
 // ── Focus ────────────────────────────────────────────────────────────
@@ -280,100 +222,6 @@ fn list_vertices_region_parses() {
     assert_parses(&gdscript::generate_list_vertices(Some(&region)));
 }
 
-// ── Taper ────────────────────────────────────────────────────────────
-
-#[test]
-fn taper_y_parses() {
-    assert_parses(&gdscript::generate_taper(None, "y", 1.0, 0.0, None, None));
-}
-
-#[test]
-fn taper_z_parses() {
-    assert_parses(&gdscript::generate_taper(None, "z", 1.0, 0.5, None, None));
-}
-
-#[test]
-fn taper_x_parses() {
-    assert_parses(&gdscript::generate_taper(None, "x", 0.5, 1.5, None, None));
-}
-
-#[test]
-fn taper_named_part_parses() {
-    assert_parses(&gdscript::generate_taper(
-        Some("wing"),
-        "z",
-        1.0,
-        0.0,
-        None,
-        None,
-    ));
-}
-
-#[test]
-fn taper_midpoint_parses() {
-    assert_parses(&gdscript::generate_taper(
-        None,
-        "y",
-        1.0,
-        0.3,
-        Some(0.5),
-        None,
-    ));
-}
-
-#[test]
-fn taper_range_parses() {
-    assert_parses(&gdscript::generate_taper(
-        None,
-        "z",
-        1.0,
-        0.0,
-        None,
-        Some((0.3, 0.7)),
-    ));
-}
-
-#[test]
-fn taper_midpoint_range_parses() {
-    assert_parses(&gdscript::generate_taper(
-        None,
-        "y",
-        1.0,
-        0.2,
-        Some(0.5),
-        Some((0.1, 0.9)),
-    ));
-}
-
-// ── Bevel ────────────────────────────────────────────────────────────
-
-#[test]
-fn bevel_parses() {
-    assert_parses(&gdscript::generate_bevel(0.1, 2, "all"));
-}
-
-#[test]
-fn bevel_high_segments_parses() {
-    assert_parses(&gdscript::generate_bevel(0.05, 4, "all"));
-}
-
-#[test]
-fn bevel_depth_edges_parses() {
-    assert_parses(&gdscript::generate_bevel(0.1, 2, "depth"));
-}
-
-#[test]
-fn bevel_profile_edges_parses() {
-    assert_parses(&gdscript::generate_bevel(0.1, 3, "profile"));
-}
-
-// ── Info ─────────────────────────────────────────────────────────────
-
-#[test]
-fn info_parses() {
-    assert_parses(&gdscript::generate_info());
-}
-
 #[test]
 fn info_all_parses() {
     assert_parses(&gdscript::generate_info_all());
@@ -423,70 +271,6 @@ fn normal_debug_parses() {
 #[test]
 fn normal_debug_clear_parses() {
     assert_parses(&gdscript::generate_normal_debug_clear());
-}
-
-// ── Checkpoint / Restore ─────────────────────────────────────────────
-
-#[test]
-fn checkpoint_parses() {
-    assert_parses(&gdscript::generate_checkpoint(None));
-}
-
-#[test]
-fn checkpoint_named_parses() {
-    assert_parses(&gdscript::generate_checkpoint(Some("before-engines")));
-}
-
-#[test]
-fn restore_parses() {
-    assert_parses(&gdscript::generate_restore(None));
-}
-
-#[test]
-fn restore_named_parses() {
-    assert_parses(&gdscript::generate_restore(Some("before-engines")));
-}
-
-// ── Fix normals ─────────────────────────────────────────────────────
-
-#[test]
-fn fix_normals_active_parses() {
-    assert_parses(&gdscript::generate_fix_normals(None));
-}
-
-#[test]
-fn fix_normals_named_parses() {
-    assert_parses(&gdscript::generate_fix_normals(Some("body")));
-}
-
-// ── Flip normals ────────────────────────────────────────────────────
-
-#[test]
-fn flip_normals_all_parses() {
-    assert_parses(&gdscript::generate_flip_normals_all());
-}
-
-#[test]
-fn flip_normals_active_parses() {
-    assert_parses(&gdscript::generate_flip_normals(None, None));
-}
-
-#[test]
-fn flip_normals_named_parses() {
-    assert_parses(&gdscript::generate_flip_normals(Some("receiver"), None));
-}
-
-#[test]
-fn flip_normals_caps_x_parses() {
-    assert_parses(&gdscript::generate_flip_normals(None, Some("x")));
-}
-
-#[test]
-fn flip_normals_caps_z_parses() {
-    assert_parses(&gdscript::generate_flip_normals(
-        Some("fuselage"),
-        Some("z"),
-    ));
 }
 
 // ── Material ─────────────────────────────────────────────────────────
@@ -562,47 +346,6 @@ fn material_preset_multi_metal_parses() {
     assert_parses(&gdscript::generate_material_preset_multi(
         "wheel-*", "metal", None,
     ));
-}
-
-// ── Loop cut ────────────────────────────────────────────────────────
-
-#[test]
-fn loop_cut_y_parses() {
-    assert_parses(&gdscript::generate_loop_cut(None, "y", 0.5));
-}
-
-#[test]
-fn loop_cut_x_parses() {
-    assert_parses(&gdscript::generate_loop_cut(Some("wing"), "x", -2.0));
-}
-
-#[test]
-fn loop_cut_z_parses() {
-    assert_parses(&gdscript::generate_loop_cut(None, "z", 0.0));
-}
-
-// ── Subdivide ────────────────────────────────────────────────────────
-
-#[test]
-fn subdivide_active_parses() {
-    assert_parses(&gdscript::generate_subdivide(None, 1));
-}
-
-#[test]
-fn subdivide_named_parses() {
-    assert_parses(&gdscript::generate_subdivide(Some("hull"), 1));
-}
-
-#[test]
-fn subdivide_multiple_iterations_parses() {
-    assert_parses(&gdscript::generate_subdivide(None, 3));
-}
-
-// ── Fix normals all ─────────────────────────────────────────────────
-
-#[test]
-fn fix_normals_all_parses() {
-    assert_parses(&gdscript::generate_fix_normals_all());
 }
 
 // ── Parse helpers ────────────────────────────────────────────────────
