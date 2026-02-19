@@ -308,6 +308,86 @@ fn validate_script_base_class(path: &Path) -> Result<()> {
     ))
 }
 
+/// Determine if the last statement in a multi-statement eval should get a `return` prefix.
+fn should_add_return(stmt: &str) -> bool {
+    // Declarations
+    if stmt.starts_with("var ") || stmt.starts_with("const ") {
+        return false;
+    }
+    // Already has return
+    if stmt == "return" || stmt.starts_with("return ") || stmt.starts_with("return\t") {
+        return false;
+    }
+    // Assignments (x = ..., x += ..., etc.)
+    if is_assignment(stmt) {
+        return false;
+    }
+    // Void calls
+    if looks_like_void_call(stmt) {
+        return false;
+    }
+    // Control flow keywords
+    if stmt.starts_with("if ")
+        || stmt.starts_with("for ")
+        || stmt.starts_with("while ")
+        || stmt.starts_with("match ")
+        || stmt == "pass"
+        || stmt == "break"
+        || stmt == "continue"
+    {
+        return false;
+    }
+    true
+}
+
+/// Check if a statement is an assignment (`x = 1`, `x += 2`, `obj.prop = v`, etc.).
+/// Ignores `=` inside strings, parentheses, brackets, and comparison operators.
+fn is_assignment(stmt: &str) -> bool {
+    let bytes = stmt.as_bytes();
+    let mut depth = 0i32;
+    let mut in_string = false;
+    let mut string_char = 0u8;
+    let mut i = 0;
+    while i < bytes.len() {
+        if in_string {
+            if bytes[i] == b'\\' {
+                i += 2;
+                continue;
+            }
+            if bytes[i] == string_char {
+                in_string = false;
+            }
+            i += 1;
+            continue;
+        }
+        match bytes[i] {
+            b'"' | b'\'' => {
+                in_string = true;
+                string_char = bytes[i];
+            }
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth -= 1,
+            b'=' if depth == 0 => {
+                // Skip == (comparison)
+                if i + 1 < bytes.len() && bytes[i + 1] == b'=' {
+                    i += 2;
+                    continue;
+                }
+                // Skip !=, <=, >= (comparison operators)
+                if i > 0 && matches!(bytes[i - 1], b'!' | b'<' | b'>') {
+                    i += 1;
+                    continue;
+                }
+                // Anything else with = at top level is an assignment (=, +=, -=, *=, etc.)
+                return true;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    false
+}
+
 /// GDScript builtin functions that return void (not in ClassDB).
 const VOID_BUILTINS: &[&str] = &[
     "print",
@@ -391,18 +471,41 @@ pub fn generate_live_eval_script(input: &str) -> String {
         return input.to_string();
     }
 
-    // Check if it looks like multi-statement (contains ; or newlines)
-    let statements: Vec<&str> = if input.contains(';') {
+    // Check if it looks like multi-statement (contains newlines or ;)
+    // Newlines take priority: --file content and multi-line --expr should split on
+    // lines, not semicolons (which may appear inside comments like `# for x; do y`).
+    let statements: Vec<&str> = if input.contains('\n') {
+        input.lines().collect()
+    } else if input.contains(';') {
         input
             .split(';')
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .collect()
-    } else if input.contains('\n') {
-        input.lines().collect()
     } else {
-        // Single expression — wrap with return, unless it's a void call
-        return if looks_like_void_call(input) {
+        // Single expression
+        let trimmed = input.trim();
+        return if is_assignment(trimmed) {
+            // Assignment: execute as statement. Special-case `result = ...`
+            // convention: declare `result`, assign, and return it.
+            if trimmed.starts_with("result ") || trimmed.starts_with("result=") {
+                format!(
+                    "extends Node\n\
+                     \n\
+                     func run():\n\
+                     \tvar result\n\
+                     \t{trimmed}\n\
+                     \treturn result\n"
+                )
+            } else {
+                format!(
+                    "extends Node\n\
+                     \n\
+                     func run():\n\
+                     \t{trimmed}\n"
+                )
+            }
+        } else if looks_like_void_call(input) {
             format!(
                 "extends Node\n\
                  \n\
@@ -420,8 +523,15 @@ pub fn generate_live_eval_script(input: &str) -> String {
     };
 
     let mut body = String::new();
-    for stmt in &statements {
-        let _ = writeln!(body, "\t{stmt}");
+    let last_idx = statements.iter().rposition(|s| !s.trim().is_empty());
+
+    for (i, stmt) in statements.iter().enumerate() {
+        let trimmed = stmt.trim();
+        if Some(i) == last_idx && should_add_return(trimmed) {
+            let _ = writeln!(body, "\treturn {trimmed}");
+        } else {
+            let _ = writeln!(body, "\t{stmt}");
+        }
     }
 
     format!(
@@ -1273,5 +1383,122 @@ mod tests {
             err.contains("if if if") || err.contains("unexpected"),
             "Error should include context: {err}"
         );
+    }
+
+    #[test]
+    fn live_script_multi_stmt_returns_last_expression() {
+        let script = generate_live_eval_script("var x = 42\nx");
+        assert!(script.contains("var x = 42"), "Should have var declaration");
+        assert!(script.contains("return x"), "Should return last expression");
+    }
+
+    #[test]
+    fn live_script_multi_stmt_returns_function_call() {
+        let script = generate_live_eval_script("var x = 42\nstr(x)");
+        assert!(script.contains("return str(x)"), "Should return str(x)");
+    }
+
+    #[test]
+    fn live_script_multi_stmt_no_return_for_assignment() {
+        let script = generate_live_eval_script("var ws = Node.new()\nws.name = \"test\"");
+        assert!(
+            !script.contains("return ws.name"),
+            "Should not return assignment"
+        );
+    }
+
+    #[test]
+    fn live_script_multi_stmt_no_double_return() {
+        let script = generate_live_eval_script("var x = 42\nreturn x");
+        assert!(script.contains("\treturn x"), "Should preserve return");
+        assert!(
+            !script.contains("return return"),
+            "Should not double-return"
+        );
+    }
+
+    #[test]
+    fn live_script_multi_stmt_semicolons_return() {
+        let script = generate_live_eval_script("var x = 42; str(x)");
+        assert!(script.contains("return str(x)"), "Should return last expr");
+    }
+
+    #[test]
+    fn live_script_multi_stmt_parses_cleanly() {
+        let cases = [
+            "var x = 42\nx",
+            "var x = 42\nstr(x)",
+            "var x = 42\nreturn x",
+            "var a = 1; var b = 2; a + b",
+        ];
+        for input in cases {
+            let script = generate_live_eval_script(input);
+            let tree = crate::core::parser::parse(&script).unwrap();
+            assert!(
+                !tree.root_node().has_error(),
+                "Multi-stmt script for '{input}' should parse cleanly, got:\n{script}"
+            );
+        }
+    }
+
+    #[test]
+    fn assignment_detection() {
+        // True positives: assignments
+        assert!(is_assignment("x = 42"));
+        assert!(is_assignment("ws.tick = 254"));
+        assert!(is_assignment("x += 1"));
+        assert!(is_assignment("x -= 1"));
+        assert!(is_assignment("x *= 2"));
+
+        // True negatives: comparisons
+        assert!(!is_assignment("x == 42"));
+        assert!(!is_assignment("x != 42"));
+        assert!(!is_assignment("x <= 42"));
+        assert!(!is_assignment("x >= 42"));
+
+        // Ignores = inside strings
+        assert!(!is_assignment("str('x = 42')"));
+        assert!(!is_assignment("\"hello = world\""));
+
+        // Ignores = inside parentheses (default params, kwargs)
+        assert!(!is_assignment("func(x = 42)"));
+    }
+
+    #[test]
+    fn live_script_file_with_semicolons_in_comments() {
+        // Bug: file content with `;` in a comment was split on semicolons instead of newlines.
+        // With newline-first splitting, the comment is preserved as-is (valid GDScript comment).
+        let file_content = "# Usage: for i in 1 2 3; do gd eval; done\nvar x = 42\nx";
+        let script = generate_live_eval_script(file_content);
+        assert!(
+            script.contains("# Usage: for i in 1 2 3; do gd eval; done"),
+            "Comment line should be preserved intact, got:\n{script}"
+        );
+        assert!(script.contains("return x"), "Should return last expression");
+        // The script should parse cleanly (comment doesn't corrupt code)
+        let tree = crate::core::parser::parse(&script).unwrap();
+        assert!(
+            !tree.root_node().has_error(),
+            "Script with comment containing semicolons should parse cleanly:\n{script}"
+        );
+    }
+
+    #[test]
+    fn should_add_return_cases() {
+        // Should add return: expressions
+        assert!(should_add_return("x"));
+        assert!(should_add_return("str(x)"));
+        assert!(should_add_return("1 + 1"));
+        assert!(should_add_return("WorldSnapshot.new()"));
+
+        // Should NOT add return
+        assert!(!should_add_return("var x = 42"));
+        assert!(!should_add_return("const Y = 10"));
+        assert!(!should_add_return("return x"));
+        assert!(!should_add_return("x = 42"));
+        assert!(!should_add_return("print(x)"));
+        assert!(!should_add_return("pass"));
+        assert!(!should_add_return("if x > 0: print(x)"));
+        assert!(!should_add_return("for i in 10: print(i)"));
     }
 }

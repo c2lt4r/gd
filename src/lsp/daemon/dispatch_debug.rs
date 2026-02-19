@@ -229,7 +229,15 @@ pub fn dispatch_debug_is_at_breakpoint(server: &DaemonServer) -> DaemonResponse 
     let Some(ds) = get_debug_server(server) else {
         return error_response("No debug server running");
     };
-    ok_response(serde_json::json!({"at_breakpoint": ds.is_at_breakpoint()}))
+    let at_bp = ds.is_at_breakpoint();
+    let mut json = serde_json::json!({"at_breakpoint": at_bp});
+    if at_bp {
+        let reason = ds.breakpoint_reason();
+        if !reason.is_empty() {
+            json["reason"] = serde_json::Value::String(reason);
+        }
+    }
+    ok_response(json)
 }
 
 /// Simple execution control command (continue/break/next/step/out).

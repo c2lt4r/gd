@@ -287,6 +287,27 @@ pub(crate) fn cmd_vars(args: &VarsArgs) -> Result<()> {
     Ok(())
 }
 
+/// Resolve eval input from --expr or --file (use `--file -` for stdin).
+fn resolve_eval_input(args: &EvalBinArgs) -> Result<String> {
+    if let Some(ref path) = args.file {
+        if path == "-" {
+            use std::io::Read;
+            let mut buf = String::new();
+            std::io::stdin()
+                .read_to_string(&mut buf)
+                .map_err(|e| miette!("Failed to read from stdin: {e}"))?;
+            Ok(buf)
+        } else {
+            std::fs::read_to_string(path)
+                .map_err(|e| miette!("Failed to read eval file '{}': {e}", path))
+        }
+    } else if let Some(ref expr) = args.expr {
+        Ok(expr.clone())
+    } else {
+        Err(miette!("Either --expr or --file is required"))
+    }
+}
+
 pub(crate) fn cmd_evaluate(args: &EvalBinArgs) -> Result<()> {
     ensure_binary_debug()?;
 
@@ -294,9 +315,9 @@ pub(crate) fn cmd_evaluate(args: &EvalBinArgs) -> Result<()> {
         return cmd_evaluate_bare(args);
     }
 
-    // Default: full GDScript via file-based eval IPC (supports loops, if, var, etc.)
-    let input = args.expr.trim();
-    let script = crate::cli::eval_cmd::generate_live_eval_script(input);
+    // Resolve input: --file reads from disk, --expr uses the string directly
+    let input = resolve_eval_input(args)?;
+    let script = crate::cli::eval_cmd::generate_live_eval_script(&input);
 
     let cwd = std::env::current_dir().unwrap_or_default();
     let project_root = crate::core::config::find_project_root(&cwd)
@@ -335,7 +356,8 @@ pub(crate) fn cmd_evaluate(args: &EvalBinArgs) -> Result<()> {
 /// Bare mode: use Godot's Expression class via binary debug protocol.
 /// Limited to expressions (no loops/if/var) but can read local variables at a breakpoint.
 fn cmd_evaluate_bare(args: &EvalBinArgs) -> Result<()> {
-    let input = args.expr.trim();
+    let input_text = resolve_eval_input(args)?;
+    let input = input_text.trim();
     let (expr, was_rewritten) = rewrite_eval_expression(input);
     if was_rewritten && !matches!(args.format, OutputFormat::Json) {
         eprintln!("  {} {}", "Rewritten:".dimmed(), expr.dimmed());

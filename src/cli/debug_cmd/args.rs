@@ -595,8 +595,11 @@ pub struct VarsArgs {
 #[derive(Args)]
 pub struct EvalBinArgs {
     /// Expression to evaluate
-    #[arg(long)]
-    pub expr: String,
+    #[arg(long, required_unless_present = "file")]
+    pub expr: Option<String>,
+    /// Read eval script from a file (preserves tabs, supports loops/if/else)
+    #[arg(long, conflicts_with = "expr")]
+    pub file: Option<String>,
     /// Stack frame index (default: 0 = top frame)
     #[arg(long, default_value = "0")]
     pub frame: u32,
