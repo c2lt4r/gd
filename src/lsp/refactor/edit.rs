@@ -284,12 +284,22 @@ pub fn replace_symbol(
         declaration_full_range(decl, &source)
     };
 
+    // Determine the indentation depth of the original declaration so we can
+    // re-indent the replacement content to match (critical for inner classes).
+    let starts = line_starts(&source);
+    let decl_line = decl.start_position().row;
+    let line_start = starts[decl_line];
+    let line_text = &source[line_start..decl.start_byte()];
+    let target_tabs = line_text.chars().filter(|&c| c == '\t').count();
+
+    // Re-indent new content to match the original declaration depth
+    let reindented = re_indent_to_depth(new_content.trim_end(), target_tabs);
+
     // Build new source
     let mut result = String::with_capacity(source.len());
     result.push_str(&source[..full_start]);
-    let trimmed = new_content.trim_end();
-    result.push_str(trimmed);
-    if !trimmed.ends_with('\n') {
+    result.push_str(&reindented);
+    if !reindented.ends_with('\n') {
         result.push('\n');
     }
     result.push_str(&source[full_end..]);
@@ -767,6 +777,54 @@ mod tests {
         // Old content must be gone
         assert!(!content.contains("var speed = 100"));
         assert!(!content.contains("\tpass"));
+    }
+
+    #[test]
+    fn replace_symbol_inner_class_preserves_indent() {
+        // Exact reproduction from false-positives report: replace-symbol on an
+        // inner class function should keep the replacement at inner-class indent
+        // level, not drop it to column 0.
+        let temp = setup(&[(
+            "tmp_script.gd",
+            "extends RefCounted\n\n\nclass Inner:\n\tvar name: String = \"\"\n\tvar value: int = 0\n\n\tfunc get_name() -> String:\n\t\treturn name\n\n\tfunc get_value() -> int:\n\t\treturn value\n\n\tfunc set_value(v: int) -> void:\n\t\tvalue = v\n\n\nfunc outer_func() -> void:\n\tpass\n",
+        )]);
+        let file = temp.path().join("tmp_script.gd");
+        let result = replace_symbol(
+            &file,
+            "get_name",
+            Some("Inner"),
+            "func get_name() -> Variant:\n\treturn name\n",
+            true, // no_format — test raw re-indentation
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+
+        let content = fs::read_to_string(&file).unwrap();
+        // Must be indented inside Inner (1 tab for func, 2 tabs for body)
+        assert!(
+            content.contains("\tfunc get_name() -> Variant:"),
+            "function should be at 1-tab indent inside Inner class, got:\n{content}"
+        );
+        assert!(
+            content.contains("\t\treturn name"),
+            "body should be at 2-tab indent inside Inner class, got:\n{content}"
+        );
+        // Sibling methods must remain at their original indent
+        assert!(
+            content.contains("\tfunc get_value() -> int:"),
+            "sibling get_value should stay at 1-tab indent, got:\n{content}"
+        );
+        assert!(
+            content.contains("\tfunc set_value(v: int) -> void:"),
+            "sibling set_value should stay at 1-tab indent, got:\n{content}"
+        );
+        // Outer function must remain top-level
+        assert!(
+            content.contains("\nfunc outer_func() -> void:"),
+            "outer_func should remain at indent 0, got:\n{content}"
+        );
     }
 
     #[test]
