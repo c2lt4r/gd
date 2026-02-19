@@ -65,16 +65,21 @@ fn query_daemon_with_root(
         return None;
     }
 
-    // Wait for daemon to be ready (up to 3s)
+    // Wait for daemon to be ready (up to 5s).
+    // The daemon writes its state file early, but it may still be building
+    // its workspace index before accepting TCP connections. Keep retrying
+    // on ConnectionFailed — only give up on DaemonError (daemon is alive
+    // but rejected the request) or timeout.
     let start = std::time::Instant::now();
-    while start.elapsed() < Duration::from_secs(3) {
+    while start.elapsed() < Duration::from_secs(5) {
         std::thread::sleep(Duration::from_millis(100));
         if let Some(state) = super::daemon::read_state_file(project_root)
             && is_pid_alive(state.pid)
         {
             match send_query(state.port, method, params, timeout) {
                 SendResult::Ok(result) => return Some(result),
-                SendResult::DaemonError(_) | SendResult::ConnectionFailed => return None,
+                SendResult::DaemonError(_) => return None,
+                SendResult::ConnectionFailed => {} // daemon still starting, retry
             }
         }
     }

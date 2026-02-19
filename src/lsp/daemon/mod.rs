@@ -140,6 +140,12 @@ pub fn run(project_root: &Path, godot_port: u16) -> miette::Result<()> {
         .map_err(|e| miette::miette!("cannot get local address: {e}"))?
         .port();
 
+    // Write state file immediately after binding so clients can discover us.
+    // This must happen BEFORE the workspace build which can take seconds on
+    // large projects (especially on Windows where FS operations are slower).
+    let state_path = project_root.join(".godot").join("gd-daemon.json");
+    write_state_file(&state_path, port, None)?;
+
     // Build workspace index for cross-file resolution
     let workspace = WorkspaceIndex::new(project_root.to_path_buf());
 
@@ -155,10 +161,6 @@ pub fn run(project_root: &Path, godot_port: u16) -> miette::Result<()> {
         godot_port,
         last_activity: Mutex::new(Instant::now()),
     });
-
-    // Write state file immediately so clients can connect
-    let state_path = project_root.join(".godot").join("gd-daemon.json");
-    write_state_file(&state_path, port, None)?;
 
     // Connect to Godot LSP in a background thread (handshake can be slow)
     {
