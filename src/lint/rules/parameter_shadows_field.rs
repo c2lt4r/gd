@@ -54,6 +54,22 @@ fn collect_fields(scope: Node, src: &[u8], fields: &mut HashSet<String>) {
     }
 }
 
+/// Check if a function node has a `static` keyword child.
+fn is_static_func(node: Node) -> bool {
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            if cursor.node().kind() == "static_keyword" {
+                return true;
+            }
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+    }
+    false
+}
+
 /// Check direct child functions for parameter-shadows-field.
 fn check_functions(
     scope: Node,
@@ -66,6 +82,7 @@ fn check_functions(
         loop {
             let child = cursor.node();
             if (child.kind() == "function_definition" || child.kind() == "constructor_definition")
+                && !is_static_func(child)
                 && let Some(params) = child.child_by_field_name("parameters")
             {
                 let body = child.child_by_field_name("body");
@@ -265,6 +282,13 @@ mod tests {
         let diags = check(source);
         // Inner class doesn't have 'speed' as its own field, so no warning
         assert!(diags.is_empty());
+    }
+
+    #[test]
+    fn no_warning_static_factory() {
+        // Static factory methods intentionally match field names — no self exists
+        let source = "var blocker_id: int\nvar tick: int\n\nstatic func from_box(blocker_id: int, tick: int) -> void:\n\tvar record = DynamicBlockerRecord.new()\n\trecord.blocker_id = blocker_id\n\trecord.tick = tick\n";
+        assert!(check(source).is_empty());
     }
 
     #[test]
