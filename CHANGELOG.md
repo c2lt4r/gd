@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.2.20] - Unreleased
+## [0.2.20] - 2026-02-20
 
 ### Added
 - **`--no-color` flag and `NO_COLOR` env** — disable ANSI color codes in all CLI output. Useful for piping, AI agent tools, and terminal emulators that don't render ANSI (e.g. Claude Code VS Code panel).
