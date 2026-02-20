@@ -83,9 +83,10 @@ pub fn bevel_with_profile(
     // Inset map: (face_idx, vertex_idx) → new position index
     let mut inset_map: HashMap<(usize, usize), usize> = HashMap::new();
 
-    for (fi, centroid) in face_centroids.iter().enumerate() {
+    for (fi, centroid_ref) in face_centroids.iter().enumerate() {
         let verts = mesh.face_vertices(fi);
-        for &vi in &verts {
+        let n = verts.len();
+        for (vi_idx, &vi) in verts.iter().enumerate() {
             if !affected.contains(&vi) {
                 continue;
             }
@@ -97,11 +98,37 @@ pub fn bevel_with_profile(
                 continue;
             }
 
+            // Per-edge inset: average the inward-pointing edge normals at this vertex.
+            // For vertex vi at index vi_idx in face, the two edges are:
+            //   prev_v → vi  and  vi → next_v
+            // The inward direction for each edge is the edge perpendicular projected
+            // onto the face plane, pointing toward the face interior.
             let p = mesh.vertices[vi].position;
-            let c = *centroid;
-            let d = sub(c, p);
+            let prev_v = verts[(vi_idx + n - 1) % n];
+            let next_v = verts[(vi_idx + 1) % n];
+            let pp = mesh.vertices[prev_v].position;
+            let np = mesh.vertices[next_v].position;
+
+            let face_normal = compute_face_normal(mesh, fi);
+
+            // Edge vectors
+            let e_prev = sub(p, pp); // prev → vi
+            let e_next = sub(np, p); // vi → next
+
+            // Inward perpendicular: cross(face_normal, edge_dir) points inward
+            let in_prev = cross(face_normal, e_prev);
+            let in_next = cross(face_normal, e_next);
+
+            // Average inward direction (bisector)
+            let d = [
+                in_prev[0] + in_next[0],
+                in_prev[1] + in_next[1],
+                in_prev[2] + in_next[2],
+            ];
             let dist = length(d);
-            let move_dist = radius.min(dist * 0.4);
+            // Limit inset to radius or 40% of distance to centroid (whichever is smaller)
+            let to_center = length(sub(*centroid_ref, p));
+            let move_dist = radius.min(to_center * 0.4);
             let t = if dist > 1e-12 { move_dist / dist } else { 0.0 };
 
             let inset_pos = [p[0] + d[0] * t, p[1] + d[1] * t, p[2] + d[2] * t];

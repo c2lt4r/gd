@@ -3,6 +3,7 @@ use owo_colors::OwoColorize;
 
 use crate::core::mesh::MeshState;
 use crate::core::mesh::normals;
+use crate::core::mesh::spatial_filter;
 
 use super::{FlipNormalsArgs, OutputFormat, match_part_pattern, project_root, run_eval};
 use crate::{ceprintln, cprintln};
@@ -23,7 +24,10 @@ pub fn cmd_flip_normals(args: &FlipNormalsArgs) -> Result<()> {
     let part = state.resolve_part_mut(args.part.as_deref())?;
     let fc = part.mesh.face_count();
 
-    let flipped = if let Some(ref caps_axis) = args.caps {
+    let flipped = if let Some(ref where_expr) = args.where_expr {
+        let filter = spatial_filter::parse_where(where_expr)?;
+        normals::flip_where(&mut part.mesh, &filter)
+    } else if let Some(ref caps_axis) = args.caps {
         normals::flip_caps(&mut part.mesh, caps_axis.as_index())
     } else {
         normals::flip_all(&mut part.mesh);
@@ -75,11 +79,19 @@ fn cmd_flip_normals_pattern(args: &FlipNormalsArgs) -> Result<()> {
         return Err(miette::miette!("No parts match pattern '{pattern}'"));
     }
 
+    let where_filter = args
+        .where_expr
+        .as_deref()
+        .map(spatial_filter::parse_where)
+        .transpose()?;
+
     let mut results = Vec::new();
     for name in &matched {
         let part = state.parts.get_mut(*name).unwrap();
         let fc = part.mesh.face_count();
-        let flipped = if let Some(ref caps_axis) = args.caps {
+        let flipped = if let Some(ref filter) = where_filter {
+            normals::flip_where(&mut part.mesh, filter)
+        } else if let Some(ref caps_axis) = args.caps {
             normals::flip_caps(&mut part.mesh, caps_axis.as_index())
         } else {
             normals::flip_all(&mut part.mesh);

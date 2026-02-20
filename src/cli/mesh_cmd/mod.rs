@@ -722,6 +722,9 @@ pub struct FlipNormalsArgs {
     /// Only flip faces whose normal aligns with this axis (cap faces from extrude/revolve)
     #[arg(long, value_enum)]
     pub caps: Option<Axis>,
+    /// Spatial filter: only flip faces whose centroid passes (e.g. "y>0.12", "z<-0.5")
+    #[arg(long, value_name = "EXPR", allow_hyphen_values = true)]
+    pub where_expr: Option<String>,
     /// Output format
     #[arg(long, default_value = "json")]
     pub format: OutputFormat,

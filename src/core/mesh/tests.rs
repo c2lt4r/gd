@@ -2168,3 +2168,103 @@ fn multi_ring_cap_24_segments() {
     );
     assert_all_normals_outward(&mesh, "multi-ring cap circle 24-seg");
 }
+
+// ── Bug fix: Bevel on concave profile ──────────────────────────────
+
+#[test]
+fn bevel_concave_profile_no_panic() {
+    // 10-point concave L-shape — previously panicked at vertex_faces() bounds check
+    let points: Vec<[f64; 2]> = vec![
+        [0.0, 0.0],
+        [0.1, 0.0],
+        [0.1, 0.02],
+        [0.03, 0.02],
+        [0.03, 0.05],
+        [0.1, 0.05],
+        [0.1, 0.07],
+        [0.0, 0.07],
+        [0.0, 0.05],
+        [0.02, 0.05],
+    ];
+    let mesh = extrude::extrude(&points, PlaneKind::Front, 0.05, 1).unwrap();
+    // Should not panic, should produce valid output
+    let beveled = bevel::bevel(&mesh, 0.005, 1, "all");
+    assert!(
+        beveled.vertex_count() > mesh.vertex_count(),
+        "bevel should add vertices: {} vs {}",
+        beveled.vertex_count(),
+        mesh.vertex_count()
+    );
+    assert!(beveled.face_count() > 0, "bevel should produce faces");
+}
+
+// ── Bug fix: Boolean with scaled tool ──────────────────────────────
+
+#[test]
+fn boolean_subtract_scaled_tool() {
+    use super::boolean::{self, BooleanMode};
+
+    // Target: unit cube
+    let target = cube_mesh();
+
+    // Tool: small cube at 0.01 scale — simulates a scaled tool part
+    let tool_base = cube_mesh();
+    // Apply scale transform to tool vertices (simulating transform_mesh)
+    let scale = [0.3, 0.3, 0.3];
+    let mut tool = tool_base.clone();
+    for v in &mut tool.vertices {
+        v.position[0] *= scale[0];
+        v.position[1] *= scale[1];
+        v.position[2] *= scale[2];
+    }
+
+    // Boolean subtract the small tool from the target
+    let result = boolean::boolean_op(&target, &tool, [0.0, 0.0, 0.0], BooleanMode::Subtract);
+    assert!(
+        result.face_count() > 0,
+        "boolean with scaled tool should not produce empty mesh"
+    );
+    assert!(
+        result.face_count() >= target.face_count(),
+        "subtract should produce at least as many faces as target: {} vs {}",
+        result.face_count(),
+        target.face_count()
+    );
+}
+
+// ── Bug fix: flip-normals --where ──────────────────────────────────
+
+#[test]
+fn flip_normals_where_top_only() {
+    let mesh = cube_mesh();
+    let fc = mesh.faces.len();
+
+    // Count faces with upward-pointing normals (y > 0.4 centroid)
+    let filter = spatial_filter::parse_where("y>0.4").unwrap();
+    let top_faces: Vec<usize> = (0..fc)
+        .filter(|&f| spatial_filter::face_matches(&mesh, f, &filter))
+        .collect();
+    assert!(
+        !top_faces.is_empty(),
+        "cube should have faces with centroid y > 0.4"
+    );
+
+    // Flip only top faces
+    let mut flipped = mesh.clone();
+    let count = normals::flip_where(&mut flipped, &filter);
+    assert_eq!(count, top_faces.len(), "should flip only top faces");
+    assert_eq!(flipped.face_count(), fc, "face count should not change");
+
+    // Verify top face normals are now inverted
+    for &f in &top_faces {
+        let n_orig = normals::compute_face_normal(&mesh, f);
+        let n_flip = normals::compute_face_normal(&flipped, f);
+        // After flip, the y component should have opposite sign
+        assert!(
+            n_orig[1] * n_flip[1] < 0.0,
+            "face {f} normal y should be inverted: {:.2} vs {:.2}",
+            n_orig[1],
+            n_flip[1]
+        );
+    }
+}

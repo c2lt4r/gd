@@ -245,6 +245,41 @@ pub fn flip_caps(mesh: &mut HalfEdgeMesh, axis: usize) -> usize {
     count
 }
 
+/// Flip only faces whose centroid passes a spatial filter.
+///
+/// Uses collect-then-rebuild to avoid corrupting twin relationships from partial flips.
+pub fn flip_where(
+    mesh: &mut HalfEdgeMesh,
+    filter: &super::spatial_filter::SpatialFilter,
+) -> usize {
+    let face_count = mesh.faces.len();
+    if face_count == 0 {
+        return 0;
+    }
+
+    let mut count = 0;
+    let positions: Vec<[f64; 3]> = mesh.vertices.iter().map(|v| v.position).collect();
+    let mut poly_faces: Vec<Vec<usize>> = Vec::with_capacity(face_count);
+
+    for f in 0..face_count {
+        let mut verts = mesh.face_vertices(f);
+        if verts.len() < 3 {
+            continue;
+        }
+        if super::spatial_filter::face_matches(mesh, f, filter) {
+            verts.reverse();
+            count += 1;
+        }
+        poly_faces.push(verts);
+    }
+
+    if count > 0 {
+        let face_slices: Vec<&[usize]> = poly_faces.iter().map(Vec::as_slice).collect();
+        *mesh = HalfEdgeMesh::from_polygons(&positions, &face_slices);
+    }
+    count
+}
+
 /// Compute the centroid of a face.
 fn face_centroid(mesh: &HalfEdgeMesh, f: usize) -> [f64; 3] {
     let verts = mesh.face_vertices(f);
