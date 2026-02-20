@@ -3,7 +3,7 @@ use std::path::Path;
 use miette::{Result, miette};
 use owo_colors::OwoColorize;
 
-use crate::core::mesh::{MeshState, PlaneKind, ShadingMode, normals};
+use crate::core::mesh::{MeshPart, MeshState, PlaneKind, ShadingMode, normals};
 
 use crate::cprintln;
 
@@ -60,8 +60,8 @@ pub fn cmd_batch(args: &BatchArgs) -> Result<()> {
     Ok(())
 }
 
-#[allow(clippy::too_many_lines)]
-fn execute_batch_command(
+#[expect(clippy::too_many_lines)]
+pub fn execute_batch_command(
     cmd_type: &str,
     cmd: &serde_json::Value,
     index: usize,
@@ -71,6 +71,39 @@ fn execute_batch_command(
     match cmd_type {
         // ── Rust geometry operations ─────────────────────────────────
         "profile" => {
+            // Handle copy_profile_from: reuse another part's profile
+            if let Some(source) = cmd["copy_profile_from"].as_str() {
+                let src = state
+                    .parts
+                    .get(source)
+                    .ok_or_else(|| miette!("Command {index}: part '{source}' not found"))?;
+                let points = src
+                    .profile_points
+                    .clone()
+                    .ok_or_else(|| miette!("Command {index}: part '{source}' has no profile"))?;
+                let plane = src
+                    .profile_plane
+                    .ok_or_else(|| miette!("Command {index}: part '{source}' has no profile plane"))?;
+                let holes = src.profile_holes.clone();
+                let pc = points.len();
+
+                let part = state.active_part_mut()?;
+                part.profile_points = Some(points.clone());
+                part.profile_plane = Some(plane);
+                part.profile_holes = holes;
+                if let Some(mesh) =
+                    crate::core::mesh::profile::triangulate_profile(&points, plane)
+                {
+                    part.mesh = mesh;
+                }
+
+                save_push_active(state, root)?;
+                return Ok(ok_result(
+                    "profile",
+                    &serde_json::json!({"copy_profile_from": source, "point_count": pc}),
+                ));
+            }
+
             let plane_str = cmd["plane"]
                 .as_str()
                 .ok_or_else(|| miette!("Command {index}: profile needs 'plane'"))?;
@@ -86,9 +119,23 @@ fn execute_batch_command(
                 pts.iter().map(|&(x, y)| [x, y]).collect()
             };
 
+            // Parse hole contours
+            let holes: Option<Vec<Vec<[f64; 2]>>> = cmd["hole"].as_array().map(|arr| {
+                arr.iter()
+                    .filter_map(|h| {
+                        h.as_str().and_then(|s| {
+                            super::parse_points(s)
+                                .ok()
+                                .map(|pts| pts.iter().map(|&(x, y)| [x, y]).collect())
+                        })
+                    })
+                    .collect()
+            });
+
             let part = state.active_part_mut()?;
             part.profile_points = Some(points_2d.clone());
             part.profile_plane = Some(plane);
+            part.profile_holes = holes;
             if let Some(mesh) = crate::core::mesh::profile::triangulate_profile(&points_2d, plane) {
                 part.mesh = mesh;
             }
@@ -584,14 +631,49 @@ fn execute_batch_command(
 
         // ── GDScript eval operations (non-geometry) ──────────────────
         "material" => {
-            let color = cmd["color"]
-                .as_str()
-                .ok_or_else(|| miette!("Command {index}: material needs 'color'"))?;
+            let preset = cmd["preset"].as_str();
+            let color = cmd["color"].as_str();
             let part = cmd["part"].as_str();
-            Ok(eval_and_wrap(
-                "material",
-                &gdscript::generate_material(part, color),
-            ))
+
+            // Handle --group → expand to parts pattern
+            if let Some(group_name) = cmd["group"].as_str() {
+                let members = state
+                    .groups
+                    .get(group_name)
+                    .ok_or_else(|| miette!("Command {index}: group '{group_name}' not found"))?
+                    .clone();
+                let pattern = members.join(",");
+                let script = if let Some(p) = preset {
+                    gdscript::generate_material_preset_multi(&pattern, p, color)
+                } else if let Some(c) = color {
+                    gdscript::generate_material_multi(&pattern, c)
+                } else {
+                    return Err(miette!("Command {index}: material needs 'color' or 'preset'"));
+                };
+                return Ok(eval_and_wrap("material", &script));
+            }
+
+            // Handle --parts pattern
+            if let Some(pattern) = cmd["parts"].as_str() {
+                let script = if let Some(p) = preset {
+                    gdscript::generate_material_preset_multi(pattern, p, color)
+                } else if let Some(c) = color {
+                    gdscript::generate_material_multi(pattern, c)
+                } else {
+                    return Err(miette!("Command {index}: material needs 'color' or 'preset'"));
+                };
+                return Ok(eval_and_wrap("material", &script));
+            }
+
+            // Single part
+            let script = if let Some(p) = preset {
+                gdscript::generate_material_preset(part, p, color)
+            } else if let Some(c) = color {
+                gdscript::generate_material(part, c)
+            } else {
+                return Err(miette!("Command {index}: material needs 'color' or 'preset'"));
+            };
+            Ok(eval_and_wrap("material", &script))
         }
         "translate" => {
             let to = cmd["to"]
@@ -599,29 +681,315 @@ fn execute_batch_command(
                 .ok_or_else(|| miette!("Command {index}: translate needs 'to'"))?;
             let (x, y, z) = super::parse_3d(to)?;
             let relative = cmd["relative"].as_bool().unwrap_or(false);
-            Ok(eval_and_wrap(
-                "translate",
-                &gdscript::generate_translate(cmd["part"].as_str(), x, y, z, relative),
-            ))
+
+            if let Some(group_name) = cmd["group"].as_str() {
+                let members = state
+                    .groups
+                    .get(group_name)
+                    .ok_or_else(|| miette!("Command {index}: group '{group_name}' not found"))?
+                    .clone();
+                for member in &members {
+                    let script =
+                        gdscript::generate_translate(Some(member.as_str()), x, y, z, relative);
+                    let _ = run_eval(&script)?;
+                }
+                Ok(ok_result(
+                    "translate",
+                    &serde_json::json!({"group": group_name, "count": members.len()}),
+                ))
+            } else {
+                Ok(eval_and_wrap(
+                    "translate",
+                    &gdscript::generate_translate(cmd["part"].as_str(), x, y, z, relative),
+                ))
+            }
         }
         "rotate" => {
             let degrees = cmd["degrees"]
                 .as_str()
                 .ok_or_else(|| miette!("Command {index}: rotate needs 'degrees'"))?;
             let (rx, ry, rz) = super::parse_3d(degrees)?;
-            Ok(eval_and_wrap(
-                "rotate",
-                &gdscript::generate_rotate(cmd["part"].as_str(), rx, ry, rz),
-            ))
+
+            if let Some(group_name) = cmd["group"].as_str() {
+                let members = state
+                    .groups
+                    .get(group_name)
+                    .ok_or_else(|| miette!("Command {index}: group '{group_name}' not found"))?
+                    .clone();
+                for member in &members {
+                    let script = gdscript::generate_rotate(Some(member.as_str()), rx, ry, rz);
+                    let _ = run_eval(&script)?;
+                }
+                Ok(ok_result(
+                    "rotate",
+                    &serde_json::json!({"group": group_name, "count": members.len()}),
+                ))
+            } else {
+                Ok(eval_and_wrap(
+                    "rotate",
+                    &gdscript::generate_rotate(cmd["part"].as_str(), rx, ry, rz),
+                ))
+            }
         }
         "scale" => {
             let factor = cmd["factor"]
                 .as_str()
                 .ok_or_else(|| miette!("Command {index}: scale needs 'factor'"))?;
             let (sx, sy, sz) = super::parse_scale(factor)?;
-            Ok(eval_and_wrap(
-                "scale",
-                &gdscript::generate_scale(cmd["part"].as_str(), sx, sy, sz, false),
+            let remap = cmd["remap"].as_bool().unwrap_or(false);
+
+            if let Some(group_name) = cmd["group"].as_str() {
+                let members = state
+                    .groups
+                    .get(group_name)
+                    .ok_or_else(|| miette!("Command {index}: group '{group_name}' not found"))?
+                    .clone();
+                for member in &members {
+                    let script =
+                        gdscript::generate_scale(Some(member.as_str()), sx, sy, sz, remap);
+                    let _ = run_eval(&script)?;
+                }
+                Ok(ok_result(
+                    "scale",
+                    &serde_json::json!({"group": group_name, "count": members.len()}),
+                ))
+            } else {
+                Ok(eval_and_wrap(
+                    "scale",
+                    &gdscript::generate_scale(cmd["part"].as_str(), sx, sy, sz, remap),
+                ))
+            }
+        }
+
+        // ── Part lifecycle + session commands (for replay) ───────────
+        "create" => {
+            let name = cmd["name"].as_str().unwrap_or("body");
+            let from = cmd["from"].as_str().unwrap_or("empty");
+
+            *state = MeshState::new(name);
+            state.save(root)?;
+
+            let script = gdscript::generate_create(name, from);
+            let result = run_eval(&script)?;
+            let parsed: serde_json::Value = serde_json::from_str(&result)
+                .unwrap_or_else(|_| serde_json::json!({}));
+
+            super::import_primitive_mesh(&parsed, state);
+            state.save(root)?;
+
+            Ok(ok_result(
+                "create",
+                &serde_json::json!({"name": name, "from": from}),
+            ))
+        }
+        "add-part" => {
+            let name = cmd["name"]
+                .as_str()
+                .ok_or_else(|| miette!("Command {index}: add-part needs 'name'"))?;
+            let from = cmd["from"].as_str().unwrap_or("empty");
+
+            state.parts.insert(name.to_string(), MeshPart::new());
+            state.active = name.to_string();
+            state.save(root)?;
+
+            let script = gdscript::generate_add_part(name, from);
+            let result = run_eval(&script)?;
+            let parsed: serde_json::Value = serde_json::from_str(&result)
+                .unwrap_or_else(|_| serde_json::json!({}));
+
+            super::import_primitive_mesh(&parsed, state);
+            state.save(root)?;
+
+            Ok(ok_result(
+                "add-part",
+                &serde_json::json!({"name": name, "from": from}),
+            ))
+        }
+        "remove-part" => {
+            if let Some(group_name) = cmd["group"].as_str() {
+                let members = state
+                    .groups
+                    .get(group_name)
+                    .ok_or_else(|| miette!("Command {index}: group '{group_name}' not found"))?
+                    .clone();
+                for member in &members {
+                    let script = gdscript::generate_remove_part(member);
+                    let _ = run_eval(&script);
+                    state.parts.shift_remove(member.as_str());
+                }
+                state.groups.remove(group_name);
+                if members.contains(&state.active) {
+                    state.active = state.parts.keys().next().cloned().unwrap_or_default();
+                }
+                state.save(root)?;
+                Ok(ok_result(
+                    "remove-part",
+                    &serde_json::json!({"group": group_name, "count": members.len()}),
+                ))
+            } else {
+                let name = cmd["name"]
+                    .as_str()
+                    .ok_or_else(|| miette!("Command {index}: remove-part needs 'name' or 'group'"))?;
+                let script = gdscript::generate_remove_part(name);
+                let _ = run_eval(&script);
+                state.parts.shift_remove(name);
+                if state.active == name {
+                    state.active = state.parts.keys().next().cloned().unwrap_or_default();
+                }
+                state.save(root)?;
+                Ok(ok_result(
+                    "remove-part",
+                    &serde_json::json!({"name": name}),
+                ))
+            }
+        }
+        "duplicate-part" => {
+            let src = cmd["name"]
+                .as_str()
+                .ok_or_else(|| miette!("Command {index}: duplicate-part needs 'name'"))?;
+            let dst = cmd["as"]
+                .as_str()
+                .ok_or_else(|| miette!("Command {index}: duplicate-part needs 'as'"))?;
+
+            let src_part = state
+                .parts
+                .get(src)
+                .ok_or_else(|| miette!("Command {index}: part '{src}' not found"))?
+                .clone();
+
+            let mut new_part = src_part;
+            let mirror_axis = cmd["mirror"]
+                .as_str()
+                .or_else(|| cmd["symmetric"].as_str());
+
+            if let Some(axis_str) = mirror_axis {
+                let axis_idx = parse_axis(axis_str, index)?;
+                crate::core::mesh::mirror::mirror(&mut new_part.mesh, axis_idx);
+                new_part.transform.position[axis_idx] =
+                    -new_part.transform.position[axis_idx];
+            }
+
+            state.parts.insert(dst.to_string(), new_part);
+            state.active = dst.to_string();
+            state.save(root)?;
+
+            let symmetric = cmd["symmetric"].as_str().is_some();
+            let script = if let Some(axis_str) = mirror_axis {
+                gdscript::generate_mirror_part(src, dst, axis_str, symmetric)
+            } else {
+                gdscript::generate_duplicate_part(src, dst)
+            };
+            let _ = run_eval(&script);
+
+            let push = state.generate_push_script(dst)?;
+            let _ = run_eval(&push);
+
+            Ok(ok_result(
+                "duplicate-part",
+                &serde_json::json!({"name": src, "as": dst}),
+            ))
+        }
+        "revolve" => {
+            let axis_str = cmd["axis"]
+                .as_str()
+                .ok_or_else(|| miette!("Command {index}: revolve needs 'axis'"))?;
+            let axis_idx = parse_axis(axis_str, index)?;
+            let degrees = cmd["degrees"].as_f64().unwrap_or(360.0);
+            #[allow(clippy::cast_possible_truncation)]
+            let segments = cmd["segments"].as_u64().unwrap_or(32) as u32;
+            let cap = cmd["cap"].as_bool().unwrap_or(false);
+
+            let (profile, plane) = {
+                let part = state.active_part()?;
+                let p = part
+                    .profile_points
+                    .as_ref()
+                    .ok_or_else(|| miette!("Command {index}: no profile set"))?
+                    .clone();
+                let k = part
+                    .profile_plane
+                    .ok_or_else(|| miette!("Command {index}: no profile plane"))?;
+                (p, k)
+            };
+
+            let mesh = crate::core::mesh::revolve::revolve(
+                &profile, plane, axis_idx, degrees, segments, cap,
+            )
+            .ok_or_else(|| miette!("Command {index}: revolve failed"))?;
+            let vc = mesh.vertex_count();
+            let fc = mesh.face_count();
+            state.active_part_mut()?.mesh = mesh;
+
+            save_push_active(state, root)?;
+            Ok(ok_result(
+                "revolve",
+                &serde_json::json!({
+                    "axis": axis_str,
+                    "degrees": degrees,
+                    "vertex_count": vc,
+                    "face_count": fc,
+                }),
+            ))
+        }
+        "move-vertex" => {
+            #[allow(clippy::cast_possible_truncation)]
+            let idx = cmd["index"]
+                .as_u64()
+                .ok_or_else(|| miette!("Command {index}: move-vertex needs 'index'"))?
+                as usize;
+            let delta_str = cmd["delta"]
+                .as_str()
+                .ok_or_else(|| miette!("Command {index}: move-vertex needs 'delta'"))?;
+            let (dx, dy, dz) = super::parse_3d(delta_str)?;
+
+            let part = state.active_part_mut()?;
+            if idx >= part.mesh.vertices.len() {
+                return Err(miette!(
+                    "Command {index}: vertex index {idx} out of range (have {})",
+                    part.mesh.vertices.len()
+                ));
+            }
+            part.mesh.vertices[idx].position[0] += dx;
+            part.mesh.vertices[idx].position[1] += dy;
+            part.mesh.vertices[idx].position[2] += dz;
+
+            save_push_active(state, root)?;
+            Ok(ok_result(
+                "move-vertex",
+                &serde_json::json!({"index": idx, "delta": [dx, dy, dz]}),
+            ))
+        }
+        "group" => {
+            let name = cmd["name"]
+                .as_str()
+                .ok_or_else(|| miette!("Command {index}: group needs 'name'"))?;
+            let parts_str = cmd["parts"]
+                .as_str()
+                .ok_or_else(|| miette!("Command {index}: group needs 'parts'"))?;
+
+            let all_names: Vec<String> = state.parts.keys().cloned().collect();
+            let matched = super::match_part_pattern(&all_names, parts_str);
+            let members: Vec<String> = matched.iter().map(|s| (*s).to_string()).collect();
+
+            state.groups.insert(name.to_string(), members.clone());
+            state.save(root)?;
+
+            Ok(ok_result(
+                "group",
+                &serde_json::json!({"name": name, "members": members}),
+            ))
+        }
+        "ungroup" => {
+            let name = cmd["name"]
+                .as_str()
+                .ok_or_else(|| miette!("Command {index}: ungroup needs 'name'"))?;
+
+            state.groups.remove(name);
+            state.save(root)?;
+
+            Ok(ok_result(
+                "ungroup",
+                &serde_json::json!({"name": name}),
             ))
         }
 

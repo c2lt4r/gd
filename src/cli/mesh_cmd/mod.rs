@@ -23,8 +23,10 @@ mod material;
 mod merge;
 mod move_vertex;
 mod profile;
+pub mod record;
 mod reference;
 mod remove_part;
+mod replay;
 mod revolve;
 mod rotate;
 mod scale;
@@ -157,6 +159,8 @@ pub enum MeshCommand {
     AutoSmooth(AutoSmoothArgs),
     /// Execute a batch of mesh commands from a JSON file
     Batch(BatchArgs),
+    /// Replay a recorded JSONL command sequence
+    Replay(ReplayArgs),
     /// Check for floating/disconnected parts
     Check(CheckArgs),
     /// Create a named group of parts for batch operations
@@ -941,6 +945,19 @@ pub struct BatchArgs {
 }
 
 #[derive(Args)]
+pub struct ReplayArgs {
+    /// Path to JSONL replay file
+    #[arg(long)]
+    pub file: String,
+    /// Preview without executing
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Output format
+    #[arg(long, default_value = "json")]
+    pub format: OutputFormat,
+}
+
+#[derive(Args)]
 pub struct ShadingArgs {
     /// Part name (defaults to active part). Use --all for all parts.
     #[arg(long)]
@@ -1043,6 +1060,11 @@ pub fn exec(args: &MeshArgs) -> Result<()> {
     let cmd_name = format!("gd mesh {}", command_name(&args.command));
     CURRENT_COMMAND.with(|c| *c.borrow_mut() = cmd_name);
 
+    // Record state-modifying commands (best-effort, skip if project root unavailable)
+    if let Ok(root) = project_root() {
+        record::maybe_record(&args.command, &root);
+    }
+
     match args.command {
         MeshCommand::Init(ref a) => init::cmd_init(a),
         MeshCommand::Create(ref a) => create::cmd_create(a),
@@ -1082,6 +1104,7 @@ pub fn exec(args: &MeshArgs) -> Result<()> {
         MeshCommand::ShadeFlat(ref a) => shading::cmd_shade_flat(a),
         MeshCommand::AutoSmooth(ref a) => shading::cmd_auto_smooth(a),
         MeshCommand::Batch(ref a) => batch::cmd_batch(a),
+        MeshCommand::Replay(ref a) => replay::cmd_replay(a),
         MeshCommand::Check(ref a) => check::cmd_check(a),
         MeshCommand::Group(ref a) => group::cmd_group(a),
         MeshCommand::Ungroup(ref a) => group::cmd_ungroup(a),
@@ -1130,6 +1153,7 @@ fn command_name(cmd: &MeshCommand) -> &'static str {
         MeshCommand::ShadeFlat(_) => "shade-flat",
         MeshCommand::AutoSmooth(_) => "auto-smooth",
         MeshCommand::Batch(_) => "batch",
+        MeshCommand::Replay(_) => "replay",
         MeshCommand::Check(_) => "check",
         MeshCommand::Group(_) => "group",
         MeshCommand::Ungroup(_) => "ungroup",
