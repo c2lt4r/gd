@@ -4,9 +4,12 @@ use miette::{Result, miette};
 use owo_colors::OwoColorize;
 
 use super::gdscript;
-use super::{DescribeArgs, OutputFormat, run_eval};
+use super::{DescribeArgs, OutputFormat, project_root, run_eval};
+use crate::core::mesh::MeshState;
+use crate::core::mesh::spatial;
 use crate::cprintln;
 
+#[expect(clippy::too_many_lines)]
 pub fn cmd_describe(args: &DescribeArgs) -> Result<()> {
     // 1. Focus all parts so composite view works
     let focus_script = gdscript::generate_focus_all();
@@ -64,6 +67,9 @@ pub fn cmd_describe(args: &DescribeArgs) -> Result<()> {
     let restore_script = gdscript::generate_restore_camera();
     let _ = run_eval(&restore_script);
 
+    // 4. Load Rust-side mesh state for spatial analysis and health metrics
+    let mesh_state = project_root().and_then(|root| MeshState::load(&root)).ok();
+
     match args.format {
         OutputFormat::Json => {
             let views_map: serde_json::Map<String, serde_json::Value> = captures
@@ -75,6 +81,29 @@ pub fn cmd_describe(args: &DescribeArgs) -> Result<()> {
             output["views"] = serde_json::Value::Object(views_map);
             output["camera_size"] = autofit["camera_size"].clone();
             output["center"] = autofit["center"].clone();
+
+            if let Some(ref state) = mesh_state {
+                // Add per-part health metrics
+                if let Some(parts_arr) = output["parts"].as_array_mut() {
+                    for part_json in parts_arr {
+                        if let Some(name) = part_json["name"].as_str()
+                            && let Some(part) = state.parts.get(name)
+                        {
+                            let nm = spatial::count_non_manifold_edges(&part.mesh);
+                            let wt = spatial::is_watertight(&part.mesh);
+                            part_json["non_manifold_edges"] = serde_json::json!(nm);
+                            part_json["watertight"] = serde_json::json!(wt);
+                        }
+                    }
+                }
+
+                // Add relationships
+                let relationships = spatial::relationship_report(state);
+                if !relationships.is_empty() {
+                    output["relationships"] = serde_json::json!(relationships);
+                }
+            }
+
             cprintln!("{}", serde_json::to_string_pretty(&output).unwrap());
         }
         OutputFormat::Text => {
@@ -95,6 +124,19 @@ pub fn cmd_describe(args: &DescribeArgs) -> Result<()> {
                     cprintln!("  {}{marker}: {vc} vertices", name.green());
                 }
             }
+
+            // Print spatial issues if available
+            if let Some(ref state) = mesh_state {
+                let issues = spatial::check_part_relationships(state);
+                if !issues.is_empty() {
+                    cprintln!();
+                    cprintln!("{}", "Spatial issues:".red().bold());
+                    for issue in &issues {
+                        cprintln!("  {} {}", "!".red(), issue.detail);
+                    }
+                }
+            }
+
             cprintln!();
             for (view, path) in &captures {
                 cprintln!("{} {view}: {}", "Screenshot".green(), path.cyan());

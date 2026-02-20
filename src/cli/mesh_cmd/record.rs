@@ -244,6 +244,10 @@ pub fn command_to_json(cmd: &MeshCommand) -> String {
             }
             v
         }
+        MeshCommand::Select(a) => json!({
+            "command": "select",
+            "name": a.name,
+        }),
         MeshCommand::Group(a) => json!({
             "command": "group",
             "name": a.name,

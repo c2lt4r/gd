@@ -13,6 +13,7 @@ pub mod normals;
 pub mod profile;
 pub mod revolve;
 pub mod solidify;
+pub mod spatial;
 pub mod spatial_filter;
 pub mod subdivide;
 pub mod taper;

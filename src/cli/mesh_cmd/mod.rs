@@ -30,6 +30,7 @@ mod replay;
 mod revolve;
 mod rotate;
 mod scale;
+mod select;
 mod shading;
 mod snapshot;
 mod solidify;
@@ -103,6 +104,8 @@ pub enum MeshCommand {
     Rotate(RotateArgs),
     /// Scale a part by a factor per axis
     Scale(ScaleArgs),
+    /// Switch the active part by name
+    Select(SelectArgs),
     /// Remove a part from the session
     #[command(name = "remove-part")]
     RemovePart(RemovePartArgs),
@@ -605,6 +608,16 @@ pub struct ScaleArgs {
 }
 
 #[derive(Args)]
+pub struct SelectArgs {
+    /// Name of the part to make active
+    #[arg(long)]
+    pub name: String,
+    /// Output format
+    #[arg(long, default_value = "json")]
+    pub format: OutputFormat,
+}
+
+#[derive(Args)]
 pub struct RemovePartArgs {
     /// Name of the part to remove
     #[arg(long, required_unless_present = "group")]
@@ -1081,6 +1094,7 @@ pub fn exec(args: &MeshArgs) -> Result<()> {
         MeshCommand::Translate(ref a) => translate::cmd_translate(a),
         MeshCommand::Rotate(ref a) => rotate::cmd_rotate(a),
         MeshCommand::Scale(ref a) => scale::cmd_scale(a),
+        MeshCommand::Select(ref a) => select::cmd_select(a),
         MeshCommand::RemovePart(ref a) => remove_part::cmd_remove_part(a),
         MeshCommand::ListVertices(ref a) => list_vertices::cmd_list_vertices(a),
         MeshCommand::Taper(ref a) => taper::cmd_taper(a),
@@ -1130,6 +1144,7 @@ fn command_name(cmd: &MeshCommand) -> &'static str {
         MeshCommand::Translate(_) => "translate",
         MeshCommand::Rotate(_) => "rotate",
         MeshCommand::Scale(_) => "scale",
+        MeshCommand::Select(_) => "select",
         MeshCommand::RemovePart(_) => "remove-part",
         MeshCommand::ListVertices(_) => "list-vertices",
         MeshCommand::Taper(_) => "taper",

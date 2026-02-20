@@ -51,7 +51,7 @@ pub fn cmd_replay(args: &ReplayArgs) -> Result<()> {
         }
 
         let result =
-            super::batch::execute_batch_command(cmd_type, &cmd, i, &mut state, &root)?;
+            super::batch::execute_with_spatial_checks(cmd_type, &cmd, i, &mut state, &root)?;
 
         if matches!(args.format, OutputFormat::Text) {
             let ok = result["ok"].as_bool().unwrap_or(false);

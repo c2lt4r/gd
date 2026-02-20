@@ -3,7 +3,8 @@ use std::path::Path;
 use miette::{Result, miette};
 use owo_colors::OwoColorize;
 
-use crate::core::mesh::{MeshPart, MeshState, PlaneKind, ShadingMode, normals};
+use crate::core::mesh::{MeshPart, MeshState, PlaneKind, ShadingMode, Transform3D, normals, spatial};
+use crate::core::mesh::half_edge::HalfEdgeMesh;
 
 use crate::cprintln;
 
@@ -28,7 +29,7 @@ pub fn cmd_batch(args: &BatchArgs) -> Result<()> {
         let cmd_type = cmd["command"]
             .as_str()
             .ok_or_else(|| miette!("Command {i}: missing 'command' field"))?;
-        let result = execute_batch_command(cmd_type, cmd, i, &mut state, &root)?;
+        let result = execute_with_spatial_checks(cmd_type, cmd, i, &mut state, &root)?;
         results.push(result);
     }
 
@@ -372,9 +373,17 @@ pub fn execute_batch_command(
                 offset
             };
 
-            let tool_mesh = state.resolve_part(Some(tool))?.mesh.clone();
-            let target_mesh = state.active_part()?.mesh.clone();
-            let mut current = target_mesh;
+            // Transform both meshes to world space so the boolean sees correct geometry
+            let tool_part = state.resolve_part(Some(tool))?;
+            let tool_transform = tool_part.transform.clone();
+            let tool_mesh = tool_part.mesh.clone();
+            let tool_world = transform_mesh(&tool_mesh, &tool_transform);
+
+            let target_part = state.active_part()?;
+            let target_transform = target_part.transform.clone();
+            let target_mesh = target_part.mesh.clone();
+            let mut current = transform_mesh(&target_mesh, &target_transform);
+
             for k in 0..count {
                 let iter_offset = [
                     offset[0] + spacing[0] * k as f64,
@@ -383,14 +392,17 @@ pub fn execute_batch_command(
                 ];
                 current = crate::core::mesh::boolean::boolean_op(
                     &current,
-                    &tool_mesh,
+                    &tool_world,
                     iter_offset,
                     mode,
                 );
             }
-            let vc = current.vertex_count();
-            let fc = current.face_count();
-            state.active_part_mut()?.mesh = current;
+
+            // Transform result back to target's local coordinate space
+            let result_local = inverse_transform_mesh(&current, &target_transform);
+            let vc = result_local.vertex_count();
+            let fc = result_local.face_count();
+            state.active_part_mut()?.mesh = result_local;
 
             save_push_active(state, root)?;
             Ok(ok_result(
@@ -691,17 +703,20 @@ pub fn execute_batch_command(
                 for member in &members {
                     let script =
                         gdscript::generate_translate(Some(member.as_str()), x, y, z, relative);
-                    let _ = run_eval(&script)?;
+                    let result = run_eval(&script)?;
+                    sync_transform_from_result(&result, state);
                 }
+                state.save(root)?;
                 Ok(ok_result(
                     "translate",
                     &serde_json::json!({"group": group_name, "count": members.len()}),
                 ))
             } else {
-                Ok(eval_and_wrap(
-                    "translate",
-                    &gdscript::generate_translate(cmd["part"].as_str(), x, y, z, relative),
-                ))
+                let script =
+                    gdscript::generate_translate(cmd["part"].as_str(), x, y, z, relative);
+                let result = eval_and_sync("translate", &script, state);
+                state.save(root)?;
+                Ok(result)
             }
         }
         "rotate" => {
@@ -718,17 +733,19 @@ pub fn execute_batch_command(
                     .clone();
                 for member in &members {
                     let script = gdscript::generate_rotate(Some(member.as_str()), rx, ry, rz);
-                    let _ = run_eval(&script)?;
+                    let result = run_eval(&script)?;
+                    sync_transform_from_result(&result, state);
                 }
+                state.save(root)?;
                 Ok(ok_result(
                     "rotate",
                     &serde_json::json!({"group": group_name, "count": members.len()}),
                 ))
             } else {
-                Ok(eval_and_wrap(
-                    "rotate",
-                    &gdscript::generate_rotate(cmd["part"].as_str(), rx, ry, rz),
-                ))
+                let script = gdscript::generate_rotate(cmd["part"].as_str(), rx, ry, rz);
+                let result = eval_and_sync("rotate", &script, state);
+                state.save(root)?;
+                Ok(result)
             }
         }
         "scale" => {
@@ -747,17 +764,20 @@ pub fn execute_batch_command(
                 for member in &members {
                     let script =
                         gdscript::generate_scale(Some(member.as_str()), sx, sy, sz, remap);
-                    let _ = run_eval(&script)?;
+                    let result = run_eval(&script)?;
+                    sync_transform_from_result(&result, state);
                 }
+                state.save(root)?;
                 Ok(ok_result(
                     "scale",
                     &serde_json::json!({"group": group_name, "count": members.len()}),
                 ))
             } else {
-                Ok(eval_and_wrap(
-                    "scale",
-                    &gdscript::generate_scale(cmd["part"].as_str(), sx, sy, sz, remap),
-                ))
+                let script =
+                    gdscript::generate_scale(cmd["part"].as_str(), sx, sy, sz, remap);
+                let result = eval_and_sync("scale", &script, state);
+                state.save(root)?;
+                Ok(result)
             }
         }
 
@@ -993,11 +1013,47 @@ pub fn execute_batch_command(
             ))
         }
 
+        "select" => {
+            let name = cmd["name"]
+                .as_str()
+                .ok_or_else(|| miette!("Command {index}: select needs 'name'"))?;
+            if !state.parts.contains_key(name) {
+                return Err(miette!("Command {index}: part '{name}' not found"));
+            }
+            state.active = name.to_string();
+            state.save(root)?;
+            Ok(ok_result("select", &serde_json::json!({"active": name})))
+        }
+
         other => Err(miette!("Command {index}: unknown batch command '{other}'")),
     }
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
+
+/// Apply a `Transform3D` to all vertices in a mesh (scale → rotate → translate).
+fn transform_mesh(mesh: &HalfEdgeMesh, t: &Transform3D) -> HalfEdgeMesh {
+    if t.is_identity() {
+        return mesh.clone();
+    }
+    let mut result = mesh.clone();
+    for v in &mut result.vertices {
+        v.position = t.apply_point(v.position);
+    }
+    result
+}
+
+/// Apply inverse transform to all vertices (un-translate → un-rotate → un-scale).
+fn inverse_transform_mesh(mesh: &HalfEdgeMesh, t: &Transform3D) -> HalfEdgeMesh {
+    if t.is_identity() {
+        return mesh.clone();
+    }
+    let mut result = mesh.clone();
+    for v in &mut result.vertices {
+        v.position = t.inverse_apply_point(v.position);
+    }
+    result
+}
 
 fn parse_plane(s: &str, index: usize) -> Result<PlaneKind> {
     match s {
@@ -1081,12 +1137,99 @@ fn save_push_active(state: &mut MeshState, root: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Execute a batch command and append spatial relationship errors to the result.
+pub fn execute_with_spatial_checks(
+    cmd_type: &str,
+    cmd: &serde_json::Value,
+    index: usize,
+    state: &mut MeshState,
+    root: &Path,
+) -> Result<serde_json::Value> {
+    let mut result = execute_batch_command(cmd_type, cmd, index, state, root)?;
+    if state.parts.len() > 1 {
+        let issues = spatial::check_part_relationships(state);
+        if !issues.is_empty() {
+            result["errors"] = serde_json::json!(
+                issues
+                    .iter()
+                    .map(spatial::SpatialIssue::to_json)
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+    Ok(result)
+}
+
 fn ok_result(cmd: &str, data: &serde_json::Value) -> serde_json::Value {
     serde_json::json!({
         "command": cmd,
         "ok": true,
         "result": data,
     })
+}
+
+/// Sync `MeshPart.transform` fields from a GDScript eval result JSON string.
+///
+/// The GDScript for translate/scale/rotate returns JSON with `name`, `position`,
+/// `scale`, and `rotation` fields. This updates the Rust-side `MeshPart.transform`
+/// so that subsequent operations (e.g. boolean) see correct world-space geometry.
+fn sync_transform_from_result(result_str: &str, state: &mut MeshState) {
+    let Ok(parsed) = serde_json::from_str::<serde_json::Value>(result_str) else {
+        return;
+    };
+    let part_name = parsed["name"]
+        .as_str()
+        .unwrap_or(&state.active)
+        .to_string();
+    let Some(part) = state.parts.get_mut(&part_name) else {
+        return;
+    };
+    if let Some(pos) = parsed["position"].as_array() {
+        part.transform.position = [
+            pos[0].as_f64().unwrap_or(0.0),
+            pos[1].as_f64().unwrap_or(0.0),
+            pos[2].as_f64().unwrap_or(0.0),
+        ];
+    }
+    if let Some(sc) = parsed["scale"].as_array() {
+        part.transform.scale = [
+            sc[0].as_f64().unwrap_or(1.0),
+            sc[1].as_f64().unwrap_or(1.0),
+            sc[2].as_f64().unwrap_or(1.0),
+        ];
+    }
+    if let Some(rot) = parsed["rotation"].as_array() {
+        part.transform.rotation = [
+            rot[0].as_f64().unwrap_or(0.0),
+            rot[1].as_f64().unwrap_or(0.0),
+            rot[2].as_f64().unwrap_or(0.0),
+        ];
+    }
+}
+
+/// Run a GDScript eval, sync transforms, and wrap the result.
+fn eval_and_sync(
+    cmd_type: &str,
+    script: &str,
+    state: &mut MeshState,
+) -> serde_json::Value {
+    match run_eval(script) {
+        Ok(result) => {
+            sync_transform_from_result(&result, state);
+            let parsed: serde_json::Value = serde_json::from_str(&result)
+                .unwrap_or_else(|_| serde_json::json!({ "raw": result }));
+            serde_json::json!({
+                "command": cmd_type,
+                "ok": true,
+                "result": parsed,
+            })
+        }
+        Err(e) => serde_json::json!({
+            "command": cmd_type,
+            "ok": false,
+            "error": e.to_string(),
+        }),
+    }
 }
 
 fn eval_and_wrap(cmd_type: &str, script: &str) -> serde_json::Value {
