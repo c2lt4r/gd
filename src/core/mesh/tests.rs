@@ -2346,6 +2346,21 @@ fn count_boundary_edges(mesh: &HalfEdgeMesh) -> usize {
     mesh.half_edges.iter().filter(|he| he.face.is_none()).count()
 }
 
+/// Count faces by vertex count: (triangles, quads, n-gons).
+fn face_type_counts(mesh: &HalfEdgeMesh) -> (usize, usize, usize) {
+    let mut tris = 0;
+    let mut quads = 0;
+    let mut ngons = 0;
+    for f in 0..mesh.face_count() {
+        match mesh.face_vertices(f).len() {
+            3 => tris += 1,
+            4 => quads += 1,
+            _ => ngons += 1,
+        }
+    }
+    (tris, quads, ngons)
+}
+
 #[test]
 fn bevel_depth_seg1_tapered_wing() {
     let wing_profile = [
@@ -2412,4 +2427,66 @@ fn bevel_all_seg1_cube() {
     let mesh = extrude::extrude(&cube, PlaneKind::Front, 2.0, 1).unwrap();
     let beveled = bevel::bevel_seg1(&mesh, 0.2, "all");
     assert_eq!(count_boundary_edges(&beveled), 0, "cube bevel all should be watertight");
+}
+
+#[test]
+fn bevel_caps_produce_quads() {
+    use std::f64::consts::TAU;
+
+    // Cube bevel --edges all, seg1: each vertex has 3 faces, 3 sharp edges.
+    // Cap polygon has 3 vertices → must be triangle (unavoidable).
+    let cube = [
+        [1.0, 1.0],
+        [-1.0, 1.0],
+        [-1.0, -1.0],
+        [1.0, -1.0],
+    ];
+    let mesh = extrude::extrude(&cube, PlaneKind::Front, 2.0, 1).unwrap();
+    let beveled = bevel::bevel_seg1(&mesh, 0.2, "all");
+    let (tris, quads, ngons) = face_type_counts(&beveled);
+    assert_eq!(ngons, 0, "no N-gons");
+    // 8 vertices × 1 tri cap each = 8 tris. Rest should be quads.
+    assert!(quads > tris, "quads ({quads}) should outnumber tris ({tris})");
+
+    // Wing bevel --edges depth, seg1: profile vertices have 3+ faces,
+    // some with 4+ (even cap vertex count → quads).
+    let wing = [
+        [3.6, -8.0],
+        [15.0, -3.0],
+        [30.0, 2.0],
+        [40.0, 5.0],
+        [40.0, 9.0],
+        [3.6, 9.0],
+    ];
+    let wmesh = extrude::extrude(&wing, PlaneKind::Top, 2.0, 2).unwrap();
+    let wbev = bevel::bevel_seg1(&wmesh, 0.3, "depth");
+    let (wtris, wquads, wngons) = face_type_counts(&wbev);
+    assert_eq!(wngons, 0, "no N-gons in wing bevel");
+    assert!(wquads > 0, "wing bevel should produce quads");
+    assert!(
+        wquads > wtris,
+        "wing should be quad-dominant: {wquads} quads vs {wtris} tris"
+    );
+    assert_eq!(count_boundary_edges(&wbev), 0, "watertight");
+
+    // Fuselage bevel seg2: more faces per vertex → larger caps → more quads.
+    let segments = 24;
+    let circle: Vec<[f64; 2]> = (0..segments)
+        .map(|i| {
+            let angle = TAU * i as f64 / segments as f64;
+            [3.57 * angle.cos(), 4.2 * angle.sin()]
+        })
+        .collect();
+    let mut mesh =
+        extrude::extrude_with_inset(&circle, PlaneKind::Front, 73.0, 8, 0.15).unwrap();
+    super::taper::taper(&mut mesh, 2, 0.12, 1.0, None, Some((0.0, 0.16)));
+    super::taper::taper(&mut mesh, 2, 1.0, 0.25, None, Some((0.75, 1.0)));
+    let beveled = bevel::bevel(&mesh, 0.3, 2, "depth");
+    let (tris, quads, ngons) = face_type_counts(&beveled);
+    assert_eq!(ngons, 0, "no N-gons in fuselage bevel");
+    assert!(
+        quads > tris,
+        "fuselage bevel should be quad-dominant: {quads} quads vs {tris} tris"
+    );
+    assert_eq!(count_boundary_edges(&beveled), 0, "watertight");
 }

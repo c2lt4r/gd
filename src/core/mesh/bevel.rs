@@ -371,13 +371,21 @@ pub fn bevel_with_profile(
             })
         };
 
-        // Emit cap as triangle fan.
-        for i in 1..cap.len() - 1 {
-            if flip {
-                poly_faces.push(vec![cap[0], cap[i + 1], cap[i]]);
-            } else {
-                poly_faces.push(vec![cap[0], cap[i], cap[i + 1]]);
-            }
+        // Emit cap as quads (paired fan from cap[0]).
+        // Groups consecutive triangle pairs into quads, preserving all
+        // outer edges for correct twin matching with neighboring faces.
+        // Odd vertex count: one trailing triangle at most.
+        if flip {
+            cap.reverse();
+        }
+        let cn = cap.len();
+        let mut ci = 1;
+        while ci + 2 < cn {
+            poly_faces.push(vec![cap[0], cap[ci], cap[ci + 1], cap[ci + 2]]);
+            ci += 2;
+        }
+        if ci + 1 < cn {
+            poly_faces.push(vec![cap[0], cap[ci], cap[ci + 1]]);
         }
     }
 
