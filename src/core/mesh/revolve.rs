@@ -1,6 +1,6 @@
 use super::PlaneKind;
 use super::half_edge::HalfEdgeMesh;
-use super::profile::{signed_area_2x, triangulate_2d};
+use super::profile::{build_quad_cap_3d, signed_area_2x};
 
 /// Revolve a 2D profile around an axis to create a surface of revolution.
 ///
@@ -66,38 +66,16 @@ pub fn revolve(
         }
     }
 
-    // End caps for partial revolves — stay triangulated
-    if cap
-        && !full_revolution
-        && points.len() >= 3
-        && let Some(cap_tri) = triangulate_2d(points)
-    {
+    // End caps for partial revolves — quad-ring inset for clean topology
+    if cap && !full_revolution && points.len() >= 3 {
         // Start cap (ring 0)
-        for tri in cap_tri.chunks(3) {
-            if flip {
-                faces.push(vec![tri[2], tri[1], tri[0]]);
-            } else {
-                faces.push(vec![tri[0], tri[1], tri[2]]);
-            }
-        }
+        let start_boundary: Vec<usize> = (0..n_pts).collect();
+        build_quad_cap_3d(&start_boundary, &mut positions, &mut faces, flip);
 
-        // End cap (last ring)
+        // End cap (last ring) — reversed winding
         let end_base = (n_rings - 1) * n_pts;
-        for tri in cap_tri.chunks(3) {
-            if flip {
-                faces.push(vec![
-                    end_base + tri[0],
-                    end_base + tri[1],
-                    end_base + tri[2],
-                ]);
-            } else {
-                faces.push(vec![
-                    end_base + tri[2],
-                    end_base + tri[1],
-                    end_base + tri[0],
-                ]);
-            }
-        }
+        let end_boundary: Vec<usize> = (end_base..end_base + n_pts).collect();
+        build_quad_cap_3d(&end_boundary, &mut positions, &mut faces, !flip);
     }
 
     if faces.is_empty() {

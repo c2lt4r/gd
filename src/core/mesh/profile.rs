@@ -100,3 +100,190 @@ pub fn triangulate_2d_with_holes(
     }
     earcutr::earcut(&flat, &hole_indices, 2).ok()
 }
+
+/// Default inset factor for quad-ring cap topology.
+const CAP_INSET: f64 = 0.15;
+
+/// Build a cap with multi-ring quad-inset topology from 3D boundary vertices.
+///
+/// For boundaries with >= 5 vertices: generates concentric rings of quads
+/// toward the centroid, with a small earcut fan for the innermost ring.
+/// For boundaries with < 5 vertices: falls back to earcut triangulation.
+///
+/// `boundary` — ordered vertex indices forming the cap boundary.
+/// `positions` — vertex array (new ring vertices appended in-place).
+/// `faces` — face output (quads + inner tris appended).
+/// `flip` — `false` = earcut-order tris + default quad winding,
+///           `true`  = reversed tris + reversed quad winding.
+pub fn build_quad_cap_3d(
+    boundary: &[usize],
+    positions: &mut Vec<[f64; 3]>,
+    faces: &mut Vec<Vec<usize>>,
+    flip: bool,
+) -> Option<()> {
+    let n = boundary.len();
+    if n < 3 {
+        return None;
+    }
+
+    // Small polygons: just earcut
+    if n < 5 {
+        let pts_2d = project_boundary_to_2d(boundary, positions);
+        let indices = triangulate_2d(&pts_2d)?;
+        for tri in indices.chunks(3) {
+            if flip {
+                faces.push(vec![boundary[tri[2]], boundary[tri[1]], boundary[tri[0]]]);
+            } else {
+                faces.push(vec![boundary[tri[0]], boundary[tri[1]], boundary[tri[2]]]);
+            }
+        }
+        return Some(());
+    }
+
+    // 3D centroid of boundary
+    let (mut cx, mut cy, mut cz) = (0.0, 0.0, 0.0);
+    for &vi in boundary {
+        let p = positions[vi];
+        cx += p[0];
+        cy += p[1];
+        cz += p[2];
+    }
+    let nf = n as f64;
+    cx /= nf;
+    cy /= nf;
+    cz /= nf;
+
+    let rings = (n / 8).clamp(1, 3);
+    let mut prev: Vec<usize> = boundary.to_vec();
+
+    // Intermediate concentric rings
+    for k in 0..rings {
+        let t = CAP_INSET * (k + 1) as f64 / (rings + 1) as f64;
+        let ring_base = positions.len();
+        for &vi in boundary {
+            let p = positions[vi];
+            positions.push([
+                p[0] + (cx - p[0]) * t,
+                p[1] + (cy - p[1]) * t,
+                p[2] + (cz - p[2]) * t,
+            ]);
+        }
+
+        emit_quad_ring(&prev, ring_base, n, flip, faces);
+        prev = (ring_base..ring_base + n).collect();
+    }
+
+    // Innermost ring at full inset factor
+    let inner_base = positions.len();
+    for &vi in boundary {
+        let p = positions[vi];
+        positions.push([
+            p[0] + (cx - p[0]) * CAP_INSET,
+            p[1] + (cy - p[1]) * CAP_INSET,
+            p[2] + (cz - p[2]) * CAP_INSET,
+        ]);
+    }
+    emit_quad_ring(&prev, inner_base, n, flip, faces);
+
+    // Inner fan: project innermost ring to local 2D, earcut
+    let inner_indices: Vec<usize> = (inner_base..inner_base + n).collect();
+    let pts_2d = project_boundary_to_2d(&inner_indices, positions);
+    let tri_idx = triangulate_2d(&pts_2d)?;
+    for tri in tri_idx.chunks(3) {
+        if flip {
+            faces.push(vec![
+                inner_indices[tri[2]],
+                inner_indices[tri[1]],
+                inner_indices[tri[0]],
+            ]);
+        } else {
+            faces.push(vec![
+                inner_indices[tri[0]],
+                inner_indices[tri[1]],
+                inner_indices[tri[2]],
+            ]);
+        }
+    }
+
+    Some(())
+}
+
+/// Emit a ring of quads connecting `prev` vertex indices to a new ring
+/// starting at `ring_base`.
+fn emit_quad_ring(
+    prev: &[usize],
+    ring_base: usize,
+    n: usize,
+    flip: bool,
+    faces: &mut Vec<Vec<usize>>,
+) {
+    for i in 0..n {
+        let j = (i + 1) % n;
+        let oi = prev[i];
+        let oj = prev[j];
+        let ii = ring_base + i;
+        let ij = ring_base + j;
+        if flip {
+            faces.push(vec![oi, ii, ij, oj]);
+        } else {
+            faces.push(vec![oi, oj, ij, ii]);
+        }
+    }
+}
+
+/// Project 3D boundary vertices to a local 2D coordinate frame for earcut.
+fn project_boundary_to_2d(indices: &[usize], positions: &[[f64; 3]]) -> Vec<[f64; 2]> {
+    if indices.len() < 2 {
+        return indices.iter().map(|_| [0.0, 0.0]).collect();
+    }
+
+    // Normal via Newell's method
+    let (mut nx, mut ny, mut nz) = (0.0, 0.0, 0.0);
+    let n = indices.len();
+    for i in 0..n {
+        let j = (i + 1) % n;
+        let vi = positions[indices[i]];
+        let vj = positions[indices[j]];
+        nx += (vi[1] - vj[1]) * (vi[2] + vj[2]);
+        ny += (vi[2] - vj[2]) * (vi[0] + vj[0]);
+        nz += (vi[0] - vj[0]) * (vi[1] + vj[1]);
+    }
+    let len = (nx * nx + ny * ny + nz * nz).sqrt();
+    if len < 1e-12 {
+        // Degenerate — fall back to XY
+        return indices.iter().map(|&i| [positions[i][0], positions[i][1]]).collect();
+    }
+    let normal = [nx / len, ny / len, nz / len];
+
+    // Tangent from first edge
+    let p0 = positions[indices[0]];
+    let p1 = positions[indices[1]];
+    let edge = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
+    let elen = (edge[0] * edge[0] + edge[1] * edge[1] + edge[2] * edge[2]).sqrt();
+    let tangent = if elen > 1e-12 {
+        [edge[0] / elen, edge[1] / elen, edge[2] / elen]
+    } else if normal[0].abs() < 0.9 {
+        [1.0, 0.0, 0.0]
+    } else {
+        [0.0, 1.0, 0.0]
+    };
+
+    // Bitangent = cross(normal, tangent)
+    let bi = [
+        normal[1] * tangent[2] - normal[2] * tangent[1],
+        normal[2] * tangent[0] - normal[0] * tangent[2],
+        normal[0] * tangent[1] - normal[1] * tangent[0],
+    ];
+
+    indices
+        .iter()
+        .map(|&i| {
+            let p = positions[i];
+            let d = [p[0] - p0[0], p[1] - p0[1], p[2] - p0[2]];
+            [
+                d[0] * tangent[0] + d[1] * tangent[1] + d[2] * tangent[2],
+                d[0] * bi[0] + d[1] * bi[1] + d[2] * bi[2],
+            ]
+        })
+        .collect()
+}

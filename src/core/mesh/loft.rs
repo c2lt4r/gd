@@ -1,5 +1,5 @@
 use super::half_edge::HalfEdgeMesh;
-use super::profile::triangulate_2d;
+use super::profile::build_quad_cap_3d;
 
 /// Loft: connect multiple cross-section profiles into a smooth surface.
 ///
@@ -46,27 +46,16 @@ pub fn loft(sections: &[Vec<[f64; 3]>], cap_start: bool, cap_end: bool) -> Optio
         }
     }
 
-    // End caps — stay triangulated
+    // End caps — quad-ring inset for clean topology
     if cap_start {
-        let pts_2d: Vec<[f64; 2]> = sections[0].iter().map(|p| [p[0], p[1]]).collect();
-        if let Some(tri) = triangulate_2d(&pts_2d) {
-            for t in tri.chunks(3) {
-                faces.push(vec![t[2], t[1], t[0]]);
-            }
-        }
+        let boundary: Vec<usize> = (0..n_pts).collect();
+        build_quad_cap_3d(&boundary, &mut positions, &mut faces, true);
     }
 
     if cap_end {
         let last_base = (n_sections - 1) * n_pts;
-        let pts_2d: Vec<[f64; 2]> = sections[n_sections - 1]
-            .iter()
-            .map(|p| [p[0], p[1]])
-            .collect();
-        if let Some(tri) = triangulate_2d(&pts_2d) {
-            for t in tri.chunks(3) {
-                faces.push(vec![last_base + t[0], last_base + t[1], last_base + t[2]]);
-            }
-        }
+        let boundary: Vec<usize> = (last_base..last_base + n_pts).collect();
+        build_quad_cap_3d(&boundary, &mut positions, &mut faces, false);
     }
 
     if faces.is_empty() {
