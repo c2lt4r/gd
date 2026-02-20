@@ -884,6 +884,7 @@ pub fn generate_material_multi(pattern: &str, color: &str) -> String {
          \tvar hex = \"{color}\"\n\
          \tvar color_val = Color.html(hex)\n\
          \tvar applied = []\n\
+         \tvar skipped = []\n\
          \tif pattern.contains(\"*\") or pattern.contains(\"?\"):\n\
          \t\tfor child in helper.get_children():\n\
          \t\t\tif child is MeshInstance3D and not child.name.begins_with(\"_\"):\n\
@@ -894,7 +895,6 @@ pub fn generate_material_multi(pattern: &str, color: &str) -> String {
          \t\t\t\t\tchild.set_meta(\"part_color\", color_val)\n\
          \t\t\t\t\tapplied.append(String(child.name))\n\
          \telse:\n\
-         \t\tvar skipped = []\n\
          \t\tfor n in pattern.split(\",\"):\n\
          \t\t\tvar name = n.strip_edges()\n\
          \t\t\tif name.is_empty(): continue\n\
@@ -964,6 +964,7 @@ pub fn generate_material_preset_multi(pattern: &str, preset: &str, color: Option
          \tvar pattern = \"{pattern}\"\n\
          {color_line}\
          \tvar applied = []\n\
+         \tvar skipped = []\n\
          \tif pattern.contains(\"*\") or pattern.contains(\"?\"):\n\
          \t\tfor child in helper.get_children():\n\
          \t\t\tif child is MeshInstance3D and not child.name.begins_with(\"_\"):\n\
@@ -971,7 +972,6 @@ pub fn generate_material_preset_multi(pattern: &str, preset: &str, color: Option
          \t\t\t\t\t_apply_preset(child, base_color)\n\
          \t\t\t\t\tapplied.append(String(child.name))\n\
          \telse:\n\
-         \t\tvar skipped = []\n\
          \t\tfor n in pattern.split(\",\"):\n\
          \t\t\tvar name = n.strip_edges()\n\
          \t\t\tif name.is_empty(): continue\n\
