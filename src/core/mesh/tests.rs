@@ -2635,3 +2635,261 @@ fn group_duplicate() {
         state.parts["engine-1"].mesh.vertices.len()
     );
 }
+
+// ── Agent replay: multi-part model build ────────────────────────────
+//
+// Replays the core mesh operations from a real agent session (179
+// commands, ~27 parts). Exercises profile→extrude→taper→bevel→mirror
+// →duplicate pipeline and validates mesh integrity at each step.
+
+/// Generate CCW ellipse points centered at origin.
+fn ellipse(rx: f64, ry: f64, segments: u32) -> Vec<[f64; 2]> {
+    use std::f64::consts::TAU;
+    (0..segments)
+        .map(|i| {
+            let angle = TAU * f64::from(i) / f64::from(segments);
+            [rx * angle.cos(), ry * angle.sin()]
+        })
+        .collect()
+}
+
+/// Generate a tapered 2D profile (leaf/fin shape) for extrusion.
+fn tapered_profile(chord: f64, thickness: f64, n: u32) -> Vec<[f64; 2]> {
+    use std::f64::consts::TAU;
+    (0..n)
+        .map(|i| {
+            let t = f64::from(i) / f64::from(n);
+            let x = chord * (1.0 - (TAU * t / 2.0).cos()) / 2.0;
+            let y = if t < 0.5 {
+                thickness * (t * 2.0)
+            } else {
+                thickness * (2.0 - t * 2.0)
+            };
+            [x, y]
+        })
+        .collect()
+}
+
+/// Assert mesh is non-degenerate and watertight (0 boundary edges).
+fn assert_closed(mesh: &HalfEdgeMesh, label: &str) {
+    assert!(mesh.vertex_count() > 0, "{label}: 0 vertices");
+    assert!(mesh.face_count() > 0, "{label}: 0 faces");
+    let boundary = count_boundary_edges(mesh);
+    assert_eq!(boundary, 0, "{label}: {boundary} boundary edges (not watertight)");
+}
+
+/// Assert mesh is non-degenerate (may have boundary edges for open shapes).
+fn assert_valid(mesh: &HalfEdgeMesh, label: &str) {
+    assert!(mesh.vertex_count() > 0, "{label}: 0 vertices");
+    assert!(mesh.face_count() > 0, "{label}: 0 faces");
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn agent_replay_multipart_build() {
+    use super::extrude;
+    use super::taper;
+    use super::bevel;
+    use super::mirror;
+    use super::normals;
+
+    let mut state = MeshState::new("fuselage");
+
+    // ── Step 1: Fuselage ──────────────────────────────────────────────
+    // profile --plane front --shape ellipse --rx 1.0 --ry 0.8 --segments 16
+    let fuse_profile = ellipse(1.0, 0.8, 16);
+    // extrude --depth 16.0 --segments 10
+    let fuse_mesh = extrude::extrude(&fuse_profile, PlaneKind::Front, 16.0, 10).unwrap();
+    assert_closed(&fuse_mesh, "fuselage after extrude");
+
+    let part = state.active_part_mut().unwrap();
+    part.mesh = fuse_mesh;
+
+    // taper --axis z --from 0.0 --to 0.35 --from-scale 0.12 --to-scale 1.0
+    taper::taper(&mut part.mesh, 2, 0.12, 1.0, None, Some((0.0, 0.35)));
+    assert_closed(&part.mesh, "fuselage after nose taper");
+
+    // taper --axis z --from 0.65 --to 1.0 --from-scale 1.0 --to-scale 0.55
+    taper::taper(&mut part.mesh, 2, 1.0, 0.55, None, Some((0.65, 1.0)));
+    assert_closed(&part.mesh, "fuselage after tail taper");
+    let fuse_verts = part.mesh.vertex_count();
+    let fuse_faces = part.mesh.face_count();
+
+    // ── Step 2: Wing (profile + extrude + taper + mirror) ─────────────
+    let wing_pts = tapered_profile(6.0, 0.15, 21);
+    let wing_mesh = extrude::extrude(&wing_pts, PlaneKind::Side, 1.0, 1).unwrap();
+    assert_valid(&wing_mesh, "wing-r after extrude");
+
+    let mut wing_part = super::MeshPart::new();
+    wing_part.mesh = wing_mesh;
+    // taper --axis x --from-scale 1.0 --to-scale 0.3
+    taper::taper(&mut wing_part.mesh, 0, 1.0, 0.3, None, None);
+    assert_valid(&wing_part.mesh, "wing-r after taper");
+    state.parts.insert("wing-r".to_string(), wing_part);
+
+    // duplicate-part --name wing-r --as wing-l --mirror x
+    let mut wing_l = state.parts["wing-r"].clone();
+    mirror::mirror(&mut wing_l.mesh, 0); // axis x
+    assert_valid(&wing_l.mesh, "wing-l after mirror");
+    assert_eq!(wing_l.mesh.vertex_count(), state.parts["wing-r"].mesh.vertex_count());
+    state.parts.insert("wing-l".to_string(), wing_l);
+
+    // ── Step 3: Canards ───────────────────────────────────────────────
+    let canard_pts = tapered_profile(1.5, 0.08, 12);
+    let canard_mesh = extrude::extrude(&canard_pts, PlaneKind::Side, 0.4, 1).unwrap();
+    let mut canard_part = super::MeshPart::new();
+    canard_part.mesh = canard_mesh;
+    taper::taper(&mut canard_part.mesh, 0, 1.0, 0.4, None, None);
+    assert_valid(&canard_part.mesh, "canard-r");
+    state.parts.insert("canard-r".to_string(), canard_part);
+
+    let mut canard_l = state.parts["canard-r"].clone();
+    mirror::mirror(&mut canard_l.mesh, 0);
+    state.parts.insert("canard-l".to_string(), canard_l);
+
+    // ── Step 4: Vertical fin ──────────────────────────────────────────
+    let fin_pts = tapered_profile(3.0, 0.1, 16);
+    let fin_mesh = extrude::extrude(&fin_pts, PlaneKind::Top, 0.15, 1).unwrap();
+    let mut fin_part = super::MeshPart::new();
+    fin_part.mesh = fin_mesh;
+    taper::taper(&mut fin_part.mesh, 1, 1.0, 0.3, None, None);
+    assert_valid(&fin_part.mesh, "fin");
+    state.parts.insert("fin".to_string(), fin_part);
+
+    // ── Step 5: Intakes (simple boxes via ellipse extrude) ────────────
+    let intake_profile = ellipse(0.4, 0.3, 8);
+    let intake_mesh = extrude::extrude(&intake_profile, PlaneKind::Front, 2.0, 2).unwrap();
+    assert_closed(&intake_mesh, "intake-r");
+    let mut intake_part = super::MeshPart::new();
+    intake_part.mesh = intake_mesh;
+    state.parts.insert("intake-r".to_string(), intake_part);
+
+    let mut intake_l = state.parts["intake-r"].clone();
+    mirror::mirror(&mut intake_l.mesh, 0);
+    state.parts.insert("intake-l".to_string(), intake_l);
+
+    // ── Step 6: Exhausts (circle profile + extrude, not cylinder prim)
+    let exhaust_profile = ellipse(0.3, 0.3, 12);
+    let exhaust_mesh = extrude::extrude(&exhaust_profile, PlaneKind::Front, 1.5, 2).unwrap();
+    assert_closed(&exhaust_mesh, "exhaust-r");
+    let mut exhaust_part = super::MeshPart::new();
+    exhaust_part.mesh = exhaust_mesh;
+    state.parts.insert("exhaust-r".to_string(), exhaust_part);
+
+    let mut exhaust_l = state.parts["exhaust-r"].clone();
+    mirror::mirror(&mut exhaust_l.mesh, 0);
+    state.parts.insert("exhaust-l".to_string(), exhaust_l);
+
+    // ── Step 7: Canopy (ellipse + extrude + taper) ────────────────────
+    let canopy_profile = ellipse(0.5, 0.35, 12);
+    let canopy_mesh = extrude::extrude(&canopy_profile, PlaneKind::Front, 2.5, 4).unwrap();
+    let mut canopy_part = super::MeshPart::new();
+    canopy_part.mesh = canopy_mesh;
+    taper::taper(&mut canopy_part.mesh, 2, 0.3, 1.0, None, Some((0.0, 0.4)));
+    taper::taper(&mut canopy_part.mesh, 2, 1.0, 0.2, None, Some((0.7, 1.0)));
+    assert_closed(&canopy_part.mesh, "canopy");
+    state.parts.insert("canopy".to_string(), canopy_part);
+
+    // ── Step 8: Cockpit interior parts ────────────────────────────────
+    // Simplified: tub, seat, panel, stick, throttle, pedals
+    let box_profile = vec![[-0.3, -0.2], [0.3, -0.2], [0.3, 0.2], [-0.3, 0.2]];
+    for name in &["cockpit-tub", "ejection-seat", "instrument-panel",
+                   "stick", "throttle", "pedals", "console-l", "console-r",
+                   "hud", "coaming"] {
+        let mesh = extrude::extrude(&box_profile, PlaneKind::Front, 0.5, 1).unwrap();
+        assert_closed(&mesh, name);
+        let mut p = super::MeshPart::new();
+        p.mesh = mesh;
+        state.parts.insert((*name).to_string(), p);
+    }
+
+    // ── Step 9: Landing gear ──────────────────────────────────────────
+    // Struts (thin boxes) + wheels (circle extrude)
+    let strut_profile = vec![[-0.05, -0.05], [0.05, -0.05], [0.05, 0.05], [-0.05, 0.05]];
+    for name in &["nose-strut", "main-strut-l", "main-strut-r"] {
+        let mesh = extrude::extrude(&strut_profile, PlaneKind::Front, 1.2, 1).unwrap();
+        let mut p = super::MeshPart::new();
+        p.mesh = mesh;
+        state.parts.insert((*name).to_string(), p);
+    }
+
+    let wheel_profile = ellipse(0.15, 0.15, 8);
+    let wheel_mesh = extrude::extrude(&wheel_profile, PlaneKind::Front, 0.1, 1).unwrap();
+    assert_closed(&wheel_mesh, "wheel");
+    for name in &["nose-wheel", "main-wheel-l", "main-wheel-r"] {
+        let mut p = super::MeshPart::new();
+        p.mesh = wheel_mesh.clone();
+        state.parts.insert((*name).to_string(), p);
+    }
+
+    // ── Step 10: fix-normals --all ────────────────────────────────────
+    let names: Vec<String> = state.parts.keys().cloned().collect();
+    for name in &names {
+        let part = state.parts.get_mut(name).unwrap();
+        normals::fix_winding(&mut part.mesh);
+    }
+
+    // ── Step 11: Bevel on fuselage ────────────────────────────────────
+    // Agent's bevel crashed on tapered geometry (now fixed). Verify it works.
+    let fuse = &state.parts["fuselage"].mesh;
+    let beveled = bevel::bevel(fuse, 0.08, 2, "depth");
+    assert_valid(&beveled, "fuselage after bevel");
+    assert!(beveled.vertex_count() > fuse_verts, "bevel should add vertices");
+    assert!(beveled.face_count() > fuse_faces, "bevel should add faces");
+    state.parts.get_mut("fuselage").unwrap().mesh = beveled;
+
+    // ── Step 12: Groups ───────────────────────────────────────────────
+    state.groups.insert("engine-assembly".to_string(), vec![
+        "intake-r".to_string(), "exhaust-r".to_string(),
+    ]);
+    state.groups.insert("landing-gear".to_string(), vec![
+        "nose-strut".to_string(), "nose-wheel".to_string(),
+        "main-strut-l".to_string(), "main-wheel-l".to_string(),
+        "main-strut-r".to_string(), "main-wheel-r".to_string(),
+    ]);
+
+    // ── Step 13: Checkpoint + restore ─────────────────────────────────
+    let checkpoint_name = "exterior-done";
+    state.checkpoints.insert(checkpoint_name.to_string(), state.parts.clone());
+    state.group_checkpoints.insert(checkpoint_name.to_string(), state.groups.clone());
+
+    // Verify restore brings back groups
+    let saved_groups = state.group_checkpoints[checkpoint_name].clone();
+    assert_eq!(saved_groups.len(), 2);
+    assert_eq!(saved_groups["landing-gear"].len(), 6);
+
+    // ── Step 14: Stats validation ─────────────────────────────────────
+    state.active = "fuselage".to_string();
+    let stats = crate::cli::mesh_cmd::mesh_stats(&state);
+    assert_eq!(stats["active_part"], "fuselage");
+    assert_eq!(stats["total_parts"], state.parts.len());
+    assert!(stats["total_tris_godot"].as_u64().unwrap() > 0);
+    assert!(stats["part_faces"].as_u64().unwrap() > 0);
+
+    // ── Step 15: Verify all parts survived ────────────────────────────
+    let expected_parts = [
+        "fuselage", "wing-r", "wing-l", "canard-r", "canard-l", "fin",
+        "intake-r", "intake-l", "exhaust-r", "exhaust-l", "canopy",
+        "cockpit-tub", "ejection-seat", "instrument-panel", "stick",
+        "throttle", "pedals", "console-l", "console-r", "hud", "coaming",
+        "nose-strut", "main-strut-l", "main-strut-r",
+        "nose-wheel", "main-wheel-l", "main-wheel-r",
+    ];
+    assert_eq!(state.parts.len(), expected_parts.len());
+    for name in &expected_parts {
+        assert!(state.parts.contains_key(*name), "missing part: {name}");
+        let mesh = &state.parts[*name].mesh;
+        assert!(mesh.vertex_count() > 0, "{name}: 0 vertices after full pipeline");
+        assert!(mesh.face_count() > 0, "{name}: 0 faces after full pipeline");
+    }
+
+    // ── Step 16: Verify to_arrays works (snapshot path) ───────────────
+    // Every part must be able to triangulate for Godot push / snapshot
+    for name in &expected_parts {
+        let part = &state.parts[*name];
+        let (positions, normals_arr, indices) = part.mesh.to_arrays_shaded(part.shading);
+        assert!(!positions.is_empty(), "{name}: empty positions from to_arrays");
+        assert!(!normals_arr.is_empty(), "{name}: empty normals from to_arrays");
+        assert!(!indices.is_empty(), "{name}: empty indices from to_arrays");
+    }
+}
