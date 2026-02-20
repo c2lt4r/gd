@@ -4,14 +4,14 @@ use owo_colors::OwoColorize;
 use crate::core::mesh::MeshState;
 
 use super::gdscript;
-use super::{CreateArgs, OutputFormat, inject_stats, project_root, run_eval};
+use super::{CreateArgs, OutputFormat, import_primitive_mesh, inject_stats, project_root, run_eval};
 use crate::cprintln;
 
 pub fn cmd_create(args: &CreateArgs) -> Result<()> {
     let root = project_root()?;
 
     // Initialize Rust mesh state
-    let state = MeshState::new(&args.name);
+    let mut state = MeshState::new(&args.name);
     state.save(&root)?;
 
     // Create Godot scene infrastructure (cameras, lights, HUD, mesh node)
@@ -19,6 +19,10 @@ pub fn cmd_create(args: &CreateArgs) -> Result<()> {
     let result = run_eval(&script)?;
     let mut parsed: serde_json::Value = serde_json::from_str(&result)
         .map_err(|e| miette::miette!("Failed to parse result: {e}"))?;
+
+    // Import primitive mesh arrays (cube/sphere/cylinder) into Rust state
+    import_primitive_mesh(&parsed, &mut state);
+    state.save(&root)?;
     inject_stats(&mut parsed, &state);
 
     match args.format {

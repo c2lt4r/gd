@@ -1233,6 +1233,52 @@ pub fn inject_stats(response: &mut serde_json::Value, state: &MeshState) {
     }
 }
 
+/// Import primitive mesh arrays from Godot JSON response into `MeshState`.
+///
+/// When `--from cube/sphere/cylinder` is used, the GDScript returns `vertices`
+/// (flat `[x,y,z,...]`) and `indices` arrays. This imports them into the Rust
+/// `HalfEdgeMesh` so subsequent operations (scale, bevel, etc.) work correctly.
+pub fn import_primitive_mesh(parsed: &serde_json::Value, state: &mut MeshState) {
+    use crate::core::mesh::half_edge::HalfEdgeMesh;
+
+    let Some(verts_json) = parsed["vertices"].as_array() else {
+        return;
+    };
+    let Some(idx_json) = parsed["indices"].as_array() else {
+        return;
+    };
+
+    let positions: Vec<[f64; 3]> = verts_json
+        .chunks(3)
+        .filter_map(|c| {
+            if c.len() == 3 {
+                Some([
+                    c[0].as_f64().unwrap_or(0.0),
+                    c[1].as_f64().unwrap_or(0.0),
+                    c[2].as_f64().unwrap_or(0.0),
+                ])
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    #[allow(clippy::cast_possible_truncation)]
+    let indices: Vec<usize> = idx_json
+        .iter()
+        .filter_map(|v| v.as_u64().map(|n| n as usize))
+        .collect();
+
+    if positions.is_empty() || indices.is_empty() {
+        return;
+    }
+
+    let mesh = HalfEdgeMesh::from_triangles(&positions, &indices);
+    if let Ok(part) = state.active_part_mut() {
+        part.mesh = mesh;
+    }
+}
+
 /// Run a generated GDScript via live eval and return the raw result string.
 ///
 /// Injects a HUD overlay update at the start of `func run():` so the human

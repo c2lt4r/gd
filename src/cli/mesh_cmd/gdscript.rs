@@ -243,9 +243,17 @@ pub fn generate_create(name: &str, primitive: &str) -> String {
          \t_mat.albedo_color = _color\n\
          \tmesh_inst.material_override = _mat\n\
          \tvar vc = 0\n\
-         \tif mesh_inst.mesh and mesh_inst.mesh.get_surface_count() > 0:\n\
-         \t\tvc = mesh_inst.mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX].size()\n\
          \tvar d = {{}}\n\
+         \tif mesh_inst.mesh and mesh_inst.mesh.get_surface_count() > 0:\n\
+         \t\tvar _arrays = mesh_inst.mesh.surface_get_arrays(0)\n\
+         \t\tvar _v = _arrays[Mesh.ARRAY_VERTEX]\n\
+         \t\tvc = _v.size()\n\
+         \t\tvar _idx = _arrays[Mesh.ARRAY_INDEX]\n\
+         \t\tif _v.size() > 0 and _idx:\n\
+         \t\t\tvar _vf = []\n\
+         \t\t\tfor _p in _v: _vf.append_array([_p.x, _p.y, _p.z])\n\
+         \t\t\td[\"vertices\"] = _vf\n\
+         \t\t\td[\"indices\"] = Array(_idx)\n\
          \td[\"name\"] = \"{name}\"\n\
          \td[\"primitive\"] = \"{primitive}\"\n\
          \td[\"default_size\"] = {primitive_size}\n\
@@ -398,24 +406,23 @@ pub fn generate_snapshot(tscn_path: &str) -> String {
     format!(
         "extends Node\n\
          \n\
-         func _bake_transform(mi: MeshInstance3D) -> void:\n\
-         \tif mi.transform == Transform3D(): return\n\
-         \tif not mi.mesh or mi.mesh.get_surface_count() == 0: return\n\
+         func _bake_mesh(mi: MeshInstance3D) -> ArrayMesh:\n\
+         \tif not mi.mesh or mi.mesh.get_surface_count() == 0: return null\n\
          \tvar arrays = mi.mesh.surface_get_arrays(0)\n\
          \tvar verts = arrays[Mesh.ARRAY_VERTEX]\n\
          \tvar norms = arrays[Mesh.ARRAY_NORMAL]\n\
          \tvar t = mi.transform\n\
-         \tfor i in verts.size():\n\
-         \t\tverts[i] = t * verts[i]\n\
-         \tif norms:\n\
-         \t\tfor i in norms.size():\n\
-         \t\t\tnorms[i] = (t.basis * norms[i]).normalized()\n\
-         \tarrays[Mesh.ARRAY_VERTEX] = verts\n\
-         \tif norms: arrays[Mesh.ARRAY_NORMAL] = norms\n\
-         \tvar new_mesh = ArrayMesh.new()\n\
-         \tnew_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)\n\
-         \tmi.mesh = new_mesh\n\
-         \tmi.transform = Transform3D()\n\
+         \tif t != Transform3D():\n\
+         \t\tfor i in verts.size():\n\
+         \t\t\tverts[i] = t * verts[i]\n\
+         \t\tif norms:\n\
+         \t\t\tfor i in norms.size():\n\
+         \t\t\t\tnorms[i] = (t.basis * norms[i]).normalized()\n\
+         \t\tarrays[Mesh.ARRAY_VERTEX] = verts\n\
+         \t\tif norms: arrays[Mesh.ARRAY_NORMAL] = norms\n\
+         \tvar baked = ArrayMesh.new()\n\
+         \tbaked.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)\n\
+         \treturn baked\n\
          \n\
          func run():\n\
          \tvar root = get_tree().get_root()\n\
@@ -424,28 +431,31 @@ pub fn generate_snapshot(tscn_path: &str) -> String {
          \tvar mesh_children = []\n\
          \tfor child in helper.get_children():\n\
          \t\tif child is MeshInstance3D and not child.name.begins_with(\"_\"):\n\
-         \t\t\tif child.mesh:\n\
+         \t\t\tif child.mesh and child.mesh.get_surface_count() > 0:\n\
          \t\t\t\tmesh_children.append(child)\n\
          \tif mesh_children.size() == 0: return \"ERROR: no mesh data in any part\"\n\
+         \tvar baked_meshes = {{}}\n\
          \tfor mi in mesh_children:\n\
-         \t\t_bake_transform(mi)\n\
+         \t\tvar baked = _bake_mesh(mi)\n\
+         \t\tif baked: baked_meshes[mi.name] = baked\n\
          \tvar resources = []\n\
          \tvar materials = {{}}\n\
          \tfor mi in mesh_children:\n\
+         \t\tif not baked_meshes.has(mi.name): continue\n\
          \t\tvar res_path = \"{base_path}_\" + mi.name + \".tres\"\n\
-         \t\tvar err = ResourceSaver.save(mi.mesh, res_path)\n\
+         \t\tvar err = ResourceSaver.save(baked_meshes[mi.name], res_path)\n\
          \t\tif err != OK: return \"ERROR: failed to save mesh '\" + mi.name + \"': \" + str(err)\n\
-         \t\tresources.append({{\"name\": mi.name, \"resource\": res_path}})\n\
+         \t\tresources.append({{\"name\": mi.name, \"resource\": res_path, \"mesh\": baked_meshes[mi.name]}})\n\
          \t\tif mi.material_override:\n\
          \t\t\tvar mat_path = \"{base_path}_\" + mi.name + \"_mat.tres\"\n\
          \t\t\tvar merr = ResourceSaver.save(mi.material_override, mat_path)\n\
          \t\t\tif merr == OK:\n\
          \t\t\t\tmaterials[mi.name] = mat_path\n\
          \tvar scene_root\n\
-         \tif mesh_children.size() == 1:\n\
+         \tif resources.size() == 1:\n\
          \t\tvar node = MeshInstance3D.new()\n\
-         \t\tnode.name = mesh_children[0].name\n\
-         \t\tnode.mesh = load(resources[0][\"resource\"])\n\
+         \t\tnode.name = resources[0][\"name\"]\n\
+         \t\tnode.mesh = resources[0][\"mesh\"]\n\
          \t\tif materials.has(node.name):\n\
          \t\t\tnode.material_override = load(materials[node.name])\n\
          \t\tscene_root = node\n\
@@ -455,7 +465,7 @@ pub fn generate_snapshot(tscn_path: &str) -> String {
          \t\tfor r in resources:\n\
          \t\t\tvar node = MeshInstance3D.new()\n\
          \t\t\tnode.name = r[\"name\"]\n\
-         \t\t\tnode.mesh = load(r[\"resource\"])\n\
+         \t\t\tnode.mesh = r[\"mesh\"]\n\
          \t\t\tif materials.has(r[\"name\"]):\n\
          \t\t\t\tnode.material_override = load(materials[r[\"name\"]])\n\
          \t\t\tscene_root.add_child(node)\n\
@@ -467,8 +477,10 @@ pub fn generate_snapshot(tscn_path: &str) -> String {
          \tif err != OK: return \"ERROR: failed to save scene: \" + str(err)\n\
          \tvar d = {{}}\n\
          \td[\"path\"] = \"{tscn_path}\"\n\
-         \td[\"parts\"] = resources\n\
-         \td[\"part_count\"] = mesh_children.size()\n\
+         \td[\"parts\"] = []\n\
+         \tfor r in resources:\n\
+         \t\td[\"parts\"].append({{\"name\": r[\"name\"], \"resource\": r[\"resource\"]}})\n\
+         \td[\"part_count\"] = resources.size()\n\
          \treturn JSON.stringify(d)\n"
     )
 }
@@ -1466,9 +1478,17 @@ pub fn generate_add_part(name: &str, primitive: &str) -> String {
          \t_mat.albedo_color = _color\n\
          \tmesh_inst.material_override = _mat\n\
          \tvar vc = 0\n\
-         \tif mesh_inst.mesh and mesh_inst.mesh.get_surface_count() > 0:\n\
-         \t\tvc = mesh_inst.mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX].size()\n\
          \tvar d = {{}}\n\
+         \tif mesh_inst.mesh and mesh_inst.mesh.get_surface_count() > 0:\n\
+         \t\tvar _arrays = mesh_inst.mesh.surface_get_arrays(0)\n\
+         \t\tvar _v = _arrays[Mesh.ARRAY_VERTEX]\n\
+         \t\tvc = _v.size()\n\
+         \t\tvar _idx = _arrays[Mesh.ARRAY_INDEX]\n\
+         \t\tif _v.size() > 0 and _idx:\n\
+         \t\t\tvar _vf = []\n\
+         \t\t\tfor _p in _v: _vf.append_array([_p.x, _p.y, _p.z])\n\
+         \t\t\td[\"vertices\"] = _vf\n\
+         \t\t\td[\"indices\"] = Array(_idx)\n\
          \td[\"name\"] = \"{name}\"\n\
          \td[\"part_count\"] = parts.size()\n\
          \td[\"vertex_count\"] = vc\n\
