@@ -4,6 +4,7 @@ use miette::{Result, miette};
 use owo_colors::OwoColorize;
 
 use super::{CreateArgs, write_or_dry_run};
+use crate::cprintln;
 
 pub(crate) fn exec_create(args: &CreateArgs) -> Result<()> {
     let path = PathBuf::from(&args.path);
@@ -24,7 +25,7 @@ pub(crate) fn exec_create(args: &CreateArgs) -> Result<()> {
     write_or_dry_run(&path, &content, args.dry_run)?;
 
     if !args.dry_run {
-        println!(
+        cprintln!(
             "{} Created {} (root: {} [{}])",
             "✓".green(),
             args.path.bold(),

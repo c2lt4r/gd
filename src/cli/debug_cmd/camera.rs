@@ -5,6 +5,7 @@ use owo_colors::OwoColorize;
 
 use super::args::{OutputFormat, ScreenshotArgs, TransformCamera2dArgs, TransformCamera3dArgs};
 use super::{daemon_cmd, ensure_binary_debug};
+use crate::cprintln;
 
 // ── Camera transforms (binary protocol) ──────────────────────────────
 
@@ -29,12 +30,12 @@ pub(crate) fn cmd_transform_camera_2d(args: &TransformCamera2dArgs) -> Result<()
     .ok_or_else(|| miette!("Failed — is a game running?"))?;
     match args.format {
         OutputFormat::Json => {
-            println!(
+            cprintln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({"ok": true})).unwrap()
             );
         }
-        OutputFormat::Text => println!("{}", "2D camera transformed".green()),
+        OutputFormat::Text => cprintln!("{}", "2D camera transformed".green()),
     }
     Ok(())
 }
@@ -66,12 +67,12 @@ pub(crate) fn cmd_transform_camera_3d(args: &TransformCamera3dArgs) -> Result<()
     .ok_or_else(|| miette!("Failed — is a game running?"))?;
     match args.format {
         OutputFormat::Json => {
-            println!(
+            cprintln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({"ok": true})).unwrap()
             );
         }
-        OutputFormat::Text => println!("{}", "3D camera transformed".green()),
+        OutputFormat::Text => cprintln!("{}", "3D camera transformed".green()),
     }
     Ok(())
 }
@@ -114,7 +115,7 @@ pub(crate) fn cmd_screenshot(args: &ScreenshotArgs) -> Result<()> {
 
     match args.format {
         OutputFormat::Json => {
-            println!(
+            cprintln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
                     "path": path,
@@ -128,7 +129,7 @@ pub(crate) fn cmd_screenshot(args: &ScreenshotArgs) -> Result<()> {
         }
         OutputFormat::Text => {
             let size_kb = size / 1024;
-            println!(
+            cprintln!(
                 "{} {}x{} ({size_kb} KB) → {}",
                 "Screenshot saved".green(),
                 width,

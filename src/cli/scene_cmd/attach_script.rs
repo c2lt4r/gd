@@ -7,6 +7,8 @@ use owo_colors::OwoColorize;
 use crate::core::config::find_project_root;
 use crate::core::scene;
 
+use crate::cprintln;
+
 use super::{
     AttachScriptArgs, build_node_pattern, increment_load_steps, is_non_ext_section,
     next_ext_resource_id,
@@ -80,14 +82,14 @@ pub(crate) fn exec_attach_script(args: &AttachScriptArgs) -> Result<()> {
     let result = insert_script_attachment(&source, &res_path, &next_id, target_node)?;
 
     if args.dry_run {
-        println!("{result}");
+        cprintln!("{result}");
         return Ok(());
     }
 
     std::fs::write(&scene_path, &result)
         .map_err(|e| miette!("Failed to write {}: {e}", args.scene))?;
 
-    println!(
+    cprintln!(
         "{} Attached {} to node '{}' in {}",
         "✓".green(),
         script_path.display().bold(),

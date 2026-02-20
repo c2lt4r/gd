@@ -4,6 +4,7 @@ use miette::{Result, miette};
 use owo_colors::OwoColorize;
 
 use super::{RemoveConnectionArgs, clean_double_blanks, read_and_parse_scene, write_or_dry_run};
+use crate::cprintln;
 
 pub(crate) fn exec_remove_connection(args: &RemoveConnectionArgs) -> Result<()> {
     let path = PathBuf::from(&args.scene);
@@ -18,7 +19,7 @@ pub(crate) fn exec_remove_connection(args: &RemoveConnectionArgs) -> Result<()> 
     write_or_dry_run(&path, &result, args.dry_run)?;
 
     if !args.dry_run {
-        println!(
+        cprintln!(
             "{} Removed connection {}.{} → {}.{} from {}",
             "✓".green(),
             args.from,

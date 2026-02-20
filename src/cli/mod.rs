@@ -34,6 +34,9 @@ use miette::Result;
 #[derive(Parser)]
 #[command(name = "gd", version, about = "The Godot toolchain")]
 pub struct Cli {
+    /// Disable colored output (also respects NO_COLOR env)
+    #[arg(long, global = true)]
+    pub no_color: bool,
     #[command(subcommand)]
     pub command: Command,
 }

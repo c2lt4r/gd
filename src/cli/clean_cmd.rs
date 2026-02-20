@@ -1,3 +1,4 @@
+use crate::cprintln;
 use clap::Args;
 use miette::{Result, miette};
 use owo_colors::OwoColorize;
@@ -26,15 +27,15 @@ pub fn exec(args: &CleanArgs) -> Result<()> {
         let dir = project.root.join(dir_name);
         if dir.exists() {
             remove_dir(&dir)?;
-            println!("{} Removed {}", "✓".green(), dir_name);
+            cprintln!("{} Removed {}", "✓".green(), dir_name);
             removed = true;
         }
     }
 
     if removed {
-        println!("{} Clean complete", "✓".green());
+        cprintln!("{} Clean complete", "✓".green());
     } else {
-        println!("{} Nothing to clean", "✓".green());
+        cprintln!("{} Nothing to clean", "✓".green());
     }
     Ok(())
 }

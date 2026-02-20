@@ -9,6 +9,7 @@ use super::args::{
 };
 use crate::core::live_eval::send_eval;
 use crate::core::project::GodotProject;
+use crate::cprintln;
 
 /// Default timeout for automation eval commands.
 const AUTO_TIMEOUT: Duration = Duration::from_secs(10);
@@ -214,7 +215,7 @@ pub fn cmd_describe(args: &DescribeArgs) -> Result<()> {
 
     match args.format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&parsed).unwrap());
+            cprintln!("{}", serde_json::to_string_pretty(&parsed).unwrap());
         }
         OutputFormat::Text => {
             // Reference node
@@ -223,7 +224,7 @@ pub fn cmd_describe(args: &DescribeArgs) -> Result<()> {
             let cls = ref_node["class"].as_str().unwrap_or("?");
             let pos = ref_node["position"].as_str().unwrap_or("?");
             let groups = format_groups(&ref_node["groups"]);
-            println!(
+            cprintln!(
                 "{} {} at {}{groups}",
                 name.green().bold(),
                 cls.dimmed(),
@@ -232,13 +233,13 @@ pub fn cmd_describe(args: &DescribeArgs) -> Result<()> {
 
             // Scene
             let scene = parsed["scene"].as_str().unwrap_or("?");
-            println!("Scene: {}", scene.dimmed());
+            cprintln!("Scene: {}", scene.dimmed());
 
             // Nearby
             let radius = parsed["radius"].as_f64().unwrap_or(0.0);
             let nearby = parsed["nearby"].as_array();
             if let Some(nodes) = nearby {
-                println!(
+                cprintln!(
                     "\n{} ({} within {radius:.0}):",
                     "Nearby".bold(),
                     nodes.len()
@@ -248,7 +249,7 @@ pub fn cmd_describe(args: &DescribeArgs) -> Result<()> {
                     let n_cls = n["class"].as_str().unwrap_or("?");
                     let n_dist = n["distance"].as_f64().unwrap_or(0.0);
                     let n_groups = format_groups(&n["groups"]);
-                    println!(
+                    cprintln!(
                         "  {:.0} — {} {}{n_groups}",
                         n_dist,
                         n_name.green(),
@@ -263,7 +264,7 @@ pub fn cmd_describe(args: &DescribeArgs) -> Result<()> {
             {
                 let act_strs: Vec<&str> =
                     acts.iter().filter_map(serde_json::Value::as_str).collect();
-                println!("\n{}: {}", "Input actions".bold(), act_strs.join(", "));
+                cprintln!("\n{}: {}", "Input actions".bold(), act_strs.join(", "));
             }
         }
     }
@@ -371,17 +372,17 @@ pub fn cmd_find(args: &FindArgs) -> Result<()> {
 
     match args.format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&nodes).unwrap());
+            cprintln!("{}", serde_json::to_string_pretty(&nodes).unwrap());
         }
         OutputFormat::Text => {
             if nodes.is_empty() {
-                println!("{}", "No nodes found".yellow());
+                cprintln!("{}", "No nodes found".yellow());
             } else {
                 for node in &nodes {
                     let path = node["path"].as_str().unwrap_or("?");
                     let cls = node["class"].as_str().unwrap_or("?");
                     let oid = node["object_id"].as_u64().unwrap_or(0);
-                    println!("{} ({}) [id: {}]", path.green(), cls.dimmed(), oid);
+                    cprintln!("{} ({}) [id: {}]", path.green(), cls.dimmed(), oid);
                 }
             }
         }
@@ -415,13 +416,13 @@ pub fn cmd_get_prop(args: &GetPropArgs) -> Result<()> {
     let result = run_eval(&script)?;
 
     match args.format {
-        OutputFormat::Json => println!("{result}"),
+        OutputFormat::Json => cprintln!("{result}"),
         OutputFormat::Text => {
             let parsed: serde_json::Value = serde_json::from_str(&result)
                 .map_err(|e| miette!("Failed to parse result: {e}"))?;
             let node_name = parsed["node"].as_str().unwrap_or("?");
             let value = &parsed["value"];
-            println!("{}.{} = {}", node_name.green(), args.property.cyan(), value);
+            cprintln!("{}.{} = {}", node_name.green(), args.property.cyan(), value);
         }
     }
     Ok(())
@@ -454,16 +455,16 @@ pub fn cmd_call(args: &CallArgs) -> Result<()> {
     let result = run_eval(&script)?;
 
     match args.format {
-        OutputFormat::Json => println!("{result}"),
+        OutputFormat::Json => cprintln!("{result}"),
         OutputFormat::Text => {
             let parsed: serde_json::Value = serde_json::from_str(&result)
                 .map_err(|e| miette!("Failed to parse result: {e}"))?;
             let node_name = parsed["node"].as_str().unwrap_or("?");
             let ret = &parsed["result"];
             if ret.is_null() {
-                println!("Called {}.{}()", node_name.green(), args.method.cyan());
+                cprintln!("Called {}.{}()", node_name.green(), args.method.cyan());
             } else {
-                println!(
+                cprintln!(
                     "Called {}.{}() → {}",
                     node_name.green(),
                     args.method.cyan(),
@@ -495,9 +496,9 @@ pub fn cmd_set(args: &SetNodeArgs) -> Result<()> {
     let result = run_eval(&script)?;
 
     match args.format {
-        OutputFormat::Json => println!("{result}"),
+        OutputFormat::Json => cprintln!("{result}"),
         OutputFormat::Text => {
-            println!(
+            cprintln!(
                 "Set {}.{} = {}",
                 args.node.green(),
                 args.property.cyan(),
@@ -626,7 +627,7 @@ fn await_property(
             let elapsed = start.elapsed().as_secs_f64();
             match format {
                 OutputFormat::Json => {
-                    println!(
+                    cprintln!(
                         "{}",
                         serde_json::to_string_pretty(&serde_json::json!({
                             "condition": format!("{node}.{property} {op} {target}"),
@@ -638,7 +639,7 @@ fn await_property(
                     );
                 }
                 OutputFormat::Text => {
-                    println!(
+                    cprintln!(
                         "{}",
                         format!("Condition met: {node}.{property} {op} {target} ({elapsed:.1}s)")
                             .green()
@@ -675,7 +676,7 @@ fn await_node(node: &str, removed: bool, cfg: &PollConfig, format: &OutputFormat
             let action = if removed { "removed" } else { "exists" };
             match format {
                 OutputFormat::Json => {
-                    println!(
+                    cprintln!(
                         "{}",
                         serde_json::to_string_pretty(&serde_json::json!({
                             "condition": format!("{node} {action}"),
@@ -686,7 +687,7 @@ fn await_node(node: &str, removed: bool, cfg: &PollConfig, format: &OutputFormat
                     );
                 }
                 OutputFormat::Text => {
-                    println!(
+                    cprintln!(
                         "{}",
                         format!("Condition met: {node} {action} ({elapsed:.1}s)").green()
                     );
@@ -896,7 +897,7 @@ pub fn cmd_navigate(args: &NavigateArgs) -> Result<()> {
             let final_dist = distance.unwrap_or(0.0);
             match args.format {
                 OutputFormat::Json => {
-                    println!(
+                    cprintln!(
                         "{}",
                         serde_json::to_string_pretty(&serde_json::json!({
                             "node": args.node,
@@ -911,7 +912,7 @@ pub fn cmd_navigate(args: &NavigateArgs) -> Result<()> {
                     );
                 }
                 OutputFormat::Text => {
-                    println!(
+                    cprintln!(
                         "{}",
                         format!(
                             "{} navigated to {target_str} ({elapsed:.1}s, {agent_type})",
@@ -970,7 +971,7 @@ pub fn cmd_move_to(args: &MoveToArgs) -> Result<()> {
                 }
                 match args.format {
                     OutputFormat::Json => {
-                        println!(
+                        cprintln!(
                             "{}",
                             serde_json::to_string_pretty(&serde_json::json!({
                                 "action": "move_to",
@@ -981,7 +982,7 @@ pub fn cmd_move_to(args: &MoveToArgs) -> Result<()> {
                         );
                     }
                     OutputFormat::Text => {
-                        println!("{}", format!("Moved to ({x}, {y}) over {dur}s").green());
+                        cprintln!("{}", format!("Moved to ({x}, {y}) over {dur}s").green());
                     }
                 }
                 Ok(())
@@ -990,7 +991,7 @@ pub fn cmd_move_to(args: &MoveToArgs) -> Result<()> {
                 let result = run_eval(&script)?;
                 match args.format {
                     OutputFormat::Json => {
-                        println!(
+                        cprintln!(
                             "{}",
                             serde_json::to_string_pretty(&serde_json::json!({
                                 "action": "move_to",
@@ -999,7 +1000,7 @@ pub fn cmd_move_to(args: &MoveToArgs) -> Result<()> {
                             .unwrap()
                         );
                     }
-                    OutputFormat::Text => println!("{}", format!("Moved to {result}").green()),
+                    OutputFormat::Text => cprintln!("{}", format!("Moved to {result}").green()),
                 }
                 Ok(())
             }
@@ -1009,7 +1010,7 @@ pub fn cmd_move_to(args: &MoveToArgs) -> Result<()> {
             let result = run_eval(&script)?;
             match args.format {
                 OutputFormat::Json => {
-                    println!(
+                    cprintln!(
                         "{}",
                         serde_json::to_string_pretty(&serde_json::json!({
                             "action": "move_to",
@@ -1020,7 +1021,7 @@ pub fn cmd_move_to(args: &MoveToArgs) -> Result<()> {
                     );
                 }
                 OutputFormat::Text => {
-                    println!("{}", format!("Moved to {node} at {result}").green());
+                    cprintln!("{}", format!("Moved to {node} at {result}").green());
                 }
             }
             Ok(())
@@ -1152,7 +1153,7 @@ pub fn cmd_drag(args: &DragArgs) -> Result<()> {
 
     match args.format {
         OutputFormat::Json => {
-            println!(
+            cprintln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
                     "action": "drag",
@@ -1166,7 +1167,7 @@ pub fn cmd_drag(args: &DragArgs) -> Result<()> {
             );
         }
         OutputFormat::Text => {
-            println!(
+            cprintln!(
                 "{}",
                 format!("Dragged from ({start_x:.0}, {start_y:.0}) to ({end_x:.0}, {end_y:.0})")
                     .green()
@@ -1187,7 +1188,7 @@ pub fn cmd_hover(args: &HoverArgs) -> Result<()> {
             std::thread::sleep(Duration::from_secs_f64(args.duration));
             match args.format {
                 OutputFormat::Json => {
-                    println!(
+                    cprintln!(
                         "{}",
                         serde_json::to_string_pretty(&serde_json::json!({
                             "action": "hover",
@@ -1199,7 +1200,7 @@ pub fn cmd_hover(args: &HoverArgs) -> Result<()> {
                     );
                 }
                 OutputFormat::Text => {
-                    println!("{}", format!("Hovering over {node} at {result}").green());
+                    cprintln!("{}", format!("Hovering over {node} at {result}").green());
                 }
             }
             Ok(())
@@ -1211,7 +1212,7 @@ pub fn cmd_hover(args: &HoverArgs) -> Result<()> {
             std::thread::sleep(Duration::from_secs_f64(args.duration));
             match args.format {
                 OutputFormat::Json => {
-                    println!(
+                    cprintln!(
                         "{}",
                         serde_json::to_string_pretty(&serde_json::json!({
                             "action": "hover",
@@ -1222,7 +1223,7 @@ pub fn cmd_hover(args: &HoverArgs) -> Result<()> {
                     );
                 }
                 OutputFormat::Text => {
-                    println!("{}", format!("Hovering at ({x}, {y})").green());
+                    cprintln!("{}", format!("Hovering at ({x}, {y})").green());
                 }
             }
             Ok(())

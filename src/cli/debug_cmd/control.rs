@@ -5,6 +5,7 @@ use super::args::{BreakpointBinArgs, EvalBinArgs, OutputFormat, StepArgs, VarsAr
 use super::rewrite::rewrite_eval_expression;
 use super::scene::format_variant_display;
 use super::{daemon_cmd, debug_break_for_eval, ensure_binary_debug};
+use crate::{ceprintln, cprintln};
 
 // ── Execution control (binary protocol) ─────────────────────────────
 
@@ -18,12 +19,12 @@ pub(crate) fn cmd_exec_continue(args: &StepArgs) -> Result<()> {
     daemon_cmd("debug_node_select_set_type", serde_json::json!({"type": 0}));
     match args.format {
         OutputFormat::Json => {
-            println!(
+            cprintln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({"ok": true})).unwrap()
             );
         }
-        OutputFormat::Text => println!("{}", "Continued".green()),
+        OutputFormat::Text => cprintln!("{}", "Continued".green()),
     }
     Ok(())
 }
@@ -36,12 +37,12 @@ pub(crate) fn cmd_exec_pause(args: &StepArgs) -> Result<()> {
         .ok_or_else(|| miette!("Failed — is a game running?"))?;
     match args.format {
         OutputFormat::Json => {
-            println!(
+            cprintln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({"ok": true})).unwrap()
             );
         }
-        OutputFormat::Text => println!("{}", "Paused".green()),
+        OutputFormat::Text => cprintln!("{}", "Paused".green()),
     }
     Ok(())
 }
@@ -52,12 +53,12 @@ pub(crate) fn cmd_exec_next(args: &StepArgs) -> Result<()> {
         .ok_or_else(|| miette!("Failed — is a game running?"))?;
     match args.format {
         OutputFormat::Json => {
-            println!(
+            cprintln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({"ok": true})).unwrap()
             );
         }
-        OutputFormat::Text => println!("{}", "Stepped over".green()),
+        OutputFormat::Text => cprintln!("{}", "Stepped over".green()),
     }
     Ok(())
 }
@@ -68,12 +69,12 @@ pub(crate) fn cmd_exec_step_in(args: &StepArgs) -> Result<()> {
         .ok_or_else(|| miette!("Failed — is a game running?"))?;
     match args.format {
         OutputFormat::Json => {
-            println!(
+            cprintln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({"ok": true})).unwrap()
             );
         }
-        OutputFormat::Text => println!("{}", "Stepped in".green()),
+        OutputFormat::Text => cprintln!("{}", "Stepped in".green()),
     }
     Ok(())
 }
@@ -84,12 +85,12 @@ pub(crate) fn cmd_exec_step_out(args: &StepArgs) -> Result<()> {
         .ok_or_else(|| miette!("Failed — is a game running?"))?;
     match args.format {
         OutputFormat::Json => {
-            println!(
+            cprintln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({"ok": true})).unwrap()
             );
         }
-        OutputFormat::Text => println!("{}", "Stepped out".green()),
+        OutputFormat::Text => cprintln!("{}", "Stepped out".green()),
     }
     Ok(())
 }
@@ -138,7 +139,7 @@ pub(crate) fn cmd_breakpoint(args: &BreakpointBinArgs) -> Result<()> {
             if let Some(ref name) = args.name {
                 out["name"] = serde_json::Value::String(name.clone());
             }
-            println!("{}", serde_json::to_string_pretty(&out).unwrap());
+            cprintln!("{}", serde_json::to_string_pretty(&out).unwrap());
         }
         OutputFormat::Text => {
             let cond_info = args
@@ -147,7 +148,7 @@ pub(crate) fn cmd_breakpoint(args: &BreakpointBinArgs) -> Result<()> {
                 .map(|c| format!(" when {c}"))
                 .unwrap_or_default();
             if enabled {
-                println!(
+                cprintln!(
                     "{} at {}:{}{}",
                     "Breakpoint set".green(),
                     path.cyan(),
@@ -155,7 +156,7 @@ pub(crate) fn cmd_breakpoint(args: &BreakpointBinArgs) -> Result<()> {
                     cond_info.dimmed(),
                 );
             } else {
-                println!(
+                cprintln!(
                     "{} at {}:{}",
                     "Breakpoint cleared".green(),
                     path.cyan(),
@@ -216,12 +217,12 @@ pub(crate) fn cmd_stack(args: &StepArgs) -> Result<()> {
         .ok_or_else(|| miette!("Failed — is a game running?"))?;
     match args.format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&result).unwrap());
+            cprintln!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
         OutputFormat::Text => {
             if let Some(frames) = result.as_array() {
                 if frames.is_empty() {
-                    println!("{}", "(no stack frames)".dimmed());
+                    cprintln!("{}", "(no stack frames)".dimmed());
                 }
                 for (i, f) in frames.iter().enumerate() {
                     let name = f["function"]
@@ -230,7 +231,7 @@ pub(crate) fn cmd_stack(args: &StepArgs) -> Result<()> {
                         .unwrap_or("?");
                     let file = f["file"].as_str().unwrap_or("?");
                     let line = f["line"].as_u64().unwrap_or(0);
-                    println!(
+                    cprintln!(
                         "  {} {} ({}:{})",
                         format!("#{i}").dimmed(),
                         name.green().bold(),
@@ -239,7 +240,7 @@ pub(crate) fn cmd_stack(args: &StepArgs) -> Result<()> {
                     );
                 }
             } else {
-                println!("{}", serde_json::to_string_pretty(&result).unwrap());
+                cprintln!("{}", serde_json::to_string_pretty(&result).unwrap());
             }
         }
     }
@@ -255,32 +256,32 @@ pub(crate) fn cmd_vars(args: &VarsArgs) -> Result<()> {
     .ok_or_else(|| miette!("Failed — is a game running?"))?;
     match args.format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&result).unwrap());
+            cprintln!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
         OutputFormat::Text => {
             if let Some(vars) = result.as_array() {
                 if vars.is_empty() {
-                    println!("{}", "(no variables)".dimmed());
+                    cprintln!("{}", "(no variables)".dimmed());
                 }
                 for v in vars {
                     let name = v["name"].as_str().unwrap_or("?");
                     let value = format_variant_display(&v["value"]);
-                    println!("  {} = {}", name.cyan(), value.green());
+                    cprintln!("  {} = {}", name.cyan(), value.green());
                 }
             } else if let Some(obj) = result.as_object() {
                 // Daemon may return named scope groups
                 for (scope_name, scope_vars) in obj {
-                    println!("\n{}", format!("{scope_name}:").bold());
+                    cprintln!("\n{}", format!("{scope_name}:").bold());
                     if let Some(vars) = scope_vars.as_array() {
                         for v in vars {
                             let name = v["name"].as_str().unwrap_or("?");
                             let value = format_variant_display(&v["value"]);
-                            println!("  {} = {}", name.cyan(), value.green());
+                            cprintln!("  {} = {}", name.cyan(), value.green());
                         }
                     }
                 }
             } else {
-                println!("{}", serde_json::to_string_pretty(&result).unwrap());
+                cprintln!("{}", serde_json::to_string_pretty(&result).unwrap());
             }
         }
     }
@@ -329,14 +330,14 @@ pub(crate) fn cmd_evaluate(args: &EvalBinArgs) -> Result<()> {
     // Show captured print output
     for line in &response.output {
         match line.r#type.as_str() {
-            "error" => eprintln!("{}", line.message),
-            _ => println!("{}", line.message),
+            "error" => ceprintln!("{}", line.message),
+            _ => cprintln!("{}", line.message),
         }
     }
 
     match args.format {
         OutputFormat::Json => {
-            println!(
+            cprintln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
                     "result": response.result,
@@ -346,7 +347,7 @@ pub(crate) fn cmd_evaluate(args: &EvalBinArgs) -> Result<()> {
         }
         OutputFormat::Text => {
             if !response.result.is_empty() {
-                println!("{}", response.result);
+                cprintln!("{}", response.result);
             }
         }
     }
@@ -360,7 +361,7 @@ fn cmd_evaluate_bare(args: &EvalBinArgs) -> Result<()> {
     let input = input_text.trim();
     let (expr, was_rewritten) = rewrite_eval_expression(input);
     if was_rewritten && !matches!(args.format, OutputFormat::Json) {
-        eprintln!("  {} {}", "Rewritten:".dimmed(), expr.dimmed());
+        ceprintln!("  {} {}", "Rewritten:".dimmed(), expr.dimmed());
     }
 
     // Auto-break: set a temporary breakpoint on _process so we get a real
@@ -384,15 +385,15 @@ fn cmd_evaluate_bare(args: &EvalBinArgs) -> Result<()> {
                 json["rewritten_expression"] = serde_json::json!(expr);
                 json["original_expression"] = serde_json::json!(input);
             }
-            println!("{}", serde_json::to_string_pretty(&json).unwrap());
+            cprintln!("{}", serde_json::to_string_pretty(&json).unwrap());
         }
         OutputFormat::Text => {
             let variant = result.get("value").unwrap_or(&result);
             let display = format_variant_display(variant);
             if type_name_from_variant(&result).is_empty() {
-                println!("{} = {}", input.cyan(), display.green());
+                cprintln!("{} = {}", input.cyan(), display.green());
             } else {
-                println!(
+                cprintln!(
                     "{} {} = {}",
                     type_name_from_variant(&result).dimmed(),
                     input.cyan(),

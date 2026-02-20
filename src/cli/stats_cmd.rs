@@ -1,3 +1,4 @@
+use crate::cprintln;
 use clap::Args;
 use miette::{Result, miette};
 use owo_colors::OwoColorize;
@@ -122,7 +123,7 @@ pub fn exec(args: &StatsArgs) -> Result<()> {
             "json" => {
                 let json = serde_json::to_string_pretty(&diff)
                     .map_err(|e| miette!("Failed to serialize: {e}"))?;
-                println!("{json}");
+                cprintln!("{json}");
             }
             "text" => output_human_diff(&diff),
             _ => return Err(miette!("Invalid format: {}", args.format)),
@@ -433,67 +434,67 @@ fn walk_node(node: Node, source: &str, rel_path: &str, stats: &mut FileStats) {
 }
 
 fn output_human(stats: &ProjectStats, show_dirs: bool, top_n: Option<usize>) {
-    println!("{}", "Project Statistics".bright_cyan().bold());
-    println!("{}", "──────────────────────────────".cyan());
-    println!(
+    cprintln!("{}", "Project Statistics".bright_cyan().bold());
+    cprintln!("{}", "──────────────────────────────".cyan());
+    cprintln!(
         "  Files:          {}",
         stats.files.to_string().bright_white()
     );
-    println!(
+    cprintln!(
         "  Lines (total):  {}",
         format_number(stats.lines_total).bright_white()
     );
-    println!(
+    cprintln!(
         "  Lines (code):   {}",
         format_number(stats.lines_code).bright_white()
     );
-    println!(
+    cprintln!(
         "  Lines (blank):  {}",
         format_number(stats.lines_blank).bright_white()
     );
-    println!(
+    cprintln!(
         "  Lines (comment): {}",
         format_number(stats.lines_comment).bright_white()
     );
-    println!("{}", "──────────────────────────────".cyan());
-    println!(
+    cprintln!("{}", "──────────────────────────────".cyan());
+    cprintln!(
         "  Classes:        {}",
         stats.classes.to_string().bright_white()
     );
-    println!(
+    cprintln!(
         "  Functions:      {}",
         stats.functions.to_string().bright_white()
     );
-    println!(
+    cprintln!(
         "  Signals:        {}",
         stats.signals.to_string().bright_white()
     );
-    println!("{}", "──────────────────────────────".cyan());
-    println!(
+    cprintln!("{}", "──────────────────────────────".cyan());
+    cprintln!(
         "  Avg function length: {} lines",
         format!("{:.1}", stats.avg_function_length).bright_white()
     );
 
     if let Some(ref longest) = stats.longest_function {
-        println!(
+        cprintln!(
             "  Longest function:    {} ({} lines)",
             longest.name.bright_yellow(),
             longest.lines.to_string().bright_white()
         );
-        println!("                       in {}", longest.file.bright_blue());
+        cprintln!("                       in {}", longest.file.bright_blue());
     }
 
     if let Some(n) = top_n
         && !stats.hotspots.is_empty()
     {
-        println!();
-        println!(
+        cprintln!();
+        cprintln!(
             "{}",
             format!("Top {n} Longest Functions").bright_cyan().bold()
         );
-        println!("{}", "──────────────────────────────".cyan());
+        cprintln!("{}", "──────────────────────────────".cyan());
         for (i, func) in stats.hotspots.iter().enumerate() {
-            println!(
+            cprintln!(
                 "  {}. {} ({} lines) in {}",
                 i + 1,
                 func.name.bright_yellow(),
@@ -504,11 +505,11 @@ fn output_human(stats: &ProjectStats, show_dirs: bool, top_n: Option<usize>) {
     }
 
     if show_dirs && !stats.directories.is_empty() {
-        println!();
-        println!("{}", "Per-Directory Breakdown".bright_cyan().bold());
-        println!("{}", "──────────────────────────────".cyan());
+        cprintln!();
+        cprintln!("{}", "Per-Directory Breakdown".bright_cyan().bold());
+        cprintln!("{}", "──────────────────────────────".cyan());
         for dir in &stats.directories {
-            println!(
+            cprintln!(
                 "  {}: {} file{}, {} LOC, {} fn{}",
                 dir.directory.bright_blue(),
                 dir.files.to_string().bright_white(),
@@ -530,20 +531,20 @@ fn format_delta(val: i64) -> String {
 }
 
 fn output_human_diff(diff: &StatsDiff) {
-    println!(
+    cprintln!(
         "{} vs {}",
         "Stats Diff".bright_cyan().bold(),
         diff.other_branch.bright_yellow()
     );
-    println!("{}", "──────────────────────────────────────".cyan());
-    println!(
+    cprintln!("{}", "──────────────────────────────────────".cyan());
+    cprintln!(
         "  {:20} {:>10} {:>10} {:>10}",
         "",
         "Current".bright_white().bold(),
         diff.other_branch.bright_white().bold(),
         "Delta".bright_white().bold()
     );
-    println!("{}", "──────────────────────────────────────".cyan());
+    cprintln!("{}", "──────────────────────────────────────".cyan());
 
     let rows: Vec<(&str, usize, usize, i64)> = vec![
         (
@@ -585,7 +586,7 @@ fn output_human_diff(diff: &StatsDiff) {
             std::cmp::Ordering::Less => delta_str.red().to_string(),
             std::cmp::Ordering::Equal => delta_str.dimmed().to_string(),
         };
-        println!(
+        cprintln!(
             "  {:20} {:>10} {:>10} {:>10}",
             label,
             format_number(current).bright_white(),
@@ -593,13 +594,13 @@ fn output_human_diff(diff: &StatsDiff) {
             delta_colored,
         );
     }
-    println!("{}", "──────────────────────────────────────".cyan());
+    cprintln!("{}", "──────────────────────────────────────".cyan());
 }
 
 fn output_json(stats: &ProjectStats) -> Result<()> {
     let json = serde_json::to_string_pretty(stats)
         .map_err(|e| miette!("Failed to serialize stats to JSON: {e}"))?;
-    println!("{json}");
+    cprintln!("{json}");
     Ok(())
 }
 

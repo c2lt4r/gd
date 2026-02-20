@@ -7,6 +7,7 @@ use owo_colors::OwoColorize;
 use crate::core::config::find_project_root;
 
 use super::{CreateArgs, write_or_dry_run};
+use crate::cprintln;
 
 pub(crate) fn exec_create(args: &CreateArgs) -> Result<()> {
     let path = PathBuf::from(&args.path);
@@ -26,7 +27,7 @@ pub(crate) fn exec_create(args: &CreateArgs) -> Result<()> {
     write_or_dry_run(&path, &content, args.dry_run)?;
 
     if !args.dry_run {
-        println!(
+        cprintln!(
             "{} Created {} (type: {})",
             "✓".green(),
             args.path.bold(),

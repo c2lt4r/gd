@@ -1,3 +1,4 @@
+use crate::{ceprintln, cprintln};
 use clap::Args;
 use miette::{Result, miette};
 use owo_colors::OwoColorize;
@@ -40,7 +41,7 @@ pub fn exec(args: &DepsArgs) -> Result<()> {
     let files = crate::core::fs::collect_gdscript_files(&root)?;
 
     if files.is_empty() {
-        println!("No GDScript files found in {}", root.display());
+        cprintln!("No GDScript files found in {}", root.display());
         return Ok(());
     }
 
@@ -72,13 +73,13 @@ pub fn exec(args: &DepsArgs) -> Result<()> {
             "json" => output_reverse_json(target, &dependents)?,
             "dot" => {
                 // Dot format: show edges pointing to the target
-                println!("digraph reverse_dependencies {{");
-                println!("  rankdir=LR;");
-                println!("  node [shape=box];");
+                cprintln!("digraph reverse_dependencies {{");
+                cprintln!("  rankdir=LR;");
+                cprintln!("  node [shape=box];");
                 for dep in &dependents {
-                    println!("  \"{dep}\" -> \"{target}\";");
+                    cprintln!("  \"{dep}\" -> \"{target}\";");
                 }
-                println!("}}");
+                cprintln!("}}");
             }
             _ => {
                 return Err(miette!(
@@ -105,9 +106,9 @@ pub fn exec(args: &DepsArgs) -> Result<()> {
     if !args.no_cycle_check {
         let cycles = detect_cycles(&dep_map);
         if !cycles.is_empty() {
-            eprintln!();
+            ceprintln!();
             for cycle in &cycles {
-                eprintln!(
+                ceprintln!(
                     "{} circular dependency detected: {}",
                     "warning:".yellow().bold(),
                     cycle.join(" -> ")
@@ -299,8 +300,8 @@ fn dfs_cycle<'a>(
 }
 
 fn output_tree(dep_map: &HashMap<String, Vec<String>>) {
-    println!("{}", "Dependencies".bright_cyan().bold());
-    println!("{}", "────────────────────────────".cyan());
+    cprintln!("{}", "Dependencies".bright_cyan().bold());
+    cprintln!("{}", "────────────────────────────".cyan());
 
     let mut files: Vec<_> = dep_map.keys().collect();
     files.sort();
@@ -311,9 +312,9 @@ fn output_tree(dep_map: &HashMap<String, Vec<String>>) {
         let prefix = if is_last { "└──" } else { "├──" };
 
         if deps.is_empty() {
-            println!("  {} {} {}", prefix, file.cyan(), "(no deps)".dimmed());
+            cprintln!("  {} {} {}", prefix, file.cyan(), "(no deps)".dimmed());
         } else {
-            println!("  {} {}", prefix, file.cyan());
+            cprintln!("  {} {}", prefix, file.cyan());
             let continuation = if is_last { "    " } else { "│   " };
             for (j, dep) in deps.iter().enumerate() {
                 let dep_prefix = if j == deps.len() - 1 {
@@ -321,16 +322,16 @@ fn output_tree(dep_map: &HashMap<String, Vec<String>>) {
                 } else {
                     "├──"
                 };
-                println!("  {}  {} {}", continuation, dep_prefix, dep.yellow());
+                cprintln!("  {}  {} {}", continuation, dep_prefix, dep.yellow());
             }
         }
     }
 }
 
 fn output_dot(dep_map: &HashMap<String, Vec<String>>) {
-    println!("digraph dependencies {{");
-    println!("  rankdir=LR;");
-    println!("  node [shape=box];");
+    cprintln!("digraph dependencies {{");
+    cprintln!("  rankdir=LR;");
+    cprintln!("  node [shape=box];");
 
     let mut files: Vec<_> = dep_map.keys().collect();
     files.sort();
@@ -338,11 +339,11 @@ fn output_dot(dep_map: &HashMap<String, Vec<String>>) {
     for file in &files {
         let deps = &dep_map[*file];
         for dep in deps {
-            println!("  \"{file}\" -> \"{dep}\";");
+            cprintln!("  \"{file}\" -> \"{dep}\";");
         }
     }
 
-    println!("}}");
+    cprintln!("}}");
 }
 
 fn output_json(dep_map: &HashMap<String, Vec<String>>, file_count: usize) -> Result<()> {
@@ -352,7 +353,7 @@ fn output_json(dep_map: &HashMap<String, Vec<String>>, file_count: usize) -> Res
     };
     let json = serde_json::to_string_pretty(&output)
         .map_err(|e| miette!("Failed to serialize JSON: {e}"))?;
-    println!("{json}");
+    cprintln!("{json}");
     Ok(())
 }
 
@@ -375,20 +376,20 @@ fn find_reverse_deps(dep_map: &HashMap<String, Vec<String>>, target: &str) -> Ve
 }
 
 fn output_reverse_tree(target: &str, dependents: &[String]) {
-    println!("{}", "Reverse Dependencies".bright_cyan().bold());
-    println!("{}", "────────────────────────────".cyan());
+    cprintln!("{}", "Reverse Dependencies".bright_cyan().bold());
+    cprintln!("{}", "────────────────────────────".cyan());
 
     if dependents.is_empty() {
-        println!("  {} {}", target.cyan(), "(no dependents found)".dimmed());
+        cprintln!("  {} {}", target.cyan(), "(no dependents found)".dimmed());
     } else {
-        println!("  {}", target.cyan());
+        cprintln!("  {}", target.cyan());
         for (i, dep) in dependents.iter().enumerate() {
             let prefix = if i == dependents.len() - 1 {
                 "└──"
             } else {
                 "├──"
             };
-            println!("    {} {}", prefix, dep.yellow());
+            cprintln!("    {} {}", prefix, dep.yellow());
         }
     }
 }
@@ -400,6 +401,6 @@ fn output_reverse_json(target: &str, dependents: &[String]) -> Result<()> {
     });
     let json = serde_json::to_string_pretty(&output)
         .map_err(|e| miette!("Failed to serialize JSON: {e}"))?;
-    println!("{json}");
+    cprintln!("{json}");
     Ok(())
 }

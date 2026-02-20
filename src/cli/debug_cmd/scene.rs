@@ -3,6 +3,7 @@ use owo_colors::OwoColorize;
 
 use super::args::{CameraViewArgs, InspectArgs, InspectObjectsArgs, OutputFormat, SceneTreeArgs};
 use super::{daemon_cmd, daemon_cmd_timeout, ensure_binary_debug};
+use crate::cprintln;
 
 // ── One-shot: scene-tree ─────────────────────────────────────────────
 
@@ -13,10 +14,10 @@ pub(crate) fn cmd_scene_tree(args: &SceneTreeArgs) -> Result<()> {
 
     match args.format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&result).unwrap());
+            cprintln!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
         OutputFormat::Text => {
-            println!("{}", "Scene tree:".bold());
+            cprintln!("{}", "Scene tree:".bold());
             if let Some(nodes) = result.get("nodes").and_then(|n| n.as_array()) {
                 for node in nodes {
                     print_scene_node(node, 1);
@@ -45,9 +46,9 @@ fn print_scene_node(node: &serde_json::Value, indent: usize) {
         format!(" {}", scene.dimmed())
     };
     if class.is_empty() {
-        println!("{pad}{name} {}{scene_info}", format!("[id: {id}]").dimmed());
+        cprintln!("{pad}{name} {}{scene_info}", format!("[id: {id}]").dimmed());
     } else {
-        println!(
+        cprintln!(
             "{pad}{} {} {}{scene_info}",
             name.cyan(),
             format!("({class})").dimmed(),
@@ -148,11 +149,11 @@ pub(crate) fn cmd_inspect(args: &InspectArgs) -> Result<()> {
 
     match args.format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&result).unwrap());
+            cprintln!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
         OutputFormat::Text => {
             let class = result["class_name"].as_str().unwrap_or("Object");
-            println!(
+            cprintln!(
                 "{} {}",
                 class.cyan().bold(),
                 format!("(id: {})", args.id).dimmed(),
@@ -160,34 +161,34 @@ pub(crate) fn cmd_inspect(args: &InspectArgs) -> Result<()> {
             // Show class docs if enriched
             if let Some(class_docs) = result.get("class_docs") {
                 if let Some(brief) = class_docs["brief"].as_str() {
-                    println!("  {}", brief.dimmed());
+                    cprintln!("  {}", brief.dimmed());
                 }
                 if let Some(url) = class_docs["docs_url"].as_str() {
-                    println!("  {}", url.dimmed());
+                    cprintln!("  {}", url.dimmed());
                 }
             }
-            println!("{}", "Properties:".bold());
+            cprintln!("{}", "Properties:".bold());
             if let Some(props) = result["properties"].as_array() {
                 if props.is_empty() {
-                    println!("  {}", "(none)".dimmed());
+                    cprintln!("  {}", "(none)".dimmed());
                 }
                 for p in props {
                     let pname = p["name"].as_str().unwrap_or("?");
                     let pval = format_variant_display(&p["value"]);
                     if let Some(docs) = p.get("docs") {
                         let doc_brief = docs["brief"].as_str().unwrap_or("");
-                        println!(
+                        cprintln!(
                             "  {} = {}  {}",
                             pname.cyan(),
                             pval.green(),
                             doc_brief.dimmed()
                         );
                     } else {
-                        println!("  {} = {}", pname.cyan(), pval.green());
+                        cprintln!("  {} = {}", pname.cyan(), pval.green());
                     }
                 }
             } else {
-                println!("  {}", "(no properties returned)".dimmed());
+                cprintln!("  {}", "(no properties returned)".dimmed());
             }
         }
     }
@@ -235,14 +236,14 @@ fn print_inspect_brief(result: &serde_json::Value, id: u64, format: &OutputForma
                 }
             }
             brief.insert("properties".to_string(), serde_json::Value::Object(members));
-            println!(
+            cprintln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::Value::Object(brief)).unwrap()
             );
         }
         OutputFormat::Text => {
             let class = result["class_name"].as_str().unwrap_or("Object");
-            println!("{} {}", class.cyan().bold(), format!("(id: {id})").dimmed(),);
+            cprintln!("{} {}", class.cyan().bold(), format!("(id: {id})").dimmed(),);
             if let Some(props) = props {
                 for p in props {
                     let pname = p["name"].as_str().unwrap_or("?");
@@ -250,7 +251,7 @@ fn print_inspect_brief(result: &serde_json::Value, id: u64, format: &OutputForma
                         continue;
                     }
                     let pval = format_variant_display(&p["value"]);
-                    println!("  {} = {}", pname.cyan(), pval.green());
+                    cprintln!("  {} = {}", pname.cyan(), pval.green());
                 }
             }
         }
@@ -269,35 +270,35 @@ pub(crate) fn cmd_inspect_objects(args: &InspectObjectsArgs) -> Result<()> {
     .ok_or_else(|| miette!("Failed — is a game running?"))?;
     match args.format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&result).unwrap());
+            cprintln!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
         OutputFormat::Text => {
             let objects = result.as_array().map_or(&[][..], std::vec::Vec::as_slice);
             for obj in objects {
                 let class = obj["class_name"].as_str().unwrap_or("Object");
                 let oid = obj["object_id"].as_u64().unwrap_or(0);
-                println!(
+                cprintln!(
                     "{} {}",
                     class.cyan().bold(),
                     format!("(id: {oid})").dimmed(),
                 );
-                println!("{}", "Properties:".bold());
+                cprintln!("{}", "Properties:".bold());
                 if let Some(props) = obj["properties"].as_array() {
                     if props.is_empty() {
-                        println!("  {}", "(none)".dimmed());
+                        cprintln!("  {}", "(none)".dimmed());
                     }
                     for p in props {
                         let pname = p["name"].as_str().unwrap_or("?");
                         let pval = format_variant_display(&p["value"]);
-                        println!("  {} = {}", pname.cyan(), pval.green());
+                        cprintln!("  {} = {}", pname.cyan(), pval.green());
                     }
                 } else {
-                    println!("  {}", "(no properties returned)".dimmed());
+                    cprintln!("  {}", "(no properties returned)".dimmed());
                 }
-                println!();
+                cprintln!();
             }
             if objects.is_empty() {
-                println!("{}", "(no objects returned)".dimmed());
+                cprintln!("{}", "(no objects returned)".dimmed());
             }
         }
     }
@@ -477,33 +478,33 @@ pub(crate) fn cmd_camera_view(args: &CameraViewArgs) -> Result<()> {
 
     match args.format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&output).unwrap());
+            cprintln!("{}", serde_json::to_string_pretty(&output).unwrap());
         }
         OutputFormat::Text => {
             if let Some(cam) = &camera_out {
                 let cam_name = cam["name"].as_str().unwrap_or("?");
                 let cam_class = cam["class"].as_str().unwrap_or("?");
-                println!(
+                cprintln!(
                     "{} {} {}",
                     "Camera:".bold(),
                     cam_name.cyan(),
                     format!("({cam_class})").dimmed(),
                 );
                 if let Some(pos) = cam.get("global_position") {
-                    println!("  position: {}", format!("{pos}").green());
+                    cprintln!("  position: {}", format!("{pos}").green());
                 }
                 if let Some(rot) = cam.get("rotation_degrees").or_else(|| cam.get("rotation")) {
-                    println!("  rotation: {}", format!("{rot}").green());
+                    cprintln!("  rotation: {}", format!("{rot}").green());
                 }
                 if let Some(fov) = cam.get("fov") {
-                    println!("  fov: {}", format!("{fov}").green());
+                    cprintln!("  fov: {}", format!("{fov}").green());
                 }
-                println!();
+                cprintln!();
             } else {
-                println!("{}", "No camera found in scene".dimmed());
-                println!();
+                cprintln!("{}", "No camera found in scene".dimmed());
+                cprintln!();
             }
-            println!("{} ({} spatial nodes)", "Nodes:".bold(), nodes_out.len());
+            cprintln!("{} ({} spatial nodes)", "Nodes:".bold(), nodes_out.len());
             for node in &nodes_out {
                 let name = node["name"].as_str().unwrap_or("?");
                 let class = node["class"].as_str().unwrap_or("?");
@@ -513,7 +514,7 @@ pub(crate) fn cmd_camera_view(args: &CameraViewArgs) -> Result<()> {
                     .or_else(|| node.get("rotation"));
                 let pos_str = pos.map_or_else(|| "?".to_string(), |v| format!("{v}"));
                 let rot_str = rot.map_or_else(|| "?".to_string(), |v| format!("{v}"));
-                println!(
+                cprintln!(
                     "  {} {} pos={} rot={}",
                     name.cyan(),
                     format!("({class})").dimmed(),

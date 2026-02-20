@@ -8,6 +8,8 @@ use std::time::{Duration, Instant};
 
 use crate::core::project::GodotProject;
 
+use crate::{ceprintln, cprintln};
+
 use super::{
     RunArgs, TestError, TestResult, TestStatus, TestSummary, extract_errors, filter_noise,
     hprintln, run_with_timeout, strip_res_prefix,
@@ -120,7 +122,7 @@ pub fn run_gdunit4_tests(
             stdout_str.clone()
         };
         if !out.is_empty() {
-            println!("{out}");
+            cprintln!("{out}");
         }
         let err = if args.clean {
             filter_noise(&stderr_str)
@@ -128,7 +130,7 @@ pub fn run_gdunit4_tests(
             stderr_str.clone()
         };
         if !err.is_empty() {
-            eprintln!("{err}");
+            ceprintln!("{err}");
         }
     }
 
@@ -189,10 +191,10 @@ pub fn run_gdunit4_tests(
     if exit_code != 0 && exit_code != 101 && summary.total == 0 {
         if !json_mode && !args.verbose {
             if !stdout_str.is_empty() {
-                println!("{stdout_str}");
+                cprintln!("{stdout_str}");
             }
             if !stderr_str.is_empty() {
-                eprintln!("{stderr_str}");
+                ceprintln!("{stderr_str}");
             }
         }
         return Err(miette!("gdUnit4 exited with status {exit_code}"));
@@ -205,16 +207,16 @@ pub fn run_gdunit4_tests(
             let show = !args.quiet || result.status != TestStatus::Pass;
             if show {
                 match result.status {
-                    TestStatus::Pass => println!("{} {label}", "✓".green()),
+                    TestStatus::Pass => cprintln!("{} {label}", "✓".green()),
                     TestStatus::Fail | TestStatus::Error => {
-                        println!("{} {label}", "✗".red());
+                        cprintln!("{} {label}", "✗".red());
                         for err in &result.errors {
                             if let Some(ln) = err.line {
-                                println!("  {}:{ln} {}", err.file, err.message);
+                                cprintln!("  {}:{ln} {}", err.file, err.message);
                             } else if !err.file.is_empty() {
-                                println!("  {} {}", err.file, err.message);
+                                cprintln!("  {} {}", err.file, err.message);
                             } else {
-                                println!("  {}", err.message);
+                                cprintln!("  {}", err.message);
                             }
                         }
                     }

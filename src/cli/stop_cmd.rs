@@ -1,3 +1,4 @@
+use crate::cprintln;
 use miette::{Result, miette};
 use owo_colors::OwoColorize;
 
@@ -11,7 +12,7 @@ pub fn exec() -> Result<()> {
             .get("pid")
             .and_then(serde_json::Value::as_u64)
             .unwrap_or(0);
-        println!("{} Game stopped (pid {pid})", "✓".green());
+        cprintln!("{} Game stopped (pid {pid})", "✓".green());
         return Ok(());
     }
 
@@ -25,7 +26,7 @@ pub fn exec() -> Result<()> {
         kill_pid(pid);
         // Clear the game_pid from state file
         crate::lsp::daemon::clear_game_pid_in_state(&root);
-        println!("{} Game stopped (pid {pid})", "✓".green());
+        cprintln!("{} Game stopped (pid {pid})", "✓".green());
         return Ok(());
     }
 

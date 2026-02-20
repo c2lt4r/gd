@@ -16,5 +16,6 @@ use cli::Cli;
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    core::color::init(cli.no_color);
     cli::run(cli)
 }

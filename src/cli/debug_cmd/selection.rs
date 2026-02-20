@@ -3,6 +3,7 @@ use owo_colors::OwoColorize;
 
 use super::args::{NodeSelectIntArgs, OutputFormat, StepArgs, ToggleFmtArgs};
 use super::{daemon_cmd, ensure_binary_debug};
+use crate::cprintln;
 
 // ── Node selection (binary protocol) ────────────────────────────────
 
@@ -15,14 +16,14 @@ pub(crate) fn cmd_node_select_type(args: &NodeSelectIntArgs) -> Result<()> {
     .ok_or_else(|| miette!("Failed — is a game running?"))?;
     match args.format {
         OutputFormat::Json => {
-            println!(
+            cprintln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({"ok": true, "type": args.value}))
                     .unwrap()
             );
         }
         OutputFormat::Text => {
-            println!(
+            cprintln!(
                 "{}",
                 format!("Node select type set to {}", args.value).green()
             );
@@ -40,14 +41,14 @@ pub(crate) fn cmd_node_select_mode(args: &NodeSelectIntArgs) -> Result<()> {
     .ok_or_else(|| miette!("Failed — is a game running?"))?;
     match args.format {
         OutputFormat::Json => {
-            println!(
+            cprintln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({"ok": true, "mode": args.value}))
                     .unwrap()
             );
         }
         OutputFormat::Text => {
-            println!(
+            cprintln!(
                 "{}",
                 format!("Node select mode set to {}", args.value).green()
             );
@@ -66,7 +67,7 @@ pub(crate) fn cmd_node_select_visible(args: &ToggleFmtArgs) -> Result<()> {
     .ok_or_else(|| miette!("Failed — is a game running?"))?;
     match args.format {
         OutputFormat::Json => {
-            println!(
+            cprintln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({"ok": true, "visible": visible}))
                     .unwrap()
@@ -74,9 +75,9 @@ pub(crate) fn cmd_node_select_visible(args: &ToggleFmtArgs) -> Result<()> {
         }
         OutputFormat::Text => {
             if visible {
-                println!("{}", "Node visibility filter enabled".green());
+                cprintln!("{}", "Node visibility filter enabled".green());
             } else {
-                println!("{}", "Node visibility filter disabled".green());
+                cprintln!("{}", "Node visibility filter disabled".green());
             }
         }
     }
@@ -93,7 +94,7 @@ pub(crate) fn cmd_node_select_avoid_locked(args: &ToggleFmtArgs) -> Result<()> {
     .ok_or_else(|| miette!("Failed — is a game running?"))?;
     match args.format {
         OutputFormat::Json => {
-            println!(
+            cprintln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({"ok": true, "avoid": avoid}))
                     .unwrap()
@@ -101,9 +102,9 @@ pub(crate) fn cmd_node_select_avoid_locked(args: &ToggleFmtArgs) -> Result<()> {
         }
         OutputFormat::Text => {
             if avoid {
-                println!("{}", "Avoid locked nodes enabled".green());
+                cprintln!("{}", "Avoid locked nodes enabled".green());
             } else {
-                println!("{}", "Avoid locked nodes disabled".green());
+                cprintln!("{}", "Avoid locked nodes disabled".green());
             }
         }
     }
@@ -120,7 +121,7 @@ pub(crate) fn cmd_node_select_prefer_group(args: &ToggleFmtArgs) -> Result<()> {
     .ok_or_else(|| miette!("Failed — is a game running?"))?;
     match args.format {
         OutputFormat::Json => {
-            println!(
+            cprintln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({"ok": true, "prefer": prefer}))
                     .unwrap()
@@ -128,9 +129,9 @@ pub(crate) fn cmd_node_select_prefer_group(args: &ToggleFmtArgs) -> Result<()> {
         }
         OutputFormat::Text => {
             if prefer {
-                println!("{}", "Prefer group enabled".green());
+                cprintln!("{}", "Prefer group enabled".green());
             } else {
-                println!("{}", "Prefer group disabled".green());
+                cprintln!("{}", "Prefer group disabled".green());
             }
         }
     }
@@ -143,12 +144,12 @@ pub(crate) fn cmd_node_select_reset_cam_2d(args: &StepArgs) -> Result<()> {
         .ok_or_else(|| miette!("Failed — is a game running?"))?;
     match args.format {
         OutputFormat::Json => {
-            println!(
+            cprintln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({"ok": true})).unwrap()
             );
         }
-        OutputFormat::Text => println!("{}", "2D selection camera reset".green()),
+        OutputFormat::Text => cprintln!("{}", "2D selection camera reset".green()),
     }
     Ok(())
 }
@@ -159,12 +160,12 @@ pub(crate) fn cmd_node_select_reset_cam_3d(args: &StepArgs) -> Result<()> {
         .ok_or_else(|| miette!("Failed — is a game running?"))?;
     match args.format {
         OutputFormat::Json => {
-            println!(
+            cprintln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({"ok": true})).unwrap()
             );
         }
-        OutputFormat::Text => println!("{}", "3D selection camera reset".green()),
+        OutputFormat::Text => cprintln!("{}", "3D selection camera reset".green()),
     }
     Ok(())
 }
@@ -175,12 +176,12 @@ pub(crate) fn cmd_clear_selection(args: &StepArgs) -> Result<()> {
         .ok_or_else(|| miette!("Failed — is a game running?"))?;
     match args.format {
         OutputFormat::Json => {
-            println!(
+            cprintln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({"ok": true})).unwrap()
             );
         }
-        OutputFormat::Text => println!("{}", "Selection cleared".green()),
+        OutputFormat::Text => cprintln!("{}", "Selection cleared".green()),
     }
     Ok(())
 }

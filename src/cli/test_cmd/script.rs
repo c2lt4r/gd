@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 use crate::core::project::GodotProject;
 
 use super::{RunArgs, TestResult, TestStatus, TestSummary, extract_errors, filter_noise};
+use crate::{ceprintln, cprintln};
 
 /// Run tests by executing each test script individually with Godot.
 #[allow(clippy::too_many_lines, clippy::unnecessary_wraps)]
@@ -69,7 +70,7 @@ pub fn run_script_tests(
             let test_duration_ms = test_start.elapsed().as_millis() as u64;
 
             if !json_mode && !args.quiet {
-                println!("{} {rel} (timed out after {}s)", "✗".red(), args.timeout);
+                cprintln!("{} {rel} (timed out after {}s)", "✗".red(), args.timeout);
             }
 
             results.push(TestResult {
@@ -111,17 +112,17 @@ pub fn run_script_tests(
             let show_result = !args.quiet || status != TestStatus::Pass;
             if show_result {
                 match status {
-                    TestStatus::Pass => println!("{} {rel}", "✓".green()),
+                    TestStatus::Pass => cprintln!("{} {rel}", "✓".green()),
                     TestStatus::Fail | TestStatus::Error => {
-                        println!("{} {rel}", "✗".red());
+                        cprintln!("{} {rel}", "✗".red());
                         // Show parsed error locations inline
                         for err in &errors {
                             if let Some(line_num) = err.line {
-                                println!("  {}:{line_num} {}", err.file, err.message);
+                                cprintln!("  {}:{line_num} {}", err.file, err.message);
                             } else if !err.file.is_empty() {
-                                println!("  {} {}", err.file, err.message);
+                                cprintln!("  {} {}", err.file, err.message);
                             } else {
-                                println!("  {}", err.message);
+                                cprintln!("  {}", err.message);
                             }
                         }
                     }
@@ -143,12 +144,12 @@ pub fn run_script_tests(
 
                 if !display_stdout.is_empty() {
                     for line in display_stdout.lines() {
-                        println!("  {line}");
+                        cprintln!("  {line}");
                     }
                 }
                 if !display_stderr.is_empty() {
                     for line in display_stderr.lines() {
-                        eprintln!("  {}", line.dimmed());
+                        ceprintln!("  {}", line.dimmed());
                     }
                 }
             }
