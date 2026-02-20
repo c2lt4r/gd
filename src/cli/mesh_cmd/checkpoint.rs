@@ -50,6 +50,19 @@ pub fn cmd_restore(args: &RestoreArgs) -> Result<()> {
         .clone();
 
     let parts_restored = saved.len();
+
+    // Remove Godot nodes for parts that exist now but not in the checkpoint
+    let extra_parts: Vec<String> = state
+        .parts
+        .keys()
+        .filter(|k| !saved.contains_key(k.as_str()))
+        .cloned()
+        .collect();
+    for name in &extra_parts {
+        let script = super::gdscript::generate_remove_part(name);
+        let _ = run_eval(&script);
+    }
+
     state.parts = saved;
 
     // Ensure active part still exists

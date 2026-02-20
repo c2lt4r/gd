@@ -1,8 +1,10 @@
 use miette::Result;
 use owo_colors::OwoColorize;
 
+use crate::core::mesh::MeshState;
+
 use super::gdscript;
-use super::{FocusArgs, OutputFormat, run_eval};
+use super::{FocusArgs, OutputFormat, project_root, run_eval};
 use crate::cprintln;
 
 pub fn cmd_focus(args: &FocusArgs) -> Result<()> {
@@ -19,6 +21,16 @@ pub fn cmd_focus(args: &FocusArgs) -> Result<()> {
     };
 
     let result = run_eval(&script)?;
+
+    // Update Rust-side active part to match Godot-side focus
+    if let Some(name) = &args.part {
+        let root = project_root()?;
+        let mut state = MeshState::load(&root)?;
+        if state.parts.contains_key(name) {
+            state.active.clone_from(name);
+            state.save(&root)?;
+        }
+    }
     let parsed: serde_json::Value = serde_json::from_str(&result)
         .map_err(|e| miette::miette!("Failed to parse result: {e}"))?;
 

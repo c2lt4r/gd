@@ -873,6 +873,9 @@ pub struct MergeArgs {
     /// Maximum distance to merge vertices
     #[arg(long, default_value = "0.001")]
     pub distance: f64,
+    /// Apply to all parts
+    #[arg(long)]
+    pub all: bool,
     /// Output format
     #[arg(long, default_value = "json")]
     pub format: OutputFormat,

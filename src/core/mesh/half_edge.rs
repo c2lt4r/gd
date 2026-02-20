@@ -272,8 +272,11 @@ impl HalfEdgeMesh {
             }
             // Move to next outgoing half-edge from v (CCW): twin → next
             let twin = self.half_edges[he].twin;
+            if twin >= self.half_edges.len() {
+                break;
+            }
             let next = self.half_edges[twin].next;
-            if next == usize::MAX || next == start_he {
+            if next == usize::MAX || next >= self.half_edges.len() || next == start_he {
                 break;
             }
             he = next;
