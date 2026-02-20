@@ -1,8 +1,10 @@
 use miette::Result;
 use owo_colors::OwoColorize;
 
+use crate::core::mesh::MeshState;
+
 use super::gdscript;
-use super::{MaterialArgs, MaterialPreset, OutputFormat, run_eval};
+use super::{MaterialArgs, MaterialPreset, OutputFormat, project_root, run_eval};
 use crate::cprintln;
 
 /// Normalize a color string: strip leading '#', expand named colors to hex.
@@ -36,13 +38,48 @@ fn preset_name(preset: &MaterialPreset) -> &'static str {
     }
 }
 
+/// Parse RGB from JSON result [r, g, b] (0.0–1.0) to [f32; 3].
+fn parse_rgb(parsed: &serde_json::Value) -> Option<[f32; 3]> {
+    let arr = parsed["rgb"].as_array()?;
+    if arr.len() >= 3 {
+        Some([
+            arr[0].as_f64()? as f32,
+            arr[1].as_f64()? as f32,
+            arr[2].as_f64()? as f32,
+        ])
+    } else {
+        None
+    }
+}
+
+/// Persist material preset and color to Rust-side MeshState.
+fn persist_material(
+    part_names: &[&str],
+    preset: Option<&str>,
+    color_rgb: Option<[f32; 3]>,
+) -> Result<()> {
+    let root = project_root()?;
+    let mut state = MeshState::load(&root)?;
+    for &name in part_names {
+        if let Some(part) = state.parts.get_mut(name) {
+            part.material_preset = preset.map(String::from);
+            if let Some(rgb) = color_rgb {
+                part.color = Some(rgb);
+            }
+        }
+    }
+    state.save(&root)?;
+    Ok(())
+}
+
 pub fn cmd_material(args: &MaterialArgs) -> Result<()> {
     let color = args.color.as_ref().map(|c| normalize_color(c));
 
     // Batch mode: --parts pattern
     if let Some(ref pattern) = args.parts {
-        let script = if let Some(ref preset) = args.preset {
-            gdscript::generate_material_preset_multi(pattern, preset_name(preset), color.as_deref())
+        let preset_str = args.preset.as_ref().map(|p| preset_name(p));
+        let script = if let Some(name) = preset_str {
+            gdscript::generate_material_preset_multi(pattern, name, color.as_deref())
         } else if let Some(ref hex) = color {
             gdscript::generate_material_multi(pattern, hex)
         } else {
@@ -53,6 +90,17 @@ pub fn cmd_material(args: &MaterialArgs) -> Result<()> {
         let result = run_eval(&script)?;
         let parsed: serde_json::Value = serde_json::from_str(&result)
             .map_err(|e| miette::miette!("Failed to parse result: {e}"))?;
+
+        // Persist preset to Rust state for applied parts
+        if let Some(applied) = parsed["applied"].as_array() {
+            let names: Vec<&str> = applied
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .collect();
+            if !names.is_empty() {
+                let _ = persist_material(&names, preset_str, None);
+            }
+        }
 
         match args.format {
             OutputFormat::Json => {
@@ -86,12 +134,9 @@ pub fn cmd_material(args: &MaterialArgs) -> Result<()> {
     }
 
     // Single-part mode
-    let script = if let Some(ref preset) = args.preset {
-        gdscript::generate_material_preset(
-            args.part.as_deref(),
-            preset_name(preset),
-            color.as_deref(),
-        )
+    let preset_str = args.preset.as_ref().map(|p| preset_name(p));
+    let script = if let Some(name) = preset_str {
+        gdscript::generate_material_preset(args.part.as_deref(), name, color.as_deref())
     } else if let Some(ref hex) = color {
         gdscript::generate_material(args.part.as_deref(), hex)
     } else {
@@ -103,6 +148,12 @@ pub fn cmd_material(args: &MaterialArgs) -> Result<()> {
     let result = run_eval(&script)?;
     let parsed: serde_json::Value = serde_json::from_str(&result)
         .map_err(|e| miette::miette!("Failed to parse result: {e}"))?;
+
+    // Persist preset + color to Rust state
+    if let Some(name) = parsed["name"].as_str() {
+        let rgb = parse_rgb(&parsed);
+        let _ = persist_material(&[name], preset_str, rgb);
+    }
 
     match args.format {
         OutputFormat::Json => {

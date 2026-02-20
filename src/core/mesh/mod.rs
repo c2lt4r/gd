@@ -175,9 +175,9 @@ fn mat3_transpose(m: [[f64; 3]; 3]) -> [[f64; 3]; 3] {
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub enum ShadingMode {
     /// Flat: each face gets its own normal (faceted look).
+    #[default]
     Flat,
     /// Smooth: shared vertex normals averaged across adjacent faces.
-    #[default]
     Smooth,
     /// Auto smooth: smooth below angle threshold (degrees), sharp above.
     AutoSmooth(f64),
@@ -196,6 +196,9 @@ pub struct MeshPart {
     /// Hole contours for multi-contour profiles.
     #[serde(default)]
     pub profile_holes: Option<Vec<Vec<[f64; 2]>>>,
+    /// Material preset name (e.g. "metal", "glass") — restored on every push.
+    #[serde(default)]
+    pub material_preset: Option<String>,
 }
 
 impl MeshPart {
@@ -208,6 +211,7 @@ impl MeshPart {
             profile_plane: None,
             shading: ShadingMode::default(),
             profile_holes: None,
+            material_preset: None,
         }
     }
 }
@@ -324,14 +328,14 @@ impl MeshState {
         // Build arrays and assign mesh
         write_array_mesh(&mut script, &positions, &normals, &indices);
 
-        // Restore material
-        script.push_str("\tif mesh_inst.has_meta(\"part_color\"):\n");
-        script.push_str("\t\tvar _mat = StandardMaterial3D.new()\n");
-        script.push_str("\t\t_mat.albedo_color = mesh_inst.get_meta(\"part_color\")\n");
-        script.push_str("\t\tmesh_inst.material_override = _mat\n");
+        // Restore material (full preset PBR properties if set, else just color)
+        write_material_restore(&mut script, part);
 
         // Store profile metadata
         write_profile_metadata(&mut script, part);
+
+        // Auto-focus: reframe all cameras to fit visible parts
+        write_auto_focus(&mut script);
 
         // Return JSON result
         let vc = part.mesh.vertex_count();
@@ -397,6 +401,81 @@ fn write_array_mesh(script: &mut String, positions: &[f64], normals: &[f64], ind
     script.push_str("\tarrays[Mesh.ARRAY_INDEX] = idx\n");
     script.push_str("\tmesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)\n");
     script.push_str("\tmesh_inst.mesh = mesh\n");
+}
+
+/// Write material restoration to push script.
+///
+/// If the part has a stored material preset, restores the full PBR properties
+/// (metallic, roughness, specular, etc.) so mesh edits don't wipe preset data.
+/// Falls back to albedo-only restore from Godot meta if no preset is stored.
+fn write_material_restore(script: &mut String, part: &MeshPart) {
+    if let Some(ref preset) = part.material_preset {
+        script.push_str("\tvar _mat = StandardMaterial3D.new()\n");
+        // Restore color from Rust state or Godot meta fallback
+        if let Some([r, g, b]) = part.color {
+            let _ = writeln!(script, "\t_mat.albedo_color = Color({r}, {g}, {b})");
+        } else {
+            script.push_str("\tif mesh_inst.has_meta(\"part_color\"):\n");
+            script.push_str("\t\t_mat.albedo_color = mesh_inst.get_meta(\"part_color\")\n");
+        }
+        // Set PBR properties based on preset
+        let pbr = match preset.as_str() {
+            "glass" => "\t_mat.metallic = 0.0\n\t_mat.roughness = 0.05\n\t_mat.specular = 0.5\n\t_mat.transparency = 1\n\t_mat.albedo_color.a = 0.3\n\t_mat.refraction_enabled = true\n\t_mat.refraction_scale = 0.02\n",
+            "metal" => "\t_mat.metallic = 0.9\n\t_mat.roughness = 0.3\n\t_mat.specular = 0.8\n",
+            "chrome" => "\t_mat.metallic = 1.0\n\t_mat.roughness = 0.05\n\t_mat.specular = 1.0\n",
+            "rubber" => "\t_mat.metallic = 0.0\n\t_mat.roughness = 0.95\n\t_mat.specular = 0.1\n",
+            "paint" => "\t_mat.metallic = 0.1\n\t_mat.roughness = 0.4\n\t_mat.specular = 0.5\n",
+            "wood" => "\t_mat.metallic = 0.0\n\t_mat.roughness = 0.7\n\t_mat.specular = 0.2\n",
+            "matte" => "\t_mat.metallic = 0.0\n\t_mat.roughness = 1.0\n\t_mat.specular = 0.0\n",
+            _ => "\t_mat.metallic = 0.0\n\t_mat.roughness = 0.4\n\t_mat.specular = 0.5\n", // plastic
+        };
+        script.push_str(pbr);
+        script.push_str("\tmesh_inst.material_override = _mat\n");
+        script.push_str("\tmesh_inst.set_meta(\"part_color\", _mat.albedo_color)\n");
+    } else {
+        // No preset — restore just color from meta
+        script.push_str("\tif mesh_inst.has_meta(\"part_color\"):\n");
+        script.push_str("\t\tvar _mat = StandardMaterial3D.new()\n");
+        script.push_str("\t\t_mat.albedo_color = mesh_inst.get_meta(\"part_color\")\n");
+        script.push_str("\t\tmesh_inst.material_override = _mat\n");
+    }
+}
+
+/// Auto-focus all cameras on the combined AABB of visible parts.
+///
+/// Runs after every push so the user always sees the object in the viewport.
+fn write_auto_focus(script: &mut String) {
+    script.push_str("\tvar _combined = AABB()\n");
+    script.push_str("\tvar _first = true\n");
+    script.push_str("\tfor _ch in helper.get_children():\n");
+    script.push_str("\t\tif _ch is MeshInstance3D and not _ch.name.begins_with(\"_\") and _ch.visible and _ch.mesh and _ch.mesh.get_surface_count() > 0:\n");
+    script.push_str("\t\t\tvar _ab = _ch.transform * _ch.mesh.get_aabb()\n");
+    script.push_str("\t\t\tif _first:\n");
+    script.push_str("\t\t\t\t_combined = _ab\n");
+    script.push_str("\t\t\t\t_first = false\n");
+    script.push_str("\t\t\telse:\n");
+    script.push_str("\t\t\t\t_combined = _combined.merge(_ab)\n");
+    script.push_str("\tif not _first:\n");
+    script.push_str("\t\tvar _center = _combined.get_center()\n");
+    script.push_str("\t\tvar _dims = _combined.size\n");
+    script.push_str("\t\tvar _sz = max(max(_dims.x, _dims.y), _dims.z) * 1.5\n");
+    script.push_str("\t\tif _sz < 0.5: _sz = 0.5\n");
+    script.push_str("\t\tvar _rig = helper.get_node_or_null(\"_CameraRig\")\n");
+    script.push_str("\t\tif _rig:\n");
+    script.push_str("\t\t\t_rig.position = _center\n");
+    script.push_str("\t\t\tfor _cam in _rig.get_children():\n");
+    script.push_str("\t\t\t\tif _cam is Camera3D:\n");
+    script.push_str("\t\t\t\t\tif _cam.projection == Camera3D.PROJECTION_ORTHOGONAL:\n");
+    script.push_str("\t\t\t\t\t\t_cam.size = _sz\n");
+    script.push_str("\t\t\t\t\telse:\n");
+    script.push_str("\t\t\t\t\t\tvar _half_fov = deg_to_rad(_cam.fov * 0.5)\n");
+    script.push_str("\t\t\t\t\t\tvar _dist = (_sz * 0.5) / tan(_half_fov)\n");
+    script.push_str("\t\t\t\t\t\tif _dist < 1.0: _dist = 1.0\n");
+    script.push_str("\t\t\t\t\t\t_cam.position = _cam.position.normalized() * _dist\n");
+    script.push_str("\t\t\t\t\tif _cam.name == \"Top\" or _cam.name == \"Bottom\":\n");
+    script.push_str("\t\t\t\t\t\t_cam.look_at(_center, Vector3.FORWARD)\n");
+    script.push_str("\t\t\t\t\telse:\n");
+    script.push_str("\t\t\t\t\t\t_cam.look_at(_center)\n");
 }
 
 /// Write profile metadata to push script.

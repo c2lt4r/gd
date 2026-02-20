@@ -940,7 +940,7 @@ pub struct CheckArgs {
     #[arg(long, default_value = "0.5")]
     pub margin: f64,
     /// Maximum allowed AABB overlap between parts (percentage of smaller part's volume)
-    #[arg(long, default_value = "5.0")]
+    #[arg(long, default_value = "1.0")]
     pub max_overlap: f64,
     /// Output format
     #[arg(long, default_value = "json")]

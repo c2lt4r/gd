@@ -185,6 +185,49 @@ pub fn generate_create(name: &str, primitive: &str) -> String {
          \thud_label.add_theme_color_override(\"font_color\", Color(0.6, 0.8, 1.0, 0.7))\n\
          \thud_label.position = Vector2(10, 10)\n\
          \thud_layer.add_child(hud_label)\n\
+         \tvar _af_src = \"extends Node\\n\\nvar _lh := 0.0\\n\\nfunc _process(_d):\\n\"\n\
+         \t_af_src += \"\\tvar h := get_parent()\\n\"\n\
+         \t_af_src += \"\\tvar combined := AABB()\\n\"\n\
+         \t_af_src += \"\\tvar first := true\\n\"\n\
+         \t_af_src += \"\\tfor ch in h.get_children():\\n\"\n\
+         \t_af_src += \"\\t\\tif ch is MeshInstance3D and not ch.name.begins_with('_') and ch.visible and ch.mesh and ch.mesh.get_surface_count() > 0:\\n\"\n\
+         \t_af_src += \"\\t\\t\\tvar ab: AABB = ch.transform * ch.mesh.get_aabb()\\n\"\n\
+         \t_af_src += \"\\t\\t\\tif first:\\n\"\n\
+         \t_af_src += \"\\t\\t\\t\\tcombined = ab\\n\"\n\
+         \t_af_src += \"\\t\\t\\t\\tfirst = false\\n\"\n\
+         \t_af_src += \"\\t\\t\\telse:\\n\"\n\
+         \t_af_src += \"\\t\\t\\t\\tcombined = combined.merge(ab)\\n\"\n\
+         \t_af_src += \"\\tif first: return\\n\"\n\
+         \t_af_src += \"\\tvar hv: float = combined.position.x + combined.position.y * 7.0 + combined.size.x * 13.0 + combined.size.y * 17.0 + combined.size.z * 23.0\\n\"\n\
+         \t_af_src += \"\\tif abs(hv - _lh) < 0.001: return\\n\"\n\
+         \t_af_src += \"\\t_lh = hv\\n\"\n\
+         \t_af_src += \"\\tvar center := combined.get_center()\\n\"\n\
+         \t_af_src += \"\\tvar dims: Vector3 = combined.size\\n\"\n\
+         \t_af_src += \"\\tvar sz: float = max(max(dims.x, dims.y), dims.z) * 1.5\\n\"\n\
+         \t_af_src += \"\\tif sz < 0.5: sz = 0.5\\n\"\n\
+         \t_af_src += \"\\tvar rg := h.get_node_or_null('_CameraRig')\\n\"\n\
+         \t_af_src += \"\\tif not rg: return\\n\"\n\
+         \t_af_src += \"\\trg.position = center\\n\"\n\
+         \t_af_src += \"\\tfor cam in rg.get_children():\\n\"\n\
+         \t_af_src += \"\\t\\tif cam is Camera3D:\\n\"\n\
+         \t_af_src += \"\\t\\t\\tif cam.projection == Camera3D.PROJECTION_ORTHOGONAL:\\n\"\n\
+         \t_af_src += \"\\t\\t\\t\\tcam.size = sz\\n\"\n\
+         \t_af_src += \"\\t\\t\\telse:\\n\"\n\
+         \t_af_src += \"\\t\\t\\t\\tvar hf: float = deg_to_rad(cam.fov * 0.5)\\n\"\n\
+         \t_af_src += \"\\t\\t\\t\\tvar dt: float = (sz * 0.5) / tan(hf)\\n\"\n\
+         \t_af_src += \"\\t\\t\\t\\tif dt < 1.0: dt = 1.0\\n\"\n\
+         \t_af_src += \"\\t\\t\\t\\tcam.position = cam.position.normalized() * dt\\n\"\n\
+         \t_af_src += \"\\t\\t\\tif cam.name == 'Top' or cam.name == 'Bottom':\\n\"\n\
+         \t_af_src += \"\\t\\t\\t\\tcam.look_at(center, Vector3.FORWARD)\\n\"\n\
+         \t_af_src += \"\\t\\t\\telse:\\n\"\n\
+         \t_af_src += \"\\t\\t\\t\\tcam.look_at(center)\\n\"\n\
+         \tvar _af_scr = GDScript.new()\n\
+         \t_af_scr.source_code = _af_src\n\
+         \t_af_scr.reload()\n\
+         \tvar _af_node = Node.new()\n\
+         \t_af_node.name = \"_AutoFocus\"\n\
+         \t_af_node.set_script(_af_scr)\n\
+         \thelper.add_child(_af_node)\n\
          \tvar mesh_inst = MeshInstance3D.new()\n\
          \tmesh_inst.name = \"{name}\"\n\
          {primitive_line}\
@@ -355,6 +398,25 @@ pub fn generate_snapshot(tscn_path: &str) -> String {
     format!(
         "extends Node\n\
          \n\
+         func _bake_transform(mi: MeshInstance3D) -> void:\n\
+         \tif mi.transform == Transform3D(): return\n\
+         \tif not mi.mesh or mi.mesh.get_surface_count() == 0: return\n\
+         \tvar arrays = mi.mesh.surface_get_arrays(0)\n\
+         \tvar verts = arrays[Mesh.ARRAY_VERTEX]\n\
+         \tvar norms = arrays[Mesh.ARRAY_NORMAL]\n\
+         \tvar t = mi.transform\n\
+         \tfor i in verts.size():\n\
+         \t\tverts[i] = t * verts[i]\n\
+         \tif norms:\n\
+         \t\tfor i in norms.size():\n\
+         \t\t\tnorms[i] = (t.basis * norms[i]).normalized()\n\
+         \tarrays[Mesh.ARRAY_VERTEX] = verts\n\
+         \tif norms: arrays[Mesh.ARRAY_NORMAL] = norms\n\
+         \tvar new_mesh = ArrayMesh.new()\n\
+         \tnew_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)\n\
+         \tmi.mesh = new_mesh\n\
+         \tmi.transform = Transform3D()\n\
+         \n\
          func run():\n\
          \tvar root = get_tree().get_root()\n\
          \tvar helper = root.get_node_or_null(\"_GdMeshHelper\")\n\
@@ -365,15 +427,15 @@ pub fn generate_snapshot(tscn_path: &str) -> String {
          \t\t\tif child.mesh:\n\
          \t\t\t\tmesh_children.append(child)\n\
          \tif mesh_children.size() == 0: return \"ERROR: no mesh data in any part\"\n\
+         \tfor mi in mesh_children:\n\
+         \t\t_bake_transform(mi)\n\
          \tvar resources = []\n\
-         \tvar transforms = {{}}\n\
          \tvar materials = {{}}\n\
          \tfor mi in mesh_children:\n\
          \t\tvar res_path = \"{base_path}_\" + mi.name + \".tres\"\n\
          \t\tvar err = ResourceSaver.save(mi.mesh, res_path)\n\
          \t\tif err != OK: return \"ERROR: failed to save mesh '\" + mi.name + \"': \" + str(err)\n\
          \t\tresources.append({{\"name\": mi.name, \"resource\": res_path}})\n\
-         \t\ttransforms[mi.name] = mi.transform\n\
          \t\tif mi.material_override:\n\
          \t\t\tvar mat_path = \"{base_path}_\" + mi.name + \"_mat.tres\"\n\
          \t\t\tvar merr = ResourceSaver.save(mi.material_override, mat_path)\n\
@@ -384,7 +446,6 @@ pub fn generate_snapshot(tscn_path: &str) -> String {
          \t\tvar node = MeshInstance3D.new()\n\
          \t\tnode.name = mesh_children[0].name\n\
          \t\tnode.mesh = load(resources[0][\"resource\"])\n\
-         \t\tnode.transform = transforms[node.name]\n\
          \t\tif materials.has(node.name):\n\
          \t\t\tnode.material_override = load(materials[node.name])\n\
          \t\tscene_root = node\n\
@@ -395,7 +456,6 @@ pub fn generate_snapshot(tscn_path: &str) -> String {
          \t\t\tvar node = MeshInstance3D.new()\n\
          \t\t\tnode.name = r[\"name\"]\n\
          \t\t\tnode.mesh = load(r[\"resource\"])\n\
-         \t\t\tnode.transform = transforms[r[\"name\"]]\n\
          \t\t\tif materials.has(r[\"name\"]):\n\
          \t\t\t\tnode.material_override = load(materials[r[\"name\"]])\n\
          \t\t\tscene_root.add_child(node)\n\
@@ -498,6 +558,7 @@ pub fn generate_check(margin: f64, max_overlap: f64) -> String {
          \t\telse:\n\
          \t\t\tfloating.append(p.name)\n\
          \tvar clipping = []\n\
+         \tvar embedded = []\n\
          \tfor i in parts.size():\n\
          \t\tfor j in range(i + 1, parts.size()):\n\
          \t\t\tif not parts[i].aabb.intersects(parts[j].aabb): continue\n\
@@ -508,14 +569,17 @@ pub fn generate_check(margin: f64, max_overlap: f64) -> String {
          \t\t\tvar smaller = min(vi, vj)\n\
          \t\t\tif smaller <= 0: continue\n\
          \t\t\tvar pct = (ov / smaller) * 100.0\n\
-         \t\t\tif pct > max_overlap:\n\
+         \t\t\tif pct > 50.0:\n\
+         \t\t\t\tembedded.append({{\"part_a\": parts[i].name, \"part_b\": parts[j].name, \"overlap_percent\": pct}})\n\
+         \t\t\telif pct > max_overlap:\n\
          \t\t\t\tclipping.append({{\"part_a\": parts[i].name, \"part_b\": parts[j].name, \"overlap_percent\": pct}})\n\
          \tvar d = {{}}\n\
          \td[\"total_parts\"] = parts.size()\n\
          \td[\"floating\"] = floating\n\
          \td[\"connected\"] = connected\n\
          \td[\"clipping\"] = clipping\n\
-         \td[\"ok\"] = floating.size() == 0 and clipping.size() == 0\n\
+         \td[\"embedded\"] = embedded\n\
+         \td[\"ok\"] = floating.size() == 0 and clipping.size() == 0 and embedded.size() == 0\n\
          \td[\"margin\"] = margin\n\
          \td[\"max_overlap\"] = max_overlap\n\
          \treturn JSON.stringify(d)\n"

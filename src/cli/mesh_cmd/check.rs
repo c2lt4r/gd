@@ -65,6 +65,28 @@ pub fn cmd_check(args: &CheckArgs) -> Result<()> {
                         );
                     }
                 }
+                let embedded = parsed["embedded"].as_array();
+                if let Some(pairs) = embedded
+                    && !pairs.is_empty()
+                {
+                    cprintln!(
+                        "{} {} embedded pair(s) (>50% overlap — likely z-fighting):",
+                        "ERROR".red().bold(),
+                        pairs.len(),
+                    );
+                    for pair in pairs {
+                        let a = pair["part_a"].as_str().unwrap_or("?");
+                        let b = pair["part_b"].as_str().unwrap_or("?");
+                        let pct = pair["overlap_percent"].as_f64().unwrap_or(0.0);
+                        cprintln!(
+                            "  - {} {} {} ({:.1}% overlap)",
+                            a.red(),
+                            "\u{2194}".dimmed(),
+                            b.red(),
+                            pct
+                        );
+                    }
+                }
             }
         }
     }
