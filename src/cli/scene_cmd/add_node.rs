@@ -5,6 +5,8 @@ use owo_colors::OwoColorize;
 
 use crate::core::scene::SceneData;
 
+use crate::cprintln;
+
 use super::{
     AddNodeArgs, clean_double_blanks, find_node, parent_attr_for_node, read_and_parse_scene,
     write_or_dry_run,
@@ -32,7 +34,7 @@ pub(crate) fn exec_add_node(args: &AddNodeArgs) -> Result<()> {
     write_or_dry_run(&path, &result, args.dry_run)?;
 
     if !args.dry_run {
-        println!(
+        cprintln!(
             "{} Added node '{}' ({}) to {}",
             "✓".green(),
             args.name.bold(),

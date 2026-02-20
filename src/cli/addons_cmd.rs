@@ -1,3 +1,4 @@
+use crate::{ceprintln, cprintln};
 use clap::{Args, Subcommand};
 use miette::{Result, miette};
 use owo_colors::OwoColorize;
@@ -94,7 +95,7 @@ fn list_addons() -> Result<()> {
     let addons_dir = project.root.join("addons");
 
     if !addons_dir.exists() {
-        println!("No addons directory found.");
+        cprintln!("No addons directory found.");
         return Ok(());
     }
 
@@ -118,26 +119,26 @@ fn list_addons() -> Result<()> {
     }
 
     if addons.is_empty() {
-        println!("No addons installed.");
+        cprintln!("No addons installed.");
         return Ok(());
     }
 
-    println!("Installed addons ({}):\n", addons.len());
+    cprintln!("Installed addons ({}):\n", addons.len());
 
     for (dir_name, info) in addons {
         print!("  {}", dir_name.green().bold());
         if let Some(version) = &info.version {
             print!(" {}", version.cyan());
         }
-        println!();
+        cprintln!();
 
         if let Some(desc) = &info.description {
-            println!("    {}", desc.dimmed());
+            cprintln!("    {}", desc.dimmed());
         }
         if let Some(author) = &info.author {
-            println!("    Author: {}", author.dimmed());
+            cprintln!("    Author: {}", author.dimmed());
         }
-        println!();
+        cprintln!();
     }
 
     Ok(())
@@ -208,7 +209,7 @@ fn install_from_git(
             .to_string()
     };
 
-    println!(
+    cprintln!(
         "Cloning {} from {}...",
         repo_name.green().bold(),
         url.dimmed()
@@ -287,19 +288,19 @@ fn install_from_git(
         // Display plugin info
         let plugin_cfg = target_path.join("plugin.cfg");
         if let Ok(info) = parse_plugin_cfg(&plugin_cfg) {
-            println!("\n{}", "Successfully installed!".green().bold());
+            cprintln!("\n{}", "Successfully installed!".green().bold());
             if let Some(name) = &info.name {
                 print!("  {}", name.green().bold());
             }
             if let Some(version) = &info.version {
                 print!(" {}", version.cyan());
             }
-            println!();
+            cprintln!();
             if let Some(author) = &info.author {
-                println!("  Author: {author}");
+                cprintln!("  Author: {author}");
             }
             if let Some(desc) = &info.description {
-                println!("  {}", desc.dimmed());
+                cprintln!("  {}", desc.dimmed());
             }
         }
     }
@@ -332,7 +333,7 @@ fn install_from_asset_library(
     addons_dir: &std::path::Path,
     godot_version: &str,
 ) -> Result<()> {
-    println!(
+    cprintln!(
         "Fetching asset {} from Godot Asset Library...",
         asset_id.cyan()
     );
@@ -356,7 +357,7 @@ fn install_from_asset_library(
         let asset_major_minor = major_minor(&asset.godot_version);
         let project_major_minor = major_minor(godot_version);
         if asset_major_minor != project_major_minor {
-            eprintln!(
+            ceprintln!(
                 "{}",
                 format!(
                     "Warning: asset targets Godot {} but project uses {}",
@@ -367,7 +368,7 @@ fn install_from_asset_library(
         }
     }
 
-    println!(
+    cprintln!(
         "Downloading {} by {}...",
         asset.title.green().bold(),
         asset.author
@@ -489,11 +490,11 @@ fn install_from_asset_library(
         }
     }
 
-    println!("\n{}", "Successfully installed!".green().bold());
-    println!("  Name: {}", asset.title);
-    println!("  Author: {}", asset.author);
+    cprintln!("\n{}", "Successfully installed!".green().bold());
+    cprintln!("  Name: {}", asset.title);
+    cprintln!("  Author: {}", asset.author);
     if !asset.godot_version.is_empty() {
-        println!("  Godot version: {}", asset.godot_version.cyan());
+        cprintln!("  Godot version: {}", asset.godot_version.cyan());
     }
     if !asset.description.is_empty() {
         let desc = if asset.description.len() > 200 {
@@ -501,7 +502,7 @@ fn install_from_asset_library(
         } else {
             asset.description
         };
-        println!("  {}", desc.dimmed());
+        cprintln!("  {}", desc.dimmed());
     }
 
     Ok(())
@@ -513,7 +514,7 @@ fn install_from_asset_library_by_name(
     addons_dir: &std::path::Path,
     godot_version: &str,
 ) -> Result<()> {
-    println!("Searching Asset Library for '{name}'...");
+    cprintln!("Searching Asset Library for '{name}'...");
 
     let search_url = asset_search_url(name);
 
@@ -561,7 +562,7 @@ fn remove_addon(args: &RemoveArgs) -> Result<()> {
     fs::remove_dir_all(&addon_path)
         .map_err(|e| miette!("Failed to remove addon directory: {e}"))?;
 
-    println!("{} {}", "Removed addon".green(), args.name.bold());
+    cprintln!("{} {}", "Removed addon".green(), args.name.bold());
 
     Ok(())
 }
@@ -605,7 +606,7 @@ fn parse_plugin_cfg(path: &std::path::Path) -> Result<PluginInfo> {
 }
 
 fn search_addons(args: &SearchArgs) -> Result<()> {
-    println!("Searching Asset Library for '{}'...\n", args.query);
+    cprintln!("Searching Asset Library for '{}'...\n", args.query);
 
     let search_url = asset_search_url(&args.query);
 
@@ -617,22 +618,22 @@ fn search_addons(args: &SearchArgs) -> Result<()> {
         .map_err(|e| miette!("Failed to parse search results: {e}"))?;
 
     if search_response.result.is_empty() {
-        println!("No results found for '{}'", args.query);
+        cprintln!("No results found for '{}'", args.query);
         return Ok(());
     }
 
-    println!("Found {} result(s):\n", search_response.result.len());
+    cprintln!("Found {} result(s):\n", search_response.result.len());
 
     for asset in &search_response.result {
-        println!("  {} {}", "ID:".dimmed(), asset.asset_id.cyan());
-        println!("  {} {}", "Title:".dimmed(), asset.title.green().bold());
-        println!("  {} {}", "Author:".dimmed(), asset.author);
-        println!("  {} {}", "Category:".dimmed(), asset.category);
+        cprintln!("  {} {}", "ID:".dimmed(), asset.asset_id.cyan());
+        cprintln!("  {} {}", "Title:".dimmed(), asset.title.green().bold());
+        cprintln!("  {} {}", "Author:".dimmed(), asset.author);
+        cprintln!("  {} {}", "Category:".dimmed(), asset.category);
         if !asset.cost.is_empty() {
-            println!("  {} {}", "License:".dimmed(), asset.cost);
+            cprintln!("  {} {}", "License:".dimmed(), asset.cost);
         }
         if !asset.godot_version.is_empty() {
-            println!("  {} {}", "Godot version:".dimmed(), asset.godot_version);
+            cprintln!("  {} {}", "Godot version:".dimmed(), asset.godot_version);
         }
         if !asset.description.is_empty() {
             let desc = if asset.description.len() > 100 {
@@ -640,12 +641,12 @@ fn search_addons(args: &SearchArgs) -> Result<()> {
             } else {
                 asset.description.clone()
             };
-            println!("  {} {}", "Description:".dimmed(), desc);
+            cprintln!("  {} {}", "Description:".dimmed(), desc);
         }
-        println!();
+        cprintln!();
     }
 
-    println!(
+    cprintln!(
         "To install, run: {}",
         "gd addons install <ID>".to_string().cyan()
     );
@@ -671,7 +672,7 @@ fn update_addons(args: &UpdateArgs) -> Result<()> {
     let addons_dir = project.root.join("addons");
 
     if !addons_dir.exists() {
-        println!("No addons directory found.");
+        cprintln!("No addons directory found.");
         return Ok(());
     }
 
@@ -705,7 +706,7 @@ fn update_addons(args: &UpdateArgs) -> Result<()> {
             urlencoding::encode(&addon_name),
         );
         let Ok(mut resp) = ureq::get(&search_url).call() else {
-            eprintln!("  {} — could not search Asset Library", addon_name.dimmed());
+            ceprintln!("  {} — could not search Asset Library", addon_name.dimmed());
             continue;
         };
         let Ok(search_response) = resp.body_mut().read_json::<AssetSearchResponse>() else {
@@ -734,7 +735,7 @@ fn update_addons(args: &UpdateArgs) -> Result<()> {
                 });
             }
         } else {
-            eprintln!(
+            ceprintln!(
                 "  {} — not found in Asset Library (local/git addon?)",
                 addon_name.dimmed()
             );
@@ -742,18 +743,18 @@ fn update_addons(args: &UpdateArgs) -> Result<()> {
     }
 
     if updatable.is_empty() {
-        println!("{}", "All addons are up to date.".green());
+        cprintln!("{}", "All addons are up to date.".green());
         return Ok(());
     }
 
-    println!(
+    cprintln!(
         "{}",
         format!("{} update(s) available:", updatable.len())
             .bright_cyan()
             .bold()
     );
     for info in &updatable {
-        println!(
+        cprintln!(
             "  {} ({}) {} → {}",
             info.addon_name.as_str().green().bold(),
             info.dir_name.as_str().dimmed(),
@@ -763,10 +764,10 @@ fn update_addons(args: &UpdateArgs) -> Result<()> {
     }
 
     if args.apply {
-        println!();
+        cprintln!();
         let godot_version = crate::core::project::detect_godot_version();
         for info in &updatable {
-            println!("Updating {}...", info.addon_name.as_str().green().bold());
+            cprintln!("Updating {}...", info.addon_name.as_str().green().bold());
             let addon_path = addons_dir.join(&info.dir_name);
             // Remove old addon
             fs::remove_dir_all(&addon_path)
@@ -779,9 +780,9 @@ fn update_addons(args: &UpdateArgs) -> Result<()> {
                 &godot_version,
             )?;
         }
-        println!("\n{}", "All addons updated!".green().bold());
+        cprintln!("\n{}", "All addons updated!".green().bold());
     } else {
-        println!(
+        cprintln!(
             "\nRun {} to apply updates.",
             "gd addons update --apply".cyan()
         );
@@ -860,8 +861,8 @@ fn lock_addons() -> Result<()> {
         .map_err(|e| miette!("Failed to serialize lock file: {e}"))?;
     fs::write(&lock_path, content).map_err(|e| miette!("Failed to write lock file: {e}"))?;
 
-    println!("{} gd-addons.lock", "Lock file generated:".green().bold());
-    println!(
+    cprintln!("{} gd-addons.lock", "Lock file generated:".green().bold());
+    cprintln!(
         "  {} addon(s) locked",
         lock_file.addon.len().to_string().bright_white()
     );
@@ -915,16 +916,16 @@ fn install_from_lockfile(
     for addon in &lock_file.addon {
         let target = addons_dir.join(&addon.name);
         if target.exists() {
-            println!("  {} — already installed, skipping", addon.name.dimmed());
+            cprintln!("  {} — already installed, skipping", addon.name.dimmed());
             continue;
         }
 
         if let Some(id) = addon.source.strip_prefix("asset:") {
-            println!("Installing {} from Asset Library...", addon.name.green());
+            cprintln!("Installing {} from Asset Library...", addon.name.green());
             install_from_asset_library(id, Some(&addon.name), addons_dir, &godot_version)?;
             installed += 1;
         } else {
-            eprintln!(
+            ceprintln!(
                 "  {} — source '{}' not supported for locked install, skipping",
                 addon.name.yellow(),
                 addon.source
@@ -932,7 +933,7 @@ fn install_from_lockfile(
         }
     }
 
-    println!(
+    cprintln!(
         "\n{} {} addon(s) installed from lock file",
         "Done!".green().bold(),
         installed

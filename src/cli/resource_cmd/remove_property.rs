@@ -4,6 +4,7 @@ use miette::{Result, miette};
 use owo_colors::OwoColorize;
 
 use super::{RemovePropertyArgs, read_and_parse_resource, write_or_dry_run};
+use crate::{ceprintln, cprintln};
 
 pub(crate) fn exec_remove_property(args: &RemovePropertyArgs) -> Result<()> {
     let path = PathBuf::from(&args.file);
@@ -12,7 +13,7 @@ pub(crate) fn exec_remove_property(args: &RemovePropertyArgs) -> Result<()> {
     }
 
     if args.key == "script" {
-        eprintln!(
+        ceprintln!(
             "{} To remove a script, use `gd resource remove-script` instead",
             "warning:".yellow().bold(),
         );
@@ -24,7 +25,7 @@ pub(crate) fn exec_remove_property(args: &RemovePropertyArgs) -> Result<()> {
     write_or_dry_run(&path, &result, args.dry_run)?;
 
     if !args.dry_run {
-        println!(
+        cprintln!(
             "{} Removed property '{}' from {}",
             "✓".green(),
             args.key.bold(),

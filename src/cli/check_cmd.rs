@@ -12,6 +12,7 @@ use crate::core::{
     fs::collect_resource_files, parser, resource_parser, scene,
 };
 use crate::lint::matches_ignore_pattern;
+use crate::{ceprintln, cprintln};
 
 #[derive(Args)]
 pub struct CheckArgs {
@@ -104,7 +105,7 @@ pub fn exec(args: &CheckArgs) -> Result<()> {
                             message: format!("{e}"),
                         });
                     } else {
-                        eprintln!("{e}");
+                        ceprintln!("{e}");
                     }
                 }
             }
@@ -162,7 +163,7 @@ pub fn exec(args: &CheckArgs) -> Result<()> {
                             message: format!("{e}"),
                         });
                     } else {
-                        eprintln!("{e}");
+                        ceprintln!("{e}");
                     }
                 }
             }
@@ -177,7 +178,7 @@ pub fn exec(args: &CheckArgs) -> Result<()> {
             ok: error_count == 0,
         };
         let json = serde_json::to_string_pretty(&output).map_err(|e| miette::miette!("{e}"))?;
-        println!("{json}");
+        cprintln!("{json}");
         if !output.ok {
             std::process::exit(1);
         }
@@ -185,11 +186,11 @@ pub fn exec(args: &CheckArgs) -> Result<()> {
     }
 
     if error_count > 0 {
-        eprintln!("\n{checked} files checked, {error_count} with parse errors");
+        ceprintln!("\n{checked} files checked, {error_count} with parse errors");
         std::process::exit(1);
     }
 
-    println!("{} {} files checked", "✓".green(), checked);
+    cprintln!("{} {} files checked", "✓".green(), checked);
     Ok(())
 }
 
@@ -482,14 +483,14 @@ fn report_errors(cursor: &mut tree_sitter::TreeCursor, source: &str, file: &Path
         if node.is_error() || node.is_missing() {
             let start = node.start_position();
             let line = source.lines().nth(start.row).unwrap_or("");
-            eprintln!(
+            ceprintln!(
                 "{}:{}:{} {} parse error",
                 file.display(),
                 start.row + 1,
                 start.column + 1,
                 "error:".red().bold(),
             );
-            eprintln!("  {line}");
+            ceprintln!("  {line}");
         }
         if cursor.goto_first_child() {
             report_errors(cursor, source, file);
@@ -505,7 +506,7 @@ fn report_structural(errors: &[StructuralError], source: &str, file: &Path) {
     use owo_colors::OwoColorize;
     for err in errors {
         let line = source.lines().nth(err.line as usize - 1).unwrap_or("");
-        eprintln!(
+        ceprintln!(
             "{}:{}:{} {} {}",
             file.display(),
             err.line,
@@ -513,7 +514,7 @@ fn report_structural(errors: &[StructuralError], source: &str, file: &Path) {
             "error:".red().bold(),
             err.message,
         );
-        eprintln!("  {line}");
+        ceprintln!("  {line}");
     }
 }
 
@@ -594,7 +595,7 @@ fn extract_ext_resource_id(value: &str) -> Option<&str> {
 fn report_scene_errors(errors: &[ParseError], _file: &Path) {
     use owo_colors::OwoColorize;
     for err in errors {
-        eprintln!(
+        ceprintln!(
             "{} {} {}",
             format!("{}:", err.file).dimmed(),
             "warning:".yellow().bold(),

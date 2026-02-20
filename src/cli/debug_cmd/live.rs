@@ -7,6 +7,7 @@ use super::args::{
     LiveRestoreArgs, LiveSetRootArgs, OutputFormat,
 };
 use super::{daemon_cmd, ensure_binary_debug};
+use crate::cprintln;
 
 // ── One-shot: live editing ──────────────────────────────────────────
 
@@ -19,7 +20,7 @@ pub(crate) fn cmd_live_set_root(args: &LiveSetRootArgs) -> Result<()> {
     .ok_or_else(|| miette!("Failed — is a game running?"))?;
     match args.format {
         OutputFormat::Json => {
-            println!(
+            cprintln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
                     "root": args.path,
@@ -29,7 +30,7 @@ pub(crate) fn cmd_live_set_root(args: &LiveSetRootArgs) -> Result<()> {
             );
         }
         OutputFormat::Text => {
-            println!(
+            cprintln!(
                 "{} live root to {} {}",
                 "Set".green(),
                 args.path.cyan(),
@@ -53,7 +54,7 @@ pub(crate) fn cmd_live_create_node(args: &LiveCreateNodeArgs) -> Result<()> {
     .ok_or_else(|| miette!("Failed — is a game running?"))?;
     match args.format {
         OutputFormat::Json => {
-            println!(
+            cprintln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
                     "created": true,
@@ -65,7 +66,7 @@ pub(crate) fn cmd_live_create_node(args: &LiveCreateNodeArgs) -> Result<()> {
             );
         }
         OutputFormat::Text => {
-            println!(
+            cprintln!(
                 "{} {} {}",
                 "Created".green(),
                 args.name.cyan(),
@@ -89,7 +90,7 @@ pub(crate) fn cmd_live_instantiate(args: &LiveInstantiateArgs) -> Result<()> {
     .ok_or_else(|| miette!("Failed — is a game running?"))?;
     match args.format {
         OutputFormat::Json => {
-            println!(
+            cprintln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
                     "instantiated": true,
@@ -101,7 +102,7 @@ pub(crate) fn cmd_live_instantiate(args: &LiveInstantiateArgs) -> Result<()> {
             );
         }
         OutputFormat::Text => {
-            println!(
+            cprintln!(
                 "{} {} {}",
                 "Instantiated".green(),
                 args.name.cyan(),
@@ -121,7 +122,7 @@ pub(crate) fn cmd_live_remove_node(args: &LiveRemoveNodeArgs) -> Result<()> {
     .ok_or_else(|| miette!("Failed — is a game running?"))?;
     match args.format {
         OutputFormat::Json => {
-            println!(
+            cprintln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
                     "removed": true,
@@ -131,7 +132,7 @@ pub(crate) fn cmd_live_remove_node(args: &LiveRemoveNodeArgs) -> Result<()> {
             );
         }
         OutputFormat::Text => {
-            println!("{} {}", "Removed".green(), args.path.cyan());
+            cprintln!("{} {}", "Removed".green(), args.path.cyan());
         }
     }
     Ok(())
@@ -146,7 +147,7 @@ pub(crate) fn cmd_live_duplicate(args: &LiveDuplicateArgs) -> Result<()> {
     .ok_or_else(|| miette!("Failed — is a game running?"))?;
     match args.format {
         OutputFormat::Json => {
-            println!(
+            cprintln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
                     "duplicated": true,
@@ -157,7 +158,7 @@ pub(crate) fn cmd_live_duplicate(args: &LiveDuplicateArgs) -> Result<()> {
             );
         }
         OutputFormat::Text => {
-            println!(
+            cprintln!(
                 "{} {} as {}",
                 "Duplicated".green(),
                 args.path.cyan(),
@@ -182,7 +183,7 @@ pub(crate) fn cmd_live_reparent(args: &LiveReparentArgs) -> Result<()> {
     .ok_or_else(|| miette!("Failed — is a game running?"))?;
     match args.format {
         OutputFormat::Json => {
-            println!(
+            cprintln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
                     "reparented": true,
@@ -193,7 +194,7 @@ pub(crate) fn cmd_live_reparent(args: &LiveReparentArgs) -> Result<()> {
             );
         }
         OutputFormat::Text => {
-            println!(
+            cprintln!(
                 "{} {} to {}",
                 "Reparented".green(),
                 args.path.cyan(),
@@ -220,7 +221,7 @@ pub(crate) fn cmd_live_node_prop(args: &LiveNodePropArgs) -> Result<()> {
     .ok_or_else(|| miette!("Failed — is a game running?"))?;
     match args.format {
         OutputFormat::Json => {
-            println!(
+            cprintln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
                     "id": args.id,
@@ -231,7 +232,7 @@ pub(crate) fn cmd_live_node_prop(args: &LiveNodePropArgs) -> Result<()> {
             );
         }
         OutputFormat::Text => {
-            println!(
+            cprintln!(
                 "{} {}.{} = {}",
                 "Set".green(),
                 format!("[{}]", args.id).dimmed(),
@@ -259,7 +260,7 @@ pub(crate) fn cmd_live_node_call(args: &LiveNodeCallArgs) -> Result<()> {
     .ok_or_else(|| miette!("Failed — is a game running?"))?;
     match args.format {
         OutputFormat::Json => {
-            println!(
+            cprintln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
                     "id": args.id,
@@ -270,7 +271,7 @@ pub(crate) fn cmd_live_node_call(args: &LiveNodeCallArgs) -> Result<()> {
             );
         }
         OutputFormat::Text => {
-            println!(
+            cprintln!(
                 "{} {}.{}({})",
                 "Called".green(),
                 format!("[{}]", args.id).dimmed(),
@@ -293,7 +294,7 @@ pub(crate) fn cmd_live_node_path(args: &LivePathArgs) -> Result<()> {
     .ok_or_else(|| miette!("Failed — is a game running?"))?;
     match args.format {
         OutputFormat::Json => {
-            println!(
+            cprintln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
                     "ok": true,
@@ -304,7 +305,7 @@ pub(crate) fn cmd_live_node_path(args: &LivePathArgs) -> Result<()> {
             );
         }
         OutputFormat::Text => {
-            println!(
+            cprintln!(
                 "{} for {}",
                 "Live node path set".green(),
                 format!("[{}]", args.id).dimmed(),
@@ -323,7 +324,7 @@ pub(crate) fn cmd_live_res_path(args: &LivePathArgs) -> Result<()> {
     .ok_or_else(|| miette!("Failed — is a game running?"))?;
     match args.format {
         OutputFormat::Json => {
-            println!(
+            cprintln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
                     "ok": true,
@@ -334,7 +335,7 @@ pub(crate) fn cmd_live_res_path(args: &LivePathArgs) -> Result<()> {
             );
         }
         OutputFormat::Text => {
-            println!(
+            cprintln!(
                 "{} for {}",
                 "Live resource path set".green(),
                 format!("[{}]", args.id).dimmed(),
@@ -360,7 +361,7 @@ pub(crate) fn cmd_live_res_prop(args: &LiveNodePropArgs) -> Result<()> {
     .ok_or_else(|| miette!("Failed — is a game running?"))?;
     match args.format {
         OutputFormat::Json => {
-            println!(
+            cprintln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
                     "id": args.id,
@@ -371,7 +372,7 @@ pub(crate) fn cmd_live_res_prop(args: &LiveNodePropArgs) -> Result<()> {
             );
         }
         OutputFormat::Text => {
-            println!(
+            cprintln!(
                 "{} {}.{} = {}",
                 "Set".green(),
                 format!("[{}]", args.id).dimmed(),
@@ -396,7 +397,7 @@ pub(crate) fn cmd_live_node_prop_res(args: &LivePropResArgs) -> Result<()> {
     .ok_or_else(|| miette!("Failed — is a game running?"))?;
     match args.format {
         OutputFormat::Json => {
-            println!(
+            cprintln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
                     "id": args.id,
@@ -407,7 +408,7 @@ pub(crate) fn cmd_live_node_prop_res(args: &LivePropResArgs) -> Result<()> {
             );
         }
         OutputFormat::Text => {
-            println!(
+            cprintln!(
                 "{} {}.{} = {}",
                 "Set".green(),
                 format!("[{}]", args.id).dimmed(),
@@ -432,7 +433,7 @@ pub(crate) fn cmd_live_res_prop_res(args: &LivePropResArgs) -> Result<()> {
     .ok_or_else(|| miette!("Failed — is a game running?"))?;
     match args.format {
         OutputFormat::Json => {
-            println!(
+            cprintln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
                     "id": args.id,
@@ -443,7 +444,7 @@ pub(crate) fn cmd_live_res_prop_res(args: &LivePropResArgs) -> Result<()> {
             );
         }
         OutputFormat::Text => {
-            println!(
+            cprintln!(
                 "{} {}.{} = {}",
                 "Set".green(),
                 format!("[{}]", args.id).dimmed(),
@@ -471,7 +472,7 @@ pub(crate) fn cmd_live_res_call(args: &LiveNodeCallArgs) -> Result<()> {
     .ok_or_else(|| miette!("Failed — is a game running?"))?;
     match args.format {
         OutputFormat::Json => {
-            println!(
+            cprintln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
                     "id": args.id,
@@ -482,7 +483,7 @@ pub(crate) fn cmd_live_res_call(args: &LiveNodeCallArgs) -> Result<()> {
             );
         }
         OutputFormat::Text => {
-            println!(
+            cprintln!(
                 "{} {}.{}({})",
                 "Called".green(),
                 format!("[{}]", args.id).dimmed(),
@@ -505,7 +506,7 @@ pub(crate) fn cmd_live_remove_keep(args: &LiveRemoveKeepArgs) -> Result<()> {
     .ok_or_else(|| miette!("Failed — is a game running?"))?;
     match args.format {
         OutputFormat::Json => {
-            println!(
+            cprintln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
                     "ok": true,
@@ -516,7 +517,7 @@ pub(crate) fn cmd_live_remove_keep(args: &LiveRemoveKeepArgs) -> Result<()> {
             );
         }
         OutputFormat::Text => {
-            println!("{} {}", "Removed (kept)".green(), args.path.cyan(),);
+            cprintln!("{} {}", "Removed (kept)".green(), args.path.cyan(),);
         }
     }
     Ok(())
@@ -535,7 +536,7 @@ pub(crate) fn cmd_live_restore(args: &LiveRestoreArgs) -> Result<()> {
     .ok_or_else(|| miette!("Failed — is a game running?"))?;
     match args.format {
         OutputFormat::Json => {
-            println!(
+            cprintln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
                     "ok": true,
@@ -546,7 +547,7 @@ pub(crate) fn cmd_live_restore(args: &LiveRestoreArgs) -> Result<()> {
             );
         }
         OutputFormat::Text => {
-            println!("{} at {}", "Restored node".green(), args.path.cyan(),);
+            cprintln!("{} at {}", "Restored node".green(), args.path.cyan(),);
         }
     }
     Ok(())

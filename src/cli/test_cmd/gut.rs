@@ -7,6 +7,8 @@ use std::time::{Duration, Instant};
 
 use crate::core::project::GodotProject;
 
+use crate::{ceprintln, cprintln};
+
 use super::{
     RunArgs, TestResult, TestStatus, TestSummary, extract_errors, filter_noise, run_with_timeout,
 };
@@ -96,7 +98,7 @@ pub fn run_gut_tests(
                 stdout.to_string()
             };
             if !display_stdout.is_empty() {
-                println!("{display_stdout}");
+                cprintln!("{display_stdout}");
             }
         }
         if !stderr.is_empty() {
@@ -106,7 +108,7 @@ pub fn run_gut_tests(
                 stderr.to_string()
             };
             if !display_stderr.is_empty() {
-                eprintln!("{display_stderr}");
+                ceprintln!("{display_stderr}");
             }
         }
     }
@@ -120,10 +122,10 @@ pub fn run_gut_tests(
         if !json_mode && !args.verbose {
             // Show output since we didn't already
             if !stdout.is_empty() {
-                println!("{stdout}");
+                cprintln!("{stdout}");
             }
             if !stderr.is_empty() {
-                eprintln!("{stderr}");
+                ceprintln!("{stderr}");
             }
         }
         return Err(miette!("GUT exited with non-zero status"));

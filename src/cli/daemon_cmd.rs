@@ -1,3 +1,4 @@
+use crate::cprintln;
 use clap::{Args, Subcommand};
 use miette::Result;
 
@@ -33,9 +34,9 @@ pub fn exec(args: DaemonArgs) -> Result<()> {
             if let Some(result) =
                 crate::lsp::daemon_client::query_daemon("status", serde_json::json!({}), None)
             {
-                println!("{}", serde_json::to_string_pretty(&result).unwrap());
+                cprintln!("{}", serde_json::to_string_pretty(&result).unwrap());
             } else {
-                println!("Daemon not running");
+                cprintln!("Daemon not running");
             }
             Ok(())
         }
@@ -44,12 +45,12 @@ pub fn exec(args: DaemonArgs) -> Result<()> {
             match crate::core::config::find_project_root(&cwd) {
                 Some(root) => {
                     if crate::lsp::daemon_client::stop_daemon(&root) {
-                        println!("Daemon stopped");
+                        cprintln!("Daemon stopped");
                     } else {
-                        println!("No daemon running");
+                        cprintln!("No daemon running");
                     }
                 }
-                None => println!("Not in a Godot project"),
+                None => cprintln!("Not in a Godot project"),
             }
             Ok(())
         }
@@ -63,15 +64,15 @@ pub fn exec(args: DaemonArgs) -> Result<()> {
                         serde_json::json!({}),
                         None,
                     ) {
-                        println!(
+                        cprintln!(
                             "Daemon restarted\n{}",
                             serde_json::to_string_pretty(&result).unwrap()
                         );
                     } else {
-                        println!("Daemon stopped but failed to restart");
+                        cprintln!("Daemon stopped but failed to restart");
                     }
                 }
-                None => println!("Not in a Godot project"),
+                None => cprintln!("Not in a Godot project"),
             }
             Ok(())
         }

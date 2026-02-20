@@ -3,6 +3,7 @@ use serde_json::json;
 use std::path::Path;
 
 use super::rules::{LintDiagnostic, Severity};
+use crate::{ceprintln, cprintln};
 
 /// Print a diagnostic in human-readable format with optional source spans.
 pub fn print_diagnostic(
@@ -17,7 +18,7 @@ pub fn print_diagnostic(
         Severity::Error => "error".red().bold().to_string(),
     };
     let location = format!("{}:{}:{}", path.display(), diag.line + 1, diag.column + 1);
-    eprintln!(
+    ceprintln!(
         "{} {}: {} [{}]",
         location.bold(),
         severity_str,
@@ -35,14 +36,14 @@ pub fn print_diagnostic(
         let max_line_num = end; // 1-indexed
         let gutter_width = format!("{max_line_num}").len();
 
-        eprintln!("{:>width$} {}", "", "|".cyan(), width = gutter_width);
+        ceprintln!("{:>width$} {}", "", "|".cyan(), width = gutter_width);
 
         for (i, line) in lines[start..end].iter().enumerate() {
             let line_idx = start + i;
             let num = format!("{}", line_idx + 1);
             if line_idx == diag.line {
                 // Highlight the diagnostic line
-                eprintln!("{} {} {}", num.cyan().bold(), "|".cyan(), line,);
+                ceprintln!("{} {} {}", num.cyan().bold(), "|".cyan(), line,);
                 // Print underline if we have end_column
                 if let Some(end_col) = diag.end_column {
                     let col = diag.column;
@@ -53,7 +54,7 @@ pub fn print_diagnostic(
                         Severity::Warning => underline.yellow().bold().to_string(),
                         Severity::Error => underline.red().bold().to_string(),
                     };
-                    eprintln!(
+                    ceprintln!(
                         "{:>width$} {} {:>col$}{}",
                         "",
                         "|".cyan(),
@@ -64,7 +65,7 @@ pub fn print_diagnostic(
                     );
                 }
             } else {
-                eprintln!("{} {} {}", num.dimmed(), "|".cyan(), line.dimmed(),);
+                ceprintln!("{} {} {}", num.dimmed(), "|".cyan(), line.dimmed(),);
             }
         }
     } else if let Some(end_col) = diag.end_column
@@ -74,8 +75,8 @@ pub fn print_diagnostic(
         let line_num = format!("{}", diag.line + 1);
         let gutter_width = line_num.len();
 
-        eprintln!("{:>width$} {}", "", "|".cyan(), width = gutter_width);
-        eprintln!("{} {} {}", line_num.cyan(), "|".cyan(), line_text);
+        ceprintln!("{:>width$} {}", "", "|".cyan(), width = gutter_width);
+        ceprintln!("{} {} {}", line_num.cyan(), "|".cyan(), line_text);
 
         let col = diag.column;
         let span_len = if end_col > col { end_col - col } else { 1 };
@@ -85,7 +86,7 @@ pub fn print_diagnostic(
             Severity::Warning => underline.yellow().bold().to_string(),
             Severity::Error => underline.red().bold().to_string(),
         };
-        eprintln!(
+        ceprintln!(
             "{:>width$} {} {:>col$}{}",
             "",
             "|".cyan(),
@@ -107,7 +108,7 @@ pub struct FileLintResult {
 /// Print all results as JSON.
 pub fn print_json(results: &[FileLintResult]) {
     let json = serde_json::to_string_pretty(results).unwrap_or_else(|_| "[]".to_string());
-    println!("{json}");
+    cprintln!("{json}");
 }
 
 /// Get a short description for a lint rule.
@@ -204,5 +205,5 @@ pub fn print_sarif(results: &[FileLintResult], rules: &[&str]) {
         }]
     });
 
-    println!("{}", serde_json::to_string_pretty(&sarif).unwrap());
+    cprintln!("{}", serde_json::to_string_pretty(&sarif).unwrap());
 }

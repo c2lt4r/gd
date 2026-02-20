@@ -1,3 +1,4 @@
+use crate::{ceprintln, cprintln};
 use clap::Args;
 use miette::{Result, miette};
 use notify::RecursiveMode;
@@ -40,15 +41,15 @@ pub fn exec(args: &WatchArgs) -> Result<()> {
         }
     }
 
-    println!(
+    cprintln!(
         "{} {}",
         "watch:".cyan().bold(),
         "Watching for .gd file changes... (press Ctrl+C to stop)".dimmed()
     );
     for path in &watch_paths {
-        println!("  {} {}", "→".cyan(), path.display().dimmed());
+        cprintln!("  {} {}", "→".cyan(), path.display().dimmed());
     }
-    println!();
+    cprintln!();
 
     // Set up debounced file watcher
     let (tx, rx) = mpsc::channel();
@@ -86,13 +87,13 @@ pub fn exec(args: &WatchArgs) -> Result<()> {
                 }
 
                 // Print separator
-                println!("{}", "────".dimmed());
+                cprintln!("{}", "────".dimmed());
 
                 // Show which files changed
                 for file in &gd_files {
-                    println!("{} {}", "changed:".yellow(), file.display());
+                    cprintln!("{} {}", "changed:".yellow(), file.display());
                 }
-                println!();
+                cprintln!();
 
                 // Run formatter if requested
                 if args.fmt {
@@ -101,10 +102,10 @@ pub fn exec(args: &WatchArgs) -> Result<()> {
                     match crate::fmt::run_fmt(&paths, false, false) {
                         Ok(()) => {}
                         Err(e) => {
-                            eprintln!("{} {e}", "fmt error:".red().bold());
+                            ceprintln!("{} {e}", "fmt error:".red().bold());
                         }
                     }
-                    println!();
+                    cprintln!();
                 }
 
                 // Run linter unless disabled
@@ -115,10 +116,10 @@ pub fn exec(args: &WatchArgs) -> Result<()> {
                     match crate::lint::run_lint(&paths, &lint_opts) {
                         Ok(()) => {}
                         Err(e) => {
-                            eprintln!("{} {e}", "lint error:".red().bold());
+                            ceprintln!("{} {e}", "lint error:".red().bold());
                         }
                     }
-                    println!();
+                    cprintln!();
                 }
 
                 // Run check if requested
@@ -129,14 +130,14 @@ pub fn exec(args: &WatchArgs) -> Result<()> {
                     }) {
                         Ok(()) => {}
                         Err(e) => {
-                            eprintln!("{} {e}", "check error:".red().bold());
+                            ceprintln!("{} {e}", "check error:".red().bold());
                         }
                     }
-                    println!();
+                    cprintln!();
                 }
             }
             Ok(Err(error)) => {
-                eprintln!("{} {error}", "watch error:".red().bold());
+                ceprintln!("{} {error}", "watch error:".red().bold());
             }
             Err(_) => {
                 // Channel closed, exit

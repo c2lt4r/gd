@@ -13,6 +13,7 @@ use crate::build::{find_godot, path_for_godot};
 use crate::cli::test_cmd::{extract_errors, filter_noise, run_with_timeout};
 use crate::core::config::Config;
 use crate::core::project::GodotProject;
+use crate::{ceprintln, cprintln};
 
 #[derive(Args)]
 pub struct EvalArgs {
@@ -590,7 +591,7 @@ fn print_highlighted_script(source: &str) {
     for (i, line) in lines.iter().enumerate() {
         let num = format!("{:>width$}", i + 1);
         eprint!("  {} ", num.dimmed());
-        eprintln!("{}", highlight_gdscript_line(line));
+        ceprintln!("{}", highlight_gdscript_line(line));
     }
 }
 
@@ -727,9 +728,9 @@ fn try_live_eval(
             if !json_mode {
                 for line in &response.output {
                     match line.r#type.as_str() {
-                        "error" => eprintln!("{}", line.message.red()),
-                        "warning" => eprintln!("{}", line.message.yellow()),
-                        _ => println!("{}", line.message),
+                        "error" => ceprintln!("{}", line.message.red()),
+                        "warning" => ceprintln!("{}", line.message.yellow()),
+                        _ => cprintln!("{}", line.message),
                     }
                 }
             }
@@ -740,9 +741,9 @@ fn try_live_eval(
                     exit_code: 0,
                     errors: vec![],
                 };
-                println!("{}", serde_json::to_string_pretty(&out).unwrap());
+                cprintln!("{}", serde_json::to_string_pretty(&out).unwrap());
             } else if !response.result.is_empty() {
-                println!("{}", response.result);
+                cprintln!("{}", response.result);
             }
             Some(Ok(()))
         }
@@ -754,7 +755,7 @@ fn try_live_eval(
                     exit_code: 1,
                     errors: vec![],
                 };
-                println!("{}", serde_json::to_string_pretty(&out).unwrap());
+                cprintln!("{}", serde_json::to_string_pretty(&out).unwrap());
                 std::process::exit(1);
             } else {
                 Some(Err(e))
@@ -901,7 +902,7 @@ pub fn exec(args: &EvalArgs) -> Result<()> {
                     exit_code: -1,
                     errors: vec![],
                 };
-                println!("{}", serde_json::to_string_pretty(&eval_out).unwrap());
+                cprintln!("{}", serde_json::to_string_pretty(&eval_out).unwrap());
                 std::process::exit(1);
             } else {
                 Err(e)
@@ -930,7 +931,7 @@ fn format_output(output: &std::process::Output, verbose: bool, json_mode: bool) 
             exit_code,
             errors,
         };
-        println!("{}", serde_json::to_string_pretty(&eval_out).unwrap());
+        cprintln!("{}", serde_json::to_string_pretty(&eval_out).unwrap());
         if !output.status.success() {
             std::process::exit(1);
         }
@@ -940,7 +941,7 @@ fn format_output(output: &std::process::Output, verbose: bool, json_mode: bool) 
     // Text mode: print stdout directly
     let display = stdout.trim();
     if !display.is_empty() {
-        println!("{display}");
+        cprintln!("{display}");
     }
 
     if !output.status.success() {
@@ -948,19 +949,19 @@ fn format_output(output: &std::process::Output, verbose: bool, json_mode: bool) 
         if errors.is_empty() {
             let filtered = filter_noise(&stderr);
             if !filtered.trim().is_empty() {
-                eprintln!("{}", filtered.trim());
+                ceprintln!("{}", filtered.trim());
             }
         } else {
             for err in &errors {
                 if let Some(line_num) = err.line {
-                    eprintln!(
+                    ceprintln!(
                         "{} {}:{line_num} {}",
                         "error:".red().bold(),
                         err.file,
                         err.message
                     );
                 } else {
-                    eprintln!("{} {}", "error:".red().bold(), err.message);
+                    ceprintln!("{} {}", "error:".red().bold(), err.message);
                 }
             }
         }
@@ -972,7 +973,7 @@ fn format_output(output: &std::process::Output, verbose: bool, json_mode: bool) 
         let filtered = filter_noise(&stderr);
         if !filtered.trim().is_empty() {
             for line in filtered.trim().lines() {
-                eprintln!("{}", line.dimmed());
+                ceprintln!("{}", line.dimmed());
             }
         }
     }

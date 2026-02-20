@@ -4,6 +4,7 @@ use miette::{Result, miette};
 use owo_colors::OwoColorize;
 
 use super::{RemoveScriptArgs, read_and_parse_resource, write_or_dry_run};
+use crate::cprintln;
 
 pub(crate) fn exec_remove_script(args: &RemoveScriptArgs) -> Result<()> {
     let path = PathBuf::from(&args.file);
@@ -29,7 +30,7 @@ pub(crate) fn exec_remove_script(args: &RemoveScriptArgs) -> Result<()> {
     write_or_dry_run(&path, &result, args.dry_run)?;
 
     if !args.dry_run {
-        println!("{} Removed script from {}", "✓".green(), args.file.bold(),);
+        cprintln!("{} Removed script from {}", "✓".green(), args.file.bold(),);
     }
 
     Ok(())

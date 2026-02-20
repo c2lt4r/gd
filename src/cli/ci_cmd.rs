@@ -4,6 +4,7 @@ use owo_colors::OwoColorize;
 use std::fs;
 
 use crate::core::project::GodotProject;
+use crate::cprintln;
 
 #[derive(Args)]
 pub struct CiArgs {
@@ -126,12 +127,12 @@ jobs:
     fs::write(&ci_file, content)
         .map_err(|e| miette!("Failed to write GitHub Actions workflow: {e}"))?;
 
-    println!("{}", "✓ GitHub Actions workflow created!".green().bold());
-    println!("  {}", ci_file.display().dimmed());
-    println!();
-    println!("Next steps:");
-    println!("  1. Review and customize .github/workflows/ci.yml");
-    println!("  2. Commit and push to enable CI");
+    cprintln!("{}", "✓ GitHub Actions workflow created!".green().bold());
+    cprintln!("  {}", ci_file.display().dimmed());
+    cprintln!();
+    cprintln!("Next steps:");
+    cprintln!("  1. Review and customize .github/workflows/ci.yml");
+    cprintln!("  2. Commit and push to enable CI");
 
     Ok(())
 }
@@ -188,12 +189,12 @@ lint:
     fs::write(&ci_file, content)
         .map_err(|e| miette!("Failed to write GitLab CI configuration: {e}"))?;
 
-    println!("{}", "✓ GitLab CI configuration created!".green().bold());
-    println!("  {}", ci_file.display().dimmed());
-    println!();
-    println!("Next steps:");
-    println!("  1. Review and customize .gitlab-ci.yml");
-    println!("  2. Commit and push to enable CI");
+    cprintln!("{}", "✓ GitLab CI configuration created!".green().bold());
+    cprintln!("  {}", ci_file.display().dimmed());
+    cprintln!();
+    cprintln!("Next steps:");
+    cprintln!("  1. Review and customize .gitlab-ci.yml");
+    cprintln!("  2. Commit and push to enable CI");
 
     Ok(())
 }

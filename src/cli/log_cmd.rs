@@ -5,6 +5,7 @@ use miette::{Result, miette};
 use owo_colors::OwoColorize;
 
 use crate::debug::godot_debug_server::LogEntry;
+use crate::{ceprintln, cprintln};
 
 #[derive(Args)]
 pub struct LogArgs {
@@ -36,7 +37,7 @@ pub fn exec(args: &LogArgs) -> Result<()> {
             Some(Duration::from_secs(2)),
         );
         if resp.is_some() {
-            println!("{} Log cleared", "\u{2713}".green());
+            cprintln!("{} Log cleared", "\u{2713}".green());
         } else {
             return Err(miette!("No daemon running. Start a game with: gd run"));
         }
@@ -55,16 +56,16 @@ pub fn exec(args: &LogArgs) -> Result<()> {
 
     if entries.is_empty() {
         if args.json {
-            println!("[]");
+            cprintln!("[]");
         } else {
-            println!("No log output. Run {} first.", "`gd run`".bold());
+            cprintln!("No log output. Run {} first.", "`gd run`".bold());
         }
         return Ok(());
     }
 
     if args.json {
         let filtered = filter_entries(&entries, args.grep.as_deref());
-        println!(
+        cprintln!(
             "{}",
             serde_json::to_string_pretty(&filtered).unwrap_or_default()
         );
@@ -86,7 +87,7 @@ fn follow_log(args: &LogArgs) -> Result<()> {
         cursor = initial.last().map_or(0, |e| e.seq);
     }
 
-    eprintln!(
+    ceprintln!(
         "{} Following game output (Ctrl+C to stop)",
         "\u{25b6}".green(),
     );
@@ -140,9 +141,9 @@ fn print_entries(entries: &[LogEntry], grep: Option<&str>) {
             continue;
         }
         match entry.r#type.as_str() {
-            "error" => eprintln!("{} {}", "ERROR".red().bold(), entry.message),
-            "warning" => eprintln!("{} {}", " WARN".yellow().bold(), entry.message),
-            _ => println!("{}", entry.message),
+            "error" => ceprintln!("{} {}", "ERROR".red().bold(), entry.message),
+            "warning" => ceprintln!("{} {}", " WARN".yellow().bold(), entry.message),
+            _ => cprintln!("{}", entry.message),
         }
     }
 }

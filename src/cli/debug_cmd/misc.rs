@@ -6,6 +6,7 @@ use super::args::{
     ServerArgs,
 };
 use super::{daemon_cmd, daemon_cmd_timeout, ensure_binary_debug};
+use crate::cprintln;
 
 // ── One-shot: mute-audio ────────────────────────────────────────────
 
@@ -16,16 +17,16 @@ pub(crate) fn cmd_mute_audio(args: &MuteAudioArgs) -> Result<()> {
         .ok_or_else(|| miette!("Failed — is a game running?"))?;
     match args.format {
         OutputFormat::Json => {
-            println!(
+            cprintln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({"muted": mute})).unwrap()
             );
         }
         OutputFormat::Text => {
             if mute {
-                println!("{}", "Audio muted".green());
+                cprintln!("{}", "Audio muted".green());
             } else {
-                println!("{}", "Audio unmuted".green());
+                cprintln!("{}", "Audio unmuted".green());
             }
         }
     }
@@ -44,16 +45,16 @@ pub(crate) fn cmd_override_camera(args: &OverrideCameraArgs) -> Result<()> {
     .ok_or_else(|| miette!("Failed — is a game running?"))?;
     match args.format {
         OutputFormat::Json => {
-            println!(
+            cprintln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({"override": enable})).unwrap()
             );
         }
         OutputFormat::Text => {
             if enable {
-                println!("{}", "Camera override enabled".green());
+                cprintln!("{}", "Camera override enabled".green());
             } else {
-                println!("{}", "Camera override disabled".green());
+                cprintln!("{}", "Camera override disabled".green());
             }
         }
     }
@@ -71,7 +72,7 @@ pub(crate) fn cmd_save_node(args: &SaveNodeArgs) -> Result<()> {
     .ok_or_else(|| miette!("Failed to save node {} — is a game running?", args.id))?;
     match args.format {
         OutputFormat::Json => {
-            println!(
+            cprintln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
                     "saved": true,
@@ -82,7 +83,7 @@ pub(crate) fn cmd_save_node(args: &SaveNodeArgs) -> Result<()> {
             );
         }
         OutputFormat::Text => {
-            println!(
+            cprintln!(
                 "{} node {} to {}",
                 "Saved".green(),
                 format!("[{}]", args.id).dimmed(),
@@ -105,7 +106,7 @@ pub(crate) fn cmd_profiler(args: &ProfilerArgs) -> Result<()> {
     .ok_or_else(|| miette!("Failed — is a game running?"))?;
     match args.format {
         OutputFormat::Json => {
-            println!(
+            cprintln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
                     "profiler": args.name,
@@ -116,9 +117,9 @@ pub(crate) fn cmd_profiler(args: &ProfilerArgs) -> Result<()> {
         }
         OutputFormat::Text => {
             if enable {
-                println!("{} profiler {}", "Enabled".green(), args.name.cyan());
+                cprintln!("{} profiler {}", "Enabled".green(), args.name.cyan());
             } else {
-                println!("{} profiler {}", "Disabled".green(), args.name.cyan());
+                cprintln!("{} profiler {}", "Disabled".green(), args.name.cyan());
             }
         }
     }
@@ -137,14 +138,14 @@ pub(crate) fn cmd_reload_cached(args: &ReloadCachedArgs) -> Result<()> {
     .ok_or_else(|| miette!("Failed — is a game running?"))?;
     match args.format {
         OutputFormat::Json => {
-            println!(
+            cprintln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({"ok": true, "count": count}))
                     .unwrap()
             );
         }
         OutputFormat::Text => {
-            println!("{}", format!("Reloaded {count} cached files").green());
+            cprintln!("{}", format!("Reloaded {count} cached files").green());
         }
     }
     Ok(())
@@ -163,14 +164,14 @@ pub(crate) fn cmd_server(args: &ServerArgs) -> Result<()> {
             .unwrap_or(0);
         let connected = status.get("connected").and_then(serde_json::Value::as_bool) == Some(true);
         if connected {
-            println!(
+            cprintln!(
                 "{} port {} (game connected)",
                 "Debug server already running on".green().bold(),
                 port.to_string().cyan(),
             );
             return Ok(());
         }
-        println!(
+        cprintln!(
             "{} port {} (waiting for game)",
             "Debug server already running on".yellow().bold(),
             port.to_string().cyan(),
@@ -188,7 +189,7 @@ pub(crate) fn cmd_server(args: &ServerArgs) -> Result<()> {
         if let Some(r) = accept
             && r.get("connected").and_then(serde_json::Value::as_bool) == Some(true)
         {
-            println!("{}", "Game connected!".green().bold());
+            cprintln!("{}", "Game connected!".green().bold());
             return Ok(());
         }
         return Err(miette!("Timed out waiting for game to connect"));
@@ -202,7 +203,7 @@ pub(crate) fn cmd_server(args: &ServerArgs) -> Result<()> {
         .and_then(serde_json::Value::as_u64)
         .unwrap_or(0);
 
-    println!(
+    cprintln!(
         "{} port {}",
         "Debug server started on".green().bold(),
         port.to_string().cyan(),
@@ -210,7 +211,7 @@ pub(crate) fn cmd_server(args: &ServerArgs) -> Result<()> {
     print_launch_hint(port);
 
     if args.wait {
-        println!("{}", "Waiting for game to connect...".dimmed());
+        cprintln!("{}", "Waiting for game to connect...".dimmed());
         let accept = daemon_cmd_timeout(
             "debug_accept",
             serde_json::json!({"timeout": args.timeout}),
@@ -219,7 +220,7 @@ pub(crate) fn cmd_server(args: &ServerArgs) -> Result<()> {
         if let Some(r) = accept
             && r.get("connected").and_then(serde_json::Value::as_bool) == Some(true)
         {
-            println!("{}", "Game connected!".green().bold());
+            cprintln!("{}", "Game connected!".green().bold());
             return Ok(());
         }
         return Err(miette!("Timed out waiting for game to connect"));
@@ -239,7 +240,7 @@ pub(crate) fn print_launch_hint(port: u64) {
         });
 
     if let Some(path) = project_path {
-        println!(
+        cprintln!(
             "Launch game with:\n  {} {} {} {}",
             "godot".bold(),
             format!("--remote-debug \"tcp://127.0.0.1:{port}\"").cyan(),
@@ -247,7 +248,7 @@ pub(crate) fn print_launch_hint(port: u64) {
             format!("\"{path}\"").cyan(),
         );
     } else {
-        println!(
+        cprintln!(
             "Launch game with:\n  {} {}",
             "godot".bold(),
             format!("--remote-debug \"tcp://127.0.0.1:{port}\"").cyan(),

@@ -6,6 +6,7 @@ use std::fs;
 use std::path::Path;
 
 use crate::core::project::GodotProject;
+use crate::cprintln;
 use crate::scaffold::templates::GD_TOML_TEMPLATE;
 
 #[derive(Args)]
@@ -43,13 +44,13 @@ pub fn exec(args: &InitArgs) -> Result<()> {
 
     let name = project.name()?;
 
-    println!(
+    cprintln!(
         "{} gd toolchain in project {}",
         "Initialized".green().bold(),
         name.bold()
     );
-    println!("  Project root: {}", project.root.display());
-    println!("  Config: {}", config_path.display());
+    cprintln!("  Project root: {}", project.root.display());
+    cprintln!("  Config: {}", config_path.display());
 
     Ok(())
 }

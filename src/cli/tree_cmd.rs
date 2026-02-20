@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::core::scene;
+use crate::cprintln;
 
 #[derive(Args)]
 pub struct TreeArgs {
@@ -58,7 +59,7 @@ pub fn exec(args: &TreeArgs) -> Result<()> {
     let files = crate::core::fs::collect_gdscript_files(&root)?;
 
     if files.is_empty() {
-        println!("No GDScript files found in {}", root.display());
+        cprintln!("No GDScript files found in {}", root.display());
         return Ok(());
     }
 
@@ -78,7 +79,7 @@ pub fn exec(args: &TreeArgs) -> Result<()> {
         };
         let json = serde_json::to_string_pretty(&output)
             .map_err(|e| miette!("Failed to serialize JSON: {e}"))?;
-        println!("{json}");
+        cprintln!("{json}");
     } else {
         render_tree(&root, files.len(), &classes, args.classes_only);
     }
@@ -196,14 +197,14 @@ fn render_tree(root: &Path, file_count: usize, classes: &[ClassInfo], classes_on
         .file_name()
         .and_then(|s| s.to_str())
         .unwrap_or("Project");
-    println!(
+    cprintln!(
         "{} {} ({} {})",
         "Project:".bold(),
         project_name.cyan().bold(),
         file_count,
         if file_count == 1 { "file" } else { "files" }
     );
-    println!();
+    cprintln!();
 
     // Group classes by their base class
     let mut hierarchy: HashMap<String, Vec<&ClassInfo>> = HashMap::new();
@@ -221,7 +222,7 @@ fn render_tree(root: &Path, file_count: usize, classes: &[ClassInfo], classes_on
         let is_last_base = i == bases.len() - 1;
 
         // Print base class name
-        println!("  {}", base.green().bold());
+        cprintln!("  {}", base.green().bold());
 
         if let Some(children) = hierarchy.get(*base) {
             let child_count = children.len();
@@ -235,7 +236,7 @@ fn render_tree(root: &Path, file_count: usize, classes: &[ClassInfo], classes_on
                 let continuation = if is_last_child { "    " } else { "│   " };
 
                 // Print class name and file
-                println!(
+                cprintln!(
                     "  {} {} ({})",
                     prefix,
                     class.name.cyan(),
@@ -245,7 +246,7 @@ fn render_tree(root: &Path, file_count: usize, classes: &[ClassInfo], classes_on
                 if !classes_only {
                     // Print signals
                     if !class.signals.is_empty() {
-                        println!(
+                        cprintln!(
                             "  {}   {}: {}",
                             continuation,
                             "signals".dimmed(),
@@ -255,7 +256,7 @@ fn render_tree(root: &Path, file_count: usize, classes: &[ClassInfo], classes_on
 
                     // Print methods
                     if !class.methods.is_empty() {
-                        println!(
+                        cprintln!(
                             "  {}   {}: {}",
                             continuation,
                             "methods".dimmed(),
@@ -265,7 +266,7 @@ fn render_tree(root: &Path, file_count: usize, classes: &[ClassInfo], classes_on
 
                     // Print properties
                     if !class.properties.is_empty() {
-                        println!(
+                        cprintln!(
                             "  {}   {}: {}",
                             continuation,
                             "properties".dimmed(),
@@ -278,7 +279,7 @@ fn render_tree(root: &Path, file_count: usize, classes: &[ClassInfo], classes_on
 
         // Add spacing between base class groups
         if !is_last_base {
-            println!();
+            cprintln!();
         }
     }
 }
@@ -310,7 +311,7 @@ fn exec_scene(scene_path: &str, format: &str) -> Result<()> {
             .collect();
 
         if tscn_files.is_empty() {
-            println!("No .tscn files found in {}", path.display());
+            cprintln!("No .tscn files found in {}", path.display());
             return Ok(());
         }
 
@@ -328,16 +329,16 @@ fn exec_scene(scene_path: &str, format: &str) -> Result<()> {
             }
             let json = serde_json::to_string_pretty(&scenes)
                 .map_err(|e| miette!("Failed to serialize JSON: {e}"))?;
-            println!("{json}");
+            cprintln!("{json}");
         } else {
             for (i, file) in tscn_files.iter().enumerate() {
                 let rel = crate::core::fs::relative_slash(file, &path);
                 if let Ok(data) = scene::parse_scene_file(file) {
                     let tree = build_scene_tree(&data);
-                    println!("{}", rel.cyan().bold());
+                    cprintln!("{}", rel.cyan().bold());
                     render_scene_node(&tree, "", true);
                     if i < tscn_files.len() - 1 {
-                        println!();
+                        cprintln!();
                     }
                 }
             }
@@ -350,10 +351,10 @@ fn exec_scene(scene_path: &str, format: &str) -> Result<()> {
             let tree = build_scene_tree(&data);
             let json = serde_json::to_string_pretty(&tree)
                 .map_err(|e| miette!("Failed to serialize JSON: {e}"))?;
-            println!("{json}");
+            cprintln!("{json}");
         } else {
             let tree = build_scene_tree(&data);
-            println!("{} {}", "Scene:".bold(), scene_path.cyan().bold());
+            cprintln!("{} {}", "Scene:".bold(), scene_path.cyan().bold());
             render_scene_node(&tree, "", true);
         }
     }
@@ -441,7 +442,7 @@ fn render_scene_node(node: &SceneTreeNode, prefix: &str, is_last: bool) {
         .map(|s| format!(" {}", s.dimmed()))
         .unwrap_or_default();
 
-    println!(
+    cprintln!(
         "{}{}{}{type_str}{script_str}",
         prefix,
         connector,

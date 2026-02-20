@@ -1,3 +1,4 @@
+use crate::cprintln;
 use clap::Args;
 use flate2::read::GzDecoder;
 use miette::{Result, miette};
@@ -27,7 +28,7 @@ pub struct UpgradeArgs {
 pub fn exec(args: &UpgradeArgs) -> Result<()> {
     let current_version = env!("CARGO_PKG_VERSION");
 
-    println!("Checking for updates...");
+    cprintln!("Checking for updates...");
 
     let (latest_version, assets) = if let Some(ref ver) = args.version {
         let tag = if ver.starts_with('v') {
@@ -44,20 +45,20 @@ pub fn exec(args: &UpgradeArgs) -> Result<()> {
 
     if args.check {
         if is_newer(latest_clean, current_version) {
-            println!(
+            cprintln!(
                 "Current: v{}, Latest: {} {}",
                 current_version,
                 latest_version.cyan(),
                 "(update available)".green()
             );
         } else {
-            println!("Already up to date (v{current_version})");
+            cprintln!("Already up to date (v{current_version})");
         }
         return Ok(());
     }
 
     if !args.force && !is_newer(latest_clean, current_version) {
-        println!("Already up to date (v{current_version})");
+        cprintln!("Already up to date (v{current_version})");
         return Ok(());
     }
 
@@ -71,7 +72,7 @@ pub fn exec(args: &UpgradeArgs) -> Result<()> {
         .map(|a| a.url.clone())
         .ok_or_else(|| miette!("No release found for your platform ({target})"))?;
 
-    println!("Downloading {}...", latest_version.cyan());
+    cprintln!("Downloading {}...", latest_version.cyan());
 
     let archive_data = ureq::get(&download_url)
         .call()
@@ -88,7 +89,7 @@ pub fn exec(args: &UpgradeArgs) -> Result<()> {
 
     replace_current_exe(&binary_data)?;
 
-    println!(
+    cprintln!(
         "{} v{} -> {}",
         "Updated gd".green().bold(),
         current_version,

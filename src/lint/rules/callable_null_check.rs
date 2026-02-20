@@ -350,8 +350,7 @@ mod tests {
     #[test]
     fn chained_call_without_is_valid_warns() {
         // Same chained pattern but WITHOUT the is_valid guard — should warn
-        let source =
-            "func f(server) -> void:\n\tserver.hitscan_validator.call(1, 2)\n";
+        let source = "func f(server) -> void:\n\tserver.hitscan_validator.call(1, 2)\n";
         let diags = check(source);
         assert_eq!(diags.len(), 1);
         assert!(diags[0].message.contains("hitscan_validator"));

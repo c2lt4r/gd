@@ -4,6 +4,7 @@ use miette::{Result, miette};
 use owo_colors::OwoColorize;
 
 use super::{SetPropertyArgs, read_and_parse_scene, write_or_dry_run};
+use crate::cprintln;
 
 pub(crate) fn exec_set_property(args: &SetPropertyArgs) -> Result<()> {
     let path = PathBuf::from(&args.scene);
@@ -17,7 +18,7 @@ pub(crate) fn exec_set_property(args: &SetPropertyArgs) -> Result<()> {
     write_or_dry_run(&path, &result, args.dry_run)?;
 
     if !args.dry_run {
-        println!(
+        cprintln!(
             "{} Set {}.{} = {} in {}",
             "✓".green(),
             args.node.bold(),

@@ -1,3 +1,4 @@
+use crate::ceprintln;
 use crate::core::parser;
 use crate::fmt::printer::Printer;
 
@@ -501,7 +502,7 @@ fn test_line_continuation_binary_op_idempotent() {
     let input = "func f():\n\tvar x = a \\\n\t\t\t+ b \\\n\t\t\t+ c\n";
     let pass1 = format_source(input);
     let pass2 = format_source(&pass1);
-    eprintln!("=== PASS 1 ===\n{pass1}\n=== PASS 2 ===\n{pass2}\n=== END ===");
+    ceprintln!("=== PASS 1 ===\n{pass1}\n=== PASS 2 ===\n{pass2}\n=== END ===");
     assert_eq!(pass1, pass2, "not idempotent");
 }
 
@@ -527,7 +528,7 @@ fn test_line_continuation_in_params_idempotent() {
     let input = "func f(a: int, b: int, \\\n\t\tc: int) -> void:\n\tpass\n";
     let pass1 = format_source(input);
     let pass2 = format_source(&pass1);
-    eprintln!("=== PASS 1 ===\n{pass1}\n=== PASS 2 ===\n{pass2}\n=== END ===");
+    ceprintln!("=== PASS 1 ===\n{pass1}\n=== PASS 2 ===\n{pass2}\n=== END ===");
     assert_eq!(pass1, pass2, "not idempotent");
 }
 
@@ -535,7 +536,7 @@ fn test_line_continuation_in_params_idempotent() {
 fn test_paren_expr_with_comments() {
     let input = "func f():\n\tvar x = (\n\t\t\ta + b\n\t\t\t# comment\n\t\t\t+ c\n\t\t)\n";
     let output = format_source(input);
-    eprintln!("=== FORMATTED OUTPUT ===\n{output}\n=== END ===");
+    ceprintln!("=== FORMATTED OUTPUT ===\n{output}\n=== END ===");
     // Should not introduce parse errors
     let tree = crate::core::parser::parse(&output).unwrap();
     assert!(

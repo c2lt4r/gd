@@ -6,6 +6,7 @@ use owo_colors::OwoColorize;
 use super::args::{ClickArgs, KeyArgs, OutputFormat, PressArgs, TypeTextArgs, WaitArgs};
 use crate::core::live_eval::send_eval;
 use crate::core::project::GodotProject;
+use crate::cprintln;
 
 /// Default timeout for input eval commands.
 const INPUT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -50,12 +51,12 @@ fn run_input_script(script: &str, format: &OutputFormat) -> Result<()> {
     }
     match format {
         OutputFormat::Json => {
-            println!(
+            cprintln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({"result": result})).unwrap()
             );
         }
-        OutputFormat::Text => println!("{}", result.green()),
+        OutputFormat::Text => cprintln!("{}", result.green()),
     }
     Ok(())
 }
@@ -471,7 +472,7 @@ pub fn cmd_type_text(args: &TypeTextArgs) -> Result<()> {
         let len = args.text.len();
         match args.format {
             OutputFormat::Json => {
-                println!(
+                cprintln!(
                     "{}",
                     serde_json::to_string_pretty(
                         &serde_json::json!({"result": format!("typed {len} characters")})
@@ -479,7 +480,7 @@ pub fn cmd_type_text(args: &TypeTextArgs) -> Result<()> {
                     .unwrap()
                 );
             }
-            OutputFormat::Text => println!("{}", format!("typed {len} characters").green()),
+            OutputFormat::Text => cprintln!("{}", format!("typed {len} characters").green()),
         }
         Ok(())
     } else {

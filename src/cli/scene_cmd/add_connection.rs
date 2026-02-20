@@ -6,6 +6,7 @@ use owo_colors::OwoColorize;
 use crate::core::scene::SceneData;
 
 use super::{AddConnectionArgs, read_and_parse_scene, write_or_dry_run};
+use crate::cprintln;
 
 pub(crate) fn exec_add_connection(args: &AddConnectionArgs) -> Result<()> {
     let path = PathBuf::from(&args.scene);
@@ -26,7 +27,7 @@ pub(crate) fn exec_add_connection(args: &AddConnectionArgs) -> Result<()> {
     write_or_dry_run(&path, &result, args.dry_run)?;
 
     if !args.dry_run {
-        println!(
+        cprintln!(
             "{} Added connection {}.{} → {}.{} in {}",
             "✓".green(),
             args.from,

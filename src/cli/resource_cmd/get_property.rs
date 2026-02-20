@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use miette::{Result, miette};
 
 use super::{GetPropertyArgs, read_and_parse_resource};
+use crate::cprintln;
 
 pub(crate) fn exec_get_property(args: &GetPropertyArgs) -> Result<()> {
     let path = PathBuf::from(&args.file);
@@ -19,6 +20,6 @@ pub(crate) fn exec_get_property(args: &GetPropertyArgs) -> Result<()> {
         .map(|(_, v)| v.as_str())
         .ok_or_else(|| miette!("Property '{}' not found in resource", args.key))?;
 
-    println!("{value}");
+    cprintln!("{value}");
     Ok(())
 }

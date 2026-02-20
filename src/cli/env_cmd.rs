@@ -3,6 +3,7 @@ use owo_colors::OwoColorize;
 use serde::Serialize;
 
 use crate::core::config::Config;
+use crate::cprintln;
 
 #[derive(clap::Args)]
 pub struct EnvArgs {
@@ -49,7 +50,7 @@ pub fn exec(args: &EnvArgs) -> Result<()> {
 
     if args.json {
         let json = serde_json::to_string_pretty(&info).unwrap();
-        println!("{json}");
+        cprintln!("{json}");
     } else {
         print_row("gd", &info.gd_version);
         print_row(
@@ -72,7 +73,7 @@ pub fn exec(args: &EnvArgs) -> Result<()> {
 }
 
 fn print_row(label: &str, value: &str) {
-    println!("{:>12} {}", label.bold(), value);
+    cprintln!("{:>12} {}", label.bold(), value);
 }
 
 fn query_godot_version(godot: &std::path::Path) -> Option<String> {

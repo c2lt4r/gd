@@ -3,6 +3,8 @@ use std::path::PathBuf;
 use miette::{Result, miette};
 use owo_colors::OwoColorize;
 
+use crate::cprintln;
+
 use super::{
     DetachScriptArgs, clean_double_blanks, decrement_load_steps, extract_ext_resource_id,
     find_node, is_ext_resource_referenced, read_and_parse_scene, write_or_dry_run,
@@ -32,7 +34,7 @@ pub(crate) fn exec_detach_script(args: &DetachScriptArgs) -> Result<()> {
     write_or_dry_run(&path, &result, args.dry_run)?;
 
     if !args.dry_run {
-        println!(
+        cprintln!(
             "{} Detached script from node '{}' in {}",
             "✓".green(),
             node_name.bold(),

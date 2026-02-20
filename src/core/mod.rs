@@ -1,3 +1,5 @@
+#[allow(dead_code)]
+pub mod color;
 pub mod config;
 pub mod fs;
 pub mod live_eval;

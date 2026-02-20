@@ -8,6 +8,7 @@ use crate::core::config::find_project_root;
 use crate::core::scene;
 
 use super::{SetScriptArgs, read_and_parse_resource, write_or_dry_run};
+use crate::cprintln;
 
 pub(crate) fn exec_set_script(args: &SetScriptArgs) -> Result<()> {
     let path = PathBuf::from(&args.file);
@@ -27,7 +28,7 @@ pub(crate) fn exec_set_script(args: &SetScriptArgs) -> Result<()> {
     write_or_dry_run(&path, &result, args.dry_run)?;
 
     if !args.dry_run {
-        println!(
+        cprintln!(
             "{} Set script to {} in {}",
             "✓".green(),
             res_path.bold(),

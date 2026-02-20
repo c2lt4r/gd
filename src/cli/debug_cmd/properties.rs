@@ -7,6 +7,7 @@ use super::args::{
 };
 use super::camera::take_screenshot;
 use super::{daemon_cmd, ensure_binary_debug};
+use crate::cprintln;
 
 // ── One-shot: set-prop ──────────────────────────────────────────────
 
@@ -39,13 +40,13 @@ pub(crate) fn cmd_set_prop(args: &SetPropArgs) -> Result<()> {
                 combined["screenshot"] = serde_json::json!({
                     "width": w, "height": h, "format": "png", "path": path,
                 });
-                println!("{}", serde_json::to_string_pretty(&combined).unwrap());
+                cprintln!("{}", serde_json::to_string_pretty(&combined).unwrap());
             } else {
-                println!("{}", serde_json::to_string_pretty(&result).unwrap());
+                cprintln!("{}", serde_json::to_string_pretty(&result).unwrap());
             }
         }
         OutputFormat::Text => {
-            println!(
+            cprintln!(
                 "{} {}.{} = {}",
                 "Set".green(),
                 format!("[{}]", args.id).dimmed(),
@@ -54,7 +55,7 @@ pub(crate) fn cmd_set_prop(args: &SetPropArgs) -> Result<()> {
             );
             if args.screenshot {
                 let (_w, _h, path) = take_screenshot(None)?;
-                println!("{path}");
+                cprintln!("{path}");
             }
         }
     }
@@ -76,13 +77,13 @@ pub(crate) fn cmd_suspend(args: &SuspendArgs) -> Result<()> {
 
     match args.format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&result).unwrap());
+            cprintln!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
         OutputFormat::Text => {
             if suspend {
-                println!("{}", "Game suspended".green());
+                cprintln!("{}", "Game suspended".green());
             } else {
-                println!("{}", "Game resumed".green());
+                cprintln!("{}", "Game resumed".green());
             }
         }
     }
@@ -98,10 +99,10 @@ pub(crate) fn cmd_next_frame(args: &StepArgs) -> Result<()> {
 
     match args.format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&result).unwrap());
+            cprintln!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
         OutputFormat::Text => {
-            println!("{}", "Advanced one frame".green());
+            cprintln!("{}", "Advanced one frame".green());
         }
     }
     Ok(())
@@ -118,10 +119,10 @@ pub(crate) fn cmd_time_scale(args: &TimeScaleArgs) -> Result<()> {
 
     match args.format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&result).unwrap());
+            cprintln!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
         OutputFormat::Text => {
-            println!("{}", format!("Time scale set to {}x", args.scale).green());
+            cprintln!("{}", format!("Time scale set to {}x", args.scale).green());
         }
     }
     Ok(())
@@ -142,13 +143,13 @@ pub(crate) fn cmd_reload_scripts(args: &ReloadScriptsArgs) -> Result<()> {
 
     match args.format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&result).unwrap());
+            cprintln!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
         OutputFormat::Text => {
             if args.paths.is_empty() {
-                println!("{}", "All scripts reloaded".green());
+                cprintln!("{}", "All scripts reloaded".green());
             } else {
-                println!("{} {} script(s)", "Reloaded".green(), args.paths.len());
+                cprintln!("{} {} script(s)", "Reloaded".green(), args.paths.len());
             }
         }
     }
@@ -163,12 +164,12 @@ pub(crate) fn cmd_reload_all_scripts(args: &StepArgs) -> Result<()> {
         .ok_or_else(|| miette!("Failed — is a game running with the binary debug protocol?"))?;
     match args.format {
         OutputFormat::Json => {
-            println!(
+            cprintln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({"reloaded": true})).unwrap()
             );
         }
-        OutputFormat::Text => println!("{}", "All scripts reloaded".green()),
+        OutputFormat::Text => cprintln!("{}", "All scripts reloaded".green()),
     }
     Ok(())
 }
@@ -185,16 +186,16 @@ pub(crate) fn cmd_skip_breakpoints(args: &SkipBreakpointsArgs) -> Result<()> {
     .ok_or_else(|| miette!("Failed — is a game running?"))?;
     match args.format {
         OutputFormat::Json => {
-            println!(
+            cprintln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({"skip": skip})).unwrap()
             );
         }
         OutputFormat::Text => {
             if skip {
-                println!("{}", "Breakpoints skipped".green());
+                cprintln!("{}", "Breakpoints skipped".green());
             } else {
-                println!("{}", "Breakpoints re-enabled".green());
+                cprintln!("{}", "Breakpoints re-enabled".green());
             }
         }
     }
@@ -213,16 +214,16 @@ pub(crate) fn cmd_ignore_errors(args: &IgnoreErrorsArgs) -> Result<()> {
     .ok_or_else(|| miette!("Failed — is a game running?"))?;
     match args.format {
         OutputFormat::Json => {
-            println!(
+            cprintln!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({"ignore": ignore})).unwrap()
             );
         }
         OutputFormat::Text => {
             if ignore {
-                println!("{}", "Error breaks ignored".green());
+                cprintln!("{}", "Error breaks ignored".green());
             } else {
-                println!("{}", "Error breaks re-enabled".green());
+                cprintln!("{}", "Error breaks re-enabled".green());
             }
         }
     }
@@ -267,10 +268,10 @@ pub(crate) fn cmd_set_prop_field(args: &SetPropFieldArgs) -> Result<()> {
                     "width": w, "height": h, "format": "png", "path": path,
                 });
             }
-            println!("{}", serde_json::to_string_pretty(&out).unwrap());
+            cprintln!("{}", serde_json::to_string_pretty(&out).unwrap());
         }
         OutputFormat::Text => {
-            println!(
+            cprintln!(
                 "{} {}.{}.{} = {}",
                 "Set".green(),
                 format!("[{}]", args.id).dimmed(),
@@ -280,7 +281,7 @@ pub(crate) fn cmd_set_prop_field(args: &SetPropFieldArgs) -> Result<()> {
             );
             if args.screenshot {
                 let (_w, _h, path) = take_screenshot(None)?;
-                println!("{path}");
+                cprintln!("{path}");
             }
         }
     }

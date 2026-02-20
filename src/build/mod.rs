@@ -155,6 +155,7 @@ var _root: String
 var _tcp: TCPServer
 var _queue: Array = []
 var _eval_id: int = 0
+var _polling: bool = false
 
 func _initialize():
 	_root = ProjectSettings.globalize_path("res://")
@@ -177,6 +178,9 @@ func _initialize():
 	get_root().call_deferred("add_child", timer)
 
 func _poll():
+	if _polling:
+		return
+	_polling = true
 	# 1. Execute all queued runners from previous tick
 	while _queue.size() > 0:
 		var entry = _queue.pop_front()
@@ -184,6 +188,8 @@ func _poll():
 		var peer = entry.peer
 		print("__GD_EVAL_BEGIN__")
 		var result = runner.call("run") if is_instance_valid(runner) else null
+		if result is Signal:
+			result = await result
 		print("__GD_EVAL_END__")
 		if is_instance_valid(runner):
 			runner.queue_free()
@@ -195,6 +201,7 @@ func _poll():
 		var peer = _tcp.take_connection()
 		if peer != null:
 			_accept_eval(peer)
+	_polling = false
 
 func _accept_eval(peer: StreamPeerTCP):
 	# Read request: [4 bytes LE length][script bytes]
@@ -245,6 +252,8 @@ func _accept_eval(peer: StreamPeerTCP):
 		# RefCounted: execute immediately (no scene tree needed)
 		print("__GD_EVAL_BEGIN__")
 		var result = obj.call("run")
+		if result is Signal:
+			result = await result
 		print("__GD_EVAL_END__")
 		var result_str = str(result) if result != null else ""
 		_send_result(peer, result_str, "")
@@ -351,6 +360,8 @@ func _poll():
 		_runner = null
 		_pending_eval_id = _eval_id
 		var result = runner.call("run") if is_instance_valid(runner) else null
+		if result is Signal:
+			result = await result
 		_pending_eval_id = ""
 		if is_instance_valid(runner):
 			runner.queue_free()
