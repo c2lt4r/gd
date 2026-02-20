@@ -4,6 +4,7 @@ use owo_colors::OwoColorize;
 use crate::core::mesh::MeshState;
 
 use super::{MoveVertexArgs, OutputFormat, parse_3d, project_root, run_eval};
+use crate::cprintln;
 
 pub fn cmd_move_vertex(args: &MoveVertexArgs) -> Result<()> {
     let root = project_root()?;
@@ -39,10 +40,10 @@ pub fn cmd_move_vertex(args: &MoveVertexArgs) -> Result<()> {
 
     match args.format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&result).unwrap());
+            cprintln!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
         OutputFormat::Text => {
-            println!(
+            cprintln!(
                 "Moved vertex {}: delta=({dx}, {dy}, {dz})",
                 idx.to_string().green().bold()
             );

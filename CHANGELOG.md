@@ -3,6 +3,9 @@
 ## [0.2.20] - Unreleased
 
 ### Added
+- **`--no-color` flag and `NO_COLOR` env** — disable ANSI color codes in all CLI output. Useful for piping, AI agent tools, and terminal emulators that don't render ANSI (e.g. Claude Code VS Code panel).
+- **`gd lsp references --name` CSV support** — pass comma-separated symbol names (`--name "foo,bar,baz"`) to search for multiple symbols in one call.
+- **Async eval support** — `gd debug eval` now handles GDScript coroutines. Expressions returning `Signal` (from `await`) are automatically awaited. Timer re-entrance during async awaits is prevented with a polling guard.
 - **`gd mesh` command** — procedural 3D mesh editing for Godot via CLI. 42 subcommands for building meshes from 2D profiles, primitives, and transforms without leaving the terminal. Designed for AI agent workflows with JSON output and batch execution.
   - **Workspace**: `init` (create workspace scene), `create` (bootstrap session with camera rig and optional primitive)
   - **Geometry**: `profile` (define 2D polygon on a plane, `--copy-profile-from` for reuse, `--shape circle` for circle/arc profiles), `extrude` (with `--segments N`), `revolve` (with `--cap`, `--degrees`), `taper` (with `--from-scale`/`--to-scale`, `--from`/`--to` range, `--midpoint`), `bevel` (with `--edges all|depth|profile`, `--profile 0.0–1.0` for concave→convex), `subdivide` (edge midpoint, each triangle → 4), `loop-cut` (axis-aligned plane cut), `move-vertex`

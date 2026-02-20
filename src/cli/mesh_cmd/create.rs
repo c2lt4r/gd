@@ -5,6 +5,7 @@ use crate::core::mesh::MeshState;
 
 use super::gdscript;
 use super::{CreateArgs, OutputFormat, project_root, run_eval};
+use crate::cprintln;
 
 pub fn cmd_create(args: &CreateArgs) -> Result<()> {
     let root = project_root()?;
@@ -21,13 +22,13 @@ pub fn cmd_create(args: &CreateArgs) -> Result<()> {
 
     match args.format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&parsed).unwrap());
+            cprintln!("{}", serde_json::to_string_pretty(&parsed).unwrap());
         }
         OutputFormat::Text => {
             let name = parsed["name"].as_str().unwrap_or("?");
             let prim = parsed["primitive"].as_str().unwrap_or("?");
             let vc = parsed["vertex_count"].as_u64().unwrap_or(0);
-            println!(
+            cprintln!(
                 "Mesh session started: {} (primitive: {}, vertices: {vc})",
                 name.green().bold(),
                 prim.cyan()

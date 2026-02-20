@@ -4,6 +4,7 @@ use owo_colors::OwoColorize;
 use crate::core::mesh::MeshState;
 
 use super::{OutputFormat, SolidifyArgs, project_root, run_eval};
+use crate::cprintln;
 
 pub fn cmd_solidify(args: &SolidifyArgs) -> Result<()> {
     let root = project_root()?;
@@ -29,11 +30,11 @@ pub fn cmd_solidify(args: &SolidifyArgs) -> Result<()> {
 
     match args.format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&result).unwrap());
+            cprintln!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
         OutputFormat::Text => {
             let t = args.thickness;
-            println!(
+            cprintln!(
                 "Solidified: thickness {t:.3}, {vc} vertices, {fc} faces",
                 vc = vc.to_string().green().bold(),
                 fc = fc.to_string().cyan(),

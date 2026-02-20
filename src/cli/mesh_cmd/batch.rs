@@ -5,6 +5,8 @@ use owo_colors::OwoColorize;
 
 use crate::core::mesh::{MeshState, PlaneKind, ShadingMode, normals};
 
+use crate::cprintln;
+
 use super::gdscript;
 use super::{BatchArgs, OutputFormat, project_root, run_eval};
 
@@ -36,10 +38,10 @@ pub fn cmd_batch(args: &BatchArgs) -> Result<()> {
                 "commands_run": results.len(),
                 "results": results,
             });
-            println!("{}", serde_json::to_string_pretty(&output).unwrap());
+            cprintln!("{}", serde_json::to_string_pretty(&output).unwrap());
         }
         OutputFormat::Text => {
-            println!(
+            cprintln!(
                 "Batch complete: {} commands executed",
                 results.len().to_string().green()
             );
@@ -51,7 +53,7 @@ pub fn cmd_batch(args: &BatchArgs) -> Result<()> {
                 } else {
                     "FAILED".red().to_string()
                 };
-                println!("  {}: {} — {status}", (i + 1).to_string().dimmed(), cmd);
+                cprintln!("  {}: {} — {status}", (i + 1).to_string().dimmed(), cmd);
             }
         }
     }
@@ -125,8 +127,10 @@ fn execute_batch_command(
                 None if profile.len() >= 8 => 0.15,
                 None => 0.0,
             };
-            let mesh = crate::core::mesh::extrude::extrude_with_inset(&profile, plane, depth, segments, inset)
-                .ok_or_else(|| miette!("Command {index}: extrude failed"))?;
+            let mesh = crate::core::mesh::extrude::extrude_with_inset(
+                &profile, plane, depth, segments, inset,
+            )
+            .ok_or_else(|| miette!("Command {index}: extrude failed"))?;
             let vc = mesh.vertex_count();
             let fc = mesh.face_count();
             state.active_part_mut()?.mesh = mesh;
@@ -383,7 +387,8 @@ fn execute_batch_command(
             #[allow(clippy::cast_possible_truncation)]
             let count = cmd["count"]
                 .as_u64()
-                .ok_or_else(|| miette!("Command {index}: array needs 'count'"))? as usize;
+                .ok_or_else(|| miette!("Command {index}: array needs 'count'"))?
+                as usize;
             let offset_str = cmd["offset"]
                 .as_str()
                 .ok_or_else(|| miette!("Command {index}: array needs 'offset'"))?;
@@ -438,10 +443,7 @@ fn execute_batch_command(
                 "shade-flat" => ShadingMode::Flat,
                 _ => ShadingMode::AutoSmooth(cmd["angle"].as_f64().unwrap_or(30.0)),
             };
-            let part_name = cmd["part"]
-                .as_str()
-                .unwrap_or(&state.active)
-                .to_string();
+            let part_name = cmd["part"].as_str().unwrap_or(&state.active).to_string();
             let p = state
                 .parts
                 .get_mut(&part_name)
@@ -564,11 +566,7 @@ fn parse_plane(s: &str, index: usize) -> Result<PlaneKind> {
 }
 
 /// Generate 2D shape points from batch JSON `{"shape":"circle","radius":0.5,"segments":16}`.
-fn batch_shape_points(
-    shape: &str,
-    cmd: &serde_json::Value,
-    index: usize,
-) -> Result<Vec<[f64; 2]>> {
+fn batch_shape_points(shape: &str, cmd: &serde_json::Value, index: usize) -> Result<Vec<[f64; 2]>> {
     use std::f64::consts::TAU;
 
     match shape {

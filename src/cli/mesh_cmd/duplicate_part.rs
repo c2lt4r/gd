@@ -5,6 +5,7 @@ use crate::core::mesh::MeshState;
 
 use super::gdscript;
 use super::{DuplicatePartArgs, OutputFormat, project_root, run_eval};
+use crate::cprintln;
 
 pub fn cmd_duplicate_part(args: &DuplicatePartArgs) -> Result<()> {
     let root = project_root()?;
@@ -56,21 +57,21 @@ pub fn cmd_duplicate_part(args: &DuplicatePartArgs) -> Result<()> {
 
     match args.format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&parsed).unwrap());
+            cprintln!("{}", serde_json::to_string_pretty(&parsed).unwrap());
         }
         OutputFormat::Text => {
             let src = &args.name;
             let dst = &args.as_name;
             let pc = state.parts.len();
             if let Some(axis) = mirror_axis {
-                println!(
+                cprintln!(
                     "Mirrored {} -> {} (axis={}, {pc} parts total)",
                     src.cyan(),
                     dst.green().bold(),
                     axis.as_str().yellow(),
                 );
             } else {
-                println!(
+                cprintln!(
                     "Duplicated {} -> {} ({pc} parts total)",
                     src.cyan(),
                     dst.green().bold(),

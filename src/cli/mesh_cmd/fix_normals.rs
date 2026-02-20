@@ -5,6 +5,7 @@ use crate::core::mesh::MeshState;
 use crate::core::mesh::normals;
 
 use super::{FixNormalsArgs, OutputFormat, project_root, run_eval};
+use crate::{ceprintln, cprintln};
 
 pub fn cmd_fix_normals(args: &FixNormalsArgs) -> Result<()> {
     if args.all {
@@ -34,10 +35,10 @@ pub fn cmd_fix_normals(args: &FixNormalsArgs) -> Result<()> {
 
     match args.format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&result).unwrap());
+            cprintln!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
         OutputFormat::Text => {
-            println!(
+            cprintln!(
                 "Fixed normals on {}: {}/{} faces corrected",
                 part_name.cyan(),
                 flipped.to_string().green(),
@@ -72,7 +73,7 @@ fn cmd_fix_normals_all(args: &FixNormalsArgs) -> Result<()> {
     for name in &names {
         let push = state.generate_push_script(name)?;
         if let Err(e) = run_eval(&push) {
-            eprintln!("Warning: skipping push for '{name}': {e}");
+            ceprintln!("Warning: skipping push for '{name}': {e}");
         }
     }
 
@@ -83,10 +84,10 @@ fn cmd_fix_normals_all(args: &FixNormalsArgs) -> Result<()> {
 
     match args.format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&result).unwrap());
+            cprintln!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
         OutputFormat::Text => {
-            println!(
+            cprintln!(
                 "Fixed normals on {} parts:",
                 names.len().to_string().green()
             );
@@ -94,7 +95,7 @@ fn cmd_fix_normals_all(args: &FixNormalsArgs) -> Result<()> {
                 let name = r["name"].as_str().unwrap_or("?");
                 let flipped = r["faces_flipped"].as_u64().unwrap_or(0);
                 let total = r["total_faces"].as_u64().unwrap_or(0);
-                println!(
+                cprintln!(
                     "  {}: {}/{} faces corrected",
                     name.cyan(),
                     flipped.to_string().green(),

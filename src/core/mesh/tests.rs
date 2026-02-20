@@ -1271,8 +1271,7 @@ fn cap_inset_adds_quad_ring() {
         .collect();
 
     let mesh_no_inset = extrude::extrude(&points, PlaneKind::Front, 2.0, 1).unwrap();
-    let mesh_inset =
-        extrude::extrude_with_inset(&points, PlaneKind::Front, 2.0, 1, 0.15).unwrap();
+    let mesh_inset = extrude::extrude_with_inset(&points, PlaneKind::Front, 2.0, 1, 0.15).unwrap();
 
     // Inset adds 2 rings of n_pts inset vertices (front + back)
     assert_eq!(
@@ -1305,8 +1304,7 @@ fn cap_inset_side_plane_normals_correct() {
         })
         .collect();
 
-    let mesh =
-        extrude::extrude_with_inset(&points, PlaneKind::Side, 2.0, 1, 0.15).unwrap();
+    let mesh = extrude::extrude_with_inset(&points, PlaneKind::Side, 2.0, 1, 0.15).unwrap();
     assert_all_normals_outward(&mesh, "inset cap side plane");
 }
 
@@ -1438,12 +1436,7 @@ fn boolean_union_combines_meshes() {
     let target = cube_mesh();
     let tool = cube_mesh();
     // Offset far away → union should have faces from both
-    let result = boolean::boolean_op(
-        &target,
-        &tool,
-        [5.0, 0.0, 0.0],
-        boolean::BooleanMode::Union,
-    );
+    let result = boolean::boolean_op(&target, &tool, [5.0, 0.0, 0.0], boolean::BooleanMode::Union);
     assert_eq!(
         result.faces.len(),
         target.faces.len() + tool.faces.len(),
@@ -1455,12 +1448,7 @@ fn boolean_union_combines_meshes() {
 fn boolean_union_overlapping_reduces_faces() {
     let target = cube_mesh();
     let tool = cube_mesh();
-    let result = boolean::boolean_op(
-        &target,
-        &tool,
-        [0.3, 0.0, 0.0],
-        boolean::BooleanMode::Union,
-    );
+    let result = boolean::boolean_op(&target, &tool, [0.3, 0.0, 0.0], boolean::BooleanMode::Union);
     // Overlapping union should have fewer faces than both combined
     assert!(
         result.faces.len() < target.faces.len() + tool.faces.len(),
@@ -1497,7 +1485,11 @@ fn boolean_intersect_no_overlap_empty() {
         [10.0, 0.0, 0.0],
         boolean::BooleanMode::Intersect,
     );
-    assert_eq!(result.faces.len(), 0, "no-overlap intersect should be empty");
+    assert_eq!(
+        result.faces.len(),
+        0,
+        "no-overlap intersect should be empty"
+    );
 }
 
 // ── Bevel profile ────────────────────────────────────────────────────
@@ -1520,7 +1512,10 @@ fn bevel_profile_concave_differs_from_convex() {
             break;
         }
     }
-    assert!(any_different, "concave and convex bevels should differ in geometry");
+    assert!(
+        any_different,
+        "concave and convex bevels should differ in geometry"
+    );
 }
 
 #[test]
@@ -1592,4 +1587,3 @@ fn outward_dot_sum(mesh: &HalfEdgeMesh) -> f64 {
     }
     sum
 }
-

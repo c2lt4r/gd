@@ -7,6 +7,7 @@ use crate::core::mesh::{MeshState, PlaneKind};
 
 use super::gdscript;
 use super::{OutputFormat, ProfileArgs, ProfileShape, parse_points, project_root, run_eval};
+use crate::cprintln;
 
 pub fn cmd_profile(args: &ProfileArgs) -> Result<()> {
     let root = project_root()?;
@@ -100,10 +101,10 @@ fn print_result(resolved: &ResolvedProfile, format: &OutputFormat) {
 
     match format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&result).unwrap());
+            cprintln!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
         OutputFormat::Text => {
-            println!(
+            cprintln!(
                 "Profile set: {} ({} points) on {} plane",
                 resolved.label.cyan(),
                 resolved.points.len().to_string().green().bold(),

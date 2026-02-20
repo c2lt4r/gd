@@ -5,6 +5,7 @@ use crate::core::mesh::MeshState;
 use crate::core::mesh::boolean::{self, BooleanMode};
 
 use super::{BooleanArgs, BooleanOp, OutputFormat, parse_3d, project_root, run_eval};
+use crate::cprintln;
 
 pub fn cmd_boolean(args: &BooleanArgs) -> Result<()> {
     let root = project_root()?;
@@ -56,10 +57,10 @@ pub fn cmd_boolean(args: &BooleanArgs) -> Result<()> {
 
     match args.format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&result).unwrap());
+            cprintln!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
         OutputFormat::Text => {
-            println!(
+            cprintln!(
                 "Boolean {}: {} with {}, {fc} faces, {vc} vertices",
                 mode_str.cyan(),
                 active_name.green().bold(),

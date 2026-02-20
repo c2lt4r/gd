@@ -4,6 +4,7 @@ use owo_colors::OwoColorize;
 use crate::core::mesh::MeshState;
 
 use super::{LoopCutArgs, OutputFormat, project_root, run_eval};
+use crate::cprintln;
 
 pub fn cmd_loop_cut(args: &LoopCutArgs) -> Result<()> {
     let root = project_root()?;
@@ -35,11 +36,11 @@ pub fn cmd_loop_cut(args: &LoopCutArgs) -> Result<()> {
 
     match args.format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&result).unwrap());
+            cprintln!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
         OutputFormat::Text => {
             let at = args.at;
-            println!(
+            cprintln!(
                 "Loop cut at {}={at:.2}: {splits} triangles split, {vc} vertices",
                 args.axis.as_str().cyan()
             );

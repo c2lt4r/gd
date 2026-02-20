@@ -14,12 +14,7 @@ use super::normals::compute_face_normal;
 /// and vertex cap polygons.
 #[allow(clippy::too_many_lines)]
 #[cfg(test)]
-pub fn bevel(
-    mesh: &HalfEdgeMesh,
-    radius: f64,
-    segments: u32,
-    edge_filter: &str,
-) -> HalfEdgeMesh {
+pub fn bevel(mesh: &HalfEdgeMesh, radius: f64, segments: u32, edge_filter: &str) -> HalfEdgeMesh {
     bevel_with_profile(mesh, radius, segments, edge_filter, 0.5)
 }
 
@@ -61,10 +56,7 @@ pub fn bevel_with_profile(
     }
 
     // Affected vertices — those touching at least one sharp edge
-    let affected: HashSet<usize> = sharp_set
-        .iter()
-        .flat_map(|&(a, b)| [a, b])
-        .collect();
+    let affected: HashSet<usize> = sharp_set.iter().flat_map(|&(a, b)| [a, b]).collect();
 
     // Face centroids for inset direction calculation
     let face_centroids: Vec<[f64; 3]> = (0..mesh.faces.len())
@@ -271,7 +263,11 @@ fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
 }
 
 fn midpoint(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
-    [(a[0] + b[0]) * 0.5, (a[1] + b[1]) * 0.5, (a[2] + b[2]) * 0.5]
+    [
+        (a[0] + b[0]) * 0.5,
+        (a[1] + b[1]) * 0.5,
+        (a[2] + b[2]) * 0.5,
+    ]
 }
 
 /// Lerp between two positions. t=0 → a, t=1 → b. t can be negative (extrapolation).
@@ -392,4 +388,3 @@ fn is_depth_edge(mesh: &HalfEdgeMesh, he_idx: usize) -> bool {
 fn is_profile_edge(mesh: &HalfEdgeMesh, he_idx: usize) -> bool {
     !is_depth_edge(mesh, he_idx)
 }
-

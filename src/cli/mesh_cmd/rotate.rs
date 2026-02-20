@@ -5,6 +5,7 @@ use crate::core::mesh::MeshState;
 
 use super::gdscript;
 use super::{OutputFormat, RotateArgs, parse_3d, project_root, run_eval};
+use crate::cprintln;
 
 pub fn cmd_rotate(args: &RotateArgs) -> Result<()> {
     let (rx, ry, rz) = parse_3d(&args.degrees)?;
@@ -31,11 +32,11 @@ pub fn cmd_rotate(args: &RotateArgs) -> Result<()> {
 
     match args.format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&parsed).unwrap());
+            cprintln!("{}", serde_json::to_string_pretty(&parsed).unwrap());
         }
         OutputFormat::Text => {
             let name = parsed["name"].as_str().unwrap_or("?");
-            println!(
+            cprintln!(
                 "Rotated {}: ({rx:.1}, {ry:.1}, {rz:.1}) degrees",
                 name.green().bold(),
             );

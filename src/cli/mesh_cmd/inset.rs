@@ -4,6 +4,7 @@ use owo_colors::OwoColorize;
 use crate::core::mesh::MeshState;
 
 use super::{InsetArgs, OutputFormat, project_root, run_eval};
+use crate::cprintln;
 
 pub fn cmd_inset(args: &InsetArgs) -> Result<()> {
     let root = project_root()?;
@@ -29,11 +30,11 @@ pub fn cmd_inset(args: &InsetArgs) -> Result<()> {
 
     match args.format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&result).unwrap());
+            cprintln!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
         OutputFormat::Text => {
             let f = args.factor;
-            println!(
+            cprintln!(
                 "Inset: factor {f:.3}, {vc} vertices, {fc} faces",
                 vc = vc.to_string().green().bold(),
                 fc = fc.to_string().cyan(),

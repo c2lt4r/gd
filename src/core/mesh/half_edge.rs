@@ -361,10 +361,7 @@ impl HalfEdgeMesh {
     // ── Export ───────────────────────────────────────────────────────
 
     /// Export with shading mode: Smooth, Flat, or AutoSmooth.
-    pub fn to_arrays_shaded(
-        &self,
-        mode: super::ShadingMode,
-    ) -> (Vec<f64>, Vec<f64>, Vec<u32>) {
+    pub fn to_arrays_shaded(&self, mode: super::ShadingMode) -> (Vec<f64>, Vec<f64>, Vec<u32>) {
         match mode {
             super::ShadingMode::Smooth => self.to_arrays(),
             super::ShadingMode::Flat => self.to_arrays_flat(),
@@ -511,44 +508,56 @@ impl HalfEdgeMesh {
 
         for (f, face) in self.faces.iter().enumerate() {
             let verts = self.face_vertices_from_he(face.half_edge);
-            let emit_tri = |vlist: &[usize],
-                            positions: &mut Vec<f64>,
-                            normal_data: &mut Vec<f64>,
-                            indices: &mut Vec<u32>,
-                            vert_map: &mut HashMap<(usize, [i64; 3]), u32>,
-                            vert_face_normal: &HashMap<(usize, usize), [f64; 3]>| {
-                for &v in vlist {
-                    let n = vert_face_normal.get(&(v, f)).copied().unwrap_or(face_normals[f]);
-                    // Quantize normal to detect sharing (6 decimal places)
-                    let nq = [
-                        (n[0] * 1_000_000.0) as i64,
-                        (n[1] * 1_000_000.0) as i64,
-                        (n[2] * 1_000_000.0) as i64,
-                    ];
-                    let key = (v, nq);
-                    if let Some(&idx) = vert_map.get(&key) {
-                        indices.push(idx);
-                    } else {
-                        let idx = (positions.len() / 3) as u32;
-                        positions.extend_from_slice(&self.vertices[v].position);
-                        normal_data.extend_from_slice(&n);
-                        vert_map.insert(key, idx);
-                        indices.push(idx);
+            let emit_tri =
+                |vlist: &[usize],
+                 positions: &mut Vec<f64>,
+                 normal_data: &mut Vec<f64>,
+                 indices: &mut Vec<u32>,
+                 vert_map: &mut HashMap<(usize, [i64; 3]), u32>,
+                 vert_face_normal: &HashMap<(usize, usize), [f64; 3]>| {
+                    for &v in vlist {
+                        let n = vert_face_normal
+                            .get(&(v, f))
+                            .copied()
+                            .unwrap_or(face_normals[f]);
+                        // Quantize normal to detect sharing (6 decimal places)
+                        let nq = [
+                            (n[0] * 1_000_000.0) as i64,
+                            (n[1] * 1_000_000.0) as i64,
+                            (n[2] * 1_000_000.0) as i64,
+                        ];
+                        let key = (v, nq);
+                        if let Some(&idx) = vert_map.get(&key) {
+                            indices.push(idx);
+                        } else {
+                            let idx = (positions.len() / 3) as u32;
+                            positions.extend_from_slice(&self.vertices[v].position);
+                            normal_data.extend_from_slice(&n);
+                            vert_map.insert(key, idx);
+                            indices.push(idx);
+                        }
                     }
-                }
-            };
+                };
 
             if verts.len() == 3 {
                 emit_tri(
-                    &verts, &mut positions, &mut normal_data, &mut indices,
-                    &mut vert_map, &vert_face_normal,
+                    &verts,
+                    &mut positions,
+                    &mut normal_data,
+                    &mut indices,
+                    &mut vert_map,
+                    &vert_face_normal,
                 );
             } else if verts.len() > 3 {
                 for i in 1..verts.len() - 1 {
                     let tri = [verts[0], verts[i], verts[i + 1]];
                     emit_tri(
-                        &tri, &mut positions, &mut normal_data, &mut indices,
-                        &mut vert_map, &vert_face_normal,
+                        &tri,
+                        &mut positions,
+                        &mut normal_data,
+                        &mut indices,
+                        &mut vert_map,
+                        &vert_face_normal,
                     );
                 }
             }

@@ -4,6 +4,7 @@ use owo_colors::OwoColorize;
 use crate::core::mesh::MeshState;
 
 use super::{ExtrudeArgs, OutputFormat, project_root, run_eval};
+use crate::cprintln;
 
 pub fn cmd_extrude(args: &ExtrudeArgs) -> Result<()> {
     let root = project_root()?;
@@ -30,9 +31,14 @@ pub fn cmd_extrude(args: &ExtrudeArgs) -> Result<()> {
         None => 0.0,
     };
 
-    let mesh =
-        crate::core::mesh::extrude::extrude_with_inset(&profile, plane, args.depth, args.segments, inset)
-            .ok_or_else(|| miette!("Failed to extrude (invalid profile?)"))?;
+    let mesh = crate::core::mesh::extrude::extrude_with_inset(
+        &profile,
+        plane,
+        args.depth,
+        args.segments,
+        inset,
+    )
+    .ok_or_else(|| miette!("Failed to extrude (invalid profile?)"))?;
 
     let vc = mesh.vertex_count();
     let fc = mesh.face_count();
@@ -58,10 +64,10 @@ pub fn cmd_extrude(args: &ExtrudeArgs) -> Result<()> {
 
     match args.format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&result).unwrap());
+            cprintln!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
         OutputFormat::Text => {
-            println!(
+            cprintln!(
                 "Extruded: depth={}, vertices={vc}, faces={fc}",
                 format!("{}", args.depth).green().bold()
             );

@@ -21,7 +21,7 @@ pub fn is_disabled() -> bool {
 }
 
 /// Strip ANSI SGR escape sequences (`\x1b[...m`) from a string.
-/// Only touches styling escapes — safe for all text content.
+/// Only touches styling escapes — safe for all text content including UTF-8.
 pub fn strip_ansi(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut out = String::with_capacity(s.len());
@@ -37,11 +37,28 @@ pub fn strip_ansi(s: &str) -> String {
                 i += 1; // skip 'm'
             }
         } else {
-            out.push(bytes[i] as char);
-            i += 1;
+            // Advance by full UTF-8 character (1-4 bytes depending on leading byte)
+            let ch_len = utf8_char_len(bytes[i]);
+            if i + ch_len <= bytes.len() {
+                out.push_str(&s[i..i + ch_len]);
+            }
+            i += ch_len;
         }
     }
     out
+}
+
+/// Returns the byte length of a UTF-8 character from its leading byte.
+const fn utf8_char_len(b: u8) -> usize {
+    if b < 0x80 {
+        1
+    } else if b < 0xE0 {
+        2
+    } else if b < 0xF0 {
+        3
+    } else {
+        4
+    }
 }
 
 /// Like `println!`, but strips ANSI color codes when `NO_COLOR` is active.
@@ -93,5 +110,15 @@ mod tests {
     fn strip_ansi_handles_nested() {
         // Bold + color
         assert_eq!(strip_ansi("\x1b[1m\x1b[36mtext\x1b[39m\x1b[22m"), "text");
+    }
+
+    #[test]
+    fn strip_ansi_preserves_utf8() {
+        // Checkmark (3-byte UTF-8: E2 9C 93)
+        assert_eq!(strip_ansi("\x1b[32m✓\x1b[39m"), "✓");
+        // Cross mark + emoji
+        assert_eq!(strip_ansi("\x1b[1m✗\x1b[0m → done"), "✗ → done");
+        // Plain UTF-8 untouched
+        assert_eq!(strip_ansi("résumé café"), "résumé café");
     }
 }

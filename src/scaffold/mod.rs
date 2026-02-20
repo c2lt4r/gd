@@ -5,6 +5,7 @@ use std::io;
 use std::path::Path;
 use std::process::Command;
 
+use crate::cprintln;
 use miette::{Context, IntoDiagnostic, bail};
 use owo_colors::OwoColorize;
 
@@ -61,7 +62,7 @@ pub fn create_project(name: &str, template: &str) -> miette::Result<()> {
         .success();
 
     // Print summary
-    println!(
+    cprintln!(
         "\n  {} Created project {} (template: {})\n",
         "✓".green().bold(),
         name.cyan().bold(),
@@ -69,19 +70,19 @@ pub fn create_project(name: &str, template: &str) -> miette::Result<()> {
     );
 
     for (filename, _) in files {
-        println!("    {} {}", "+".green(), filename);
+        cprintln!("    {} {}", "+".green(), filename);
     }
 
     if git_ok {
-        println!("    {} Initialized git repository", "+".green());
+        cprintln!("    {} Initialized git repository", "+".green());
     } else {
-        println!(
+        cprintln!(
             "    {} git init failed (git may not be installed)",
             "!".yellow()
         );
     }
 
-    println!("\n  Run {} to get started.\n", format!("cd {name}").cyan());
+    cprintln!("\n  Run {} to get started.\n", format!("cd {name}").cyan());
 
     Ok(())
 }
@@ -126,7 +127,7 @@ pub fn create_from_github(name: &str, from: &str) -> miette::Result<()> {
         None => resolve_default_branch(owner, repo)?,
     };
 
-    println!(
+    cprintln!(
         "  Downloading {}/{} ({})...",
         owner.cyan(),
         repo.cyan(),
@@ -213,23 +214,23 @@ pub fn create_from_github(name: &str, from: &str) -> miette::Result<()> {
         .success();
 
     // Print summary
-    println!(
+    cprintln!(
         "\n  {} Created project {} from {}/{}\n",
         "✓".green().bold(),
         name.cyan().bold(),
         owner,
         repo,
     );
-    println!("    {} {} files extracted", "+".green(), file_count);
+    cprintln!("    {} {} files extracted", "+".green(), file_count);
     if git_ok {
-        println!("    {} Initialized git repository", "+".green());
+        cprintln!("    {} Initialized git repository", "+".green());
     } else {
-        println!(
+        cprintln!(
             "    {} git init failed (git may not be installed)",
             "!".yellow()
         );
     }
-    println!("\n  Run {} to get started.\n", format!("cd {name}").cyan());
+    cprintln!("\n  Run {} to get started.\n", format!("cd {name}").cyan());
 
     Ok(())
 }

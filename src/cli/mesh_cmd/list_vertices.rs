@@ -3,6 +3,7 @@ use owo_colors::OwoColorize;
 
 use super::gdscript;
 use super::{ListVerticesArgs, OutputFormat, parse_3d, run_eval};
+use crate::cprintln;
 
 pub fn cmd_list_vertices(args: &ListVerticesArgs) -> Result<()> {
     let region = if let Some(ref r) = args.region {
@@ -26,13 +27,13 @@ pub fn cmd_list_vertices(args: &ListVerticesArgs) -> Result<()> {
 
     match args.format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&parsed).unwrap());
+            cprintln!("{}", serde_json::to_string_pretty(&parsed).unwrap());
         }
         OutputFormat::Text => {
             let name = parsed["name"].as_str().unwrap_or("?");
             let total = parsed["total_vertices"].as_u64().unwrap_or(0);
             let returned = parsed["returned"].as_u64().unwrap_or(0);
-            println!(
+            cprintln!(
                 "{}: {returned}/{total} vertices{}",
                 name.green().bold(),
                 if args.region.is_some() {
@@ -45,7 +46,7 @@ pub fn cmd_list_vertices(args: &ListVerticesArgs) -> Result<()> {
                 for v in verts {
                     let idx = v["index"].as_u64().unwrap_or(0);
                     if let Some(pos) = v["position"].as_array() {
-                        println!(
+                        cprintln!(
                             "  [{idx}]: ({:.4}, {:.4}, {:.4})",
                             pos[0].as_f64().unwrap_or(0.0),
                             pos[1].as_f64().unwrap_or(0.0),

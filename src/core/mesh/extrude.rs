@@ -61,8 +61,16 @@ pub fn extrude_with_inset(
 
     if use_inset {
         build_inset_caps(
-            points, plane, &cap_indices, cap_flip, n_pts, n_segs,
-            half, inset_factor, &mut positions, &mut indices,
+            points,
+            plane,
+            &cap_indices,
+            cap_flip,
+            n_pts,
+            n_segs,
+            half,
+            inset_factor,
+            &mut positions,
+            &mut indices,
         )?;
     } else {
         build_standard_caps(&cap_indices, cap_flip, n_pts, n_segs, &mut indices);
@@ -152,14 +160,24 @@ fn build_inset_caps(
 
     // Front cap: outer quad ring + inner polygon
     build_inset_cap_one_side(
-        0, front_inset_base, cap_flip, false, n_pts,
-        &inner_cap_indices, indices,
+        0,
+        front_inset_base,
+        cap_flip,
+        false,
+        n_pts,
+        &inner_cap_indices,
+        indices,
     );
 
     // Back cap: outer quad ring + inner polygon (reversed)
     build_inset_cap_one_side(
-        n_segs * n_pts, back_inset_base, cap_flip, true, n_pts,
-        &inner_cap_indices, indices,
+        n_segs * n_pts,
+        back_inset_base,
+        cap_flip,
+        true,
+        n_pts,
+        &inner_cap_indices,
+        indices,
     );
 
     Some(())

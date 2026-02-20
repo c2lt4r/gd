@@ -5,6 +5,7 @@ use owo_colors::OwoColorize;
 
 use super::gdscript;
 use super::{DescribeArgs, OutputFormat, run_eval};
+use crate::cprintln;
 
 pub fn cmd_describe(args: &DescribeArgs) -> Result<()> {
     // 1. Focus all parts so composite view works
@@ -74,7 +75,7 @@ pub fn cmd_describe(args: &DescribeArgs) -> Result<()> {
             output["views"] = serde_json::Value::Object(views_map);
             output["camera_size"] = autofit["camera_size"].clone();
             output["center"] = autofit["center"].clone();
-            println!("{}", serde_json::to_string_pretty(&output).unwrap());
+            cprintln!("{}", serde_json::to_string_pretty(&output).unwrap());
         }
         OutputFormat::Text => {
             // Part summary
@@ -82,7 +83,7 @@ pub fn cmd_describe(args: &DescribeArgs) -> Result<()> {
             let count = info["part_count"].as_u64().unwrap_or(0);
             let total_vc = info["total_vertex_count"].as_u64().unwrap_or(0);
             let total_fc = info["total_face_count"].as_u64().unwrap_or(0);
-            println!(
+            cprintln!(
                 "{count} parts, {total_vc} vertices, {total_fc} faces (active: {})",
                 active.cyan()
             );
@@ -91,12 +92,12 @@ pub fn cmd_describe(args: &DescribeArgs) -> Result<()> {
                     let name = p["name"].as_str().unwrap_or("?");
                     let vc = p["vertex_count"].as_u64().unwrap_or(0);
                     let marker = if name == active { " *" } else { "" };
-                    println!("  {}{marker}: {vc} vertices", name.green());
+                    cprintln!("  {}{marker}: {vc} vertices", name.green());
                 }
             }
-            println!();
+            cprintln!();
             for (view, path) in &captures {
-                println!("{} {view}: {}", "Screenshot".green(), path.cyan());
+                cprintln!("{} {view}: {}", "Screenshot".green(), path.cyan());
             }
         }
     }

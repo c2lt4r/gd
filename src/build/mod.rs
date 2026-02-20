@@ -7,6 +7,7 @@ use std::process::{Command, Stdio};
 use crate::core::config::Config;
 use crate::core::fs;
 use crate::core::project::GodotProject;
+use crate::{ceprintln, cprintln};
 
 /// Binary names to search for on PATH.
 const GODOT_BINARY_NAMES: &[&str] = &["godot", "godot4", "godot-4"];
@@ -643,7 +644,7 @@ fn print_status_line(project_name: &str, debug_port: Option<u64>, eval: bool) {
     } else {
         " (bare — no eval server)"
     };
-    println!(
+    cprintln!(
         "{} Running {}{debug_info}{eval_info}",
         "▶".green(),
         project_name.bold(),
@@ -725,7 +726,7 @@ pub fn export_project(preset: Option<&str>, output: Option<&str>, release: bool)
     };
 
     let mode = if release { "release" } else { "debug" };
-    println!(
+    cprintln!(
         "{} Exporting '{}' ({}) to {}",
         "▶".green(),
         preset_name.bold(),
@@ -762,18 +763,18 @@ pub fn export_project(preset: Option<&str>, output: Option<&str>, release: bool)
     if !child_output.status.success() {
         let stderr = String::from_utf8_lossy(&child_output.stderr);
         let stdout = String::from_utf8_lossy(&child_output.stdout);
-        eprintln!("{} Export failed", "✗".red().bold());
+        ceprintln!("{} Export failed", "✗".red().bold());
         if !stdout.is_empty() {
-            eprintln!("{stdout}");
+            ceprintln!("{stdout}");
         }
         if !stderr.is_empty() {
-            eprintln!("{stderr}");
+            ceprintln!("{stderr}");
         }
         let code = child_output.status.code().unwrap_or(1);
         std::process::exit(code);
     }
 
-    println!("{} Export complete: {}", "✓".green(), output_file.display());
+    cprintln!("{} Export complete: {}", "✓".green(), output_file.display());
     Ok(())
 }
 

@@ -2,6 +2,7 @@ use miette::{Result, miette};
 use owo_colors::OwoColorize;
 
 use super::{InitArgs, OutputFormat, project_root};
+use crate::cprintln;
 
 /// Minimal 3D workspace scene with lighting and a neutral background.
 const WORKSPACE_SCENE: &str = "\
@@ -48,16 +49,16 @@ pub fn cmd_init(args: &InitArgs) -> Result<()> {
                 "scene": args.scene,
                 "main_scene": res_scene,
             });
-            println!("{}", serde_json::to_string_pretty(&output).unwrap());
+            cprintln!("{}", serde_json::to_string_pretty(&output).unwrap());
         }
         OutputFormat::Text => {
-            println!("Created mesh workspace: {}", args.scene.green());
-            println!("Main scene set to: {res_scene}");
-            println!("Start with: {}", "gd run".cyan());
-            println!();
-            println!("Coordinate system:");
-            println!("  X = right/left,  Y = up/down,  Z = toward/away from camera");
-            println!("  Forward = -Z,  1 unit = 1 meter");
+            cprintln!("Created mesh workspace: {}", args.scene.green());
+            cprintln!("Main scene set to: {res_scene}");
+            cprintln!("Start with: {}", "gd run".cyan());
+            cprintln!();
+            cprintln!("Coordinate system:");
+            cprintln!("  X = right/left,  Y = up/down,  Z = toward/away from camera");
+            cprintln!("  Forward = -Z,  1 unit = 1 meter");
         }
     }
     Ok(())

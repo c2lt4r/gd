@@ -3,6 +3,7 @@ use owo_colors::OwoColorize;
 
 use super::gdscript;
 use super::{FocusArgs, OutputFormat, run_eval};
+use crate::cprintln;
 
 pub fn cmd_focus(args: &FocusArgs) -> Result<()> {
     if !args.all && args.part.is_none() {
@@ -23,20 +24,20 @@ pub fn cmd_focus(args: &FocusArgs) -> Result<()> {
 
     match args.format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&parsed).unwrap());
+            cprintln!("{}", serde_json::to_string_pretty(&parsed).unwrap());
         }
         OutputFormat::Text => {
             let active = parsed["active"].as_str().unwrap_or("?");
             if args.all {
                 let pc = parsed["part_count"].as_u64().unwrap_or(0);
-                println!(
+                cprintln!(
                     "Showing {} parts (active: {})",
                     pc.to_string().green().bold(),
                     active.cyan()
                 );
             } else {
                 let vc = parsed["vertex_count"].as_u64().unwrap_or(0);
-                println!("Focused: {} ({vc} vertices)", active.green().bold(),);
+                cprintln!("Focused: {} ({vc} vertices)", active.green().bold(),);
             }
         }
     }

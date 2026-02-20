@@ -4,6 +4,7 @@ use owo_colors::OwoColorize;
 use crate::core::mesh::MeshState;
 
 use super::{BevelArgs, OutputFormat, project_root, run_eval};
+use crate::cprintln;
 
 pub fn cmd_bevel(args: &BevelArgs) -> Result<()> {
     let root = project_root()?;
@@ -38,12 +39,12 @@ pub fn cmd_bevel(args: &BevelArgs) -> Result<()> {
 
     match args.format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&result).unwrap());
+            cprintln!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
         OutputFormat::Text => {
             let r = args.radius;
             let segs = args.segments;
-            println!(
+            cprintln!(
                 "Beveled: radius {r:.3}, {segs} segments, {} edges, {vc} vertices",
                 args.edges.as_str().cyan()
             );

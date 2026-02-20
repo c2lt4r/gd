@@ -3,6 +3,7 @@ use owo_colors::OwoColorize;
 
 use super::gdscript;
 use super::{MaterialArgs, MaterialPreset, OutputFormat, run_eval};
+use crate::cprintln;
 
 /// Normalize a color string: strip leading '#', expand named colors to hex.
 fn normalize_color(input: &str) -> String {
@@ -55,12 +56,12 @@ pub fn cmd_material(args: &MaterialArgs) -> Result<()> {
 
         match args.format {
             OutputFormat::Json => {
-                println!("{}", serde_json::to_string_pretty(&parsed).unwrap());
+                cprintln!("{}", serde_json::to_string_pretty(&parsed).unwrap());
             }
             OutputFormat::Text => {
                 let count = parsed["count"].as_u64().unwrap_or(0);
                 let pat = parsed["pattern"].as_str().unwrap_or("?");
-                println!(
+                cprintln!(
                     "Applied material to {} parts matching {}",
                     count.to_string().green(),
                     pat.cyan()
@@ -91,21 +92,21 @@ pub fn cmd_material(args: &MaterialArgs) -> Result<()> {
 
     match args.format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&parsed).unwrap());
+            cprintln!("{}", serde_json::to_string_pretty(&parsed).unwrap());
         }
         OutputFormat::Text => {
             let name = parsed["name"].as_str().unwrap_or("?");
             if let Some(preset) = parsed["preset"].as_str() {
                 let metallic = parsed["metallic"].as_f64().unwrap_or(0.0);
                 let roughness = parsed["roughness"].as_f64().unwrap_or(0.0);
-                println!(
+                cprintln!(
                     "Material {}: preset={}, metallic={metallic:.1}, roughness={roughness:.1}",
                     name.green().bold(),
                     preset.cyan(),
                 );
             } else {
                 let hex = parsed["color"].as_str().unwrap_or("?");
-                println!("Material {}: color #{}", name.green().bold(), hex.cyan());
+                cprintln!("Material {}: color #{}", name.green().bold(), hex.cyan());
             }
         }
     }

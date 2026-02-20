@@ -3,6 +3,7 @@ use owo_colors::OwoColorize;
 
 use super::gdscript;
 use super::{OutputFormat, SnapshotArgs, run_eval};
+use crate::cprintln;
 
 pub fn cmd_snapshot(args: &SnapshotArgs) -> Result<()> {
     // Convert path to res:// if needed
@@ -28,10 +29,10 @@ pub fn cmd_snapshot(args: &SnapshotArgs) -> Result<()> {
         });
         match args.format {
             OutputFormat::Json => {
-                println!("{}", serde_json::to_string_pretty(&output).unwrap());
+                cprintln!("{}", serde_json::to_string_pretty(&output).unwrap());
             }
             OutputFormat::Text => {
-                println!("{} Would save: {}", "Dry run:".yellow(), tscn_path.cyan());
+                cprintln!("{} Would save: {}", "Dry run:".yellow(), tscn_path.cyan());
             }
         }
         return Ok(());
@@ -44,7 +45,7 @@ pub fn cmd_snapshot(args: &SnapshotArgs) -> Result<()> {
 
     match args.format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&parsed).unwrap());
+            cprintln!("{}", serde_json::to_string_pretty(&parsed).unwrap());
         }
         OutputFormat::Text => {
             let path = parsed["path"].as_str().unwrap_or("?");
@@ -57,7 +58,7 @@ pub fn cmd_snapshot(args: &SnapshotArgs) -> Result<()> {
                         .collect()
                 })
                 .unwrap_or_default();
-            println!(
+            cprintln!(
                 "Snapshot saved: {} ({count} part{}: {})",
                 path.green().bold(),
                 if count == 1 { "" } else { "s" },

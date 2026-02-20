@@ -5,6 +5,7 @@ use crate::core::mesh::MeshState;
 
 use super::gdscript;
 use super::{OutputFormat, TranslateArgs, parse_3d, project_root, run_eval};
+use crate::cprintln;
 
 pub fn cmd_translate(args: &TranslateArgs) -> Result<()> {
     let (x, y, z) = parse_3d(&args.to)?;
@@ -35,14 +36,14 @@ pub fn cmd_translate(args: &TranslateArgs) -> Result<()> {
 
     match args.format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&parsed).unwrap());
+            cprintln!("{}", serde_json::to_string_pretty(&parsed).unwrap());
         }
         OutputFormat::Text => {
             let name = parsed["name"].as_str().unwrap_or("?");
             let new_pos = parsed["position"].as_array();
             if let Some(pos) = new_pos {
                 if let Some(ref_name) = parsed["relative_to"].as_str() {
-                    println!(
+                    cprintln!(
                         "Translated {} relative to {}: ({:.2}, {:.2}, {:.2})",
                         name.green().bold(),
                         ref_name.cyan(),
@@ -51,7 +52,7 @@ pub fn cmd_translate(args: &TranslateArgs) -> Result<()> {
                         pos[2].as_f64().unwrap_or(0.0),
                     );
                 } else {
-                    println!(
+                    cprintln!(
                         "Translated {}: ({:.2}, {:.2}, {:.2})",
                         name.green().bold(),
                         pos[0].as_f64().unwrap_or(0.0),

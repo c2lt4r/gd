@@ -4,6 +4,7 @@ use miette::{Result, miette};
 use owo_colors::OwoColorize;
 
 use super::{OutputFormat, Plane, ReferenceArgs};
+use crate::cprintln;
 
 pub fn cmd_reference(args: &ReferenceArgs) -> Result<()> {
     let path = Path::new(&args.path);
@@ -24,12 +25,12 @@ pub fn cmd_reference(args: &ReferenceArgs) -> Result<()> {
                 "size_bytes": size_bytes,
                 "view": view_str,
             });
-            println!("{}", serde_json::to_string_pretty(&output).unwrap());
+            cprintln!("{}", serde_json::to_string_pretty(&output).unwrap());
         }
         OutputFormat::Text => {
             let size_kb = size_bytes / 1024;
             let view_info = view_str.map_or(String::new(), |v| format!(" (view: {v})"));
-            println!("Reference: {} ({size_kb} KB){view_info}", args.path.green());
+            cprintln!("Reference: {} ({size_kb} KB){view_info}", args.path.green());
         }
     }
     Ok(())

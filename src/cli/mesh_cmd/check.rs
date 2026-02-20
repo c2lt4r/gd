@@ -3,6 +3,7 @@ use owo_colors::OwoColorize;
 
 use super::gdscript;
 use super::{CheckArgs, OutputFormat, run_eval};
+use crate::cprintln;
 
 pub fn cmd_check(args: &CheckArgs) -> Result<()> {
     let script = gdscript::generate_check_floating(args.margin);
@@ -12,21 +13,21 @@ pub fn cmd_check(args: &CheckArgs) -> Result<()> {
 
     match args.format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&parsed).unwrap());
+            cprintln!("{}", serde_json::to_string_pretty(&parsed).unwrap());
         }
         OutputFormat::Text => {
             let ok = parsed["ok"].as_bool().unwrap_or(false);
             let total = parsed["total_parts"].as_u64().unwrap_or(0);
             let floating = parsed["floating"].as_array();
             if ok {
-                println!(
+                cprintln!(
                     "{} All {total} parts are connected (margin={:.1})",
                     "OK".green().bold(),
                     args.margin
                 );
             } else {
                 let count = floating.map_or(0, Vec::len);
-                println!(
+                cprintln!(
                     "{} {count}/{total} floating parts detected (margin={:.1}):",
                     "WARN".yellow().bold(),
                     args.margin
@@ -34,7 +35,7 @@ pub fn cmd_check(args: &CheckArgs) -> Result<()> {
                 if let Some(names) = floating {
                     for n in names {
                         if let Some(name) = n.as_str() {
-                            println!("  - {}", name.red());
+                            cprintln!("  - {}", name.red());
                         }
                     }
                 }

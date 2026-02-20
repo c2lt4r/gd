@@ -5,6 +5,7 @@ use owo_colors::OwoColorize;
 
 use super::gdscript;
 use super::{OutputFormat, ViewArgs, run_eval};
+use crate::{ceprintln, cprintln};
 
 /// Capture a screenshot from a named camera. Returns (view_name, file_path).
 fn capture_view(
@@ -145,18 +146,18 @@ pub fn cmd_view(args: &ViewArgs) -> Result<()> {
                     "Only {visible_parts}/{total_parts} parts visible. Use --focus all to show all parts."
                 ));
             }
-            println!("{}", serde_json::to_string_pretty(&output).unwrap());
+            cprintln!("{}", serde_json::to_string_pretty(&output).unwrap());
         }
         OutputFormat::Text => {
             if has_hidden {
-                eprintln!(
+                ceprintln!(
                     "{}: only {visible_parts}/{total_parts} parts visible — use {} to show all",
                     "Warning".yellow(),
                     "--focus all".cyan()
                 );
             }
             for (view, path) in &captures {
-                println!("{} {view}: {}", "Screenshot".green(), path.cyan());
+                cprintln!("{} {view}: {}", "Screenshot".green(), path.cyan());
             }
         }
     }

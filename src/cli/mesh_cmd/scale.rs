@@ -5,6 +5,7 @@ use crate::core::mesh::MeshState;
 
 use super::gdscript;
 use super::{OutputFormat, ScaleArgs, parse_scale, project_root, run_eval};
+use crate::cprintln;
 
 pub fn cmd_scale(args: &ScaleArgs) -> Result<()> {
     let (sx, sy, sz) = parse_scale(&args.factor)?;
@@ -38,11 +39,11 @@ pub fn cmd_scale(args: &ScaleArgs) -> Result<()> {
 
     match args.format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&parsed).unwrap());
+            cprintln!("{}", serde_json::to_string_pretty(&parsed).unwrap());
         }
         OutputFormat::Text => {
             let name = parsed["name"].as_str().unwrap_or("?");
-            println!(
+            cprintln!(
                 "Scaled {}: ({sx:.2}, {sy:.2}, {sz:.2})",
                 name.green().bold(),
             );

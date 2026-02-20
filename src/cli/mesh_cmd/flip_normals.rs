@@ -5,6 +5,7 @@ use crate::core::mesh::MeshState;
 use crate::core::mesh::normals;
 
 use super::{FlipNormalsArgs, OutputFormat, match_part_pattern, project_root, run_eval};
+use crate::{ceprintln, cprintln};
 
 pub fn cmd_flip_normals(args: &FlipNormalsArgs) -> Result<()> {
     if args.all {
@@ -43,16 +44,16 @@ pub fn cmd_flip_normals(args: &FlipNormalsArgs) -> Result<()> {
 
     match args.format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&result).unwrap());
+            cprintln!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
         OutputFormat::Text => {
             if args.caps.is_some() {
-                println!(
+                cprintln!(
                     "Flipped {flipped}/{fc} cap faces on {}",
                     part_name.green().bold()
                 );
             } else {
-                println!(
+                cprintln!(
                     "Flipped normals on {}: {fc} faces",
                     part_name.green().bold()
                 );
@@ -96,7 +97,7 @@ fn cmd_flip_normals_pattern(args: &FlipNormalsArgs) -> Result<()> {
     for name in &matched {
         let push = state.generate_push_script(name)?;
         if let Err(e) = run_eval(&push) {
-            eprintln!("Warning: skipping push for '{name}': {e}");
+            ceprintln!("Warning: skipping push for '{name}': {e}");
         }
     }
 
@@ -108,10 +109,10 @@ fn cmd_flip_normals_pattern(args: &FlipNormalsArgs) -> Result<()> {
 
     match args.format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&result).unwrap());
+            cprintln!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
         OutputFormat::Text => {
-            println!(
+            cprintln!(
                 "Flipped normals on {} parts matching {}:",
                 matched.len().to_string().green(),
                 pattern.cyan()
@@ -119,7 +120,7 @@ fn cmd_flip_normals_pattern(args: &FlipNormalsArgs) -> Result<()> {
             for r in &results {
                 let name = r["name"].as_str().unwrap_or("?");
                 let faces = r["face_count"].as_u64().unwrap_or(0);
-                println!("  {}: {faces} faces", name.cyan());
+                cprintln!("  {}: {faces} faces", name.cyan());
             }
         }
     }
@@ -149,7 +150,7 @@ fn cmd_flip_normals_all(args: &FlipNormalsArgs) -> Result<()> {
     for name in &names {
         let push = state.generate_push_script(name)?;
         if let Err(e) = run_eval(&push) {
-            eprintln!("Warning: skipping push for '{name}': {e}");
+            ceprintln!("Warning: skipping push for '{name}': {e}");
         }
     }
 
@@ -160,17 +161,17 @@ fn cmd_flip_normals_all(args: &FlipNormalsArgs) -> Result<()> {
 
     match args.format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&result).unwrap());
+            cprintln!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
         OutputFormat::Text => {
-            println!(
+            cprintln!(
                 "Flipped normals on {} parts:",
                 names.len().to_string().green()
             );
             for r in &results {
                 let name = r["name"].as_str().unwrap_or("?");
                 let faces = r["face_count"].as_u64().unwrap_or(0);
-                println!("  {}: {faces} faces", name.cyan());
+                cprintln!("  {}: {faces} faces", name.cyan());
             }
         }
     }

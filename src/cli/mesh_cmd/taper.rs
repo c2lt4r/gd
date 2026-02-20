@@ -4,6 +4,7 @@ use owo_colors::OwoColorize;
 use crate::core::mesh::MeshState;
 
 use super::{OutputFormat, TaperArgs, project_root, run_eval};
+use crate::cprintln;
 
 pub fn cmd_taper(args: &TaperArgs) -> Result<()> {
     let root = project_root()?;
@@ -47,12 +48,12 @@ pub fn cmd_taper(args: &TaperArgs) -> Result<()> {
 
     match args.format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&result).unwrap());
+            cprintln!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
         OutputFormat::Text => {
             let from = args.from_scale;
             let to = args.to_scale;
-            println!(
+            cprintln!(
                 "Tapered along {}: {from:.2} -> {to:.2} ({vc} vertices)",
                 args.axis.as_str().cyan()
             );

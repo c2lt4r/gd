@@ -5,6 +5,7 @@ use crate::core::mesh::{MeshPart, MeshState};
 
 use super::gdscript;
 use super::{AddPartArgs, OutputFormat, project_root, run_eval};
+use crate::cprintln;
 
 pub fn cmd_add_part(args: &AddPartArgs) -> Result<()> {
     let root = project_root()?;
@@ -26,10 +27,10 @@ pub fn cmd_add_part(args: &AddPartArgs) -> Result<()> {
 
     match args.format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&parsed).unwrap());
+            cprintln!("{}", serde_json::to_string_pretty(&parsed).unwrap());
         }
         OutputFormat::Text => {
-            println!(
+            cprintln!(
                 "Added part: {} ({vc} vertices, {pc} parts total)",
                 args.name.green().bold(),
             );

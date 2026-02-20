@@ -4,6 +4,7 @@ use owo_colors::OwoColorize;
 use crate::core::mesh::MeshState;
 
 use super::{InfoArgs, OutputFormat, project_root};
+use crate::cprintln;
 
 pub fn cmd_info(args: &InfoArgs) -> Result<()> {
     let root = project_root()?;
@@ -38,19 +39,24 @@ fn print_info_single(state: &MeshState, args: &InfoArgs) -> Result<()> {
 
     match args.format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&result).unwrap());
+            cprintln!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
         OutputFormat::Text => {
-            println!(
+            cprintln!(
                 "Mesh: {} (vertices: {vc}, faces: {fc})",
                 name.green().bold()
             );
-            println!(
+            cprintln!(
                 "AABB: ({:.2}, {:.2}, {:.2}) -> ({:.2}, {:.2}, {:.2})",
-                aabb_min[0], aabb_min[1], aabb_min[2], aabb_max[0], aabb_max[1], aabb_max[2],
+                aabb_min[0],
+                aabb_min[1],
+                aabb_min[2],
+                aabb_max[0],
+                aabb_max[1],
+                aabb_max[2],
             );
             if pts > 0 {
-                println!("Profile: {plane} ({pts} points)");
+                cprintln!("Profile: {plane} ({pts} points)");
             }
         }
     }
@@ -90,11 +96,11 @@ fn print_info_all(state: &MeshState, args: &InfoArgs) {
 
     match args.format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&result).unwrap());
+            cprintln!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
         OutputFormat::Text => {
             let count = state.parts.len();
-            println!(
+            cprintln!(
                 "{count} parts, {total_vc} vertices, {total_fc} faces (active: {})",
                 state.active.cyan()
             );
@@ -103,7 +109,7 @@ fn print_info_all(state: &MeshState, args: &InfoArgs) {
                 let vc = p["vertex_count"].as_u64().unwrap_or(0);
                 let fc = p["face_count"].as_u64().unwrap_or(0);
                 let marker = if name == state.active { " *" } else { "" };
-                println!("  {}{marker}: {vc} vertices, {fc} faces", name.green());
+                cprintln!("  {}{marker}: {vc} vertices, {fc} faces", name.green());
                 let fmt_vec = |arr: &serde_json::Value| -> String {
                     if let Some(a) = arr.as_array() {
                         format!(
@@ -116,13 +122,13 @@ fn print_info_all(state: &MeshState, args: &InfoArgs) {
                         "?".to_string()
                     }
                 };
-                println!(
+                cprintln!(
                     "    pos({})  rot({})  scale({})",
                     fmt_vec(&p["position"]),
                     fmt_vec(&p["rotation"]),
                     fmt_vec(&p["scale"]),
                 );
-                println!(
+                cprintln!(
                     "    aabb({}) -> ({})",
                     fmt_vec(&p["aabb_min"]),
                     fmt_vec(&p["aabb_max"]),

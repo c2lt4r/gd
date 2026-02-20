@@ -4,6 +4,7 @@ use owo_colors::OwoColorize;
 use crate::core::mesh::MeshState;
 
 use super::{ArrayArgs, OutputFormat, parse_3d, project_root, run_eval};
+use crate::cprintln;
 
 pub fn cmd_array(args: &ArrayArgs) -> Result<()> {
     let root = project_root()?;
@@ -12,8 +13,7 @@ pub fn cmd_array(args: &ArrayArgs) -> Result<()> {
     let (x, y, z) = parse_3d(&args.offset)?;
 
     let part = state.active_part_mut()?;
-    let result =
-        crate::core::mesh::array::array(&part.mesh, args.count as usize, [x, y, z]);
+    let result = crate::core::mesh::array::array(&part.mesh, args.count as usize, [x, y, z]);
     let vc = result.vertex_count();
     let fc = result.face_count();
     part.mesh = result;
@@ -33,11 +33,11 @@ pub fn cmd_array(args: &ArrayArgs) -> Result<()> {
 
     match args.format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&result).unwrap());
+            cprintln!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
         OutputFormat::Text => {
             let c = args.count;
-            println!(
+            cprintln!(
                 "Array: {} copies, offset [{x}, {y}, {z}], {} vertices",
                 c.to_string().green().bold(),
                 vc.to_string().cyan(),

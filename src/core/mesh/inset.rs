@@ -79,11 +79,7 @@ pub fn inset(mesh: &HalfEdgeMesh, factor: f64) -> HalfEdgeMesh {
             let inner_j = inset_start + j;
 
             // Two triangles per quad, winding consistent with outward normals
-            let q_normal = tri_normal(
-                positions[outer_i],
-                positions[outer_j],
-                positions[inner_j],
-            );
+            let q_normal = tri_normal(positions[outer_i], positions[outer_j], positions[inner_j]);
             if dot(q_normal, face_n) > 0.0 {
                 indices.extend_from_slice(&[outer_i, outer_j, inner_j]);
                 indices.extend_from_slice(&[outer_i, inner_j, inner_i]);

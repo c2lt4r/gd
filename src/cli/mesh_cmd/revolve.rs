@@ -4,6 +4,7 @@ use owo_colors::OwoColorize;
 use crate::core::mesh::MeshState;
 
 use super::{OutputFormat, RevolveArgs, project_root, run_eval};
+use crate::cprintln;
 
 pub fn cmd_revolve(args: &RevolveArgs) -> Result<()> {
     let root = project_root()?;
@@ -55,12 +56,12 @@ pub fn cmd_revolve(args: &RevolveArgs) -> Result<()> {
 
     match args.format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&result).unwrap());
+            cprintln!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
         OutputFormat::Text => {
             let angle = args.degrees;
             let segs = args.segments;
-            println!(
+            cprintln!(
                 "Revolved: axis={}, angle={angle}, segments={segs}, vertices={vc}",
                 args.axis.as_str().cyan()
             );

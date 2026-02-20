@@ -70,5 +70,8 @@ pub fn merge_by_distance(mesh: &HalfEdgeMesh, distance: f64) -> (HalfEdgeMesh, u
         }
     }
 
-    (HalfEdgeMesh::from_triangles(&positions, &indices), merged_count)
+    (
+        HalfEdgeMesh::from_triangles(&positions, &indices),
+        merged_count,
+    )
 }

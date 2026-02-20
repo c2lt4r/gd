@@ -4,13 +4,24 @@ use owo_colors::OwoColorize;
 use crate::core::mesh::{MeshState, ShadingMode};
 
 use super::{AutoSmoothArgs, OutputFormat, ShadingArgs, project_root, run_eval};
+use crate::cprintln;
 
 pub fn cmd_shade_smooth(args: &ShadingArgs) -> Result<()> {
-    apply_shading(ShadingMode::Smooth, args.part.as_deref(), args.all, &args.format)
+    apply_shading(
+        ShadingMode::Smooth,
+        args.part.as_deref(),
+        args.all,
+        &args.format,
+    )
 }
 
 pub fn cmd_shade_flat(args: &ShadingArgs) -> Result<()> {
-    apply_shading(ShadingMode::Flat, args.part.as_deref(), args.all, &args.format)
+    apply_shading(
+        ShadingMode::Flat,
+        args.part.as_deref(),
+        args.all,
+        &args.format,
+    )
 }
 
 pub fn cmd_auto_smooth(args: &AutoSmoothArgs) -> Result<()> {
@@ -67,10 +78,10 @@ fn apply_shading(
 
     match format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&result).unwrap());
+            cprintln!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
         OutputFormat::Text => {
-            println!(
+            cprintln!(
                 "Shading set to {} on {} part(s)",
                 label.cyan(),
                 parts.len().to_string().green().bold()

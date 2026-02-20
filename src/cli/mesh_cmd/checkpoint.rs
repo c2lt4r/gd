@@ -4,6 +4,7 @@ use owo_colors::OwoColorize;
 use crate::core::mesh::MeshState;
 
 use super::{CheckpointArgs, OutputFormat, RestoreArgs, project_root, run_eval};
+use crate::{ceprintln, cprintln};
 
 pub fn cmd_checkpoint(args: &CheckpointArgs) -> Result<()> {
     let root = project_root()?;
@@ -23,10 +24,10 @@ pub fn cmd_checkpoint(args: &CheckpointArgs) -> Result<()> {
 
     match args.format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&result).unwrap());
+            cprintln!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
         OutputFormat::Text => {
-            println!(
+            cprintln!(
                 "Checkpoint {} saved: {} parts",
                 label.cyan(),
                 parts_saved.to_string().green()
@@ -65,7 +66,7 @@ pub fn cmd_restore(args: &RestoreArgs) -> Result<()> {
     for name in &names {
         let push = state.generate_push_script(name)?;
         if let Err(e) = run_eval(&push) {
-            eprintln!("Warning: skipping push for '{name}': {e}");
+            ceprintln!("Warning: skipping push for '{name}': {e}");
         }
     }
 
@@ -76,10 +77,10 @@ pub fn cmd_restore(args: &RestoreArgs) -> Result<()> {
 
     match args.format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&result).unwrap());
+            cprintln!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
         OutputFormat::Text => {
-            println!(
+            cprintln!(
                 "Restored {} parts from checkpoint {}",
                 parts_restored.to_string().green(),
                 label.cyan()
