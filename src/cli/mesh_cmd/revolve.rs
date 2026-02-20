@@ -3,7 +3,7 @@ use owo_colors::OwoColorize;
 
 use crate::core::mesh::MeshState;
 
-use super::{OutputFormat, RevolveArgs, project_root, run_eval};
+use super::{OutputFormat, RevolveArgs, inject_stats, project_root, run_eval};
 use crate::cprintln;
 
 pub fn cmd_revolve(args: &RevolveArgs) -> Result<()> {
@@ -46,13 +46,14 @@ pub fn cmd_revolve(args: &RevolveArgs) -> Result<()> {
     let push = state.generate_push_script(&state.active.clone())?;
     let _ = run_eval(&push)?;
 
-    let result = serde_json::json!({
+    let mut result = serde_json::json!({
         "axis": args.axis.as_str(),
         "angle": args.degrees,
         "segments": args.segments,
         "vertex_count": vc,
         "face_count": fc,
     });
+    inject_stats(&mut result, &state);
 
     match args.format {
         OutputFormat::Json => {

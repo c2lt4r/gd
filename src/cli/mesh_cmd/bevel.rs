@@ -4,7 +4,7 @@ use owo_colors::OwoColorize;
 use crate::core::mesh::MeshState;
 use crate::core::mesh::spatial_filter;
 
-use super::{BevelArgs, OutputFormat, project_root, run_eval};
+use super::{BevelArgs, OutputFormat, inject_stats, project_root, run_eval};
 use crate::cprintln;
 
 pub fn cmd_bevel(args: &BevelArgs) -> Result<()> {
@@ -46,13 +46,14 @@ pub fn cmd_bevel(args: &BevelArgs) -> Result<()> {
     let push = state.generate_push_script(&state.active.clone())?;
     let _ = run_eval(&push)?;
 
-    let result = serde_json::json!({
+    let mut result = serde_json::json!({
         "radius": args.radius,
         "segments": args.segments,
         "edges": args.edges.as_str(),
         "vertex_count": vc,
         "face_count": fc,
     });
+    inject_stats(&mut result, &state);
 
     match args.format {
         OutputFormat::Json => {

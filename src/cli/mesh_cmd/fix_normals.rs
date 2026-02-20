@@ -4,7 +4,7 @@ use owo_colors::OwoColorize;
 use crate::core::mesh::MeshState;
 use crate::core::mesh::normals;
 
-use super::{FixNormalsArgs, OutputFormat, project_root, run_eval};
+use super::{FixNormalsArgs, OutputFormat, inject_stats, project_root, run_eval};
 use crate::{ceprintln, cprintln};
 
 pub fn cmd_fix_normals(args: &FixNormalsArgs) -> Result<()> {
@@ -27,11 +27,12 @@ pub fn cmd_fix_normals(args: &FixNormalsArgs) -> Result<()> {
     let push = state.generate_push_script(&part_name)?;
     let _ = run_eval(&push)?;
 
-    let result = serde_json::json!({
+    let mut result = serde_json::json!({
         "name": part_name,
         "faces_flipped": flipped,
         "total_faces": total,
     });
+    inject_stats(&mut result, &state);
 
     match args.format {
         OutputFormat::Json => {
@@ -77,10 +78,11 @@ fn cmd_fix_normals_all(args: &FixNormalsArgs) -> Result<()> {
         }
     }
 
-    let result = serde_json::json!({
+    let mut result = serde_json::json!({
         "parts_fixed": names.len(),
         "results": results,
     });
+    inject_stats(&mut result, &state);
 
     match args.format {
         OutputFormat::Json => {

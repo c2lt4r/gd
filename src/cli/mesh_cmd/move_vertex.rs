@@ -3,7 +3,7 @@ use owo_colors::OwoColorize;
 
 use crate::core::mesh::MeshState;
 
-use super::{MoveVertexArgs, OutputFormat, parse_3d, project_root, run_eval};
+use super::{MoveVertexArgs, OutputFormat, inject_stats, parse_3d, project_root, run_eval};
 use crate::cprintln;
 
 pub fn cmd_move_vertex(args: &MoveVertexArgs) -> Result<()> {
@@ -33,10 +33,11 @@ pub fn cmd_move_vertex(args: &MoveVertexArgs) -> Result<()> {
     let push = state.generate_push_script(&state.active.clone())?;
     let _ = run_eval(&push)?;
 
-    let result = serde_json::json!({
+    let mut result = serde_json::json!({
         "index": idx,
         "position": new_pos,
     });
+    inject_stats(&mut result, &state);
 
     match args.format {
         OutputFormat::Json => {

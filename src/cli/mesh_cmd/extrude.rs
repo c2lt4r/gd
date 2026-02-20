@@ -3,7 +3,7 @@ use owo_colors::OwoColorize;
 
 use crate::core::mesh::MeshState;
 
-use super::{ExtrudeArgs, OutputFormat, project_root, run_eval};
+use super::{ExtrudeArgs, OutputFormat, inject_stats, project_root, run_eval};
 use crate::cprintln;
 
 pub fn cmd_extrude(args: &ExtrudeArgs) -> Result<()> {
@@ -64,7 +64,7 @@ pub fn cmd_extrude(args: &ExtrudeArgs) -> Result<()> {
     let _ = run_eval(&push)?;
 
     let half = args.depth / 2.0;
-    let result = serde_json::json!({
+    let mut result = serde_json::json!({
         "depth": args.depth,
         "plane": plane.as_str(),
         "segments": args.segments,
@@ -73,6 +73,7 @@ pub fn cmd_extrude(args: &ExtrudeArgs) -> Result<()> {
         "vertex_count": vc,
         "face_count": fc,
     });
+    inject_stats(&mut result, &state);
 
     match args.format {
         OutputFormat::Json => {

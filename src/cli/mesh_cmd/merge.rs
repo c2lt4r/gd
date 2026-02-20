@@ -3,7 +3,7 @@ use owo_colors::OwoColorize;
 
 use crate::core::mesh::MeshState;
 
-use super::{MergeArgs, OutputFormat, project_root, run_eval};
+use super::{MergeArgs, OutputFormat, inject_stats, project_root, run_eval};
 use crate::cprintln;
 
 pub fn cmd_merge(args: &MergeArgs) -> Result<()> {
@@ -38,11 +38,12 @@ pub fn cmd_merge(args: &MergeArgs) -> Result<()> {
             let _ = run_eval(&push);
         }
 
-        let result = serde_json::json!({
+        let mut result = serde_json::json!({
             "distance": args.distance,
             "total_merged": total_merged,
             "parts": results,
         });
+        inject_stats(&mut result, &state);
 
         match args.format {
             OutputFormat::Json => {
@@ -71,12 +72,13 @@ pub fn cmd_merge(args: &MergeArgs) -> Result<()> {
         let push = state.generate_push_script(&active)?;
         let _ = run_eval(&push)?;
 
-        let result = serde_json::json!({
+        let mut result = serde_json::json!({
             "distance": args.distance,
             "merged": merged,
             "vertex_count": vc,
             "face_count": fc,
         });
+        inject_stats(&mut result, &state);
 
         match args.format {
             OutputFormat::Json => {

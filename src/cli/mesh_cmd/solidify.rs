@@ -3,7 +3,7 @@ use owo_colors::OwoColorize;
 
 use crate::core::mesh::MeshState;
 
-use super::{OutputFormat, SolidifyArgs, project_root, run_eval};
+use super::{OutputFormat, SolidifyArgs, inject_stats, project_root, run_eval};
 use crate::cprintln;
 
 pub fn cmd_solidify(args: &SolidifyArgs) -> Result<()> {
@@ -22,11 +22,12 @@ pub fn cmd_solidify(args: &SolidifyArgs) -> Result<()> {
     let push = state.generate_push_script(&active)?;
     let _ = run_eval(&push)?;
 
-    let result = serde_json::json!({
+    let mut result = serde_json::json!({
         "thickness": args.thickness,
         "vertex_count": vc,
         "face_count": fc,
     });
+    inject_stats(&mut result, &state);
 
     match args.format {
         OutputFormat::Json => {

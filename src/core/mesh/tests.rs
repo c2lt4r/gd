@@ -2490,3 +2490,148 @@ fn bevel_caps_produce_quads() {
     );
     assert_eq!(count_boundary_edges(&beveled), 0, "watertight");
 }
+
+#[test]
+fn bevel_complex_profile_no_panic() {
+    // 32-point side profile, extruded 4 segments, tapered with midpoint.
+    // Reproduces usize underflow crash on non-manifold edges in Phase 2.5.
+    use std::f64::consts::TAU;
+    let n = 32;
+    let profile: Vec<[f64; 2]> = (0..n)
+        .map(|i| {
+            let angle = TAU * i as f64 / n as f64;
+            [3.0 * angle.cos(), 2.0 * angle.sin()]
+        })
+        .collect();
+    let mut mesh =
+        extrude::extrude_with_inset(&profile, PlaneKind::Side, 10.0, 4, 0.1).unwrap();
+    super::taper::taper(&mut mesh, 2, 0.3, 1.0, Some(0.5), Some((0.0, 0.5)));
+    super::taper::taper(&mut mesh, 2, 1.0, 0.3, Some(0.5), Some((0.5, 1.0)));
+    // Should not panic (previously caused usize underflow at bevel.rs:250)
+    let beveled = bevel::bevel(&mesh, 0.08, 2, "depth");
+    assert!(beveled.face_count() > 0);
+}
+
+#[test]
+fn extrude_with_holes_correct_winding() {
+    // Circle with a circular hole — hole walls should face outward, not inward.
+    use std::f64::consts::TAU;
+    let n = 16;
+    let outer: Vec<[f64; 2]> = (0..n)
+        .map(|i| {
+            let angle = TAU * i as f64 / n as f64;
+            [1.0 * angle.cos(), 1.0 * angle.sin()]
+        })
+        .collect();
+    let hole: Vec<[f64; 2]> = (0..n)
+        .map(|i| {
+            let angle = TAU * i as f64 / n as f64;
+            [0.3 * angle.cos(), 0.3 * angle.sin()]
+        })
+        .collect();
+
+    let mesh = extrude::extrude_with_holes(&outer, &[hole], PlaneKind::Front, 1.0, 1).unwrap();
+    assert!(mesh.face_count() > 0);
+    assert_eq!(count_boundary_edges(&mesh), 0, "hole extrusion should be watertight");
+
+    // Verify normals: for a closed mesh, fix_winding should flip 0 faces
+    // (if winding is already correct, all normals point outward consistently).
+    let mut check = mesh.clone();
+    let flipped = normals::fix_winding(&mut check);
+    assert_eq!(
+        flipped, 0,
+        "hole walls should have correct outward winding (fix_winding flipped {flipped} faces)"
+    );
+}
+
+#[test]
+fn mesh_stats_basic() {
+    // Build a 2-part state and verify stats computation.
+    let mut state = MeshState::new("body");
+    state.active_part_mut().unwrap().mesh = cube_mesh(); // 12 tris
+
+    let mut part2 = super::MeshPart::new();
+    part2.mesh = single_triangle(); // 1 tri
+    state.parts.insert("wing".to_string(), part2);
+
+    // Active part is "body" (cube: 12 tris, all triangle faces)
+    let stats = crate::cli::mesh_cmd::mesh_stats(&state);
+    assert_eq!(stats["active_part"], "body");
+    assert_eq!(stats["part_faces"], 12); // cube has 12 triangle faces
+    assert_eq!(stats["part_tris"], 12);
+    assert_eq!(stats["part_quads"], 0);
+    assert_eq!(stats["part_ngons"], 0);
+    assert_eq!(stats["total_parts"], 2);
+    // 12 tris from cube + 1 tri from wing = 13 total
+    assert_eq!(stats["total_tris_godot"], 13);
+}
+
+// ── Group tests ─────────────────────────────────────────────────────
+
+#[test]
+fn group_create_and_list() {
+    let mut state = MeshState::new("body");
+
+    let mut wing = super::MeshPart::new();
+    wing.mesh = single_triangle();
+    state.parts.insert("wing-L".to_string(), wing);
+
+    let mut wing_r = super::MeshPart::new();
+    wing_r.mesh = single_triangle();
+    state.parts.insert("wing-R".to_string(), wing_r);
+
+    // Create a group
+    state
+        .groups
+        .insert("wings".to_string(), vec!["wing-L".to_string(), "wing-R".to_string()]);
+
+    assert_eq!(state.groups.len(), 1);
+    assert_eq!(state.groups["wings"].len(), 2);
+    assert!(state.groups["wings"].contains(&"wing-L".to_string()));
+    assert!(state.groups["wings"].contains(&"wing-R".to_string()));
+
+    // Remove group (parts remain)
+    state.groups.remove("wings");
+    assert!(state.groups.is_empty());
+    assert!(state.parts.contains_key("wing-L"));
+    assert!(state.parts.contains_key("wing-R"));
+}
+
+#[test]
+fn group_duplicate() {
+    let mut state = MeshState::new("body");
+
+    let mut eng = super::MeshPart::new();
+    eng.mesh = cube_mesh();
+    state.parts.insert("engine-1".to_string(), eng);
+
+    let mut intake = super::MeshPart::new();
+    intake.mesh = single_triangle();
+    state.parts.insert("intake-1".to_string(), intake);
+
+    state.groups.insert(
+        "eng-1".to_string(),
+        vec!["engine-1".to_string(), "intake-1".to_string()],
+    );
+
+    // Simulate group duplicate with --replace "1" --with "2"
+    let members = state.groups["eng-1"].clone();
+    let mut new_members = Vec::new();
+    for src_name in &members {
+        let new_name = src_name.replace('1', "2");
+        let src_part = state.parts[src_name].clone();
+        state.parts.insert(new_name.clone(), src_part);
+        new_members.push(new_name);
+    }
+    state
+        .groups
+        .insert("eng-2".to_string(), new_members.clone());
+
+    assert_eq!(state.parts.len(), 5); // body + engine-1 + intake-1 + engine-2 + intake-2
+    assert_eq!(state.groups.len(), 2);
+    assert_eq!(state.groups["eng-2"], vec!["engine-2", "intake-2"]);
+    assert_eq!(
+        state.parts["engine-2"].mesh.vertices.len(),
+        state.parts["engine-1"].mesh.vertices.len()
+    );
+}

@@ -3,7 +3,7 @@ use owo_colors::OwoColorize;
 
 use crate::core::mesh::MeshState;
 
-use super::{OutputFormat, SubdivideArgs, project_root, run_eval};
+use super::{OutputFormat, SubdivideArgs, inject_stats, project_root, run_eval};
 use crate::cprintln;
 
 pub fn cmd_subdivide(args: &SubdivideArgs) -> Result<()> {
@@ -26,12 +26,13 @@ pub fn cmd_subdivide(args: &SubdivideArgs) -> Result<()> {
     let _ = run_eval(&push)?;
 
     let iters = args.iterations;
-    let result = serde_json::json!({
+    let mut result = serde_json::json!({
         "name": part_name,
         "iterations": iters,
         "face_count": fc,
         "vertex_count": vc,
     });
+    inject_stats(&mut result, &state);
 
     match args.format {
         OutputFormat::Json => {

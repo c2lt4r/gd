@@ -4,7 +4,7 @@ use owo_colors::OwoColorize;
 use crate::core::mesh::MeshState;
 
 use super::gdscript;
-use super::{CreateArgs, OutputFormat, project_root, run_eval};
+use super::{CreateArgs, OutputFormat, inject_stats, project_root, run_eval};
 use crate::cprintln;
 
 pub fn cmd_create(args: &CreateArgs) -> Result<()> {
@@ -17,8 +17,9 @@ pub fn cmd_create(args: &CreateArgs) -> Result<()> {
     // Create Godot scene infrastructure (cameras, lights, HUD, mesh node)
     let script = gdscript::generate_create(&args.name, args.from.as_str());
     let result = run_eval(&script)?;
-    let parsed: serde_json::Value = serde_json::from_str(&result)
+    let mut parsed: serde_json::Value = serde_json::from_str(&result)
         .map_err(|e| miette::miette!("Failed to parse result: {e}"))?;
+    inject_stats(&mut parsed, &state);
 
     match args.format {
         OutputFormat::Json => {

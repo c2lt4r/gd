@@ -3,7 +3,7 @@ use owo_colors::OwoColorize;
 
 use crate::core::mesh::MeshState;
 
-use super::{ArrayArgs, OutputFormat, parse_3d, project_root, run_eval};
+use super::{ArrayArgs, OutputFormat, inject_stats, parse_3d, project_root, run_eval};
 use crate::cprintln;
 
 pub fn cmd_array(args: &ArrayArgs) -> Result<()> {
@@ -24,12 +24,13 @@ pub fn cmd_array(args: &ArrayArgs) -> Result<()> {
     let push = state.generate_push_script(&active)?;
     let _ = run_eval(&push)?;
 
-    let result = serde_json::json!({
+    let mut result = serde_json::json!({
         "count": args.count,
         "offset": [x, y, z],
         "vertex_count": vc,
         "face_count": fc,
     });
+    inject_stats(&mut result, &state);
 
     match args.format {
         OutputFormat::Json => {

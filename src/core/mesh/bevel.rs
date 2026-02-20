@@ -245,8 +245,12 @@ pub fn bevel_with_profile(
     // whose winding is derived from half-edge direction (manifold-safe).
     {
         let mut visited: HashSet<(usize, usize)> = HashSet::new();
+        let he_len = mesh.half_edges.len();
         for he in &mesh.half_edges {
             let Some(f_a) = he.face else { continue };
+            if he.twin >= he_len || he.prev >= he_len {
+                continue;
+            }
             let Some(f_b) = mesh.half_edges[he.twin].face else {
                 continue;
             };

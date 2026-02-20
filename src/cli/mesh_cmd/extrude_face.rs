@@ -4,7 +4,7 @@ use owo_colors::OwoColorize;
 use crate::core::mesh::MeshState;
 use crate::core::mesh::spatial_filter;
 
-use super::{ExtrudeFaceArgs, OutputFormat, project_root, run_eval};
+use super::{ExtrudeFaceArgs, OutputFormat, inject_stats, project_root, run_eval};
 use crate::cprintln;
 
 pub fn cmd_extrude_face(args: &ExtrudeFaceArgs) -> Result<()> {
@@ -39,13 +39,14 @@ pub fn cmd_extrude_face(args: &ExtrudeFaceArgs) -> Result<()> {
     let push = state.generate_push_script(&active)?;
     let _ = run_eval(&push)?;
 
-    let result = serde_json::json!({
+    let mut result = serde_json::json!({
         "depth": args.depth,
         "where": args.where_expr,
         "faces_selected": selected_count,
         "vertex_count": vc,
         "face_count": fc,
     });
+    inject_stats(&mut result, &state);
 
     match args.format {
         OutputFormat::Json => {

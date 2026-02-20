@@ -296,17 +296,30 @@ pub fn extrude_with_holes(
     let n_segs = segments as usize;
     let half = depth / 2.0;
 
+    // Normalize hole winding to CW (earcut expects outer=CCW, holes=CW).
+    // If a hole is CCW (positive signed area), reverse it.
+    let holes: Vec<Vec<[f64; 2]>> = holes
+        .iter()
+        .map(|h| {
+            if signed_area_2x(h) > 0.0 {
+                h.iter().copied().rev().collect()
+            } else {
+                h.clone()
+            }
+        })
+        .collect();
+
     // Triangulate caps with holes
-    let cap_indices = triangulate_2d_with_holes(outer, holes)?;
+    let cap_indices = triangulate_2d_with_holes(outer, &holes)?;
 
     let cap_flip = plane != PlaneKind::Front;
     let area2 = signed_area_2x(outer);
     let wall_flip = (area2 > 0.0) != (plane == PlaneKind::Front);
 
-    // Build combined point list: outer + all holes
+    // Build combined point list: outer + all holes (using normalized winding)
     let mut all_2d: Vec<[f64; 2]> = outer.to_vec();
     let mut hole_offsets: Vec<usize> = Vec::new(); // start index of each hole in all_2d
-    for hole in holes {
+    for hole in &holes {
         hole_offsets.push(all_2d.len());
         all_2d.extend_from_slice(hole);
     }
@@ -351,10 +364,26 @@ pub fn extrude_with_holes(
         }
     }
 
-    // Outer side walls
-    build_side_walls(wall_flip, n_outer, n_segs, &mut faces);
+    // Outer side walls (stride is n_all, not n_outer, because each ring contains
+    // both outer and hole vertices)
+    for seg in 0..n_segs {
+        let fwd_base = seg * n_all;
+        let bwd_base = (seg + 1) * n_all;
+        for i in 0..n_outer {
+            let j = (i + 1) % n_outer;
+            let fi = fwd_base + i;
+            let fj = fwd_base + j;
+            let bi = bwd_base + i;
+            let bj = bwd_base + j;
+            if wall_flip {
+                faces.push(vec![fi, fj, bj, bi]);
+            } else {
+                faces.push(vec![fj, fi, bi, bj]);
+            }
+        }
+    }
 
-    // Hole side walls (reversed winding — inner walls face inward toward hollow)
+    // Hole side walls (same winding as outer — hole contours normalized to CW)
     for (hi, hole) in holes.iter().enumerate() {
         let n_hole = hole.len();
         let hole_start = hole_offsets[hi];
@@ -367,11 +396,11 @@ pub fn extrude_with_holes(
                 let fj = fwd_base + j;
                 let bi = bwd_base + i;
                 let bj = bwd_base + j;
-                // Reversed winding compared to outer walls
+                // Same winding as outer walls (hole contours wind CW)
                 if wall_flip {
-                    faces.push(vec![fj, fi, bi, bj]);
-                } else {
                     faces.push(vec![fi, fj, bj, bi]);
+                } else {
+                    faces.push(vec![fj, fi, bi, bj]);
                 }
             }
         }

@@ -3,7 +3,7 @@ use owo_colors::OwoColorize;
 
 use crate::core::mesh::MeshState;
 
-use super::{OutputFormat, TaperArgs, project_root, run_eval};
+use super::{OutputFormat, TaperArgs, inject_stats, project_root, run_eval};
 use crate::cprintln;
 
 pub fn cmd_taper(args: &TaperArgs) -> Result<()> {
@@ -36,7 +36,7 @@ pub fn cmd_taper(args: &TaperArgs) -> Result<()> {
     let push = state.generate_push_script(&active)?;
     let _ = run_eval(&push)?;
 
-    let result = serde_json::json!({
+    let mut result = serde_json::json!({
         "axis": args.axis.as_str(),
         "from_scale": args.from_scale,
         "to_scale": args.to_scale,
@@ -45,6 +45,7 @@ pub fn cmd_taper(args: &TaperArgs) -> Result<()> {
         "vertex_count": vc,
         "vertices_modified": count,
     });
+    inject_stats(&mut result, &state);
 
     match args.format {
         OutputFormat::Json => {

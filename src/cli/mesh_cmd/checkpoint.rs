@@ -3,7 +3,7 @@ use owo_colors::OwoColorize;
 
 use crate::core::mesh::MeshState;
 
-use super::{CheckpointArgs, OutputFormat, RestoreArgs, project_root, run_eval};
+use super::{CheckpointArgs, OutputFormat, RestoreArgs, inject_stats, project_root, run_eval};
 use crate::{ceprintln, cprintln};
 
 pub fn cmd_checkpoint(args: &CheckpointArgs) -> Result<()> {
@@ -14,13 +14,17 @@ pub fn cmd_checkpoint(args: &CheckpointArgs) -> Result<()> {
 
     let parts_saved = state.parts.len();
     state.checkpoints.insert(label.clone(), state.parts.clone());
+    state
+        .group_checkpoints
+        .insert(label.clone(), state.groups.clone());
     state.save(&root)?;
 
-    let result = serde_json::json!({
+    let mut result = serde_json::json!({
         "parts_saved": parts_saved,
         "name": label,
         "checkpoints": state.checkpoints.keys().collect::<Vec<_>>(),
     });
+    inject_stats(&mut result, &state);
 
     match args.format {
         OutputFormat::Json => {
@@ -65,6 +69,11 @@ pub fn cmd_restore(args: &RestoreArgs) -> Result<()> {
 
     state.parts = saved;
 
+    // Restore groups if available
+    if let Some(saved_groups) = state.group_checkpoints.get(&label).cloned() {
+        state.groups = saved_groups;
+    }
+
     // Ensure active part still exists
     if !state.parts.contains_key(&state.active)
         && let Some(first) = state.parts.keys().next()
@@ -83,10 +92,11 @@ pub fn cmd_restore(args: &RestoreArgs) -> Result<()> {
         }
     }
 
-    let result = serde_json::json!({
+    let mut result = serde_json::json!({
         "parts_restored": parts_restored,
         "name": label,
     });
+    inject_stats(&mut result, &state);
 
     match args.format {
         OutputFormat::Json => {

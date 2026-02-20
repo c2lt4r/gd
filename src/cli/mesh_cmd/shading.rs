@@ -3,7 +3,7 @@ use owo_colors::OwoColorize;
 
 use crate::core::mesh::{MeshState, ShadingMode};
 
-use super::{AutoSmoothArgs, OutputFormat, ShadingArgs, project_root, run_eval};
+use super::{AutoSmoothArgs, OutputFormat, ShadingArgs, inject_stats, project_root, run_eval};
 use crate::cprintln;
 
 pub fn cmd_shade_smooth(args: &ShadingArgs) -> Result<()> {
@@ -71,10 +71,11 @@ fn apply_shading(
         let _ = run_eval(&push)?;
     }
 
-    let result = serde_json::json!({
+    let mut result = serde_json::json!({
         "shading": label,
         "parts": parts,
     });
+    inject_stats(&mut result, &state);
 
     match format {
         OutputFormat::Json => {

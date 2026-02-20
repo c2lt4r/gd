@@ -13,6 +13,7 @@ mod fix_normals;
 mod flip_normals;
 mod focus;
 mod gdscript;
+mod group;
 mod info;
 mod init;
 mod inset;
@@ -46,6 +47,7 @@ use clap::{Args, Subcommand, ValueEnum};
 use miette::{Result, miette};
 
 use crate::core::live_eval::send_eval;
+use crate::core::mesh::MeshState;
 use crate::core::project::GodotProject;
 
 thread_local! {
@@ -157,6 +159,12 @@ pub enum MeshCommand {
     Batch(BatchArgs),
     /// Check for floating/disconnected parts
     Check(CheckArgs),
+    /// Create a named group of parts for batch operations
+    Group(GroupArgs),
+    /// Remove a group definition (parts remain)
+    Ungroup(UngroupArgs),
+    /// List all defined groups
+    Groups(GroupsArgs),
 }
 
 #[derive(Clone, Debug, ValueEnum)]
@@ -495,8 +503,8 @@ pub struct AddPartArgs {
 #[derive(Args)]
 pub struct DuplicatePartArgs {
     /// Source part to clone
-    #[arg(long)]
-    pub name: String,
+    #[arg(long, required_unless_present = "group")]
+    pub name: Option<String>,
     /// Name for the new copy
     #[arg(long = "as")]
     pub as_name: String,
@@ -506,6 +514,15 @@ pub struct DuplicatePartArgs {
     /// Mirror + auto-position symmetrically (offsets by AABB when source is at origin)
     #[arg(long, value_enum)]
     pub symmetric: Option<Axis>,
+    /// Duplicate all parts in a group (creates new group with --as name)
+    #[arg(long)]
+    pub group: Option<String>,
+    /// String to find in member names for replacement (use with --with)
+    #[arg(long)]
+    pub replace: Option<String>,
+    /// Replacement string for member names (requires --replace)
+    #[arg(long, requires = "replace")]
+    pub with: Option<String>,
     /// Output format
     #[arg(long, default_value = "json")]
     pub format: OutputFormat,
@@ -529,6 +546,9 @@ pub struct TranslateArgs {
     /// Part name (defaults to active part)
     #[arg(long)]
     pub part: Option<String>,
+    /// Translate all parts in a group
+    #[arg(long)]
+    pub group: Option<String>,
     /// Position or offset as "x,y,z"
     #[arg(long, allow_hyphen_values = true)]
     pub to: String,
@@ -549,6 +569,9 @@ pub struct RotateArgs {
     /// Part name (defaults to active part)
     #[arg(long)]
     pub part: Option<String>,
+    /// Rotate all parts in a group
+    #[arg(long)]
+    pub group: Option<String>,
     /// Rotation in degrees as "rx,ry,rz"
     #[arg(long, allow_hyphen_values = true)]
     pub degrees: String,
@@ -563,6 +586,9 @@ pub struct ScaleArgs {
     /// Part name (defaults to active part)
     #[arg(long)]
     pub part: Option<String>,
+    /// Scale all parts in a group
+    #[arg(long)]
+    pub group: Option<String>,
     /// Scale factor as "sx,sy,sz" or a single uniform value
     #[arg(long)]
     pub factor: String,
@@ -577,8 +603,11 @@ pub struct ScaleArgs {
 #[derive(Args)]
 pub struct RemovePartArgs {
     /// Name of the part to remove
+    #[arg(long, required_unless_present = "group")]
+    pub name: Option<String>,
+    /// Remove all parts in a group (and the group definition)
     #[arg(long)]
-    pub name: String,
+    pub group: Option<String>,
     /// Output format
     #[arg(long, default_value = "json")]
     pub format: OutputFormat,
@@ -743,7 +772,7 @@ pub struct FixNormalsArgs {
     pub format: OutputFormat,
 }
 
-#[derive(Args)]
+#[derive(Args, Clone)]
 pub struct MaterialArgs {
     /// Part name (defaults to active part)
     #[arg(long)]
@@ -751,6 +780,9 @@ pub struct MaterialArgs {
     /// Apply to multiple parts by glob pattern or comma-separated names (e.g. "wheel-*" or "body,roof")
     #[arg(long)]
     pub parts: Option<String>,
+    /// Apply material to all parts in a group
+    #[arg(long)]
+    pub group: Option<String>,
     /// Color as hex (e.g. "ff0000" or "#ff0000") or named color (red, green, blue, white, black)
     #[arg(long)]
     pub color: Option<String>,
@@ -950,6 +982,36 @@ pub struct CheckArgs {
     pub format: OutputFormat,
 }
 
+#[derive(Args)]
+pub struct GroupArgs {
+    /// Name for the group
+    #[arg(long)]
+    pub name: String,
+    /// Parts to include (comma-separated names or glob patterns, e.g. "engine1,intake1" or "eng-*")
+    #[arg(long)]
+    pub parts: String,
+    /// Output format
+    #[arg(long, default_value = "json")]
+    pub format: OutputFormat,
+}
+
+#[derive(Args)]
+pub struct UngroupArgs {
+    /// Name of the group to remove
+    #[arg(long)]
+    pub name: String,
+    /// Output format
+    #[arg(long, default_value = "json")]
+    pub format: OutputFormat,
+}
+
+#[derive(Args)]
+pub struct GroupsArgs {
+    /// Output format
+    #[arg(long, default_value = "json")]
+    pub format: OutputFormat,
+}
+
 #[derive(Clone, Debug)]
 pub enum OutputFormat {
     Text,
@@ -1021,6 +1083,9 @@ pub fn exec(args: &MeshArgs) -> Result<()> {
         MeshCommand::AutoSmooth(ref a) => shading::cmd_auto_smooth(a),
         MeshCommand::Batch(ref a) => batch::cmd_batch(a),
         MeshCommand::Check(ref a) => check::cmd_check(a),
+        MeshCommand::Group(ref a) => group::cmd_group(a),
+        MeshCommand::Ungroup(ref a) => group::cmd_ungroup(a),
+        MeshCommand::Groups(ref a) => group::cmd_groups(a),
     }
 }
 
@@ -1066,6 +1131,9 @@ fn command_name(cmd: &MeshCommand) -> &'static str {
         MeshCommand::AutoSmooth(_) => "auto-smooth",
         MeshCommand::Batch(_) => "batch",
         MeshCommand::Check(_) => "check",
+        MeshCommand::Group(_) => "group",
+        MeshCommand::Ungroup(_) => "ungroup",
+        MeshCommand::Groups(_) => "groups",
     }
 }
 
@@ -1113,6 +1181,56 @@ fn match_part_pattern<'a>(names: &'a [String], pattern: &str) -> Vec<&'a str> {
     }
 
     matched
+}
+
+/// Compute per-response stats from mesh state.
+pub fn mesh_stats(state: &MeshState) -> serde_json::Value {
+    let active = &state.active;
+    let mut total_tris_godot: usize = 0;
+    let mut part_faces = 0;
+    let mut part_quads = 0;
+    let mut part_tris = 0;
+    let mut part_ngons = 0;
+    let mut boundary = 0;
+
+    for (name, part) in &state.parts {
+        let mesh = &part.mesh;
+        let mut q = 0usize;
+        let mut t = 0usize;
+        for f in 0..mesh.face_count() {
+            match mesh.face_vertices(f).len() {
+                3 => t += 1,
+                4 => q += 1,
+                n => t += n - 2,
+            }
+        }
+        total_tris_godot += q * 2 + t;
+        if name == active {
+            part_faces = mesh.face_count();
+            part_quads = q;
+            part_tris = t;
+            part_ngons = mesh.face_count() - q - t;
+            boundary = mesh.half_edges.iter().filter(|he| he.face.is_none()).count();
+        }
+    }
+
+    serde_json::json!({
+        "active_part": active,
+        "part_faces": part_faces,
+        "part_quads": part_quads,
+        "part_tris": part_tris,
+        "part_ngons": part_ngons,
+        "boundary_edges": boundary,
+        "total_parts": state.parts.len(),
+        "total_tris_godot": total_tris_godot,
+    })
+}
+
+/// Inject `_stats` into a JSON response object.
+pub fn inject_stats(response: &mut serde_json::Value, state: &MeshState) {
+    if let Some(obj) = response.as_object_mut() {
+        obj.insert("_stats".to_string(), mesh_stats(state));
+    }
 }
 
 /// Run a generated GDScript via live eval and return the raw result string.

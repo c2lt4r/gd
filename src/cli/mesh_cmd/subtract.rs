@@ -5,7 +5,7 @@ use crate::core::mesh::MeshState;
 use crate::core::mesh::boolean::{self, BooleanMode};
 use crate::core::mesh::half_edge::HalfEdgeMesh;
 
-use super::{BooleanArgs, BooleanOp, OutputFormat, parse_3d, project_root, run_eval};
+use super::{BooleanArgs, BooleanOp, OutputFormat, inject_stats, parse_3d, project_root, run_eval};
 use crate::cprintln;
 
 /// Apply a `Transform3D` to all vertices in a mesh (scale → rotate → translate).
@@ -111,7 +111,7 @@ pub fn cmd_boolean(args: &BooleanArgs) -> Result<()> {
         BooleanOp::Intersect => "intersect",
     };
 
-    let result = serde_json::json!({
+    let mut result = serde_json::json!({
         "mode": mode_str,
         "name": active_name,
         "tool": tool_name,
@@ -119,6 +119,7 @@ pub fn cmd_boolean(args: &BooleanArgs) -> Result<()> {
         "face_count": fc,
         "vertex_count": vc,
     });
+    inject_stats(&mut result, &state);
 
     match args.format {
         OutputFormat::Json => {

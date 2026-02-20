@@ -4,7 +4,7 @@ use owo_colors::OwoColorize;
 use crate::core::mesh::MeshState;
 
 use super::gdscript;
-use super::{MaterialArgs, MaterialPreset, OutputFormat, project_root, run_eval};
+use super::{MaterialArgs, MaterialPreset, OutputFormat, inject_stats, project_root, run_eval};
 use crate::cprintln;
 
 /// Normalize a color string: strip leading '#', expand named colors to hex.
@@ -75,62 +75,24 @@ fn persist_material(
 pub fn cmd_material(args: &MaterialArgs) -> Result<()> {
     let color = args.color.as_ref().map(|c| normalize_color(c));
 
+    // --group resolves to --parts (comma-separated member names)
+    if let Some(ref group_name) = args.group {
+        let root = project_root()?;
+        let state = MeshState::load(&root)?;
+        let members = state
+            .groups
+            .get(group_name.as_str())
+            .ok_or_else(|| miette::miette!("Group '{group_name}' not found"))?;
+        let pattern = members.join(",");
+        let mut group_args = args.clone();
+        group_args.group = None;
+        group_args.parts = Some(pattern);
+        return cmd_material(&group_args);
+    }
+
     // Batch mode: --parts pattern
     if let Some(ref pattern) = args.parts {
-        let preset_str = args.preset.as_ref().map(|p| preset_name(p));
-        let script = if let Some(name) = preset_str {
-            gdscript::generate_material_preset_multi(pattern, name, color.as_deref())
-        } else if let Some(ref hex) = color {
-            gdscript::generate_material_multi(pattern, hex)
-        } else {
-            return Err(miette::miette!(
-                "Provide --color or --preset (e.g. --preset glass, --color ff0000)"
-            ));
-        };
-        let result = run_eval(&script)?;
-        let parsed: serde_json::Value = serde_json::from_str(&result)
-            .map_err(|e| miette::miette!("Failed to parse result: {e}"))?;
-
-        // Persist preset to Rust state for applied parts
-        if let Some(applied) = parsed["applied"].as_array() {
-            let names: Vec<&str> = applied
-                .iter()
-                .filter_map(serde_json::Value::as_str)
-                .collect();
-            if !names.is_empty() {
-                let _ = persist_material(&names, preset_str, None);
-            }
-        }
-
-        match args.format {
-            OutputFormat::Json => {
-                cprintln!("{}", serde_json::to_string_pretty(&parsed).unwrap());
-            }
-            OutputFormat::Text => {
-                let count = parsed["count"].as_u64().unwrap_or(0);
-                let pat = parsed["pattern"].as_str().unwrap_or("?");
-                cprintln!(
-                    "Applied material to {} parts matching {}",
-                    count.to_string().green(),
-                    pat.cyan()
-                );
-            }
-        }
-        // Warn about unmatched part names
-        if let Some(skipped) = parsed["skipped"].as_array() {
-            let names: Vec<&str> = skipped
-                .iter()
-                .filter_map(serde_json::Value::as_str)
-                .collect();
-            if !names.is_empty() {
-                eprintln!(
-                    "{}: no parts matched: {}",
-                    "warning".yellow().bold(),
-                    names.join(", ").yellow()
-                );
-            }
-        }
-        return Ok(());
+        return cmd_material_batch(args, pattern, color.as_deref());
     }
 
     // Single-part mode
@@ -146,13 +108,20 @@ pub fn cmd_material(args: &MaterialArgs) -> Result<()> {
     };
 
     let result = run_eval(&script)?;
-    let parsed: serde_json::Value = serde_json::from_str(&result)
+    let mut parsed: serde_json::Value = serde_json::from_str(&result)
         .map_err(|e| miette::miette!("Failed to parse result: {e}"))?;
 
     // Persist preset + color to Rust state
     if let Some(name) = parsed["name"].as_str() {
         let rgb = parse_rgb(&parsed);
         let _ = persist_material(&[name], preset_str, rgb);
+    }
+
+    // Inject stats from current state
+    if let Ok(root) = project_root()
+        && let Ok(st) = crate::core::mesh::MeshState::load(&root)
+    {
+        inject_stats(&mut parsed, &st);
     }
 
     match args.format {
@@ -173,6 +142,70 @@ pub fn cmd_material(args: &MaterialArgs) -> Result<()> {
                 let hex = parsed["color"].as_str().unwrap_or("?");
                 cprintln!("Material {}: color #{}", name.green().bold(), hex.cyan());
             }
+        }
+    }
+    Ok(())
+}
+
+fn cmd_material_batch(args: &MaterialArgs, pattern: &str, color: Option<&str>) -> Result<()> {
+    let preset_str = args.preset.as_ref().map(|p| preset_name(p));
+    let script = if let Some(name) = preset_str {
+        gdscript::generate_material_preset_multi(pattern, name, color)
+    } else if let Some(hex) = color {
+        gdscript::generate_material_multi(pattern, hex)
+    } else {
+        return Err(miette::miette!(
+            "Provide --color or --preset (e.g. --preset glass, --color ff0000)"
+        ));
+    };
+    let result = run_eval(&script)?;
+    let mut parsed: serde_json::Value = serde_json::from_str(&result)
+        .map_err(|e| miette::miette!("Failed to parse result: {e}"))?;
+
+    // Persist preset to Rust state for applied parts
+    if let Some(applied) = parsed["applied"].as_array() {
+        let names: Vec<&str> = applied
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .collect();
+        if !names.is_empty() {
+            let _ = persist_material(&names, preset_str, None);
+        }
+    }
+
+    // Inject stats from current state
+    if let Ok(root) = project_root()
+        && let Ok(st) = crate::core::mesh::MeshState::load(&root)
+    {
+        inject_stats(&mut parsed, &st);
+    }
+
+    match args.format {
+        OutputFormat::Json => {
+            cprintln!("{}", serde_json::to_string_pretty(&parsed).unwrap());
+        }
+        OutputFormat::Text => {
+            let count = parsed["count"].as_u64().unwrap_or(0);
+            let pat = parsed["pattern"].as_str().unwrap_or("?");
+            cprintln!(
+                "Applied material to {} parts matching {}",
+                count.to_string().green(),
+                pat.cyan()
+            );
+        }
+    }
+    // Warn about unmatched part names
+    if let Some(skipped) = parsed["skipped"].as_array() {
+        let names: Vec<&str> = skipped
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .collect();
+        if !names.is_empty() {
+            eprintln!(
+                "{}: no parts matched: {}",
+                "warning".yellow().bold(),
+                names.join(", ").yellow()
+            );
         }
     }
     Ok(())

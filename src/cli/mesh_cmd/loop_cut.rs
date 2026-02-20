@@ -3,7 +3,7 @@ use owo_colors::OwoColorize;
 
 use crate::core::mesh::MeshState;
 
-use super::{LoopCutArgs, OutputFormat, project_root, run_eval};
+use super::{LoopCutArgs, OutputFormat, inject_stats, project_root, run_eval};
 use crate::cprintln;
 
 pub fn cmd_loop_cut(args: &LoopCutArgs) -> Result<()> {
@@ -27,12 +27,13 @@ pub fn cmd_loop_cut(args: &LoopCutArgs) -> Result<()> {
     let push = state.generate_push_script(&part_name)?;
     let _ = run_eval(&push)?;
 
-    let result = serde_json::json!({
+    let mut result = serde_json::json!({
         "axis": args.axis.as_str(),
         "at": args.at,
         "triangles_split": splits,
         "vertex_count": vc,
     });
+    inject_stats(&mut result, &state);
 
     match args.format {
         OutputFormat::Json => {

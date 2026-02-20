@@ -4,7 +4,7 @@ use owo_colors::OwoColorize;
 use crate::core::mesh::{MeshPart, MeshState};
 
 use super::gdscript;
-use super::{AddPartArgs, OutputFormat, project_root, run_eval};
+use super::{AddPartArgs, OutputFormat, inject_stats, project_root, run_eval};
 use crate::cprintln;
 
 pub fn cmd_add_part(args: &AddPartArgs) -> Result<()> {
@@ -19,11 +19,12 @@ pub fn cmd_add_part(args: &AddPartArgs) -> Result<()> {
     // Create node in Godot (handles primitive mesh if needed)
     let script = gdscript::generate_add_part(&args.name, args.from.as_str());
     let result = run_eval(&script)?;
-    let parsed: serde_json::Value = serde_json::from_str(&result)
+    let mut parsed: serde_json::Value = serde_json::from_str(&result)
         .map_err(|e| miette::miette!("Failed to parse result: {e}"))?;
 
     let pc = state.parts.len();
     let vc = parsed["vertex_count"].as_u64().unwrap_or(0);
+    inject_stats(&mut parsed, &state);
 
     match args.format {
         OutputFormat::Json => {

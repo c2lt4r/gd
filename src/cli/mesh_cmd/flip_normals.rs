@@ -5,7 +5,7 @@ use crate::core::mesh::MeshState;
 use crate::core::mesh::normals;
 use crate::core::mesh::spatial_filter;
 
-use super::{FlipNormalsArgs, OutputFormat, match_part_pattern, project_root, run_eval};
+use super::{FlipNormalsArgs, OutputFormat, inject_stats, match_part_pattern, project_root, run_eval};
 use crate::{ceprintln, cprintln};
 
 pub fn cmd_flip_normals(args: &FlipNormalsArgs) -> Result<()> {
@@ -40,11 +40,12 @@ pub fn cmd_flip_normals(args: &FlipNormalsArgs) -> Result<()> {
     let push = state.generate_push_script(&part_name)?;
     let _ = run_eval(&push)?;
 
-    let result = serde_json::json!({
+    let mut result = serde_json::json!({
         "name": part_name,
         "flipped_faces": flipped,
         "face_count": fc,
     });
+    inject_stats(&mut result, &state);
 
     match args.format {
         OutputFormat::Json => {
@@ -113,11 +114,12 @@ fn cmd_flip_normals_pattern(args: &FlipNormalsArgs) -> Result<()> {
         }
     }
 
-    let result = serde_json::json!({
+    let mut result = serde_json::json!({
         "pattern": pattern,
         "parts_flipped": matched.len(),
         "results": results,
     });
+    inject_stats(&mut result, &state);
 
     match args.format {
         OutputFormat::Json => {
@@ -166,10 +168,11 @@ fn cmd_flip_normals_all(args: &FlipNormalsArgs) -> Result<()> {
         }
     }
 
-    let result = serde_json::json!({
+    let mut result = serde_json::json!({
         "parts_flipped": names.len(),
         "results": results,
     });
+    inject_stats(&mut result, &state);
 
     match args.format {
         OutputFormat::Json => {

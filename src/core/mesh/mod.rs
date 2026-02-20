@@ -223,6 +223,12 @@ pub struct MeshState {
     pub parts: IndexMap<String, MeshPart>,
     pub active: String,
     pub checkpoints: HashMap<String, IndexMap<String, MeshPart>>,
+    /// Group snapshots keyed by checkpoint label (parallel to `checkpoints`).
+    #[serde(default)]
+    pub group_checkpoints: HashMap<String, HashMap<String, Vec<String>>>,
+    /// Named groups of part names for batch operations.
+    #[serde(default)]
+    pub groups: HashMap<String, Vec<String>>,
 }
 
 impl MeshState {
@@ -235,6 +241,8 @@ impl MeshState {
             parts,
             active: name.to_string(),
             checkpoints: HashMap::new(),
+            group_checkpoints: HashMap::new(),
+            groups: HashMap::new(),
         }
     }
 
