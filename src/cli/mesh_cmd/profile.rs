@@ -15,10 +15,18 @@ pub fn cmd_profile(args: &ProfileArgs) -> Result<()> {
 
     let resolved = resolve_profile(&state, args)?;
 
+    // Parse hole contours
+    let holes = parse_holes(&args.hole)?;
+
     // Apply to active part
     let part = state.active_part_mut()?;
     part.profile_points = Some(resolved.points.clone());
     part.profile_plane = Some(resolved.plane);
+    part.profile_holes = if holes.is_empty() {
+        None
+    } else {
+        Some(holes.clone())
+    };
 
     if let Some(mesh) =
         crate::core::mesh::profile::triangulate_profile(&resolved.points, resolved.plane)
@@ -38,7 +46,7 @@ pub fn cmd_profile(args: &ProfileArgs) -> Result<()> {
     let _ = run_eval(&meta_script);
 
     // Output
-    print_result(&resolved, &args.format);
+    print_result(&resolved, holes.len(), &args.format);
     Ok(())
 }
 
@@ -92,24 +100,48 @@ fn resolve_profile(state: &MeshState, args: &ProfileArgs) -> Result<ResolvedProf
     }
 }
 
-fn print_result(resolved: &ResolvedProfile, format: &OutputFormat) {
-    let result = serde_json::json!({
+/// Parse `--hole` flag values into hole contours.
+fn parse_holes(hole_args: &[String]) -> Result<Vec<Vec<[f64; 2]>>> {
+    let mut holes = Vec::new();
+    for h in hole_args {
+        let parsed = parse_points(h)?;
+        let points: Vec<[f64; 2]> = parsed.iter().map(|&(x, y)| [x, y]).collect();
+        holes.push(points);
+    }
+    Ok(holes)
+}
+
+fn print_result(resolved: &ResolvedProfile, hole_count: usize, format: &OutputFormat) {
+    let mut result = serde_json::json!({
         "plane": resolved.plane.as_str(),
         "point_count": resolved.points.len(),
         "label": resolved.label,
     });
+    if hole_count > 0 {
+        result["hole_count"] = serde_json::json!(hole_count);
+    }
 
     match format {
         OutputFormat::Json => {
             cprintln!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
         OutputFormat::Text => {
-            cprintln!(
-                "Profile set: {} ({} points) on {} plane",
-                resolved.label.cyan(),
-                resolved.points.len().to_string().green().bold(),
-                resolved.plane.as_str().cyan()
-            );
+            if hole_count > 0 {
+                cprintln!(
+                    "Profile set: {} ({} points, {} holes) on {} plane",
+                    resolved.label.cyan(),
+                    resolved.points.len().to_string().green().bold(),
+                    hole_count.to_string().cyan(),
+                    resolved.plane.as_str().cyan()
+                );
+            } else {
+                cprintln!(
+                    "Profile set: {} ({} points) on {} plane",
+                    resolved.label.cyan(),
+                    resolved.points.len().to_string().green().bold(),
+                    resolved.plane.as_str().cyan()
+                );
+            }
         }
     }
 }

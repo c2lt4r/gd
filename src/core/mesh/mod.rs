@@ -2,6 +2,7 @@ pub mod array;
 pub mod bevel;
 pub mod boolean;
 pub mod extrude;
+pub mod extrude_face;
 pub mod half_edge;
 pub mod inset;
 pub mod loft;
@@ -12,6 +13,7 @@ pub mod normals;
 pub mod profile;
 pub mod revolve;
 pub mod solidify;
+pub mod spatial_filter;
 pub mod subdivide;
 pub mod taper;
 
@@ -191,6 +193,9 @@ pub struct MeshPart {
     pub profile_plane: Option<PlaneKind>,
     #[serde(default)]
     pub shading: ShadingMode,
+    /// Hole contours for multi-contour profiles.
+    #[serde(default)]
+    pub profile_holes: Option<Vec<Vec<[f64; 2]>>>,
 }
 
 impl MeshPart {
@@ -202,6 +207,7 @@ impl MeshPart {
             profile_points: None,
             profile_plane: None,
             shading: ShadingMode::default(),
+            profile_holes: None,
         }
     }
 }

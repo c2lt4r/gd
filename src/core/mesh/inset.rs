@@ -4,9 +4,18 @@ use super::normals::compute_face_normal;
 /// Inset all faces of a mesh by moving each vertex toward the face centroid.
 ///
 /// `factor`: how far to inset (0.0 = no change, 1.0 = collapse to centroid).
+/// `selected`: if `Some`, only inset those face indices; unselected faces pass through.
 /// Returns a new mesh with the original faces shrunk and quad strips connecting
 /// the original boundary to the inset boundary.
 pub fn inset(mesh: &HalfEdgeMesh, factor: f64) -> HalfEdgeMesh {
+    inset_selected(mesh, factor, None)
+}
+
+pub fn inset_selected(
+    mesh: &HalfEdgeMesh,
+    factor: f64,
+    selected: Option<&[usize]>,
+) -> HalfEdgeMesh {
     if mesh.faces.is_empty() || factor <= 0.0 {
         return mesh.clone();
     }
@@ -19,6 +28,14 @@ pub fn inset(mesh: &HalfEdgeMesh, factor: f64) -> HalfEdgeMesh {
     for fi in 0..mesh.faces.len() {
         let verts = mesh.face_vertices(fi);
         if verts.len() < 3 {
+            continue;
+        }
+
+        // If a selection is active and this face is not in it, pass through unchanged
+        if let Some(sel) = selected
+            && !sel.contains(&fi)
+        {
+            poly_faces.push(verts);
             continue;
         }
 

@@ -8,6 +8,7 @@ mod create;
 mod describe;
 mod duplicate_part;
 mod extrude;
+mod extrude_face;
 mod fix_normals;
 mod flip_normals;
 mod focus;
@@ -133,6 +134,9 @@ pub enum MeshCommand {
     Boolean(BooleanArgs),
     /// Inset all faces (create smaller face inside each face, connected by quads)
     Inset(InsetArgs),
+    /// Extrude selected faces along their normals
+    #[command(name = "extrude-face")]
+    ExtrudeFace(ExtrudeFaceArgs),
     /// Give mesh shell thickness (duplicate + offset along inverted normals)
     Solidify(SolidifyArgs),
     /// Merge vertices within a distance threshold (remove doubles)
@@ -362,6 +366,9 @@ pub struct ProfileArgs {
     /// Copy the profile from another part (reuse its points and plane)
     #[arg(long)]
     pub copy_profile_from: Option<String>,
+    /// Hole contour (repeatable): --hole "x1,y1 x2,y2 ..."
+    #[arg(long, allow_hyphen_values = true)]
+    pub hole: Vec<String>,
     /// Output format
     #[arg(long, default_value = "json")]
     pub format: OutputFormat,
@@ -647,6 +654,9 @@ pub struct BevelArgs {
     /// Bevel profile: 0.0 = concave, 0.5 = circular (default), 1.0 = convex chamfer
     #[arg(long, default_value = "0.5")]
     pub profile: f64,
+    /// Spatial filter: only bevel edges whose midpoint passes (e.g. "y>0.12")
+    #[arg(long, value_name = "EXPR", allow_hyphen_values = true)]
+    pub where_expr: Option<String>,
     /// Output format
     #[arg(long, default_value = "json")]
     pub format: OutputFormat,
@@ -810,6 +820,12 @@ pub struct BooleanArgs {
     /// Offset for the tool part as "x,y,z"
     #[arg(long, allow_hyphen_values = true)]
     pub offset: Option<String>,
+    /// Number of repetitions for array boolean
+    #[arg(long)]
+    pub count: Option<u32>,
+    /// Spacing increment per repetition as "x,y,z" (defaults to offset if omitted)
+    #[arg(long, allow_hyphen_values = true)]
+    pub spacing: Option<String>,
     /// Output format
     #[arg(long, default_value = "json")]
     pub format: OutputFormat,
@@ -820,6 +836,23 @@ pub struct InsetArgs {
     /// Inset factor (0.0 = no change, 1.0 = collapse to centroid)
     #[arg(long, default_value = "0.2")]
     pub factor: f64,
+    /// Spatial filter: only inset faces whose centroid passes (e.g. "y>0.4")
+    #[arg(long, value_name = "EXPR", allow_hyphen_values = true)]
+    pub where_expr: Option<String>,
+    /// Output format
+    #[arg(long, default_value = "json")]
+    pub format: OutputFormat,
+}
+
+#[derive(Args)]
+#[command(allow_hyphen_values = true)]
+pub struct ExtrudeFaceArgs {
+    /// Extrusion depth along face normals
+    #[arg(long)]
+    pub depth: f64,
+    /// Spatial filter: select faces to extrude (e.g. "y>0.4") — required
+    #[arg(long, value_name = "EXPR", allow_hyphen_values = true)]
+    pub where_expr: String,
     /// Output format
     #[arg(long, default_value = "json")]
     pub format: OutputFormat,
@@ -973,6 +1006,7 @@ pub fn exec(args: &MeshArgs) -> Result<()> {
         MeshCommand::Subdivide(ref a) => subdivide::cmd_subdivide(a),
         MeshCommand::Boolean(ref a) => subtract::cmd_boolean(a),
         MeshCommand::Inset(ref a) => inset::cmd_inset(a),
+        MeshCommand::ExtrudeFace(ref a) => extrude_face::cmd_extrude_face(a),
         MeshCommand::Solidify(ref a) => solidify::cmd_solidify(a),
         MeshCommand::MergeVerts(ref a) => merge::cmd_merge(a),
         MeshCommand::Array(ref a) => array_cmd::cmd_array(a),
@@ -1017,6 +1051,7 @@ fn command_name(cmd: &MeshCommand) -> &'static str {
         MeshCommand::Subdivide(_) => "subdivide",
         MeshCommand::Boolean(_) => "boolean",
         MeshCommand::Inset(_) => "inset",
+        MeshCommand::ExtrudeFace(_) => "extrude-face",
         MeshCommand::Solidify(_) => "solidify",
         MeshCommand::MergeVerts(_) => "merge-verts",
         MeshCommand::Array(_) => "array",

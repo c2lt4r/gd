@@ -191,9 +191,19 @@ fn execute_batch_command(
             let edges = cmd["edges"].as_str().unwrap_or("all");
             let profile = cmd["profile"].as_f64().unwrap_or(0.5);
 
+            let where_expr = cmd["where"].as_str();
+            let spatial = where_expr
+                .map(crate::core::mesh::spatial_filter::parse_where)
+                .transpose()?;
+
             let part = state.active_part_mut()?;
             let beveled = crate::core::mesh::bevel::bevel_with_profile(
-                &part.mesh, radius, segments, edges, profile,
+                &part.mesh,
+                radius,
+                segments,
+                edges,
+                profile,
+                spatial.as_ref(),
             );
             let vc = beveled.vertex_count();
             let fc = beveled.face_count();
@@ -306,13 +316,34 @@ fn execute_batch_command(
                 _ => crate::core::mesh::boolean::BooleanMode::Subtract,
             };
 
+            #[allow(clippy::cast_possible_truncation)]
+            let count = cmd["count"].as_u64().unwrap_or(1).max(1) as u32;
+            let spacing = if let Some(s) = cmd["spacing"].as_str() {
+                let (x, y, z) = super::parse_3d(s)?;
+                [x, y, z]
+            } else {
+                offset
+            };
+
             let tool_mesh = state.resolve_part(Some(tool))?.mesh.clone();
             let target_mesh = state.active_part()?.mesh.clone();
-            let result_mesh =
-                crate::core::mesh::boolean::boolean_op(&target_mesh, &tool_mesh, offset, mode);
-            let vc = result_mesh.vertex_count();
-            let fc = result_mesh.face_count();
-            state.active_part_mut()?.mesh = result_mesh;
+            let mut current = target_mesh;
+            for k in 0..count {
+                let iter_offset = [
+                    offset[0] + spacing[0] * k as f64,
+                    offset[1] + spacing[1] * k as f64,
+                    offset[2] + spacing[2] * k as f64,
+                ];
+                current = crate::core::mesh::boolean::boolean_op(
+                    &current,
+                    &tool_mesh,
+                    iter_offset,
+                    mode,
+                );
+            }
+            let vc = current.vertex_count();
+            let fc = current.face_count();
+            state.active_part_mut()?.mesh = current;
 
             save_push_active(state, root)?;
             Ok(ok_result(
@@ -325,10 +356,54 @@ fn execute_batch_command(
                 }),
             ))
         }
+        "extrude-face" => {
+            let depth = cmd["depth"]
+                .as_f64()
+                .ok_or_else(|| miette!("Command {index}: extrude-face needs 'depth'"))?;
+            let where_str = cmd["where"]
+                .as_str()
+                .ok_or_else(|| miette!("Command {index}: extrude-face needs 'where'"))?;
+            let sf = crate::core::mesh::spatial_filter::parse_where(where_str)?;
+            let part = state.active_part_mut()?;
+            let selected: Vec<usize> = (0..part.mesh.faces.len())
+                .filter(|&fi| {
+                    crate::core::mesh::spatial_filter::face_matches(&part.mesh, fi, &sf)
+                })
+                .collect();
+            let result =
+                crate::core::mesh::extrude_face::extrude_faces(&part.mesh, depth, &selected);
+            let vc = result.vertex_count();
+            let fc = result.face_count();
+            part.mesh = result;
+
+            save_push_active(state, root)?;
+            Ok(ok_result(
+                "extrude-face",
+                &serde_json::json!({
+                    "depth": depth,
+                    "faces_selected": selected.len(),
+                    "vertex_count": vc,
+                    "face_count": fc,
+                }),
+            ))
+        }
         "inset" => {
             let factor = cmd["factor"].as_f64().unwrap_or(0.2);
+            let where_expr = cmd["where"].as_str();
+            let spatial = where_expr
+                .map(crate::core::mesh::spatial_filter::parse_where)
+                .transpose()?;
             let part = state.active_part_mut()?;
-            let result = crate::core::mesh::inset::inset(&part.mesh, factor);
+            let result = if let Some(ref sf) = spatial {
+                let selected: Vec<usize> = (0..part.mesh.faces.len())
+                    .filter(|&fi| {
+                        crate::core::mesh::spatial_filter::face_matches(&part.mesh, fi, sf)
+                    })
+                    .collect();
+                crate::core::mesh::inset::inset_selected(&part.mesh, factor, Some(&selected))
+            } else {
+                crate::core::mesh::inset::inset(&part.mesh, factor)
+            };
             let vc = result.vertex_count();
             let fc = result.face_count();
             part.mesh = result;

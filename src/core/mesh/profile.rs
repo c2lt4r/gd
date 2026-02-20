@@ -80,3 +80,23 @@ pub fn triangulate_2d(points: &[[f64; 2]]) -> Option<Vec<usize>> {
     let flat: Vec<f64> = points.iter().flat_map(|p| [p[0], p[1]]).collect();
     earcutr::earcut(&flat, &[], 2).ok()
 }
+
+/// Triangulate a 2D polygon with holes, returning indices into the combined
+/// point array (outer + all holes concatenated).
+///
+/// The returned indices refer to positions in `[outer..., hole0..., hole1..., ...]`.
+pub fn triangulate_2d_with_holes(
+    outer: &[[f64; 2]],
+    holes: &[Vec<[f64; 2]>],
+) -> Option<Vec<usize>> {
+    if outer.len() < 3 {
+        return None;
+    }
+    let mut flat: Vec<f64> = outer.iter().flat_map(|p| [p[0], p[1]]).collect();
+    let mut hole_indices: Vec<usize> = Vec::new();
+    for hole in holes {
+        hole_indices.push(flat.len() / 2);
+        flat.extend(hole.iter().flat_map(|p| [p[0], p[1]]));
+    }
+    earcutr::earcut(&flat, &hole_indices, 2).ok()
+}

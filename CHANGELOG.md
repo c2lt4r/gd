@@ -1,5 +1,16 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **`gd mesh extrude-face`** — extrude selected faces along their normals by a given depth. Use `--where "y>0.4"` to select faces by spatial filter on centroid position.
+- **`gd mesh boolean --count --spacing`** — array boolean: repeat a boolean operation N times with incremental offset. Useful for cutting repeating patterns (rail teeth, vent slits, magazine holes) in a single command.
+- **`gd mesh profile --hole`** — multi-contour profiles with holes. Repeatable flag accepts hole polygons for hollow cross-sections (rings, frames). Earcut triangulates caps with holes natively.
+- **`gd mesh bevel --where`** — edge-selective bevel via spatial filter (e.g. `--where "y>0.4"` bevels only top edges).
+- **`gd mesh inset --where`** — face-selective inset via spatial filter (e.g. `--where "z<-0.3"` insets only back faces).
+- **Spatial filter system** (`--where` flag) — shared `axis op value` expressions (e.g. `y>0.12`, `z<=-0.5`) for face centroid and edge midpoint filtering. Used by `bevel`, `inset`, and `extrude-face`.
+- **Multi-ring concentric cap topology** — circle/polygon caps with >= 5 vertices now generate N concentric quad rings (auto: `max(1, n_pts/8)`, capped at 3) instead of a single fan triangulation. Eliminates pole singularity for UV unwrapping.
+
 ## [0.2.20] - 2026-02-20
 
 ### Added

@@ -2,6 +2,7 @@ use miette::Result;
 use owo_colors::OwoColorize;
 
 use crate::core::mesh::MeshState;
+use crate::core::mesh::spatial_filter;
 
 use super::{BevelArgs, OutputFormat, project_root, run_eval};
 use crate::cprintln;
@@ -9,6 +10,12 @@ use crate::cprintln;
 pub fn cmd_bevel(args: &BevelArgs) -> Result<()> {
     let root = project_root()?;
     let mut state = MeshState::load(&root)?;
+
+    let spatial = args
+        .where_expr
+        .as_deref()
+        .map(spatial_filter::parse_where)
+        .transpose()?;
 
     let part = state.active_part_mut()?;
     let original_fc = part.mesh.face_count();
@@ -18,6 +25,7 @@ pub fn cmd_bevel(args: &BevelArgs) -> Result<()> {
         args.segments,
         args.edges.as_str(),
         args.profile,
+        spatial.as_ref(),
     );
 
     let vc = beveled.vertex_count();

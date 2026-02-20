@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use super::half_edge::HalfEdgeMesh;
 use super::normals::compute_face_normal;
+use super::spatial_filter::{self, SpatialFilter};
 
 /// Bevel sharp edges of a mesh by inserting chamfer geometry.
 ///
@@ -15,13 +16,14 @@ use super::normals::compute_face_normal;
 #[allow(clippy::too_many_lines)]
 #[cfg(test)]
 pub fn bevel(mesh: &HalfEdgeMesh, radius: f64, segments: u32, edge_filter: &str) -> HalfEdgeMesh {
-    bevel_with_profile(mesh, radius, segments, edge_filter, 0.5)
+    bevel_with_profile(mesh, radius, segments, edge_filter, 0.5, None)
 }
 
 /// Bevel with explicit profile control.
 ///
 /// `profile`: 0.0 = concave, 0.5 = circular (default), 1.0 = convex chamfer.
 /// Values outside `[0.0, 1.0]` are clamped.
+/// `spatial`: optional spatial filter — only bevel edges whose midpoint passes.
 #[allow(clippy::too_many_lines)]
 pub fn bevel_with_profile(
     mesh: &HalfEdgeMesh,
@@ -29,12 +31,13 @@ pub fn bevel_with_profile(
     segments: u32,
     edge_filter: &str,
     profile: f64,
+    spatial: Option<&SpatialFilter>,
 ) -> HalfEdgeMesh {
     if mesh.faces.is_empty() || radius <= 0.0 || segments == 0 {
         return mesh.clone();
     }
 
-    let sharp_edges = find_sharp_edges(mesh, edge_filter);
+    let sharp_edges = find_sharp_edges(mesh, edge_filter, spatial);
     if sharp_edges.is_empty() {
         return mesh.clone();
     }
@@ -312,7 +315,11 @@ fn add_strip_quad(
 // ── Sharp-edge detection ─────────────────────────────────────────────
 
 /// Find half-edge indices of sharp edges based on dihedral angle.
-fn find_sharp_edges(mesh: &HalfEdgeMesh, filter: &str) -> Vec<usize> {
+fn find_sharp_edges(
+    mesh: &HalfEdgeMesh,
+    filter: &str,
+    spatial: Option<&SpatialFilter>,
+) -> Vec<usize> {
     let threshold = 0.7_f64; // ~45 degrees
     let mut sharp = Vec::new();
 
@@ -337,13 +344,16 @@ fn find_sharp_edges(mesh: &HalfEdgeMesh, filter: &str) -> Vec<usize> {
 
         // Sharp edge if normals differ significantly
         if d < threshold {
-            // Apply filter
+            // Apply edge-type filter
             let include = match filter {
                 "depth" => is_depth_edge(mesh, i),
                 "profile" => is_profile_edge(mesh, i),
                 _ => true, // "all"
             };
-            if include {
+            // Apply spatial filter
+            let spatial_ok =
+                spatial.is_none_or(|sf| spatial_filter::edge_matches(mesh, i, sf));
+            if include && spatial_ok {
                 sharp.push(i);
             }
         }

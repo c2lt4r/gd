@@ -10,7 +10,7 @@ pub fn cmd_extrude(args: &ExtrudeArgs) -> Result<()> {
     let root = project_root()?;
     let mut state = MeshState::load(&root)?;
 
-    let (profile, plane) = {
+    let (profile, plane, holes) = {
         let part = state.active_part()?;
         let profile = part
             .profile_points
@@ -20,25 +20,37 @@ pub fn cmd_extrude(args: &ExtrudeArgs) -> Result<()> {
         let plane = part
             .profile_plane
             .ok_or_else(|| miette!("No profile plane set."))?;
-        (profile, plane)
+        let holes = part.profile_holes.clone().unwrap_or_default();
+        (profile, plane, holes)
     };
 
-    // Auto-detect cap inset: enable at 0.15 for circle/ellipse profiles (8+ vertices)
-    // unless explicitly set by the user
-    let inset = match args.cap_inset {
-        Some(v) => v,
-        None if profile.len() >= 8 => 0.15,
-        None => 0.0,
-    };
+    let mesh = if holes.is_empty() {
+        // Auto-detect cap inset: enable at 0.15 for circle/ellipse profiles (8+ vertices)
+        // unless explicitly set by the user
+        let inset = match args.cap_inset {
+            Some(v) => v,
+            None if profile.len() >= 8 => 0.15,
+            None => 0.0,
+        };
 
-    let mesh = crate::core::mesh::extrude::extrude_with_inset(
-        &profile,
-        plane,
-        args.depth,
-        args.segments,
-        inset,
-    )
-    .ok_or_else(|| miette!("Failed to extrude (invalid profile?)"))?;
+        crate::core::mesh::extrude::extrude_with_inset(
+            &profile,
+            plane,
+            args.depth,
+            args.segments,
+            inset,
+        )
+        .ok_or_else(|| miette!("Failed to extrude (invalid profile?)"))?
+    } else {
+        crate::core::mesh::extrude::extrude_with_holes(
+            &profile,
+            &holes,
+            plane,
+            args.depth,
+            args.segments,
+        )
+        .ok_or_else(|| miette!("Failed to extrude with holes (invalid profile?)"))?
+    };
 
     let vc = mesh.vertex_count();
     let fc = mesh.face_count();
@@ -56,7 +68,7 @@ pub fn cmd_extrude(args: &ExtrudeArgs) -> Result<()> {
         "depth": args.depth,
         "plane": plane.as_str(),
         "segments": args.segments,
-        "cap_inset": inset,
+        "hole_count": holes.len(),
         "depth_range": [-half, half],
         "vertex_count": vc,
         "face_count": fc,

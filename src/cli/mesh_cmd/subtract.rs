@@ -49,6 +49,15 @@ pub fn cmd_boolean(args: &BooleanArgs) -> Result<()> {
         [0.0; 3]
     };
 
+    let spacing = if let Some(ref spacing_str) = args.spacing {
+        let (x, y, z) = parse_3d(spacing_str)?;
+        [x, y, z]
+    } else {
+        explicit_offset
+    };
+
+    let count = args.count.unwrap_or(1).max(1);
+
     let mode = match args.mode {
         BooleanOp::Subtract => BooleanMode::Subtract,
         BooleanOp::Union => BooleanMode::Union,
@@ -64,13 +73,20 @@ pub fn cmd_boolean(args: &BooleanArgs) -> Result<()> {
     let target_mesh = target_part.mesh.clone();
 
     // Transform both meshes to world space so the boolean sees correct geometry
-    let target_world = transform_mesh(&target_mesh, &target_transform);
+    let mut current = transform_mesh(&target_mesh, &target_transform);
     let tool_world = transform_mesh(&tool_mesh, &tool_transform);
 
-    let result_world = boolean::boolean_op(&target_world, &tool_world, explicit_offset, mode);
+    for k in 0..count {
+        let iter_offset = [
+            explicit_offset[0] + spacing[0] * k as f64,
+            explicit_offset[1] + spacing[1] * k as f64,
+            explicit_offset[2] + spacing[2] * k as f64,
+        ];
+        current = boolean::boolean_op(&current, &tool_world, iter_offset, mode);
+    }
 
     // Transform result back to target's local coordinate space
-    let result_local = inverse_transform_mesh(&result_world, &target_transform);
+    let result_local = inverse_transform_mesh(&current, &target_transform);
 
     let vc = result_local.vertex_count();
     let fc = result_local.face_count();
@@ -99,6 +115,7 @@ pub fn cmd_boolean(args: &BooleanArgs) -> Result<()> {
         "mode": mode_str,
         "name": active_name,
         "tool": tool_name,
+        "count": count,
         "face_count": fc,
         "vertex_count": vc,
     });
@@ -109,7 +126,7 @@ pub fn cmd_boolean(args: &BooleanArgs) -> Result<()> {
         }
         OutputFormat::Text => {
             cprintln!(
-                "Boolean {}: {} with {}, {fc} faces, {vc} vertices",
+                "Boolean {}: {} with {} (x{count}), {fc} faces, {vc} vertices",
                 mode_str.cyan(),
                 active_name.green().bold(),
                 tool_name.cyan(),

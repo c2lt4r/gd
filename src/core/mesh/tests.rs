@@ -1335,11 +1335,12 @@ fn cap_inset_adds_quad_ring() {
     let mesh_no_inset = extrude::extrude(&points, PlaneKind::Front, 2.0, 1).unwrap();
     let mesh_inset = extrude::extrude_with_inset(&points, PlaneKind::Front, 2.0, 1, 0.15).unwrap();
 
-    // Inset adds 2 rings of n_pts inset vertices (front + back)
+    // Multi-ring inset: 16 segments → 2 auto-rings per cap.
+    // Each cap adds (2 intermediate + 1 inner) × 16 = 48 verts; × 2 caps = 96.
     assert_eq!(
         mesh_inset.vertices.len(),
-        mesh_no_inset.vertices.len() + 2 * 16,
-        "inset should add 32 vertices (16 per cap)"
+        mesh_no_inset.vertices.len() + 96,
+        "inset should add 96 vertices (48 per cap with multi-ring)"
     );
 
     // Inset replaces fan caps with quad-ring + inner-fan, producing more faces
@@ -1560,8 +1561,8 @@ fn boolean_intersect_no_overlap_empty() {
 #[test]
 fn bevel_profile_concave_differs_from_convex() {
     let mesh = cube_mesh();
-    let concave = bevel::bevel_with_profile(&mesh, 0.1, 3, "all", 0.0);
-    let convex = bevel::bevel_with_profile(&mesh, 0.1, 3, "all", 1.0);
+    let concave = bevel::bevel_with_profile(&mesh, 0.1, 3, "all", 0.0, None);
+    let convex = bevel::bevel_with_profile(&mesh, 0.1, 3, "all", 1.0, None);
     // Both should produce valid meshes with same topology
     assert_eq!(concave.faces.len(), convex.faces.len());
     // But different vertex positions (at least some differ)
@@ -1585,7 +1586,7 @@ fn bevel_profile_concave_differs_from_convex() {
 fn bevel_profile_default_matches_original() {
     let mesh = cube_mesh();
     let original = bevel::bevel(&mesh, 0.1, 2, "all");
-    let with_profile = bevel::bevel_with_profile(&mesh, 0.1, 2, "all", 0.5);
+    let with_profile = bevel::bevel_with_profile(&mesh, 0.1, 2, "all", 0.5, None);
     assert_eq!(original.faces.len(), with_profile.faces.len());
     assert_eq!(original.vertices.len(), with_profile.vertices.len());
 }
@@ -1887,4 +1888,283 @@ fn bevel_works_after_cap_inset_circle() {
         "bevel after cap-inset (circle 16-seg) should produce more faces: got {} (same as {original_faces})",
         beveled.faces.len(),
     );
+}
+
+// ── Spatial filter ──────────────────────────────────────────────────
+
+use super::spatial_filter;
+
+#[test]
+fn spatial_filter_parse() {
+    let sf = spatial_filter::parse_where("y>0.12").unwrap();
+    assert_eq!(sf.axis, 1);
+    assert_eq!(sf.op, std::cmp::Ordering::Greater);
+    assert!((sf.value - 0.12).abs() < 1e-9);
+
+    let sf = spatial_filter::parse_where("z<-0.5").unwrap();
+    assert_eq!(sf.axis, 2);
+    assert_eq!(sf.op, std::cmp::Ordering::Less);
+    assert!((sf.value - -0.5).abs() < 1e-9);
+
+    let sf = spatial_filter::parse_where("x>=0").unwrap();
+    assert_eq!(sf.axis, 0);
+    assert_eq!(sf.op, std::cmp::Ordering::Greater);
+    assert!(sf.value.abs() < 1e-9);
+}
+
+#[test]
+fn spatial_filter_parse_errors() {
+    assert!(spatial_filter::parse_where("").is_err());
+    assert!(spatial_filter::parse_where("w>1").is_err());
+    assert!(spatial_filter::parse_where("y").is_err());
+    assert!(spatial_filter::parse_where("y>abc").is_err());
+}
+
+// ── Bevel with --where ──────────────────────────────────────────────
+
+#[test]
+fn bevel_where_top_only() {
+    // Cube from -0.5 to 0.5. Top edges have midpoint y > 0.4.
+    let mesh = cube_mesh();
+    let sf = spatial_filter::parse_where("y>0.4").unwrap();
+    let beveled = bevel::bevel_with_profile(&mesh, 0.1, 1, "all", 0.5, Some(&sf));
+    // Should produce fewer bevel faces than all-edges bevel
+    let beveled_all = bevel::bevel(&mesh, 0.1, 1, "all");
+    assert!(
+        beveled.faces.len() > mesh.faces.len(),
+        "where-filtered bevel should still add faces"
+    );
+    assert!(
+        beveled.faces.len() < beveled_all.faces.len(),
+        "top-only bevel ({}) should have fewer faces than all-edges ({})",
+        beveled.faces.len(),
+        beveled_all.faces.len(),
+    );
+}
+
+// ── Inset with --where ──────────────────────────────────────────────
+
+#[test]
+fn inset_where_top_only() {
+    // Cube: top faces have centroid y > 0.4
+    let mesh = cube_mesh();
+    let sf = spatial_filter::parse_where("y>0.4").unwrap();
+    let selected: Vec<usize> = (0..mesh.faces.len())
+        .filter(|&fi| spatial_filter::face_matches(&mesh, fi, &sf))
+        .collect();
+    assert!(!selected.is_empty(), "should select some top faces");
+
+    let result = inset::inset_selected(&mesh, 0.3, Some(&selected));
+    let result_all = inset::inset(&mesh, 0.3);
+
+    assert!(
+        result.faces.len() > mesh.faces.len(),
+        "where-filtered inset should add faces"
+    );
+    assert!(
+        result.faces.len() < result_all.faces.len(),
+        "top-only inset ({}) should have fewer faces than all-face inset ({})",
+        result.faces.len(),
+        result_all.faces.len(),
+    );
+}
+
+// ── Extrude-face ────────────────────────────────────────────────────
+
+use super::extrude_face;
+
+#[test]
+fn extrude_face_top() {
+    // Cube: extrude top faces upward
+    let mesh = cube_mesh();
+    let sf = spatial_filter::parse_where("y>0.4").unwrap();
+    let selected: Vec<usize> = (0..mesh.faces.len())
+        .filter(|&fi| spatial_filter::face_matches(&mesh, fi, &sf))
+        .collect();
+    assert!(!selected.is_empty());
+
+    let result = extrude_face::extrude_faces(&mesh, 0.5, &selected);
+
+    // Should have more faces (side walls added)
+    assert!(
+        result.faces.len() > mesh.faces.len(),
+        "extrude-face should add side wall faces: got {} vs {}",
+        result.faces.len(),
+        mesh.faces.len(),
+    );
+
+    // Extrude duplicates selected-face vertices → more vertices than original.
+    assert!(
+        result.vertex_count() > mesh.vertex_count(),
+        "extrude-face should add offset vertices: got {} vs {}",
+        result.vertex_count(),
+        mesh.vertex_count(),
+    );
+}
+
+#[test]
+fn extrude_face_no_selection_returns_clone() {
+    let mesh = cube_mesh();
+    let result = extrude_face::extrude_faces(&mesh, 0.5, &[]);
+    assert_eq!(result.faces.len(), mesh.faces.len());
+}
+
+// ── Boolean array ───────────────────────────────────────────────────
+
+#[test]
+fn boolean_array_subtract() {
+    let target = cube_mesh();
+    // Small tool cube
+    #[rustfmt::skip]
+    let small_pos = [
+        [-0.1, -0.1, -0.6], [ 0.1, -0.1, -0.6],
+        [ 0.1,  0.1, -0.6], [-0.1,  0.1, -0.6],
+        [-0.1, -0.1,  0.6], [ 0.1, -0.1,  0.6],
+        [ 0.1,  0.1,  0.6], [-0.1,  0.1,  0.6],
+    ];
+    #[rustfmt::skip]
+    let small_idx = [
+        0, 1, 2,  0, 2, 3,
+        5, 4, 7,  5, 7, 6,
+        3, 2, 6,  3, 6, 7,
+        4, 5, 1,  4, 1, 0,
+        1, 5, 6,  1, 6, 2,
+        4, 0, 3,  4, 3, 7,
+    ];
+    let tool = HalfEdgeMesh::from_triangles(&small_pos, &small_idx);
+
+    // Array subtract: 3 cuts along X axis
+    let offset = [0.0, 0.0, 0.0];
+    let spacing = [0.25, 0.0, 0.0];
+    let mut current = target.clone();
+    for k in 0..3_u32 {
+        let iter_offset = [
+            offset[0] + spacing[0] * k as f64,
+            offset[1] + spacing[1] * k as f64,
+            offset[2] + spacing[2] * k as f64,
+        ];
+        current = boolean::boolean_op(
+            &current,
+            &tool,
+            iter_offset,
+            boolean::BooleanMode::Subtract,
+        );
+    }
+    // Should have more faces than original (material removed + caps added per cut)
+    assert!(
+        current.faces.len() > target.faces.len(),
+        "3 array subtracts should produce more faces: {} vs {}",
+        current.faces.len(),
+        target.faces.len(),
+    );
+}
+
+// ── Multi-contour profiles (holes) ──────────────────────────────────
+
+#[test]
+fn profile_with_hole() {
+    // Outer square with inner square hole
+    let outer = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
+    let hole = vec![[0.25, 0.25], [0.75, 0.25], [0.75, 0.75], [0.25, 0.75]];
+
+    let indices = profile::triangulate_2d_with_holes(&outer, &[hole]);
+    assert!(indices.is_some(), "should triangulate with hole");
+    let indices = indices.unwrap();
+    // 8 points total, earcut should produce triangles filling the area minus the hole
+    assert_eq!(indices.len() % 3, 0, "indices should be multiple of 3");
+    // Square with square hole → 8 triangles (8 total points, outer ring + hole ring)
+    assert!(
+        indices.len() >= 18,
+        "should produce at least 6 triangles: got {}",
+        indices.len() / 3,
+    );
+}
+
+#[test]
+fn extrude_with_hole() {
+    // Extruded ring: outer square with inner square hole
+    let outer = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
+    let hole = vec![[0.25, 0.25], [0.75, 0.25], [0.75, 0.75], [0.25, 0.75]];
+
+    let mesh =
+        extrude::extrude_with_holes(&outer, &[hole], PlaneKind::Front, 2.0, 1);
+    assert!(mesh.is_some(), "should extrude with holes");
+    let mesh = mesh.unwrap();
+
+    // Should have outer side walls + inner hole side walls + caps
+    // 8 total points × 2 sections = 16 vertices
+    assert_eq!(mesh.vertices.len(), 16);
+
+    // Outer walls: 4 quads, inner walls: 4 quads, caps: triangulated with holes
+    assert!(
+        mesh.faces.len() > 8,
+        "extruded ring should have wall + cap faces: got {}",
+        mesh.faces.len(),
+    );
+
+    // Check that inner walls exist (more faces than a solid extrude)
+    let solid = extrude::extrude(&outer, PlaneKind::Front, 2.0, 1).unwrap();
+    assert!(
+        mesh.faces.len() > solid.faces.len(),
+        "ring ({}) should have more faces than solid ({})",
+        mesh.faces.len(),
+        solid.faces.len(),
+    );
+}
+
+// ── Multi-ring cap ──────────────────────────────────────────────────
+
+#[test]
+fn multi_ring_cap() {
+    use std::f64::consts::TAU;
+    let segments = 16u32;
+    let circle: Vec<[f64; 2]> = (0..segments)
+        .map(|i| {
+            let angle = TAU * f64::from(i) / f64::from(segments);
+            [1.0 * angle.cos(), 1.0 * angle.sin()]
+        })
+        .collect();
+
+    // With inset: should produce multi-ring quads
+    let mesh = extrude::extrude_with_inset(&circle, PlaneKind::Front, 2.0, 1, 0.15).unwrap();
+
+    // Count quads on the cap faces (multi-ring should produce more quads than single ring)
+    let quad_count = (0..mesh.faces.len())
+        .filter(|&f| mesh.face_vertices(f).len() == 4)
+        .count();
+
+    // 16-segment circle with auto rings = max(1, 16/8) = 2 rings
+    // Each ring has 16 quads, so 2 rings × 2 caps = at least 64 quad-ring faces
+    // Plus the inner earcut + 16 outer side quads
+    assert!(
+        quad_count >= 48,
+        "multi-ring cap should produce many quads: got {quad_count}"
+    );
+
+    // All normals should still point outward
+    assert_all_normals_outward(&mesh, "multi-ring cap circle 16-seg");
+}
+
+#[test]
+fn multi_ring_cap_24_segments() {
+    use std::f64::consts::TAU;
+    let segments = 24u32;
+    let circle: Vec<[f64; 2]> = (0..segments)
+        .map(|i| {
+            let angle = TAU * f64::from(i) / f64::from(segments);
+            [1.0 * angle.cos(), 1.0 * angle.sin()]
+        })
+        .collect();
+
+    let mesh = extrude::extrude_with_inset(&circle, PlaneKind::Front, 2.0, 1, 0.15).unwrap();
+    // 24 segments → 3 rings (max(1, 24/8) = 3, capped at 3)
+    // 3 rings × 24 quads × 2 caps + 1 inner quad ring × 2 caps = at least many quads
+    let quad_count = (0..mesh.faces.len())
+        .filter(|&f| mesh.face_vertices(f).len() == 4)
+        .count();
+    assert!(
+        quad_count >= 96,
+        "24-seg circle should produce >= 96 quads: got {quad_count}"
+    );
+    assert_all_normals_outward(&mesh, "multi-ring cap circle 24-seg");
 }
