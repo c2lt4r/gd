@@ -19,6 +19,12 @@ pub fn bevel(mesh: &HalfEdgeMesh, radius: f64, segments: u32, edge_filter: &str)
     bevel_with_profile(mesh, radius, segments, edge_filter, 0.5, None)
 }
 
+/// Bevel with segments=1 (flat chamfer, no arc intermediates).
+#[cfg(test)]
+pub fn bevel_seg1(mesh: &HalfEdgeMesh, radius: f64, edge_filter: &str) -> HalfEdgeMesh {
+    bevel_with_profile(mesh, radius, 1, edge_filter, 0.5, None)
+}
+
 /// Bevel with explicit profile control.
 ///
 /// `profile`: 0.0 = concave, 0.5 = circular (default), 1.0 = convex chamfer.
@@ -151,6 +157,10 @@ pub fn bevel_with_profile(
     }
 
     // ── Phase 2: Bevel strips along each sharp edge ──────────────────
+    // Also record arc intermediate vertices for enhanced vertex caps.
+    // arc_map: (vertex, face_from, face_to) → intermediate bezier vertex indices
+    let mut arc_map: HashMap<(usize, usize, usize), Vec<usize>> = HashMap::new();
+
     for (&(va, vb), &[fi1, fi2]) in &edge_faces {
         if fi1 == usize::MAX || fi2 == usize::MAX {
             continue;
@@ -168,28 +178,20 @@ pub fn bevel_with_profile(
             continue;
         };
 
-        // Determine correct winding for the strip faces.
-        // The strip normal should align with the average of the two face normals.
-        let expected = {
-            let n1 = compute_face_normal(mesh, fi1);
-            let n2 = compute_face_normal(mesh, fi2);
-            [n1[0] + n2[0], n1[1] + n2[1], n1[2] + n2[2]]
-        };
-
-        // Test triangle (a1, a2, b1) — if normal aligns with expected, use this winding
-        let trial_normal = cross(
-            sub(positions[a2], positions[a1]),
-            sub(positions[b1], positions[a1]),
-        );
-        let flip_strip = dot(trial_normal, expected) < 0.0;
+        // Derive strip winding from the half-edge direction in face fi1.
+        // If fi1 has edge va→vb, the inset face has a1→b1.
+        // The strip must have twin b1→a1, which is flip=false: [a1, a2, b2, b1].
+        // If fi1 has edge vb→va, the inset face has b1→a1.
+        // The strip must have twin a1→b1, which is flip=true: [a1, b1, b2, a2].
+        let fi1_verts = mesh.face_vertices(fi1);
+        let fi1_n = fi1_verts.len();
+        let fi1_has_va_to_vb = (0..fi1_n)
+            .any(|i| fi1_verts[i] == va && fi1_verts[(i + 1) % fi1_n] == vb);
+        let flip_strip = !fi1_has_va_to_vb;
 
         if segments <= 1 {
             add_strip_quad(a1, b1, a2, b2, flip_strip, &mut poly_faces);
         } else {
-            // Multi-segment: quadratic Bezier with profile-controlled control point.
-            // profile=0.5 → circular arc (ctrl = original vertex position)
-            // profile=1.0 → flat chamfer (ctrl = midpoint of inset positions)
-            // profile=0.0 → concave (ctrl pushed past original position)
             let clamped = profile.clamp(0.0, 1.0);
             let va_orig = mesh.vertices[va].position;
             let vb_orig = mesh.vertices[vb].position;
@@ -200,12 +202,15 @@ pub fn bevel_with_profile(
 
             let mut prev_a = a1;
             let mut prev_b = b1;
+            let mut va_mids = Vec::new();
+            let mut vb_mids = Vec::new();
 
             for s in 1..=segments {
                 let t = f64::from(s) / f64::from(segments);
                 let next_a = if s < segments {
                     let idx = positions.len();
                     positions.push(bezier_quad(positions[a1], va_pos, positions[a2], t));
+                    va_mids.push(idx);
                     idx
                 } else {
                     a2
@@ -213,6 +218,7 @@ pub fn bevel_with_profile(
                 let next_b = if s < segments {
                     let idx = positions.len();
                     positions.push(bezier_quad(positions[b1], vb_pos, positions[b2], t));
+                    vb_mids.push(idx);
                     idx
                 } else {
                     b2
@@ -221,47 +227,156 @@ pub fn bevel_with_profile(
                 prev_a = next_a;
                 prev_b = next_b;
             }
+
+            // Store arc intermediates (both directions for face ring walk)
+            let va_rev: Vec<usize> = va_mids.iter().copied().rev().collect();
+            arc_map.insert((va, fi1, fi2), va_mids);
+            arc_map.insert((va, fi2, fi1), va_rev);
+
+            let vb_rev: Vec<usize> = vb_mids.iter().copied().rev().collect();
+            arc_map.insert((vb, fi1, fi2), vb_mids);
+            arc_map.insert((vb, fi2, fi1), vb_rev);
+        }
+    }
+
+    // ── Phase 2.5: Transition faces for non-sharp edges ──────────────
+    // Non-sharp edges between faces with different vertex mappings (inset
+    // vs original) create gaps.  Bridge them with transition quads/tris
+    // whose winding is derived from half-edge direction (manifold-safe).
+    {
+        let mut visited: HashSet<(usize, usize)> = HashSet::new();
+        for he in &mesh.half_edges {
+            let Some(f_a) = he.face else { continue };
+            let Some(f_b) = mesh.half_edges[he.twin].face else {
+                continue;
+            };
+
+            let v_to = he.vertex;
+            let v_from = mesh.half_edges[he.prev].vertex;
+            let key = canonical(v_from, v_to);
+
+            if sharp_set.contains(&key) || !visited.insert(key) {
+                continue;
+            }
+
+            let a_from = inset_map.get(&(f_a, v_from)).copied().unwrap_or(v_from);
+            let a_to = inset_map.get(&(f_a, v_to)).copied().unwrap_or(v_to);
+            let b_from = inset_map.get(&(f_b, v_from)).copied().unwrap_or(v_from);
+            let b_to = inset_map.get(&(f_b, v_to)).copied().unwrap_or(v_to);
+
+            if a_from == b_from && a_to == b_to {
+                continue;
+            }
+
+            // Winding derived from directed edge:
+            //   f_a has edge a_from → a_to   (mapped v_from → v_to)
+            //   f_b has edge b_to   → b_from (mapped v_to   → v_from)
+            // Transition face must contain twin edges:
+            //   a_to → a_from  (twin of f_a's edge)
+            //   b_from → b_to  (twin of f_b's edge)
+            if a_from == b_from {
+                poly_faces.push(vec![a_from, b_to, a_to]);
+            } else if a_to == b_to {
+                poly_faces.push(vec![a_to, a_from, b_from]);
+            } else {
+                poly_faces.push(vec![a_from, b_from, b_to, a_to]);
+            }
         }
     }
 
     // ── Phase 3: Vertex caps ─────────────────────────────────────────
-    for &v in &affected {
-        let face_ring = mesh.vertex_faces(v);
-        // Collect inset vertices in face-ring order
-        let ring_verts: Vec<usize> = face_ring
-            .iter()
-            .filter_map(|&fi| inset_map.get(&(fi, v)).copied())
-            .collect();
+    // Walk the face ring around each affected vertex, collecting inset
+    // copies plus bevel arc intermediates to form a complete cap polygon.
 
-        if ring_verts.len() < 3 {
+    // Build edge lookup from all previously-emitted faces for empirical
+    // cap winding detection.  If a cap edge A→B already exists in a
+    // neighbor face, the cap must use B→A (the twin direction).
+    let emitted_edges: HashSet<(usize, usize)> = {
+        let mut set = HashSet::new();
+        for face in &poly_faces {
+            let fl = face.len();
+            for i in 0..fl {
+                set.insert((face[i], face[(i + 1) % fl]));
+            }
+        }
+        set
+    };
+
+    for &v in &affected {
+        let ring = vertex_face_ring(mesh, v);
+        let n = ring.len();
+        if n < 2 {
             continue;
         }
 
-        // Determine winding: cap normal should point outward (same direction
-        // as the average of the adjacent face normals).
-        let avg_normal = {
-            let mut n = [0.0; 3];
-            for &fi in &face_ring {
-                let fn_ = compute_face_normal(mesh, fi);
-                n[0] += fn_[0];
-                n[1] += fn_[1];
-                n[2] += fn_[2];
+        let mut cap: Vec<usize> = Vec::new();
+
+        for i in 0..n {
+            let (fi, shared_v) = ring[i];
+            let fi_next = ring[(i + 1) % n].0;
+            let v_fi = inset_map.get(&(fi, v)).copied().unwrap_or(v);
+
+            cap.push(v_fi);
+
+            // For sharp edges between fi and fi_next, add bevel arc intermediates
+            if sharp_set.contains(&canonical(v, shared_v))
+                && let Some(mids) = arc_map.get(&(v, fi, fi_next))
+            {
+                cap.extend_from_slice(mids);
             }
-            n
+        }
+
+        // Dedup consecutive equal vertices (non-inset faces share original v)
+        cap.dedup();
+        if cap.len() >= 2 && cap.first() == cap.last() {
+            cap.pop();
+        }
+
+        if cap.len() < 3 {
+            continue;
+        }
+
+        // Determine winding empirically: if a cap polygon edge A→B already
+        // exists in a neighbor face, the cap must emit B→A (the twin).
+        let flip = {
+            let mut result = None;
+            for i in 0..cap.len() {
+                let j = (i + 1) % cap.len();
+                if emitted_edges.contains(&(cap[i], cap[j])) {
+                    result = Some(true); // reverse to create twin
+                    break;
+                }
+                if emitted_edges.contains(&(cap[j], cap[i])) {
+                    result = Some(false); // keep direction as twin
+                    break;
+                }
+            }
+            result.unwrap_or_else(|| {
+                // Fallback: normal-based (rarely needed)
+                let avg_normal = {
+                    let mut normal = [0.0; 3];
+                    for &(fi, _) in &ring {
+                        let fn_ = compute_face_normal(mesh, fi);
+                        normal[0] += fn_[0];
+                        normal[1] += fn_[1];
+                        normal[2] += fn_[2];
+                    }
+                    normal
+                };
+                let trial = cross(
+                    sub(positions[cap[1]], positions[cap[0]]),
+                    sub(positions[cap[2]], positions[cap[0]]),
+                );
+                dot(trial, avg_normal) < 0.0
+            })
         };
 
-        let trial = cross(
-            sub(positions[ring_verts[1]], positions[ring_verts[0]]),
-            sub(positions[ring_verts[2]], positions[ring_verts[0]]),
-        );
-        let flip_cap = dot(trial, avg_normal) < 0.0;
-
-        // Vertex caps stay triangulated (fan from ring_verts[0])
-        for i in 1..ring_verts.len() - 1 {
-            if flip_cap {
-                poly_faces.push(vec![ring_verts[0], ring_verts[i + 1], ring_verts[i]]);
+        // Emit cap as triangle fan.
+        for i in 1..cap.len() - 1 {
+            if flip {
+                poly_faces.push(vec![cap[0], cap[i + 1], cap[i]]);
             } else {
-                poly_faces.push(vec![ring_verts[0], ring_verts[i], ring_verts[i + 1]]);
+                poly_faces.push(vec![cap[0], cap[i], cap[i + 1]]);
             }
         }
     }
@@ -271,6 +386,36 @@ pub fn bevel_with_profile(
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
+
+/// Walk half-edges around vertex `v`, returning `(face_idx, edge_target)`
+/// for each face.  `edge_target` is the other vertex on the edge separating
+/// this face from the next face in the ring.
+fn vertex_face_ring(mesh: &HalfEdgeMesh, v: usize) -> Vec<(usize, usize)> {
+    let mut ring = Vec::new();
+    let Some(start_he) = mesh.vertices[v].half_edge else {
+        return ring;
+    };
+    let mut he_idx = start_he;
+    loop {
+        let he = &mesh.half_edges[he_idx];
+        if let Some(f) = he.face {
+            ring.push((f, he.vertex));
+        }
+        let twin = he.twin;
+        if twin >= mesh.half_edges.len() {
+            break;
+        }
+        let next = mesh.half_edges[twin].next;
+        if next == usize::MAX || next >= mesh.half_edges.len() || next == start_he {
+            break;
+        }
+        he_idx = next;
+        if ring.len() > mesh.faces.len() {
+            break;
+        }
+    }
+    ring
+}
 
 fn canonical(a: usize, b: usize) -> (usize, usize) {
     if a < b { (a, b) } else { (b, a) }

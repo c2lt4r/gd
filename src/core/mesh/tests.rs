@@ -2268,3 +2268,148 @@ fn flip_normals_where_top_only() {
         );
     }
 }
+
+// ── Bevel vertex-cap gap fix ────────────────────────────────────────
+
+#[test]
+fn bevel_depth_after_taper_no_holes() {
+    // Reproduces the A380 fuselage hole: ellipse extruded, tapered at ends,
+    // then bevel --edges depth.  Before fix, vertex caps at cap-ring vertices
+    // were skipped (only 2 inset copies), leaving holes at front and back.
+    use std::f64::consts::TAU;
+
+    let segments = 24;
+    let circle: Vec<[f64; 2]> = (0..segments)
+        .map(|i| {
+            let angle = TAU * i as f64 / segments as f64;
+            [3.57 * angle.cos(), 4.2 * angle.sin()]
+        })
+        .collect();
+
+    let mut mesh =
+        extrude::extrude_with_inset(&circle, PlaneKind::Front, 73.0, 8, 0.15).unwrap();
+    let pre_taper_verts = mesh.vertex_count();
+    let pre_taper_faces = mesh.face_count();
+    assert!(pre_taper_verts > 0);
+    assert!(pre_taper_faces > 0);
+
+    // Taper nose (front) to 12% and tail (back) to 25%
+    super::taper::taper(&mut mesh, 2, 0.12, 1.0, None, Some((0.0, 0.16)));
+    super::taper::taper(&mut mesh, 2, 1.0, 0.25, None, Some((0.75, 1.0)));
+
+    // Bevel depth edges — this is where the holes appeared
+    let beveled = bevel::bevel(&mesh, 0.3, 2, "depth");
+    assert!(
+        beveled.face_count() > mesh.face_count(),
+        "bevel should produce more faces: {} vs {}",
+        beveled.face_count(),
+        mesh.face_count()
+    );
+
+    // Verify watertightness: every edge should have exactly 2 adjacent faces.
+    // A hole means some edge has only 1 adjacent face (boundary edge).
+    let boundary = count_boundary_edges(&beveled);
+    assert_eq!(
+        boundary, 0,
+        "beveled tapered mesh should be watertight (0 boundary edges), found {boundary}"
+    );
+}
+
+#[test]
+fn bevel_depth_tapered_wing_no_holes() {
+    // Reproduces the wing hole: 6-point profile, taper to 0.25x, bevel depth.
+    let wing_profile = [
+        [3.6, -8.0],
+        [15.0, -3.0],
+        [30.0, 2.0],
+        [40.0, 5.0],
+        [40.0, 9.0],
+        [3.6, 9.0],
+    ];
+    let mut mesh = extrude::extrude(&wing_profile, PlaneKind::Top, 2.0, 2).unwrap();
+
+    super::taper::taper(&mut mesh, 0, 1.0, 0.25, None, None);
+
+    let beveled = bevel::bevel(&mesh, 0.3, 2, "depth");
+    assert!(beveled.face_count() > mesh.face_count());
+
+    let boundary = count_boundary_edges(&beveled);
+    assert_eq!(
+        boundary, 0,
+        "beveled tapered wing should be watertight, found {boundary} boundary edges"
+    );
+}
+
+/// Count boundary edges (edges with only one adjacent face).
+/// Boundary half-edges have `face: None` — their twin has a face.
+fn count_boundary_edges(mesh: &HalfEdgeMesh) -> usize {
+    mesh.half_edges.iter().filter(|he| he.face.is_none()).count()
+}
+
+#[test]
+fn bevel_depth_seg1_tapered_wing() {
+    let wing_profile = [
+        [3.6, -8.0],
+        [15.0, -3.0],
+        [30.0, 2.0],
+        [40.0, 5.0],
+        [40.0, 9.0],
+        [3.6, 9.0],
+    ];
+    let mut mesh = extrude::extrude(&wing_profile, PlaneKind::Top, 2.0, 2).unwrap();
+    super::taper::taper(&mut mesh, 0, 1.0, 0.25, None, None);
+
+    let beveled = bevel::bevel_seg1(&mesh, 0.3, "depth");
+    assert_eq!(
+        count_boundary_edges(&beveled),
+        0,
+        "tapered wing seg1 bevel should be watertight"
+    );
+}
+
+#[test]
+fn bevel_depth_seg1_cube() {
+    let cube = [
+        [1.0, 1.0],
+        [-1.0, 1.0],
+        [-1.0, -1.0],
+        [1.0, -1.0],
+    ];
+    let mesh = extrude::extrude(&cube, PlaneKind::Front, 2.0, 1).unwrap();
+    let beveled = bevel::bevel_seg1(&mesh, 0.2, "depth");
+    assert_eq!(count_boundary_edges(&beveled), 0, "cube bevel depth should be watertight");
+}
+
+#[test]
+fn bevel_depth_seg1_untapered_wing() {
+    let wing_profile = [
+        [3.6, -8.0],
+        [15.0, -3.0],
+        [30.0, 2.0],
+        [40.0, 5.0],
+        [40.0, 9.0],
+        [3.6, 9.0],
+    ];
+    let mesh = extrude::extrude(&wing_profile, PlaneKind::Top, 2.0, 2).unwrap();
+    assert_eq!(count_boundary_edges(&mesh), 0, "input mesh should be watertight");
+
+    let beveled = bevel::bevel_seg1(&mesh, 0.3, "depth");
+    assert_eq!(
+        count_boundary_edges(&beveled),
+        0,
+        "untapered wing bevel should be watertight"
+    );
+}
+
+#[test]
+fn bevel_all_seg1_cube() {
+    let cube = [
+        [1.0, 1.0],
+        [-1.0, 1.0],
+        [-1.0, -1.0],
+        [1.0, -1.0],
+    ];
+    let mesh = extrude::extrude(&cube, PlaneKind::Front, 2.0, 1).unwrap();
+    let beveled = bevel::bevel_seg1(&mesh, 0.2, "all");
+    assert_eq!(count_boundary_edges(&beveled), 0, "cube bevel all should be watertight");
+}
