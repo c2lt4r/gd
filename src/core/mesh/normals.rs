@@ -36,23 +36,25 @@ pub fn compute_vertex_normals(mesh: &HalfEdgeMesh) -> Vec<[f64; 3]> {
     vertex_normals
 }
 
-/// Compute the face normal from the cross product of its first two edges.
+/// Compute the face normal using Newell's method (robust for any polygon size).
 pub fn compute_face_normal(mesh: &HalfEdgeMesh, f: usize) -> [f64; 3] {
     let verts = mesh.face_vertices(f);
     if verts.len() < 3 {
         return [0.0, 1.0, 0.0];
     }
 
-    let p0 = mesh.vertices[verts[0]].position;
-    let p1 = mesh.vertices[verts[1]].position;
-    let p2 = mesh.vertices[verts[2]].position;
+    let mut nx = 0.0_f64;
+    let mut ny = 0.0_f64;
+    let mut nz = 0.0_f64;
 
-    let e1 = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
-    let e2 = [p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]];
-
-    let nx = e1[1] * e2[2] - e1[2] * e2[1];
-    let ny = e1[2] * e2[0] - e1[0] * e2[2];
-    let nz = e1[0] * e2[1] - e1[1] * e2[0];
+    let n = verts.len();
+    for i in 0..n {
+        let cur = mesh.vertices[verts[i]].position;
+        let next = mesh.vertices[verts[(i + 1) % n]].position;
+        nx += (cur[1] - next[1]) * (cur[2] + next[2]);
+        ny += (cur[2] - next[2]) * (cur[0] + next[0]);
+        nz += (cur[0] - next[0]) * (cur[1] + next[1]);
+    }
 
     let len = (nx * nx + ny * ny + nz * nz).sqrt();
     if len > 1e-12 {
@@ -131,31 +133,31 @@ pub fn fix_winding(mesh: &mut HalfEdgeMesh) -> usize {
         }
     }
 
-    // Rebuild mesh from triangles with corrected winding
+    // Rebuild mesh with corrected winding, preserving face sizes
     let flipped_count = should_flip.iter().filter(|&&f| f).count();
     if flipped_count == 0 {
         return 0;
     }
 
     let positions: Vec<[f64; 3]> = mesh.vertices.iter().map(|v| v.position).collect();
-    let mut indices: Vec<usize> = Vec::with_capacity(num_faces * 3);
+    let mut poly_faces: Vec<Vec<usize>> = Vec::with_capacity(num_faces);
 
     for (f, &flip) in should_flip.iter().enumerate() {
         let verts = mesh.face_vertices(f);
-        if verts.len() == 3 {
-            if flip {
-                indices.push(verts[2]);
-                indices.push(verts[1]);
-                indices.push(verts[0]);
-            } else {
-                indices.push(verts[0]);
-                indices.push(verts[1]);
-                indices.push(verts[2]);
-            }
+        if verts.len() < 3 {
+            continue;
+        }
+        if flip {
+            let mut reversed = verts;
+            reversed.reverse();
+            poly_faces.push(reversed);
+        } else {
+            poly_faces.push(verts);
         }
     }
 
-    *mesh = HalfEdgeMesh::from_triangles(&positions, &indices);
+    let face_slices: Vec<&[usize]> = poly_faces.iter().map(Vec::as_slice).collect();
+    *mesh = HalfEdgeMesh::from_polygons(&positions, &face_slices);
     flipped_count
 }
 
@@ -195,18 +197,18 @@ pub fn flip_all(mesh: &mut HalfEdgeMesh) {
     }
 
     let positions: Vec<[f64; 3]> = mesh.vertices.iter().map(|v| v.position).collect();
-    let mut indices: Vec<usize> = Vec::with_capacity(face_count * 3);
+    let mut poly_faces: Vec<Vec<usize>> = Vec::with_capacity(face_count);
 
     for f in 0..face_count {
-        let verts = mesh.face_vertices(f);
-        if verts.len() == 3 {
-            indices.push(verts[2]);
-            indices.push(verts[1]);
-            indices.push(verts[0]);
+        let mut verts = mesh.face_vertices(f);
+        if verts.len() >= 3 {
+            verts.reverse();
+            poly_faces.push(verts);
         }
     }
 
-    *mesh = HalfEdgeMesh::from_triangles(&positions, &indices);
+    let face_slices: Vec<&[usize]> = poly_faces.iter().map(Vec::as_slice).collect();
+    *mesh = HalfEdgeMesh::from_polygons(&positions, &face_slices);
 }
 
 /// Flip only cap faces aligned with a given axis.
@@ -221,28 +223,24 @@ pub fn flip_caps(mesh: &mut HalfEdgeMesh, axis: usize) -> usize {
 
     let mut count = 0;
     let positions: Vec<[f64; 3]> = mesh.vertices.iter().map(|v| v.position).collect();
-    let mut indices: Vec<usize> = Vec::with_capacity(face_count * 3);
+    let mut poly_faces: Vec<Vec<usize>> = Vec::with_capacity(face_count);
 
     for f in 0..face_count {
-        let verts = mesh.face_vertices(f);
-        if verts.len() != 3 {
+        let mut verts = mesh.face_vertices(f);
+        if verts.len() < 3 {
             continue;
         }
         let normal = compute_face_normal(mesh, f);
         if normal[axis].abs() > 0.7 {
-            indices.push(verts[2]);
-            indices.push(verts[1]);
-            indices.push(verts[0]);
+            verts.reverse();
             count += 1;
-        } else {
-            indices.push(verts[0]);
-            indices.push(verts[1]);
-            indices.push(verts[2]);
         }
+        poly_faces.push(verts);
     }
 
     if count > 0 {
-        *mesh = HalfEdgeMesh::from_triangles(&positions, &indices);
+        let face_slices: Vec<&[usize]> = poly_faces.iter().map(Vec::as_slice).collect();
+        *mesh = HalfEdgeMesh::from_polygons(&positions, &face_slices);
     }
     count
 }

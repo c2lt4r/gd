@@ -150,6 +150,111 @@ impl HalfEdgeMesh {
         mesh
     }
 
+    /// Build a half-edge mesh from polygon data (variable-length faces).
+    ///
+    /// `positions`: vertex positions `[x, y, z]`
+    /// `faces`: slice of face vertex-index slices (triangles, quads, or n-gons)
+    pub fn from_polygons(positions: &[[f64; 3]], faces: &[&[usize]]) -> Self {
+        let total_he: usize = faces.iter().map(|f| f.len()).sum();
+
+        let mut mesh = Self {
+            vertices: positions
+                .iter()
+                .map(|&p| Vertex {
+                    position: p,
+                    half_edge: None,
+                })
+                .collect(),
+            half_edges: Vec::with_capacity(total_he * 2),
+            faces: Vec::with_capacity(faces.len()),
+        };
+
+        let mut edge_map: HashMap<(usize, usize), usize> = HashMap::new();
+
+        for face in faces {
+            let n = face.len();
+            if n < 3 {
+                continue;
+            }
+
+            let f = mesh.faces.len();
+            mesh.faces.push(Face {
+                half_edge: mesh.half_edges.len(),
+            });
+
+            let he_base = mesh.half_edges.len();
+
+            for i in 0..n {
+                let from = face[i];
+                let to = face[(i + 1) % n];
+                let he_idx = he_base + i;
+
+                mesh.half_edges.push(HalfEdge {
+                    vertex: to,
+                    face: Some(f),
+                    twin: usize::MAX,
+                    next: he_base + (i + 1) % n,
+                    prev: he_base + (i + n - 1) % n,
+                });
+
+                if mesh.vertices[from].half_edge.is_none() {
+                    mesh.vertices[from].half_edge = Some(he_idx);
+                }
+
+                edge_map.insert((from, to), he_idx);
+            }
+        }
+
+        // Wire up twins
+        let num_he = mesh.half_edges.len();
+        let mut boundary_edges: Vec<(usize, usize)> = Vec::new();
+
+        let mut he_idx = 0;
+        for face in faces {
+            let n = face.len();
+            if n < 3 {
+                continue;
+            }
+            for i in 0..n {
+                let from = face[i];
+                let to = face[(i + 1) % n];
+                if let Some(&twin_idx) = edge_map.get(&(to, from)) {
+                    mesh.half_edges[he_idx].twin = twin_idx;
+                } else {
+                    boundary_edges.push((from, to));
+                }
+                he_idx += 1;
+            }
+        }
+
+        // Create boundary half-edges for unpaired edges
+        for &(from, to) in &boundary_edges {
+            if let Some(&interior_he) = edge_map.get(&(from, to)) {
+                if mesh.half_edges[interior_he].twin != usize::MAX {
+                    continue;
+                }
+                let boundary_he_idx = mesh.half_edges.len();
+                mesh.half_edges.push(HalfEdge {
+                    vertex: from,
+                    face: None,
+                    twin: interior_he,
+                    next: usize::MAX,
+                    prev: usize::MAX,
+                });
+                mesh.half_edges[interior_he].twin = boundary_he_idx;
+
+                if mesh.vertices[to].half_edge.is_none() {
+                    mesh.vertices[to].half_edge = Some(boundary_he_idx);
+                }
+            }
+        }
+
+        // Link boundary half-edges into chains
+        link_boundary_chains(&mut mesh, num_he);
+
+        mesh
+    }
+
     // ── Adjacency queries ───────────────────────────────────────────
 
     /// All face indices surrounding a vertex.
@@ -386,18 +491,21 @@ impl HalfEdgeMesh {
             }
         }
 
+        // Godot uses CW front-face winding (cross product points inward for front
+        // faces).  Our internal representation is CCW (cross product outward), so we
+        // swap the last two indices of every triangle to match Godot's convention.
         let mut indices = Vec::with_capacity(self.faces.len() * 3);
         for face in &self.faces {
             let verts = self.face_vertices_from_he(face.half_edge);
             if verts.len() == 3 {
-                for &v in &verts {
-                    indices.push(v as u32);
-                }
+                indices.push(verts[0] as u32);
+                indices.push(verts[2] as u32);
+                indices.push(verts[1] as u32);
             } else if verts.len() > 3 {
                 for i in 1..verts.len() - 1 {
                     indices.push(verts[0] as u32);
-                    indices.push(verts[i] as u32);
                     indices.push(verts[i + 1] as u32);
+                    indices.push(verts[i] as u32);
                 }
             }
         }
@@ -416,8 +524,9 @@ impl HalfEdgeMesh {
             let verts = self.face_vertices_from_he(self.faces[f].half_edge);
             let face_n = super::normals::compute_face_normal(self, f);
 
+            // CW winding for Godot: swap last two vertices per triangle
             if verts.len() == 3 {
-                for &v in &verts {
+                for &v in &[verts[0], verts[2], verts[1]] {
                     positions.extend_from_slice(&self.vertices[v].position);
                     normal_data.extend_from_slice(&face_n);
                     indices.push(vi);
@@ -425,7 +534,7 @@ impl HalfEdgeMesh {
                 }
             } else if verts.len() > 3 {
                 for i in 1..verts.len() - 1 {
-                    for &v in &[verts[0], verts[i], verts[i + 1]] {
+                    for &v in &[verts[0], verts[i + 1], verts[i]] {
                         positions.extend_from_slice(&self.vertices[v].position);
                         normal_data.extend_from_slice(&face_n);
                         indices.push(vi);
@@ -539,9 +648,11 @@ impl HalfEdgeMesh {
                     }
                 };
 
+            // CW winding for Godot: swap last two vertices per triangle
             if verts.len() == 3 {
+                let cw = [verts[0], verts[2], verts[1]];
                 emit_tri(
-                    &verts,
+                    &cw,
                     &mut positions,
                     &mut normal_data,
                     &mut indices,
@@ -550,7 +661,7 @@ impl HalfEdgeMesh {
                 );
             } else if verts.len() > 3 {
                 for i in 1..verts.len() - 1 {
-                    let tri = [verts[0], verts[i], verts[i + 1]];
+                    let tri = [verts[0], verts[i + 1], verts[i]];
                     emit_tri(
                         &tri,
                         &mut positions,
@@ -603,7 +714,7 @@ impl HalfEdgeMesh {
         (min, max)
     }
 
-    /// Number of triangles (assuming all faces are triangles).
+    /// Number of faces (triangles, quads, or n-gons).
     pub fn face_count(&self) -> usize {
         self.faces.len()
     }

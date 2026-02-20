@@ -2,6 +2,9 @@ use super::PlaneKind;
 use super::half_edge::HalfEdgeMesh;
 use super::profile::{map_2d_to_3d_at_depth, signed_area_2x, triangulate_2d};
 
+/// Face storage: mix of triangles and quads.
+type PolyFaces = Vec<Vec<usize>>;
+
 /// Linear extrusion with no cap inset. Convenience wrapper for tests and
 /// simple profiles (< 8 vertices).
 #[cfg(test)]
@@ -56,7 +59,7 @@ pub fn extrude_with_inset(
         }
     }
 
-    let mut indices: Vec<usize> = Vec::new();
+    let mut faces: PolyFaces = Vec::new();
     let use_inset = inset_factor > 0.0 && n_pts >= 5;
 
     if use_inset {
@@ -70,15 +73,16 @@ pub fn extrude_with_inset(
             half,
             inset_factor,
             &mut positions,
-            &mut indices,
+            &mut faces,
         )?;
     } else {
-        build_standard_caps(&cap_indices, cap_flip, n_pts, n_segs, &mut indices);
+        build_standard_caps(&cap_indices, cap_flip, n_pts, n_segs, &mut faces);
     }
 
-    build_side_walls(wall_flip, n_pts, n_segs, &mut indices);
+    build_side_walls(wall_flip, n_pts, n_segs, &mut faces);
 
-    Some(HalfEdgeMesh::from_triangles(&positions, &indices))
+    let face_slices: Vec<&[usize]> = faces.iter().map(Vec::as_slice).collect();
+    Some(HalfEdgeMesh::from_polygons(&positions, &face_slices))
 }
 
 /// Standard fan-triangulated caps (no inset ring).
@@ -87,28 +91,28 @@ fn build_standard_caps(
     cap_flip: bool,
     n_pts: usize,
     n_segs: usize,
-    indices: &mut Vec<usize>,
+    faces: &mut PolyFaces,
 ) {
-    // Front cap (section 0, at +half)
+    // Front cap (section 0, at +half) — triangulated
     for tri in cap_indices.chunks(3) {
         if cap_flip {
-            indices.extend_from_slice(&[tri[2], tri[1], tri[0]]);
+            faces.push(vec![tri[2], tri[1], tri[0]]);
         } else {
-            indices.extend_from_slice(&[tri[0], tri[1], tri[2]]);
+            faces.push(vec![tri[0], tri[1], tri[2]]);
         }
     }
 
-    // Back cap (section n_segs, at -half)
+    // Back cap (section n_segs, at -half) — triangulated
     let back_offset = n_segs * n_pts;
     for tri in cap_indices.chunks(3) {
         if cap_flip {
-            indices.extend_from_slice(&[
+            faces.push(vec![
                 back_offset + tri[0],
                 back_offset + tri[1],
                 back_offset + tri[2],
             ]);
         } else {
-            indices.extend_from_slice(&[
+            faces.push(vec![
                 back_offset + tri[2],
                 back_offset + tri[1],
                 back_offset + tri[0],
@@ -129,7 +133,7 @@ fn build_inset_caps(
     half: f64,
     inset_factor: f64,
     positions: &mut Vec<[f64; 3]>,
-    indices: &mut Vec<usize>,
+    faces: &mut PolyFaces,
 ) -> Option<()> {
     // Compute 2D centroid
     let cx: f64 = points.iter().map(|p| p[0]).sum::<f64>() / n_pts as f64;
@@ -166,7 +170,7 @@ fn build_inset_caps(
         false,
         n_pts,
         &inner_cap_indices,
-        indices,
+        faces,
     );
 
     // Back cap: outer quad ring + inner polygon (reversed)
@@ -177,7 +181,7 @@ fn build_inset_caps(
         true,
         n_pts,
         &inner_cap_indices,
-        indices,
+        faces,
     );
 
     Some(())
@@ -191,9 +195,9 @@ fn build_inset_cap_one_side(
     is_back: bool,
     n_pts: usize,
     inner_indices: &[usize],
-    indices: &mut Vec<usize>,
+    faces: &mut PolyFaces,
 ) {
-    // Outer quad ring
+    // Outer quad ring — emit as quads
     for i in 0..n_pts {
         let j = (i + 1) % n_pts;
         let oi = outer_base + i;
@@ -201,30 +205,32 @@ fn build_inset_cap_one_side(
         let ii = inset_base + i;
         let ij = inset_base + j;
         if cap_flip == is_back {
-            indices.extend_from_slice(&[oi, oj, ii]);
-            indices.extend_from_slice(&[oj, ij, ii]);
+            faces.push(vec![oi, oj, ij, ii]);
         } else {
-            indices.extend_from_slice(&[oi, ii, oj]);
-            indices.extend_from_slice(&[oj, ii, ij]);
+            faces.push(vec![oi, ii, ij, oj]);
         }
     }
 
-    // Inner polygon
+    // Inner polygon — stays triangulated
     for tri in inner_indices.chunks(3) {
         if cap_flip == is_back {
-            indices.push(inset_base + tri[0]);
-            indices.push(inset_base + tri[1]);
-            indices.push(inset_base + tri[2]);
+            faces.push(vec![
+                inset_base + tri[0],
+                inset_base + tri[1],
+                inset_base + tri[2],
+            ]);
         } else {
-            indices.push(inset_base + tri[2]);
-            indices.push(inset_base + tri[1]);
-            indices.push(inset_base + tri[0]);
+            faces.push(vec![
+                inset_base + tri[2],
+                inset_base + tri[1],
+                inset_base + tri[0],
+            ]);
         }
     }
 }
 
-/// Side walls connecting adjacent cross-sections.
-fn build_side_walls(wall_flip: bool, n_pts: usize, n_segs: usize, indices: &mut Vec<usize>) {
+/// Side walls connecting adjacent cross-sections — emits quads.
+fn build_side_walls(wall_flip: bool, n_pts: usize, n_segs: usize, faces: &mut PolyFaces) {
     for seg in 0..n_segs {
         let fwd_base = seg * n_pts;
         let bwd_base = (seg + 1) * n_pts;
@@ -236,11 +242,9 @@ fn build_side_walls(wall_flip: bool, n_pts: usize, n_segs: usize, indices: &mut 
             let bj = bwd_base + j;
 
             if wall_flip {
-                indices.extend_from_slice(&[fi, fj, bi]);
-                indices.extend_from_slice(&[fj, bj, bi]);
+                faces.push(vec![fi, fj, bj, bi]);
             } else {
-                indices.extend_from_slice(&[fj, fi, bi]);
-                indices.extend_from_slice(&[fj, bi, bj]);
+                faces.push(vec![fj, fi, bi, bj]);
             }
         }
     }

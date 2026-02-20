@@ -11,6 +11,7 @@ pub fn cmd_bevel(args: &BevelArgs) -> Result<()> {
     let mut state = MeshState::load(&root)?;
 
     let part = state.active_part_mut()?;
+    let original_fc = part.mesh.face_count();
     let beveled = crate::core::mesh::bevel::bevel_with_profile(
         &part.mesh,
         args.radius,
@@ -21,6 +22,14 @@ pub fn cmd_bevel(args: &BevelArgs) -> Result<()> {
 
     let vc = beveled.vertex_count();
     let fc = beveled.face_count();
+
+    if fc == original_fc {
+        eprintln!(
+            "{}: bevel had no effect — no sharp edges found (try adjusting radius or edge filter)",
+            "warning".yellow().bold(),
+        );
+    }
+
     part.mesh = beveled;
 
     state.save(&root)?;

@@ -3,6 +3,9 @@ use super::half_edge::HalfEdgeMesh;
 /// Epsilon for vertex welding — positions within this distance are merged.
 const WELD_EPSILON: f64 = 1e-6;
 
+/// Epsilon for geometric tests (parallelism, degeneracy, point-on-edge).
+const GEO_EPS: f64 = 1e-8;
+
 // ── Vector math helpers ──────────────────────────────────────────────
 
 fn sub(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
@@ -29,8 +32,12 @@ fn lerp(a: [f64; 3], b: [f64; 3], t: f64) -> [f64; 3] {
     ]
 }
 
-fn midpoint(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
-    lerp(a, b, 0.5)
+fn len2(v: [f64; 3]) -> f64 {
+    dot(v, v)
+}
+
+fn dist2(a: [f64; 3], b: [f64; 3]) -> f64 {
+    len2(sub(a, b))
 }
 
 // ── Mesh builder with vertex welding ─────────────────────────────────
@@ -52,10 +59,7 @@ impl MeshBuilder {
     fn vertex(&mut self, p: [f64; 3]) -> usize {
         let eps2 = WELD_EPSILON * WELD_EPSILON;
         for (i, pos) in self.positions.iter().enumerate() {
-            let dx = pos[0] - p[0];
-            let dy = pos[1] - p[1];
-            let dz = pos[2] - p[2];
-            if dx * dx + dy * dy + dz * dz < eps2 {
+            if dist2(*pos, p) < eps2 {
                 return i;
             }
         }
@@ -80,7 +84,7 @@ impl MeshBuilder {
     }
 }
 
-// ── Ray-triangle intersection (Moller-Trumbore) ─────────────────────
+// ── Ray-triangle intersection (Möller-Trumbore) ─────────────────────
 
 /// Returns the ray parameter `t` where the ray hits the triangle, or `None`.
 /// Ray: `origin + t * dir`. Only returns `t > epsilon`.
@@ -129,29 +133,6 @@ fn point_in_mesh(point: &[f64; 3], triangles: &[[[f64; 3]; 3]]) -> bool {
     count % 2 == 1
 }
 
-// ── Edge-mesh intersection ──────────────────────────────────────────
-
-/// Find the first intersection of segment `a→b` with a triangle mesh.
-/// Returns `t` in `(0, 1)` where the intersection lies on the segment.
-fn edge_mesh_intersection(a: [f64; 3], b: [f64; 3], triangles: &[[[f64; 3]; 3]]) -> Option<f64> {
-    let dir = sub(b, a);
-    let mut best_t = f64::MAX;
-    for tri in triangles {
-        if let Some(t) = ray_triangle(a, dir, tri[0], tri[1], tri[2])
-            && t > 1e-6
-            && t < (1.0 - 1e-6)
-            && t < best_t
-        {
-            best_t = t;
-        }
-    }
-    if best_t < f64::MAX {
-        Some(best_t)
-    } else {
-        None
-    }
-}
-
 // ── Triangle extraction ─────────────────────────────────────────────
 
 /// Extract all faces as flat triangle arrays, applying an offset to positions.
@@ -177,51 +158,260 @@ fn extract_triangles(mesh: &HalfEdgeMesh, offset: [f64; 3]) -> Vec<[[f64; 3]; 3]
     tris
 }
 
-// ── Straddling face split ───────────────────────────────────────────
+// ── Triangle-triangle intersection ──────────────────────────────────
 
-/// Split a triangle that straddles the tool boundary, keeping only outside parts.
+/// Compute where edge `(a, b)` intersects triangle `(v0, v1, v2)`.
 ///
-/// Exactly one or two vertices are inside the tool. We find the two cut points
-/// on the straddling edges and split into 3 sub-triangles (same pattern as
-/// `loop_cut.rs`), keeping only the sub-triangles on the outside.
+/// Uses Möller-Trumbore restricted to `t ∈ [0, 1]` (edge, not ray).
+/// Returns the exact 3D intersection point, or `None`.
 #[allow(clippy::similar_names)]
-fn split_straddling_face(
-    p: &[[f64; 3]; 3],
-    inside: [bool; 3],
-    tool_tris: &[[[f64; 3]; 3]],
-    builder: &mut MeshBuilder,
-) {
-    // Find the solo vertex (the one different from the other two)
-    let solo = if inside[0] != inside[1] && inside[0] != inside[2] {
-        0
-    } else if inside[1] != inside[0] && inside[1] != inside[2] {
-        1
+fn edge_tri_point(
+    a: [f64; 3],
+    b: [f64; 3],
+    v0: [f64; 3],
+    v1: [f64; 3],
+    v2: [f64; 3],
+) -> Option<[f64; 3]> {
+    let dir = sub(b, a);
+    let e1 = sub(v1, v0);
+    let e2 = sub(v2, v0);
+    let h = cross(dir, e2);
+    let det = dot(e1, h);
+    if det.abs() < GEO_EPS {
+        return None; // parallel or coplanar
+    }
+    let inv = 1.0 / det;
+    let s = sub(a, v0);
+    let u = inv * dot(s, h);
+    if !(-GEO_EPS..=1.0 + GEO_EPS).contains(&u) {
+        return None;
+    }
+    let q = cross(s, e1);
+    let v = inv * dot(dir, q);
+    if v < -GEO_EPS || u + v > 1.0 + GEO_EPS {
+        return None;
+    }
+    let t = inv * dot(e2, q);
+    if (-GEO_EPS..=1.0 + GEO_EPS).contains(&t) {
+        Some(lerp(a, b, t.clamp(0.0, 1.0)))
     } else {
-        2
+        None
+    }
+}
+
+/// Add a point to a collection, deduplicating within a tolerance.
+fn push_unique(pts: &mut Vec<[f64; 3]>, p: [f64; 3]) {
+    let eps2 = WELD_EPSILON * WELD_EPSILON * 100.0; // 1e-5 radius
+    for existing in pts.iter() {
+        if dist2(*existing, p) < eps2 {
+            return;
+        }
+    }
+    pts.push(p);
+}
+
+/// Compute the intersection segment of two triangles, if they properly intersect.
+///
+/// Finds all points where edges of one triangle pierce the other, then returns
+/// the two distinct intersection points as a segment. Returns `None` for
+/// coplanar, non-intersecting, or point-contact cases.
+#[allow(clippy::similar_names)]
+fn tri_tri_segment(
+    t1: &[[f64; 3]; 3],
+    t2: &[[f64; 3]; 3],
+) -> Option<([f64; 3], [f64; 3])> {
+    // Quick AABB reject
+    for ax in 0..3 {
+        let mn1 = t1[0][ax].min(t1[1][ax]).min(t1[2][ax]);
+        let mx1 = t1[0][ax].max(t1[1][ax]).max(t1[2][ax]);
+        let mn2 = t2[0][ax].min(t2[1][ax]).min(t2[2][ax]);
+        let mx2 = t2[0][ax].max(t2[1][ax]).max(t2[2][ax]);
+        if mx1 < mn2 - GEO_EPS || mx2 < mn1 - GEO_EPS {
+            return None;
+        }
+    }
+
+    let mut pts = Vec::with_capacity(6);
+
+    // Edges of t1 vs triangle t2
+    for i in 0..3 {
+        if let Some(p) = edge_tri_point(t1[i], t1[(i + 1) % 3], t2[0], t2[1], t2[2]) {
+            push_unique(&mut pts, p);
+        }
+    }
+
+    // Edges of t2 vs triangle t1
+    for i in 0..3 {
+        if let Some(p) = edge_tri_point(t2[i], t2[(i + 1) % 3], t1[0], t1[1], t1[2]) {
+            push_unique(&mut pts, p);
+        }
+    }
+
+    if pts.len() >= 2 {
+        Some((pts[0], pts[1]))
+    } else {
+        None
+    }
+}
+
+// ── Triangle splitting ──────────────────────────────────────────────
+
+/// Test if 3D point `p` lies on segment `a→b` (within tolerance).
+fn on_segment(p: [f64; 3], a: [f64; 3], b: [f64; 3]) -> bool {
+    let ab = sub(b, a);
+    let ab2 = len2(ab);
+    if ab2 < GEO_EPS * GEO_EPS {
+        return dist2(p, a) < GEO_EPS * GEO_EPS;
+    }
+    // Squared distance from p to infinite line through a,b
+    let ap = sub(p, a);
+    let c = cross(ab, ap);
+    if len2(c) / ab2 > WELD_EPSILON * WELD_EPSILON * 100.0 {
+        return false;
+    }
+    // Parameter along segment
+    let t = dot(ap, ab) / ab2;
+    (-GEO_EPS..=1.0 + GEO_EPS).contains(&t)
+}
+
+/// Which edge of `tri` does point `p` lie on?
+/// Returns 0 (v0→v1), 1 (v1→v2), or 2 (v2→v0). `None` if not on any edge.
+fn which_edge(p: [f64; 3], tri: &[[f64; 3]; 3]) -> Option<usize> {
+    (0..3).find(|&i| on_segment(p, tri[i], tri[(i + 1) % 3]))
+}
+
+/// True if a triangle has near-zero area.
+fn degenerate(tri: &[[f64; 3]; 3]) -> bool {
+    len2(cross(sub(tri[1], tri[0]), sub(tri[2], tri[0]))) < GEO_EPS * GEO_EPS
+}
+
+/// Split a triangle given cut points `p` on edge `ep` and `q` on edge `eq`.
+///
+/// Produces 3 sub-triangles preserving the original CCW winding.
+/// Edges are numbered 0 = v0→v1, 1 = v1→v2, 2 = v2→v0.
+#[allow(clippy::similar_names)]
+fn split_two_edges(
+    tri: [[f64; 3]; 3],
+    cp: [f64; 3],
+    ep: usize,
+    cq: [f64; 3],
+    eq: usize,
+) -> Vec<[[f64; 3]; 3]> {
+    let [va, vb, vc] = tri;
+
+    // Normalise so ep < eq (only 3 cases)
+    let (p, e0, q, e1) = if ep < eq {
+        (cp, ep, cq, eq)
+    } else {
+        (cq, eq, cp, ep)
     };
 
-    let other_a = (solo + 1) % 3;
-    let other_b = (solo + 2) % 3;
+    let mut out = Vec::with_capacity(3);
 
-    // Find cut points on edges from solo to each other vertex
-    let cut_a = edge_mesh_intersection(p[solo], p[other_a], tool_tris).map_or_else(
-        || midpoint(p[solo], p[other_a]),
-        |t| lerp(p[solo], p[other_a], t),
-    );
-
-    let cut_b = edge_mesh_intersection(p[solo], p[other_b], tool_tris).map_or_else(
-        || midpoint(p[solo], p[other_b]),
-        |t| lerp(p[solo], p[other_b], t),
-    );
-
-    if inside[solo] {
-        // Solo is inside: keep the two outside sub-triangles
-        builder.triangle(cut_a, p[other_a], p[other_b]);
-        builder.triangle(cut_a, p[other_b], cut_b);
-    } else {
-        // Solo is outside: keep only the solo sub-triangle
-        builder.triangle(p[solo], cut_a, cut_b);
+    match (e0, e1) {
+        (0, 1) => {
+            // p on A→B, q on B→C; shared vertex B
+            out.push([va, p, q]);
+            out.push([va, q, vc]);
+            out.push([p, vb, q]);
+        }
+        (0, 2) => {
+            // p on A→B, q on C→A; shared vertex A
+            out.push([va, p, q]);
+            out.push([p, vb, vc]);
+            out.push([p, vc, q]);
+        }
+        (1, 2) => {
+            // p on B→C, q on C→A; shared vertex C
+            out.push([va, vb, p]);
+            out.push([va, p, q]);
+            out.push([p, vc, q]);
+        }
+        _ => out.push(tri),
     }
+
+    out.retain(|t| !degenerate(t));
+    out
+}
+
+/// Split a triangle along a single intersection segment.
+fn split_by_segment(
+    tri: [[f64; 3]; 3],
+    seg_a: [f64; 3],
+    seg_b: [f64; 3],
+) -> Vec<[[f64; 3]; 3]> {
+    if dist2(seg_a, seg_b) < GEO_EPS * GEO_EPS {
+        return vec![tri]; // degenerate segment
+    }
+    let ea = which_edge(seg_a, &tri);
+    let eb = which_edge(seg_b, &tri);
+
+    match (ea, eb) {
+        (Some(a), Some(b)) if a != b => split_two_edges(tri, seg_a, a, seg_b, b),
+        _ => vec![tri], // same edge, interior, or not on triangle — no split
+    }
+}
+
+/// Iteratively split a triangle by all triangles from another mesh.
+///
+/// For each `other` triangle that intersects the current set of sub-triangles,
+/// compute the intersection segment and split the affected sub-triangle.
+const MAX_SPLITS: usize = 256;
+
+fn split_by_mesh(tri: [[f64; 3]; 3], others: &[[[f64; 3]; 3]]) -> Vec<[[f64; 3]; 3]> {
+    let mut current = vec![tri];
+
+    for other in others {
+        // Coarse AABB filter against original triangle
+        if !aabb_overlap(&tri, other) {
+            continue;
+        }
+        if current.len() >= MAX_SPLITS {
+            break;
+        }
+
+        let mut next = Vec::with_capacity(current.len() + 4);
+        for sub in &current {
+            if let Some((p, q)) = tri_tri_segment(sub, other) {
+                next.extend(split_by_segment(*sub, p, q));
+            } else {
+                next.push(*sub);
+            }
+        }
+        current = next;
+    }
+
+    current
+}
+
+/// Quick per-axis AABB overlap test between two triangles.
+fn aabb_overlap(t1: &[[f64; 3]; 3], t2: &[[f64; 3]; 3]) -> bool {
+    for ax in 0..3 {
+        let mn1 = t1[0][ax].min(t1[1][ax]).min(t1[2][ax]);
+        let mx1 = t1[0][ax].max(t1[1][ax]).max(t1[2][ax]);
+        let mn2 = t2[0][ax].min(t2[1][ax]).min(t2[2][ax]);
+        let mx2 = t2[0][ax].max(t2[1][ax]).max(t2[2][ax]);
+        if mx1 < mn2 - GEO_EPS || mx2 < mn1 - GEO_EPS {
+            return false;
+        }
+    }
+    true
+}
+
+/// Triangle centroid, nudged slightly along the face normal to avoid
+/// on-surface ambiguity in `point_in_mesh` ray casting.
+fn nudged_centroid(tri: &[[f64; 3]; 3]) -> [f64; 3] {
+    let cx = (tri[0][0] + tri[1][0] + tri[2][0]) / 3.0;
+    let cy = (tri[0][1] + tri[1][1] + tri[2][1]) / 3.0;
+    let cz = (tri[0][2] + tri[1][2] + tri[2][2]) / 3.0;
+    let n = cross(sub(tri[1], tri[0]), sub(tri[2], tri[0]));
+    let mag = len2(n).sqrt();
+    if mag < GEO_EPS {
+        return [cx, cy, cz];
+    }
+    // Nudge 1e-5 along outward normal
+    let s = 1e-5 / mag;
+    [cx + n[0] * s, cy + n[1] * s, cz + n[2] * s]
 }
 
 // ── Boolean operation modes ──────────────────────────────────────────
@@ -240,38 +430,33 @@ pub enum BooleanMode {
 // ── Main boolean operation ──────────────────────────────────────────
 
 /// Boolean subtract: remove the volume of `tool` (offset by `offset`) from `target`.
-///
-/// Convenience wrapper around `boolean_op` with `BooleanMode::Subtract`.
 #[cfg(test)]
 pub fn subtract(target: &HalfEdgeMesh, tool: &HalfEdgeMesh, offset: [f64; 3]) -> HalfEdgeMesh {
     boolean_op(target, tool, offset, BooleanMode::Subtract)
 }
 
 /// Boolean union: combine `target` and `tool` into a single mesh.
-///
-/// Convenience wrapper around `boolean_op` with `BooleanMode::Union`.
 #[allow(dead_code)]
 pub fn union(target: &HalfEdgeMesh, tool: &HalfEdgeMesh, offset: [f64; 3]) -> HalfEdgeMesh {
     boolean_op(target, tool, offset, BooleanMode::Union)
 }
 
 /// Boolean intersect: keep only the volume shared by `target` and `tool`.
-///
-/// Convenience wrapper around `boolean_op` with `BooleanMode::Intersect`.
 #[allow(dead_code)]
 pub fn intersect(target: &HalfEdgeMesh, tool: &HalfEdgeMesh, offset: [f64; 3]) -> HalfEdgeMesh {
     boolean_op(target, tool, offset, BooleanMode::Intersect)
 }
 
-/// Generic boolean operation on two meshes.
+/// Boolean operation on two triangle meshes.
 ///
-/// Algorithm: split-and-classify (direct triangle splitting at the intersection
-/// boundary, then face classification). Follows Blender-style boolean, not CSG.
+/// Uses triangle-triangle intersection to split faces at the exact boundary,
+/// then classifies each sub-face by centroid point-in-mesh testing.
+/// Correctly handles tools sitting entirely within a single large target face
+/// (no pre-existing target vertices inside the tool volume).
 ///
-/// - Subtract: keep target-outside, add flipped tool-inside
+/// - Subtract: keep target-outside + flipped tool-inside
 /// - Union: keep target-outside + tool-outside
 /// - Intersect: keep target-inside + tool-inside
-#[allow(clippy::too_many_lines)]
 pub fn boolean_op(
     target: &HalfEdgeMesh,
     tool: &HalfEdgeMesh,
@@ -289,10 +474,7 @@ pub fn boolean_op(
     }
     if target.faces.is_empty() {
         return match mode {
-            BooleanMode::Union => {
-                // Return tool with offset applied
-                offset_mesh(tool, offset)
-            }
+            BooleanMode::Union => offset_mesh(tool, offset),
             _ => HalfEdgeMesh::default(),
         };
     }
@@ -300,106 +482,49 @@ pub fn boolean_op(
     let tool_tris = extract_triangles(tool, offset);
     let target_tris = extract_triangles(target, [0.0; 3]);
 
-    // Classify target vertices as inside/outside tool
-    let target_inside: Vec<bool> = target
-        .vertices
-        .iter()
-        .map(|v| point_in_mesh(&v.position, &tool_tris))
-        .collect();
-
     let mut builder = MeshBuilder::new();
 
     // ── Process target faces ─────────────────────────────────────────
-    for f in 0..target.faces.len() {
-        let verts = target.face_vertices(f);
-        if verts.len() != 3 {
-            continue;
-        }
+    for target_tri in &target_tris {
+        let subs = split_by_mesh(*target_tri, &tool_tris);
+        for sub in &subs {
+            let c = nudged_centroid(sub);
+            let inside_tool = point_in_mesh(&c, &tool_tris);
 
-        let (v0, v1, v2) = (verts[0], verts[1], verts[2]);
-        let in_flags = [target_inside[v0], target_inside[v1], target_inside[v2]];
-        let count_inside = in_flags.iter().filter(|&&b| b).count();
+            let keep = match mode {
+                BooleanMode::Subtract | BooleanMode::Union => !inside_tool,
+                BooleanMode::Intersect => inside_tool,
+            };
 
-        let keep_outside = mode == BooleanMode::Subtract || mode == BooleanMode::Union;
-        let keep_inside = mode == BooleanMode::Intersect;
-
-        match count_inside {
-            0 => {
-                if keep_outside {
-                    builder.triangle(
-                        target.vertices[v0].position,
-                        target.vertices[v1].position,
-                        target.vertices[v2].position,
-                    );
-                }
-            }
-            3 => {
-                if keep_inside {
-                    builder.triangle(
-                        target.vertices[v0].position,
-                        target.vertices[v1].position,
-                        target.vertices[v2].position,
-                    );
-                }
-            }
-            _ => {
-                let positions = [
-                    target.vertices[v0].position,
-                    target.vertices[v1].position,
-                    target.vertices[v2].position,
-                ];
-                if keep_outside {
-                    split_straddling_face(&positions, in_flags, &tool_tris, &mut builder);
-                }
-                if keep_inside {
-                    // Invert: keep the inside parts instead
-                    let inv_flags = [!in_flags[0], !in_flags[1], !in_flags[2]];
-                    split_straddling_face(&positions, inv_flags, &tool_tris, &mut builder);
-                }
+            if keep {
+                builder.triangle(sub[0], sub[1], sub[2]);
             }
         }
     }
 
     // ── Process tool faces ───────────────────────────────────────────
-    for f in 0..tool.faces.len() {
-        let verts = tool.face_vertices(f);
-        if verts.len() != 3 {
-            continue;
-        }
+    for tool_tri in &tool_tris {
+        let subs = split_by_mesh(*tool_tri, &target_tris);
+        for sub in &subs {
+            let c = nudged_centroid(sub);
+            let inside_target = point_in_mesh(&c, &target_tris);
 
-        let positions: Vec<[f64; 3]> = verts
-            .iter()
-            .map(|&v| {
-                let p = tool.vertices[v].position;
-                [p[0] + offset[0], p[1] + offset[1], p[2] + offset[2]]
-            })
-            .collect();
-
-        let centroid = [
-            (positions[0][0] + positions[1][0] + positions[2][0]) / 3.0,
-            (positions[0][1] + positions[1][1] + positions[2][1]) / 3.0,
-            (positions[0][2] + positions[1][2] + positions[2][2]) / 3.0,
-        ];
-
-        let inside_target = point_in_mesh(&centroid, &target_tris);
-
-        match mode {
-            BooleanMode::Subtract => {
-                if inside_target {
-                    // Cap the hole: flipped winding for inward-facing cap
-                    builder.triangle(positions[2], positions[1], positions[0]);
+            match mode {
+                BooleanMode::Subtract => {
+                    if inside_target {
+                        // Flip winding — tool face becomes cavity wall
+                        builder.triangle(sub[2], sub[1], sub[0]);
+                    }
                 }
-            }
-            BooleanMode::Union => {
-                if !inside_target {
-                    // Keep tool faces that are outside target (original winding)
-                    builder.triangle(positions[0], positions[1], positions[2]);
+                BooleanMode::Union => {
+                    if !inside_target {
+                        builder.triangle(sub[0], sub[1], sub[2]);
+                    }
                 }
-            }
-            BooleanMode::Intersect => {
-                if inside_target {
-                    // Keep tool faces that are inside target (original winding)
-                    builder.triangle(positions[0], positions[1], positions[2]);
+                BooleanMode::Intersect => {
+                    if inside_target {
+                        builder.triangle(sub[0], sub[1], sub[2]);
+                    }
                 }
             }
         }

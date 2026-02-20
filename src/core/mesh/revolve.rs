@@ -41,13 +41,13 @@ pub fn revolve(
         }
     }
 
-    let mut indices: Vec<usize> = Vec::new();
+    let mut faces: Vec<Vec<usize>> = Vec::new();
 
     // Determine winding from first quad's normal direction
     let area2 = signed_area_2x(points);
     let flip = area2 < 0.0;
 
-    // Side faces: connect adjacent rings
+    // Side faces: connect adjacent rings — emit quads
     for ring in 0..n_segs {
         let cur_base = (ring % n_rings) * n_pts;
         let next_base = ((ring + 1) % n_rings) * n_pts;
@@ -59,24 +59,14 @@ pub fn revolve(
             let nj = next_base + i + 1;
 
             if flip {
-                indices.push(ci);
-                indices.push(ni);
-                indices.push(cj);
-                indices.push(cj);
-                indices.push(ni);
-                indices.push(nj);
+                faces.push(vec![ci, ni, nj, cj]);
             } else {
-                indices.push(ci);
-                indices.push(cj);
-                indices.push(ni);
-                indices.push(cj);
-                indices.push(nj);
-                indices.push(ni);
+                faces.push(vec![ci, cj, nj, ni]);
             }
         }
     }
 
-    // End caps for partial revolves
+    // End caps for partial revolves — stay triangulated
     if cap
         && !full_revolution
         && points.len() >= 3
@@ -85,13 +75,9 @@ pub fn revolve(
         // Start cap (ring 0)
         for tri in cap_tri.chunks(3) {
             if flip {
-                indices.push(tri[2]);
-                indices.push(tri[1]);
-                indices.push(tri[0]);
+                faces.push(vec![tri[2], tri[1], tri[0]]);
             } else {
-                indices.push(tri[0]);
-                indices.push(tri[1]);
-                indices.push(tri[2]);
+                faces.push(vec![tri[0], tri[1], tri[2]]);
             }
         }
 
@@ -99,22 +85,27 @@ pub fn revolve(
         let end_base = (n_rings - 1) * n_pts;
         for tri in cap_tri.chunks(3) {
             if flip {
-                indices.push(end_base + tri[0]);
-                indices.push(end_base + tri[1]);
-                indices.push(end_base + tri[2]);
+                faces.push(vec![
+                    end_base + tri[0],
+                    end_base + tri[1],
+                    end_base + tri[2],
+                ]);
             } else {
-                indices.push(end_base + tri[2]);
-                indices.push(end_base + tri[1]);
-                indices.push(end_base + tri[0]);
+                faces.push(vec![
+                    end_base + tri[2],
+                    end_base + tri[1],
+                    end_base + tri[0],
+                ]);
             }
         }
     }
 
-    if indices.is_empty() {
+    if faces.is_empty() {
         return None;
     }
 
-    Some(HalfEdgeMesh::from_triangles(&positions, &indices))
+    let face_slices: Vec<&[usize]> = faces.iter().map(Vec::as_slice).collect();
+    Some(HalfEdgeMesh::from_polygons(&positions, &face_slices))
 }
 
 /// Rotate a 2D profile point around the given axis.

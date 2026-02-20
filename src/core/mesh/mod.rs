@@ -77,6 +77,98 @@ impl Default for Transform3D {
     }
 }
 
+impl Transform3D {
+    /// Apply this transform to a point: scale → rotate (YXZ euler) → translate.
+    pub fn apply_point(&self, p: [f64; 3]) -> [f64; 3] {
+        // Scale
+        let s = [p[0] * self.scale[0], p[1] * self.scale[1], p[2] * self.scale[2]];
+        // Rotate (Godot YXZ euler order)
+        let r = self.rotation_matrix();
+        let rotated = mat3_mul(r, s);
+        // Translate
+        [
+            rotated[0] + self.position[0],
+            rotated[1] + self.position[1],
+            rotated[2] + self.position[2],
+        ]
+    }
+
+    /// Apply inverse transform: un-translate → un-rotate → un-scale.
+    pub fn inverse_apply_point(&self, p: [f64; 3]) -> [f64; 3] {
+        // Un-translate
+        let t = [
+            p[0] - self.position[0],
+            p[1] - self.position[1],
+            p[2] - self.position[2],
+        ];
+        // Un-rotate (transpose of rotation matrix)
+        let r = self.rotation_matrix();
+        let rt = mat3_transpose(r);
+        let unrotated = mat3_mul(rt, t);
+        // Un-scale
+        let sx = if self.scale[0].abs() > 1e-12 { 1.0 / self.scale[0] } else { 0.0 };
+        let sy = if self.scale[1].abs() > 1e-12 { 1.0 / self.scale[1] } else { 0.0 };
+        let sz = if self.scale[2].abs() > 1e-12 { 1.0 / self.scale[2] } else { 0.0 };
+        [unrotated[0] * sx, unrotated[1] * sy, unrotated[2] * sz]
+    }
+
+    /// Returns true if this transform is identity (no position, rotation, or non-unit scale).
+    pub fn is_identity(&self) -> bool {
+        let eps = 1e-12;
+        self.position[0].abs() < eps
+            && self.position[1].abs() < eps
+            && self.position[2].abs() < eps
+            && self.rotation[0].abs() < eps
+            && self.rotation[1].abs() < eps
+            && self.rotation[2].abs() < eps
+            && (self.scale[0] - 1.0).abs() < eps
+            && (self.scale[1] - 1.0).abs() < eps
+            && (self.scale[2] - 1.0).abs() < eps
+    }
+
+    /// Build rotation matrix from euler angles in degrees (Godot YXZ order).
+    fn rotation_matrix(&self) -> [[f64; 3]; 3] {
+        let rx = self.rotation[0].to_radians();
+        let ry = self.rotation[1].to_radians();
+        let rz = self.rotation[2].to_radians();
+
+        let (sx, cx) = (rx.sin(), rx.cos());
+        let (sy, cy) = (ry.sin(), ry.cos());
+        let (sz, cz) = (rz.sin(), rz.cos());
+
+        // R = Ry * Rx * Rz (Godot's YXZ convention)
+        [
+            [
+                cy * cz + sy * sx * sz,
+                -cy * sz + sy * sx * cz,
+                sy * cx,
+            ],
+            [cx * sz, cx * cz, -sx],
+            [
+                -sy * cz + cy * sx * sz,
+                sy * sz + cy * sx * cz,
+                cy * cx,
+            ],
+        ]
+    }
+}
+
+fn mat3_mul(m: [[f64; 3]; 3], v: [f64; 3]) -> [f64; 3] {
+    [
+        m[0][0] * v[0] + m[0][1] * v[1] + m[0][2] * v[2],
+        m[1][0] * v[0] + m[1][1] * v[1] + m[1][2] * v[2],
+        m[2][0] * v[0] + m[2][1] * v[1] + m[2][2] * v[2],
+    ]
+}
+
+fn mat3_transpose(m: [[f64; 3]; 3]) -> [[f64; 3]; 3] {
+    [
+        [m[0][0], m[1][0], m[2][0]],
+        [m[0][1], m[1][1], m[2][1]],
+        [m[0][2], m[1][2], m[2][2]],
+    ]
+}
+
 /// Shading mode for a mesh part.
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub enum ShadingMode {

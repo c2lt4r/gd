@@ -903,6 +903,9 @@ pub struct CheckArgs {
     /// Margin for AABB overlap detection (parts within this distance are connected)
     #[arg(long, default_value = "0.5")]
     pub margin: f64,
+    /// Maximum allowed AABB overlap between parts (percentage of smaller part's volume)
+    #[arg(long, default_value = "5.0")]
+    pub max_overlap: f64,
     /// Output format
     #[arg(long, default_value = "json")]
     pub format: OutputFormat,

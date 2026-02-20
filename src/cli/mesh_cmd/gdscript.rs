@@ -464,7 +464,7 @@ pub fn generate_list_vertices(region: Option<&super::BoundingBox>) -> String {
 ///
 /// Detects floating/disconnected parts by comparing world-space AABBs.
 /// A part is "floating" if its expanded AABB doesn't overlap with any other part's AABB.
-pub fn generate_check_floating(margin: f64) -> String {
+pub fn generate_check(margin: f64, max_overlap: f64) -> String {
     format!(
         "extends Node\n\
          \n\
@@ -481,6 +481,7 @@ pub fn generate_check_floating(margin: f64) -> String {
          \t\t\t\taabb.position += child.position\n\
          \t\t\tparts.append({{\"name\": String(child.name), \"aabb\": aabb}})\n\
          \tvar margin = {margin}\n\
+         \tvar max_overlap = {max_overlap}\n\
          \tvar floating = []\n\
          \tvar connected = []\n\
          \tfor i in parts.size():\n\
@@ -496,12 +497,27 @@ pub fn generate_check_floating(margin: f64) -> String {
          \t\t\tconnected.append(p.name)\n\
          \t\telse:\n\
          \t\t\tfloating.append(p.name)\n\
+         \tvar clipping = []\n\
+         \tfor i in parts.size():\n\
+         \t\tfor j in range(i + 1, parts.size()):\n\
+         \t\t\tif not parts[i].aabb.intersects(parts[j].aabb): continue\n\
+         \t\t\tvar overlap = parts[i].aabb.intersection(parts[j].aabb)\n\
+         \t\t\tvar ov = overlap.size.x * overlap.size.y * overlap.size.z\n\
+         \t\t\tvar vi = parts[i].aabb.size.x * parts[i].aabb.size.y * parts[i].aabb.size.z\n\
+         \t\t\tvar vj = parts[j].aabb.size.x * parts[j].aabb.size.y * parts[j].aabb.size.z\n\
+         \t\t\tvar smaller = min(vi, vj)\n\
+         \t\t\tif smaller <= 0: continue\n\
+         \t\t\tvar pct = (ov / smaller) * 100.0\n\
+         \t\t\tif pct > max_overlap:\n\
+         \t\t\t\tclipping.append({{\"part_a\": parts[i].name, \"part_b\": parts[j].name, \"overlap_percent\": pct}})\n\
          \tvar d = {{}}\n\
          \td[\"total_parts\"] = parts.size()\n\
          \td[\"floating\"] = floating\n\
          \td[\"connected\"] = connected\n\
-         \td[\"ok\"] = floating.size() == 0\n\
+         \td[\"clipping\"] = clipping\n\
+         \td[\"ok\"] = floating.size() == 0 and clipping.size() == 0\n\
          \td[\"margin\"] = margin\n\
+         \td[\"max_overlap\"] = max_overlap\n\
          \treturn JSON.stringify(d)\n"
     )
 }
@@ -878,8 +894,10 @@ pub fn generate_material_multi(pattern: &str, color: &str) -> String {
          \t\t\t\t\tchild.set_meta(\"part_color\", color_val)\n\
          \t\t\t\t\tapplied.append(String(child.name))\n\
          \telse:\n\
+         \t\tvar skipped = []\n\
          \t\tfor n in pattern.split(\",\"):\n\
          \t\t\tvar name = n.strip_edges()\n\
+         \t\t\tif name.is_empty(): continue\n\
          \t\t\tvar mi = helper.get_node_or_null(NodePath(name))\n\
          \t\t\tif mi:\n\
          \t\t\t\tvar mat = StandardMaterial3D.new()\n\
@@ -887,11 +905,14 @@ pub fn generate_material_multi(pattern: &str, color: &str) -> String {
          \t\t\t\tmi.material_override = mat\n\
          \t\t\t\tmi.set_meta(\"part_color\", color_val)\n\
          \t\t\t\tapplied.append(name)\n\
+         \t\t\telse:\n\
+         \t\t\t\tskipped.append(name)\n\
          \tvar d = {{}}\n\
          \td[\"pattern\"] = pattern\n\
          \td[\"color\"] = hex\n\
          \td[\"applied\"] = applied\n\
          \td[\"count\"] = applied.size()\n\
+         \tif skipped.size() > 0: d[\"skipped\"] = skipped\n\
          \treturn JSON.stringify(d)\n"
     )
 }
@@ -950,17 +971,22 @@ pub fn generate_material_preset_multi(pattern: &str, preset: &str, color: Option
          \t\t\t\t\t_apply_preset(child, base_color)\n\
          \t\t\t\t\tapplied.append(String(child.name))\n\
          \telse:\n\
+         \t\tvar skipped = []\n\
          \t\tfor n in pattern.split(\",\"):\n\
          \t\t\tvar name = n.strip_edges()\n\
+         \t\t\tif name.is_empty(): continue\n\
          \t\t\tvar mi = helper.get_node_or_null(NodePath(name))\n\
          \t\t\tif mi:\n\
          \t\t\t\t_apply_preset(mi, base_color)\n\
          \t\t\t\tapplied.append(name)\n\
+         \t\t\telse:\n\
+         \t\t\t\tskipped.append(name)\n\
          \tvar d = {{}}\n\
          \td[\"pattern\"] = pattern\n\
          \td[\"preset\"] = \"{preset}\"\n\
          \td[\"applied\"] = applied\n\
          \td[\"count\"] = applied.size()\n\
+         \tif skipped.size() > 0: d[\"skipped\"] = skipped\n\
          \treturn JSON.stringify(d)\n"
     )
 }

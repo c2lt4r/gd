@@ -75,7 +75,7 @@ pub fn bevel_with_profile(
         .collect();
 
     let mut positions: Vec<[f64; 3]> = mesh.vertices.iter().map(|v| v.position).collect();
-    let mut indices: Vec<usize> = Vec::new();
+    let mut poly_faces: Vec<Vec<usize>> = Vec::new();
 
     // Inset map: (face_idx, vertex_idx) → new position index
     let mut inset_map: HashMap<(usize, usize), usize> = HashMap::new();
@@ -115,7 +115,9 @@ pub fn bevel_with_profile(
             .iter()
             .map(|&vi| inset_map.get(&(fi, vi)).copied().unwrap_or(vi))
             .collect();
-        triangulate_into(&mapped, &mut indices);
+        if mapped.len() >= 3 {
+            poly_faces.push(mapped);
+        }
     }
 
     // ── Phase 2: Bevel strips along each sharp edge ──────────────────
@@ -152,7 +154,7 @@ pub fn bevel_with_profile(
         let flip_strip = dot(trial_normal, expected) < 0.0;
 
         if segments <= 1 {
-            add_strip_quad(a1, b1, a2, b2, flip_strip, &mut indices);
+            add_strip_quad(a1, b1, a2, b2, flip_strip, &mut poly_faces);
         } else {
             // Multi-segment: quadratic Bezier with profile-controlled control point.
             // profile=0.5 → circular arc (ctrl = original vertex position)
@@ -185,7 +187,7 @@ pub fn bevel_with_profile(
                 } else {
                     b2
                 };
-                add_strip_quad(prev_a, prev_b, next_a, next_b, flip_strip, &mut indices);
+                add_strip_quad(prev_a, prev_b, next_a, next_b, flip_strip, &mut poly_faces);
                 prev_a = next_a;
                 prev_b = next_b;
             }
@@ -224,20 +226,18 @@ pub fn bevel_with_profile(
         );
         let flip_cap = dot(trial, avg_normal) < 0.0;
 
+        // Vertex caps stay triangulated (fan from ring_verts[0])
         for i in 1..ring_verts.len() - 1 {
             if flip_cap {
-                indices.push(ring_verts[0]);
-                indices.push(ring_verts[i + 1]);
-                indices.push(ring_verts[i]);
+                poly_faces.push(vec![ring_verts[0], ring_verts[i + 1], ring_verts[i]]);
             } else {
-                indices.push(ring_verts[0]);
-                indices.push(ring_verts[i]);
-                indices.push(ring_verts[i + 1]);
+                poly_faces.push(vec![ring_verts[0], ring_verts[i], ring_verts[i + 1]]);
             }
         }
     }
 
-    HalfEdgeMesh::from_triangles(&positions, &indices)
+    let face_slices: Vec<&[usize]> = poly_faces.iter().map(Vec::as_slice).collect();
+    HalfEdgeMesh::from_polygons(&positions, &face_slices)
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -293,34 +293,19 @@ fn bezier_quad(p0: [f64; 3], ctrl: [f64; 3], p1: [f64; 3], t: f64) -> [f64; 3] {
     ]
 }
 
-/// Emit a quad strip between (a1,b1) and (a2,b2) as two triangles.
+/// Emit a quad strip between (a1,b1) and (a2,b2) as a single quad face.
 fn add_strip_quad(
     a1: usize,
     b1: usize,
     a2: usize,
     b2: usize,
     flip: bool,
-    indices: &mut Vec<usize>,
+    faces: &mut Vec<Vec<usize>>,
 ) {
     if flip {
-        indices.extend_from_slice(&[a1, b1, a2]);
-        indices.extend_from_slice(&[b1, b2, a2]);
+        faces.push(vec![a1, b1, b2, a2]);
     } else {
-        indices.extend_from_slice(&[a1, a2, b1]);
-        indices.extend_from_slice(&[b1, a2, b2]);
-    }
-}
-
-/// Fan-triangulate a polygon and append to indices.
-fn triangulate_into(verts: &[usize], indices: &mut Vec<usize>) {
-    if verts.len() == 3 {
-        indices.extend_from_slice(verts);
-    } else if verts.len() > 3 {
-        for i in 1..verts.len() - 1 {
-            indices.push(verts[0]);
-            indices.push(verts[i]);
-            indices.push(verts[i + 1]);
-        }
+        faces.push(vec![a1, a2, b2, b1]);
     }
 }
 

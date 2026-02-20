@@ -27,9 +27,9 @@ pub fn loft(sections: &[Vec<[f64; 3]>], cap_start: bool, cap_end: bool) -> Optio
         positions.extend_from_slice(section);
     }
 
-    let mut indices: Vec<usize> = Vec::new();
+    let mut faces: Vec<Vec<usize>> = Vec::new();
 
-    // Connect adjacent sections with quad strips
+    // Connect adjacent sections with quads
     for s in 0..n_sections - 1 {
         let cur_base = s * n_pts;
         let next_base = (s + 1) * n_pts;
@@ -42,23 +42,16 @@ pub fn loft(sections: &[Vec<[f64; 3]>], cap_start: bool, cap_end: bool) -> Optio
             let ni = next_base + i;
             let nj = next_base + j;
 
-            // Two triangles per quad
-            indices.extend_from_slice(&[ci, cj, ni]);
-            indices.extend_from_slice(&[cj, nj, ni]);
+            faces.push(vec![ci, cj, nj, ni]);
         }
     }
 
-    // End caps
+    // End caps — stay triangulated
     if cap_start {
-        // Triangulate the first section as a 2D polygon
-        let pts_2d: Vec<[f64; 2]> = sections[0]
-            .iter()
-            .map(|p| [p[0], p[1]]) // project to XY for triangulation
-            .collect();
+        let pts_2d: Vec<[f64; 2]> = sections[0].iter().map(|p| [p[0], p[1]]).collect();
         if let Some(tri) = triangulate_2d(&pts_2d) {
             for t in tri.chunks(3) {
-                // Reversed winding for start cap (faces inward along path)
-                indices.extend_from_slice(&[t[2], t[1], t[0]]);
+                faces.push(vec![t[2], t[1], t[0]]);
             }
         }
     }
@@ -71,14 +64,15 @@ pub fn loft(sections: &[Vec<[f64; 3]>], cap_start: bool, cap_end: bool) -> Optio
             .collect();
         if let Some(tri) = triangulate_2d(&pts_2d) {
             for t in tri.chunks(3) {
-                indices.extend_from_slice(&[last_base + t[0], last_base + t[1], last_base + t[2]]);
+                faces.push(vec![last_base + t[0], last_base + t[1], last_base + t[2]]);
             }
         }
     }
 
-    if indices.is_empty() {
+    if faces.is_empty() {
         return None;
     }
 
-    Some(HalfEdgeMesh::from_triangles(&positions, &indices))
+    let face_slices: Vec<&[usize]> = faces.iter().map(Vec::as_slice).collect();
+    Some(HalfEdgeMesh::from_polygons(&positions, &face_slices))
 }

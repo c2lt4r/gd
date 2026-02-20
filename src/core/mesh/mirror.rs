@@ -20,16 +20,16 @@ pub fn mirror(mesh: &mut HalfEdgeMesh, axis: usize) {
         })
         .collect();
 
-    // Collect face indices with reversed winding
-    let mut indices: Vec<usize> = Vec::with_capacity(mesh.faces.len() * 3);
+    // Collect face indices with reversed winding (any face size)
+    let mut poly_faces: Vec<Vec<usize>> = Vec::with_capacity(mesh.faces.len());
     for f in 0..mesh.faces.len() {
-        let verts = mesh.face_vertices(f);
-        if verts.len() == 3 {
-            indices.push(verts[2]);
-            indices.push(verts[1]);
-            indices.push(verts[0]);
+        let mut verts = mesh.face_vertices(f);
+        if verts.len() >= 3 {
+            verts.reverse();
+            poly_faces.push(verts);
         }
     }
 
-    *mesh = HalfEdgeMesh::from_triangles(&positions, &indices);
+    let face_slices: Vec<&[usize]> = poly_faces.iter().map(Vec::as_slice).collect();
+    *mesh = HalfEdgeMesh::from_polygons(&positions, &face_slices);
 }

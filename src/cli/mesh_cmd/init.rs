@@ -48,6 +48,28 @@ pub fn cmd_init(args: &InitArgs) -> Result<()> {
             let output = serde_json::json!({
                 "scene": args.scene,
                 "main_scene": res_scene,
+                "coordinate_system": {
+                    "x": "right/left",
+                    "y": "up/down",
+                    "z": "toward/away from camera",
+                    "forward": "-Z",
+                    "unit": "1 meter"
+                },
+                "camera_views": {
+                    "front": "looking from -Z (sees face of object)",
+                    "back": "looking from +Z (sees rear)",
+                    "side": "looking from +X (sees left side)"
+                },
+                "modeling_approaches": [
+                    "profile + extrude: flat cross-section pushed into depth",
+                    "profile + revolve: cross-section spun around an axis",
+                    "primitives: cube/sphere/cylinder assembled with transforms"
+                ],
+                "tips": [
+                    "State real-world dimensions before placing geometry (1 unit = 1 meter)",
+                    "Use gd mesh info after each operation to verify dimensions",
+                    "Use gd mesh check for overlapping/floating parts"
+                ]
             });
             cprintln!("{}", serde_json::to_string_pretty(&output).unwrap());
         }
@@ -59,6 +81,33 @@ pub fn cmd_init(args: &InitArgs) -> Result<()> {
             cprintln!("Coordinate system:");
             cprintln!("  X = right/left,  Y = up/down,  Z = toward/away from camera");
             cprintln!("  Forward = -Z,  1 unit = 1 meter");
+            cprintln!();
+            cprintln!("Camera views:");
+            cprintln!("  Front = looking from -Z toward origin (sees the face of the object)");
+            cprintln!("  Back  = looking from +Z toward origin (sees the rear)");
+            cprintln!("  Side  = looking from +X (sees the left side)");
+            cprintln!();
+            cprintln!("Modeling approaches:");
+            cprintln!(
+                "  profile + extrude    Flat cross-section pushed into depth (walls, wings, panels)"
+            );
+            cprintln!(
+                "  profile + revolve    Cross-section spun around an axis (bottles, wheels, pipes)"
+            );
+            cprintln!(
+                "  primitives           cube/sphere/cylinder assembled with translate/rotate/scale"
+            );
+            cprintln!();
+            cprintln!("Tips:");
+            cprintln!("  State real-world dimensions before placing geometry (1 unit = 1 meter)");
+            cprintln!(
+                "  Use {} after each operation to verify dimensions",
+                "gd mesh info".cyan()
+            );
+            cprintln!(
+                "  Use {} to check for overlapping/floating parts",
+                "gd mesh check".cyan()
+            );
         }
     }
     Ok(())

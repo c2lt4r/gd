@@ -68,6 +68,20 @@ pub fn cmd_material(args: &MaterialArgs) -> Result<()> {
                 );
             }
         }
+        // Warn about unmatched part names
+        if let Some(skipped) = parsed["skipped"].as_array() {
+            let names: Vec<&str> = skipped
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .collect();
+            if !names.is_empty() {
+                eprintln!(
+                    "{}: no parts matched: {}",
+                    "warning".yellow().bold(),
+                    names.join(", ").yellow()
+                );
+            }
+        }
         return Ok(());
     }
 

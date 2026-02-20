@@ -14,7 +14,7 @@ pub fn inset(mesh: &HalfEdgeMesh, factor: f64) -> HalfEdgeMesh {
     let factor = factor.min(0.99);
 
     let mut positions: Vec<[f64; 3]> = mesh.vertices.iter().map(|v| v.position).collect();
-    let mut indices: Vec<usize> = Vec::new();
+    let mut poly_faces: Vec<Vec<usize>> = Vec::new();
 
     for fi in 0..mesh.faces.len() {
         let verts = mesh.face_vertices(fi);
@@ -49,9 +49,8 @@ pub fn inset(mesh: &HalfEdgeMesh, factor: f64) -> HalfEdgeMesh {
         // Face normal for winding check
         let face_n = compute_face_normal(mesh, fi);
 
-        // Inner face: fan-triangulate inset vertices
+        // Inner face: preserve original face size (tri stays tri, quad stays quad)
         let inner: Vec<usize> = (0..verts.len()).map(|i| inset_start + i).collect();
-        // Check winding matches original face normal
         if inner.len() >= 3 {
             let trial = tri_normal(
                 positions[inner[0]],
@@ -60,16 +59,16 @@ pub fn inset(mesh: &HalfEdgeMesh, factor: f64) -> HalfEdgeMesh {
             );
             let same_dir = dot(trial, face_n) > 0.0;
 
-            for i in 1..inner.len() - 1 {
-                if same_dir {
-                    indices.extend_from_slice(&[inner[0], inner[i], inner[i + 1]]);
-                } else {
-                    indices.extend_from_slice(&[inner[0], inner[i + 1], inner[i]]);
-                }
+            if same_dir {
+                poly_faces.push(inner);
+            } else {
+                let mut reversed = inner;
+                reversed.reverse();
+                poly_faces.push(reversed);
             }
         }
 
-        // Quad strip: outer[i]→outer[i+1]→inner[i+1]→inner[i]
+        // Quad strip: emit quads connecting outer to inner boundary
         let nv = verts.len();
         for i in 0..nv {
             let j = (i + 1) % nv;
@@ -78,19 +77,17 @@ pub fn inset(mesh: &HalfEdgeMesh, factor: f64) -> HalfEdgeMesh {
             let inner_i = inset_start + i;
             let inner_j = inset_start + j;
 
-            // Two triangles per quad, winding consistent with outward normals
             let q_normal = tri_normal(positions[outer_i], positions[outer_j], positions[inner_j]);
             if dot(q_normal, face_n) > 0.0 {
-                indices.extend_from_slice(&[outer_i, outer_j, inner_j]);
-                indices.extend_from_slice(&[outer_i, inner_j, inner_i]);
+                poly_faces.push(vec![outer_i, outer_j, inner_j, inner_i]);
             } else {
-                indices.extend_from_slice(&[outer_i, inner_j, outer_j]);
-                indices.extend_from_slice(&[outer_i, inner_i, inner_j]);
+                poly_faces.push(vec![outer_i, inner_i, inner_j, outer_j]);
             }
         }
     }
 
-    HalfEdgeMesh::from_triangles(&positions, &indices)
+    let face_slices: Vec<&[usize]> = poly_faces.iter().map(Vec::as_slice).collect();
+    HalfEdgeMesh::from_polygons(&positions, &face_slices)
 }
 
 fn tri_normal(a: [f64; 3], b: [f64; 3], c: [f64; 3]) -> [f64; 3] {

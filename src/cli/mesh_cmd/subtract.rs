@@ -3,9 +3,37 @@ use owo_colors::OwoColorize;
 
 use crate::core::mesh::MeshState;
 use crate::core::mesh::boolean::{self, BooleanMode};
+use crate::core::mesh::half_edge::HalfEdgeMesh;
 
 use super::{BooleanArgs, BooleanOp, OutputFormat, parse_3d, project_root, run_eval};
 use crate::cprintln;
+
+/// Apply a `Transform3D` to all vertices in a mesh (scale → rotate → translate).
+fn transform_mesh(mesh: &HalfEdgeMesh, t: &crate::core::mesh::Transform3D) -> HalfEdgeMesh {
+    if t.is_identity() {
+        return mesh.clone();
+    }
+    let mut result = mesh.clone();
+    for v in &mut result.vertices {
+        v.position = t.apply_point(v.position);
+    }
+    result
+}
+
+/// Apply inverse transform to all vertices (un-translate → un-rotate → un-scale).
+fn inverse_transform_mesh(
+    mesh: &HalfEdgeMesh,
+    t: &crate::core::mesh::Transform3D,
+) -> HalfEdgeMesh {
+    if t.is_identity() {
+        return mesh.clone();
+    }
+    let mut result = mesh.clone();
+    for v in &mut result.vertices {
+        v.position = t.inverse_apply_point(v.position);
+    }
+    result
+}
 
 pub fn cmd_boolean(args: &BooleanArgs) -> Result<()> {
     let root = project_root()?;
@@ -14,7 +42,7 @@ pub fn cmd_boolean(args: &BooleanArgs) -> Result<()> {
     let active_name = state.active.clone();
     let tool_name = &args.tool;
 
-    let offset = if let Some(ref offset_str) = args.offset {
+    let explicit_offset = if let Some(ref offset_str) = args.offset {
         let (x, y, z) = parse_3d(offset_str)?;
         [x, y, z]
     } else {
@@ -27,14 +55,34 @@ pub fn cmd_boolean(args: &BooleanArgs) -> Result<()> {
         BooleanOp::Intersect => BooleanMode::Intersect,
     };
 
-    let tool_mesh = state.resolve_part(Some(tool_name))?.mesh.clone();
-    let target_mesh = state.active_part()?.mesh.clone();
+    let tool_part = state.resolve_part(Some(tool_name))?;
+    let tool_transform = tool_part.transform.clone();
+    let tool_mesh = tool_part.mesh.clone();
 
-    let result_mesh = boolean::boolean_op(&target_mesh, &tool_mesh, offset, mode);
-    let vc = result_mesh.vertex_count();
-    let fc = result_mesh.face_count();
+    let target_part = state.active_part()?;
+    let target_transform = target_part.transform.clone();
+    let target_mesh = target_part.mesh.clone();
 
-    state.active_part_mut()?.mesh = result_mesh;
+    // Transform both meshes to world space so the boolean sees correct geometry
+    let target_world = transform_mesh(&target_mesh, &target_transform);
+    let tool_world = transform_mesh(&tool_mesh, &tool_transform);
+
+    let result_world = boolean::boolean_op(&target_world, &tool_world, explicit_offset, mode);
+
+    // Transform result back to target's local coordinate space
+    let result_local = inverse_transform_mesh(&result_world, &target_transform);
+
+    let vc = result_local.vertex_count();
+    let fc = result_local.face_count();
+
+    if fc == 0 {
+        eprintln!(
+            "{}: boolean produced empty mesh — tool may not overlap target in world space",
+            "warning".yellow().bold(),
+        );
+    }
+
+    state.active_part_mut()?.mesh = result_local;
     state.save(&root)?;
 
     // Push to Godot

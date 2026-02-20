@@ -446,8 +446,8 @@ fn extrude_square_front() {
     let mesh = extrude::extrude(&points, PlaneKind::Front, 2.0, 1).unwrap();
     // 4 profile points × 2 sections = 8 vertices
     assert_eq!(mesh.vertices.len(), 8);
-    // 2 cap triangles × 2 caps + 4 side quads × 2 triangles = 12 faces
-    assert_eq!(mesh.faces.len(), 12);
+    // 2 cap triangles × 2 caps + 4 side quads = 8 faces
+    assert_eq!(mesh.faces.len(), 8);
 }
 
 #[test]
@@ -456,8 +456,8 @@ fn extrude_triangle_side() {
     let mesh = extrude::extrude(&points, PlaneKind::Side, 3.0, 1).unwrap();
     // 3 profile points × 2 sections = 6 vertices
     assert_eq!(mesh.vertices.len(), 6);
-    // 1 cap tri × 2 caps + 3 side quads × 2 tris = 8 faces
-    assert_eq!(mesh.faces.len(), 8);
+    // 1 cap tri × 2 caps + 3 side quads = 5 faces
+    assert_eq!(mesh.faces.len(), 5);
 }
 
 #[test]
@@ -466,8 +466,8 @@ fn extrude_with_segments() {
     let mesh = extrude::extrude(&points, PlaneKind::Front, 2.0, 4).unwrap();
     // 4 profile points × 5 sections = 20 vertices
     assert_eq!(mesh.vertices.len(), 20);
-    // 2 cap tris × 2 + 4 side quads × 4 segments × 2 tris = 4 + 32 = 36
-    assert_eq!(mesh.faces.len(), 36);
+    // 2 cap tris × 2 + 4 side quads × 4 segments = 4 + 16 = 20
+    assert_eq!(mesh.faces.len(), 20);
 }
 
 #[test]
@@ -671,7 +671,7 @@ fn mirror_preserves_face_count() {
 
 #[test]
 fn mirror_then_to_arrays_produces_valid_indices() {
-    // Create an extruded square mesh (8 verts, 12 faces)
+    // Create an extruded square mesh (8 verts, 8 faces: 4 cap tris + 4 side quads)
     let points = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
     let mut mesh = extrude::extrude(&points, PlaneKind::Front, 2.0, 1).unwrap();
     let face_count_before = mesh.faces.len();
@@ -696,14 +696,12 @@ fn mirror_then_to_arrays_produces_valid_indices() {
         "to_arrays() produced empty indices after mirror"
     );
 
-    // Expected: each face is a triangle, so indices = faces * 3
-    let expected_index_count = face_count_before * 3;
-    assert_eq!(
+    // to_arrays() fan-triangulates quads, so index count >= face_count * 3
+    assert!(
+        indices.len() >= face_count_before * 3,
+        "index count ({}) should be at least face_count * 3 ({})",
         indices.len(),
-        expected_index_count,
-        "index count ({}) should equal face_count * 3 ({}); some faces were lost in traversal",
-        indices.len(),
-        expected_index_count,
+        face_count_before * 3,
     );
 
     // All indices must be in-bounds
@@ -725,13 +723,12 @@ fn mirror_then_to_arrays_produces_valid_indices() {
         );
     }
 
-    // Verify each face is still traversable (face_vertices returns exactly 3)
+    // Verify each face is still traversable (face_vertices returns 3 or 4)
     for f in 0..mesh.faces.len() {
         let verts = mesh.face_vertices(f);
-        assert_eq!(
-            verts.len(),
-            3,
-            "face {f} has {} vertices after mirror (expected 3); half-edge cycle is broken",
+        assert!(
+            verts.len() >= 3,
+            "face {f} has {} vertices after mirror (expected >= 3); half-edge cycle is broken",
             verts.len(),
         );
     }
@@ -760,13 +757,12 @@ fn mirror_revolved_mesh_produces_valid_indices() {
         "to_arrays() produced empty indices after mirroring revolved mesh"
     );
 
-    let expected_index_count = face_count_before * 3;
-    assert_eq!(
+    // to_arrays() fan-triangulates quads, so index count >= face_count * 3
+    assert!(
+        indices.len() >= face_count_before * 3,
+        "index count ({}) should be at least face_count * 3 ({})",
         indices.len(),
-        expected_index_count,
-        "index count ({}) != face_count * 3 ({}); faces lost in half-edge traversal",
-        indices.len(),
-        expected_index_count,
+        face_count_before * 3,
     );
 
     for (i, &idx) in indices.iter().enumerate() {
@@ -789,10 +785,9 @@ fn mirror_revolved_mesh_produces_valid_indices() {
     // Verify every face is still traversable
     for f in 0..mesh.faces.len() {
         let verts = mesh.face_vertices(f);
-        assert_eq!(
-            verts.len(),
-            3,
-            "face {f} has {} vertices after mirror (expected 3)",
+        assert!(
+            verts.len() >= 3,
+            "face {f} has {} vertices after mirror (expected >= 3)",
             verts.len(),
         );
     }
@@ -1015,8 +1010,8 @@ fn loft_two_sections() {
     assert!(mesh.is_some());
     let mesh = mesh.unwrap();
     assert_eq!(mesh.vertices.len(), 8);
-    // 4 quads × 2 triangles = 8 faces
-    assert_eq!(mesh.faces.len(), 8);
+    // 4 quads = 4 faces
+    assert_eq!(mesh.faces.len(), 4);
 }
 
 #[test]
@@ -1036,8 +1031,8 @@ fn loft_with_caps() {
     let mesh = loft::loft(&[section0, section1], true, true);
     assert!(mesh.is_some());
     let mesh = mesh.unwrap();
-    // 8 side + 2 cap tris × 2 = 12 faces
-    assert_eq!(mesh.faces.len(), 12);
+    // 4 side quads + 2 cap tris × 2 = 8 faces
+    assert_eq!(mesh.faces.len(), 8);
 }
 
 #[test]
@@ -1056,8 +1051,8 @@ fn loft_three_sections() {
     let mesh = mesh.unwrap();
     // 3 × 3 = 9 vertices
     assert_eq!(mesh.vertices.len(), 9);
-    // 2 sections × 3 quads × 2 tris = 12 faces
-    assert_eq!(mesh.faces.len(), 12);
+    // 2 sections × 3 quads = 6 faces
+    assert_eq!(mesh.faces.len(), 6);
 }
 
 #[test]
@@ -1180,6 +1175,73 @@ fn subtract_welded_vertices() {
         result.vertices.len(),
         "all vertices should be unique (welded)"
     );
+}
+
+#[test]
+fn subtract_tool_inside_single_face() {
+    // Regression test: tool entirely within a large target face.
+    // Old algorithm failed because no target vertices were inside the tool.
+    // New algorithm splits the target face at the intersection boundary.
+
+    // Large flat quad (two triangles) as target
+    let big_positions = [
+        [-5.0, 0.0, -5.0],
+        [5.0, 0.0, -5.0],
+        [5.0, 4.0, -5.0],
+        [-5.0, 4.0, -5.0],
+        [-5.0, 0.0, -4.8],
+        [5.0, 0.0, -4.8],
+        [5.0, 4.0, -4.8],
+        [-5.0, 4.0, -4.8],
+    ];
+    #[rustfmt::skip]
+    let big_indices = [
+        // Front
+        0, 1, 2,  0, 2, 3,
+        // Back
+        5, 4, 7,  5, 7, 6,
+        // Top
+        3, 2, 6,  3, 6, 7,
+        // Bottom
+        4, 5, 1,  4, 1, 0,
+        // Right
+        1, 5, 6,  1, 6, 2,
+        // Left
+        4, 0, 3,  4, 3, 7,
+    ];
+    let target = HalfEdgeMesh::from_triangles(&big_positions, &big_indices);
+
+    // Small door-cut tool that sits in the middle of the front face
+    #[rustfmt::skip]
+    let door_pos = [
+        [-0.5, 0.0, -5.3], [ 0.5, 0.0, -5.3],
+        [ 0.5, 2.2, -5.3], [-0.5, 2.2, -5.3],
+        [-0.5, 0.0, -4.5], [ 0.5, 0.0, -4.5],
+        [ 0.5, 2.2, -4.5], [-0.5, 2.2, -4.5],
+    ];
+    #[rustfmt::skip]
+    let door_indices = [
+        0, 1, 2,  0, 2, 3,
+        5, 4, 7,  5, 7, 6,
+        3, 2, 6,  3, 6, 7,
+        4, 5, 1,  4, 1, 0,
+        1, 5, 6,  1, 6, 2,
+        4, 0, 3,  4, 3, 7,
+    ];
+    let tool = HalfEdgeMesh::from_triangles(&door_pos, &door_indices);
+
+    let result = boolean::subtract(&target, &tool, [0.0, 0.0, 0.0]);
+
+    // The target had 12 faces. After boolean subtract, the front face should be
+    // split and the door region removed, so face count must change.
+    assert!(
+        result.faces.len() > target.faces.len(),
+        "subtract should split target faces (got {} vs original {})",
+        result.faces.len(),
+        target.faces.len()
+    );
+    // Tool's interior faces (inside the wall) should be added as cavity walls
+    assert!(!result.faces.is_empty());
 }
 
 // ── Circle profile ──────────────────────────────────────────────────
@@ -1445,18 +1507,17 @@ fn boolean_union_combines_meshes() {
 }
 
 #[test]
-fn boolean_union_overlapping_reduces_faces() {
+fn boolean_union_overlapping_produces_valid_mesh() {
     let target = cube_mesh();
     let tool = cube_mesh();
     let result = boolean::boolean_op(&target, &tool, [0.3, 0.0, 0.0], boolean::BooleanMode::Union);
-    // Overlapping union should have fewer faces than both combined
-    assert!(
-        result.faces.len() < target.faces.len() + tool.faces.len(),
-        "union overlap ({}) should be less than sum ({})",
-        result.faces.len(),
-        target.faces.len() + tool.faces.len()
-    );
+    // Overlapping union: face count may increase due to splitting at the
+    // intersection boundary, but should produce a non-empty valid mesh.
     assert!(!result.faces.is_empty());
+    for f in 0..result.faces.len() {
+        let verts = result.face_vertices(f);
+        assert_eq!(verts.len(), 3, "all faces should be triangles");
+    }
 }
 
 #[test]
@@ -1471,8 +1532,10 @@ fn boolean_intersect_overlapping() {
     );
     // Intersection of overlapping cubes should produce some faces
     assert!(!result.faces.is_empty(), "intersection should not be empty");
-    // Smaller than either input
-    assert!(result.faces.len() < target.faces.len() + tool.faces.len());
+    for f in 0..result.faces.len() {
+        let verts = result.face_vertices(f);
+        assert_eq!(verts.len(), 3, "all faces should be triangles");
+    }
 }
 
 #[test]
@@ -1586,4 +1649,242 @@ fn outward_dot_sum(mesh: &HalfEdgeMesh) -> f64 {
         sum += fn_[0] * out[0] + fn_[1] * out[1] + fn_[2] * out[2];
     }
     sum
+}
+
+// ── Quad topology tests ─────────────────────────────────────────────
+
+#[test]
+fn extrude_produces_quads() {
+    // Side walls of an extruded square should be quads (4 vertices per face)
+    let points = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
+    let mesh = extrude::extrude(&points, PlaneKind::Front, 2.0, 1).unwrap();
+    let mut quad_count = 0;
+    let mut tri_count = 0;
+    for f in 0..mesh.faces.len() {
+        let verts = mesh.face_vertices(f);
+        match verts.len() {
+            3 => tri_count += 1,
+            4 => quad_count += 1,
+            n => panic!("unexpected face with {n} vertices"),
+        }
+    }
+    // 4 cap tris (2 per cap) + 4 side quads
+    assert_eq!(tri_count, 4, "expected 4 cap triangles");
+    assert_eq!(quad_count, 4, "expected 4 side quads");
+}
+
+#[test]
+fn revolve_produces_quads() {
+    // Side faces of a revolved shape should be quads
+    let points = [[0.5, 0.0], [1.0, 0.0], [1.0, 1.0], [0.5, 1.0]];
+    let mesh = revolve::revolve(&points, PlaneKind::Front, 1, 360.0, 8, false).unwrap();
+    let quad_count = (0..mesh.faces.len())
+        .filter(|&f| mesh.face_vertices(f).len() == 4)
+        .count();
+    // 3 edge-pairs per ring × 8 rings = 24 quads
+    assert_eq!(quad_count, 24, "revolve side faces should all be quads");
+}
+
+#[test]
+fn to_arrays_triangulates_quads() {
+    // to_arrays() should produce only triangles (GPU-ready)
+    let points = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
+    let mesh = extrude::extrude(&points, PlaneKind::Front, 2.0, 1).unwrap();
+    let (_, _, indices) = mesh.to_arrays();
+    // All indices should be in groups of 3
+    assert_eq!(indices.len() % 3, 0, "indices should be divisible by 3");
+    // Quads become 2 triangles each: 4 tris (caps) + 4 quads × 2 = 12 triangles = 36 indices
+    assert_eq!(indices.len(), 36);
+}
+
+#[test]
+fn from_polygons_basic() {
+    // Build a simple quad from from_polygons
+    let positions = [
+        [0.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [1.0, 1.0, 0.0],
+        [0.0, 1.0, 0.0],
+    ];
+    let faces: Vec<&[usize]> = vec![&[0, 1, 2, 3]];
+    let mesh = HalfEdgeMesh::from_polygons(&positions, &faces);
+    assert_eq!(mesh.faces.len(), 1);
+    assert_eq!(mesh.face_vertices(0).len(), 4);
+}
+
+#[test]
+fn from_polygons_mixed_tri_quad() {
+    // Build a mesh with both triangles and quads
+    let positions = [
+        [0.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [1.0, 1.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [2.0, 0.5, 0.0],
+    ];
+    let faces: Vec<&[usize]> = vec![&[0, 1, 2, 3], &[1, 4, 2]];
+    let mesh = HalfEdgeMesh::from_polygons(&positions, &faces);
+    assert_eq!(mesh.faces.len(), 2);
+    assert_eq!(mesh.face_vertices(0).len(), 4);
+    assert_eq!(mesh.face_vertices(1).len(), 3);
+}
+
+#[test]
+fn loft_produces_quads() {
+    let section0 = vec![
+        [0.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [1.0, 1.0, 0.0],
+        [0.0, 1.0, 0.0],
+    ];
+    let section1 = vec![
+        [0.0, 0.0, 2.0],
+        [1.0, 0.0, 2.0],
+        [1.0, 1.0, 2.0],
+        [0.0, 1.0, 2.0],
+    ];
+    let mesh = loft::loft(&[section0, section1], false, false).unwrap();
+    // All 4 faces should be quads
+    for f in 0..mesh.faces.len() {
+        assert_eq!(
+            mesh.face_vertices(f).len(),
+            4,
+            "loft face {f} should be a quad"
+        );
+    }
+}
+
+/// Verify that GPU triangle winding from `to_arrays()` matches outward normals.
+///
+/// For each triangle emitted by `to_arrays()`, computes the geometric normal
+/// from the cross product of edges (GPU winding-based) and checks it points
+/// outward from the mesh center. This catches bugs where the Rust face normals
+/// are correct but the GPU triangle winding produces back-facing triangles.
+#[test]
+fn gpu_triangle_winding_matches_godot_cw() {
+    // Godot uses CW front-face winding: cross product (e1×e2) should point INWARD
+    // (toward mesh center) for front-facing triangles.  This matches BoxMesh behavior.
+    fn check_gpu_winding(mesh: &HalfEdgeMesh, label: &str) {
+        let center = mesh_center(mesh);
+        let (positions, _normals, indices) = mesh.to_arrays();
+
+        let mut outward = Vec::new();
+        for (t, tri) in indices.chunks(3).enumerate() {
+            let v0 = [
+                positions[tri[0] as usize * 3],
+                positions[tri[0] as usize * 3 + 1],
+                positions[tri[0] as usize * 3 + 2],
+            ];
+            let v1 = [
+                positions[tri[1] as usize * 3],
+                positions[tri[1] as usize * 3 + 1],
+                positions[tri[1] as usize * 3 + 2],
+            ];
+            let v2 = [
+                positions[tri[2] as usize * 3],
+                positions[tri[2] as usize * 3 + 1],
+                positions[tri[2] as usize * 3 + 2],
+            ];
+
+            // Geometric normal from GPU triangle winding
+            let e1 = [v1[0] - v0[0], v1[1] - v0[1], v1[2] - v0[2]];
+            let e2 = [v2[0] - v0[0], v2[1] - v0[1], v2[2] - v0[2]];
+            let geo_n = [
+                e1[1] * e2[2] - e1[2] * e2[1],
+                e1[2] * e2[0] - e1[0] * e2[2],
+                e1[0] * e2[1] - e1[1] * e2[0],
+            ];
+
+            // Triangle centroid → outward direction from mesh center
+            let tc = [
+                (v0[0] + v1[0] + v2[0]) / 3.0,
+                (v0[1] + v1[1] + v2[1]) / 3.0,
+                (v0[2] + v1[2] + v2[2]) / 3.0,
+            ];
+            let dir = [tc[0] - center[0], tc[1] - center[1], tc[2] - center[2]];
+            let dot = geo_n[0] * dir[0] + geo_n[1] * dir[1] + geo_n[2] * dir[2];
+
+            // CW winding means cross product should point inward (dot < 0)
+            if dot > 1e-12 {
+                outward.push(t);
+            }
+        }
+
+        let total = indices.len() / 3;
+        assert!(
+            outward.is_empty(),
+            "{label}: {}/{total} GPU triangles have wrong winding (CCW instead of Godot CW) (tris: {outward:?})",
+            outward.len(),
+        );
+    }
+
+    // Front plane
+    let points = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
+    let mesh = extrude::extrude(&points, PlaneKind::Front, 2.0, 1).unwrap();
+    check_gpu_winding(&mesh, "Front plane extrude");
+
+    // Side plane
+    let mesh = extrude::extrude(&points, PlaneKind::Side, 2.0, 1).unwrap();
+    check_gpu_winding(&mesh, "Side plane extrude");
+
+    // Top plane
+    let mesh = extrude::extrude(&points, PlaneKind::Top, 2.0, 1).unwrap();
+    check_gpu_winding(&mesh, "Top plane extrude");
+
+    // Revolve
+    let half_profile = [[0.5, 0.0], [0.5, 1.0], [0.0, 1.0]];
+    let mesh = revolve::revolve(&half_profile, PlaneKind::Front, 1, 360.0, 8, false).unwrap();
+    check_gpu_winding(&mesh, "Revolve front Y-axis");
+
+    // Thin extrusion (similar to agent's gun body)
+    let thin_profile = [[0.0, 0.0], [0.25, 0.0], [0.25, 0.055], [0.15, 0.068], [0.0, 0.068]];
+    let mesh = extrude::extrude(&thin_profile, PlaneKind::Side, 0.055, 1).unwrap();
+    check_gpu_winding(&mesh, "Thin side plane extrude");
+}
+
+// ── Bevel after cap-inset ───────────────────────────────────────────
+
+#[test]
+fn bevel_works_after_cap_inset_pentagon() {
+    // Pentagon (>= 5 pts to trigger inset) with cap-inset, then bevel
+    let pentagon = [
+        [1.0, 0.0],
+        [0.309, 0.951],
+        [-0.809, 0.588],
+        [-0.809, -0.588],
+        [0.309, -0.951],
+    ];
+    let mesh =
+        extrude::extrude_with_inset(&pentagon, PlaneKind::Front, 2.0, 1, 0.15).unwrap();
+    let original_faces = mesh.faces.len();
+
+    let beveled = bevel::bevel(&mesh, 0.1, 1, "all");
+    assert!(
+        beveled.faces.len() > original_faces,
+        "bevel after cap-inset should produce more faces: got {} (same as original {original_faces})",
+        beveled.faces.len(),
+    );
+}
+
+#[test]
+fn bevel_works_after_cap_inset_circle() {
+    // Circle with 16 segments — the exact case from the agent's barrel
+    use std::f64::consts::TAU;
+    let segments = 16;
+    let circle: Vec<[f64; 2]> = (0..segments)
+        .map(|i| {
+            let angle = TAU * i as f64 / segments as f64;
+            [0.5 * angle.cos(), 0.5 * angle.sin()]
+        })
+        .collect();
+    let mesh =
+        extrude::extrude_with_inset(&circle, PlaneKind::Front, 2.0, 1, 0.15).unwrap();
+    let original_faces = mesh.faces.len();
+
+    let beveled = bevel::bevel(&mesh, 0.1, 1, "all");
+    assert!(
+        beveled.faces.len() > original_faces,
+        "bevel after cap-inset (circle 16-seg) should produce more faces: got {} (same as {original_faces})",
+        beveled.faces.len(),
+    );
 }
