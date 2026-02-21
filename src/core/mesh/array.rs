@@ -18,6 +18,7 @@ pub fn array(mesh: &HalfEdgeMesh, count: usize, offset: [f64; 3]) -> HalfEdgeMes
         vertices: Vec::with_capacity(n_verts * count),
         half_edges: Vec::with_capacity(n_he * count),
         faces: Vec::with_capacity(n_faces * count),
+        edge_tags: Vec::new(),
     };
 
     for k in 0..count {

@@ -9,7 +9,7 @@ use super::topology::{canonical_edge as canonical, cross, dot, sub};
 ///
 /// `radius`: offset distance from the original edge.
 /// `segments`: number of arc segments for the bevel curve (1 = flat chamfer).
-/// `edge_filter`: which edges to bevel — "all", "depth", or "profile".
+/// `edge_filter`: which edges to bevel — "all", "depth", "profile", or "tagged".
 ///
 /// Uses the half-edge adjacency to find sharp edges (high dihedral angle)
 /// in O(E) time, then rebuilds the mesh with inset faces, bevel strips,
@@ -513,6 +513,9 @@ fn find_sharp_edges(
             let include = match filter {
                 "depth" => is_depth_edge(mesh, i),
                 "profile" => is_profile_edge(mesh, i),
+                "tagged" => {
+                    !mesh.edge_tags.is_empty() && mesh.edge_tags[i] != 0
+                }
                 _ => true, // "all"
             };
             // Apply spatial filter

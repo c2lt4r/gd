@@ -575,6 +575,7 @@ pub fn intersect(target: &HalfEdgeMesh, tool: &HalfEdgeMesh, offset: [f64; 3]) -
 /// Preserves quad topology for faces far from the intersection boundary.
 /// T-junctions eliminated by construction: adjacent polygons sharing an edge
 /// are split by the SAME plane at the SAME `lerp` point.
+#[allow(clippy::too_many_lines)]
 pub fn boolean_op(
     target: &HalfEdgeMesh,
     tool: &HalfEdgeMesh,
@@ -654,6 +655,8 @@ pub fn boolean_op(
         }
     }
 
+    let target_poly_end = output_polys.len();
+
     // ── Process tool faces ───────────────────────────────────────────
     for tool_poly in &tool_polys {
         let (t_min, t_max) = polygon_aabb(tool_poly);
@@ -702,11 +705,38 @@ pub fn boolean_op(
     // Insert those vertices so all shared edges have matching vertices.
     fix_t_junctions(&mut output_polys);
 
+    // ── Build raw mesh with provenance tracking ─────────────────────
     let mut builder = PolygonMeshBuilder::new();
-    for poly in &output_polys {
+    let mut face_is_tool: Vec<bool> = Vec::new();
+    for (i, poly) in output_polys.iter().enumerate() {
+        let before = builder.faces.len();
         builder.polygon(poly);
+        // Track source for each face that survived the builder
+        for _ in before..builder.faces.len() {
+            face_is_tool.push(i >= target_poly_end);
+        }
     }
     let raw = builder.build();
+
+    // ── Identify boolean boundary edges ──────────────────────────────
+    let mut boundary_edge_set = std::collections::HashSet::new();
+    for (he_idx, he) in raw.half_edges.iter().enumerate() {
+        if he.twin >= raw.half_edges.len() || he_idx >= he.twin {
+            continue;
+        }
+        let twin = &raw.half_edges[he.twin];
+        let (Some(f1), Some(f2)) = (he.face, twin.face) else {
+            continue;
+        };
+        if f1 < face_is_tool.len()
+            && f2 < face_is_tool.len()
+            && face_is_tool[f1] != face_is_tool[f2]
+        {
+            let p_to = raw.vertices[he.vertex].position;
+            let p_from = raw.vertices[raw.half_edges[he.prev].vertex].position;
+            boundary_edge_set.insert(topology::quantized_edge_key(p_from, p_to));
+        }
+    }
 
     // ── Dissolve coplanar edges ──────────────────────────────────────
     // Merge coplanar fragments back into larger polygons. This collapses
@@ -717,7 +747,12 @@ pub fn boolean_op(
     // ── Quadrangulate n-gons ────────────────────────────────────────
     // Convert boundary n-gons (5+ vertices) to quad ring topology for
     // clean bevel and subdivision behavior.
-    topology::quadrangulate_ngons(&dissolved)
+    let mut result = topology::quadrangulate_ngons(&dissolved);
+
+    // ── Tag boundary edges ──────────────────────────────────────────
+    topology::tag_edges_from_positions(&mut result, &boundary_edge_set);
+
+    result
 }
 
 /// Auto-expand the tool mesh when its bounding box is flush with the target's

@@ -3441,3 +3441,139 @@ fn boolean_quadrangulate_watertight() {
     let boundary = spatial::count_non_manifold_edges(&result);
     assert_eq!(boundary, 0, "quadrangulated boolean result should be watertight");
 }
+
+// ── Edge tagging ────────────────────────────────────────────────────
+
+#[test]
+fn boolean_tags_boundary_edges() {
+    // Boolean subtract should tag edges at the cut boundary
+    let target = cube_mesh();
+
+    #[rustfmt::skip]
+    let small_pos = [
+        [-0.2, -0.2, -0.6], [ 0.2, -0.2, -0.6],
+        [ 0.2,  0.2, -0.6], [-0.2,  0.2, -0.6],
+        [-0.2, -0.2,  0.6], [ 0.2, -0.2,  0.6],
+        [ 0.2,  0.2,  0.6], [-0.2,  0.2,  0.6],
+    ];
+    #[rustfmt::skip]
+    let small_idx = [
+        0, 1, 2,  0, 2, 3,
+        5, 4, 7,  5, 7, 6,
+        3, 2, 6,  3, 6, 7,
+        4, 5, 1,  4, 1, 0,
+        1, 5, 6,  1, 6, 2,
+        4, 0, 3,  4, 3, 7,
+    ];
+    let tool = HalfEdgeMesh::from_triangles(&small_pos, &small_idx);
+    let result = boolean::boolean_op(
+        &target,
+        &tool,
+        [0.0, 0.0, 0.0],
+        boolean::BooleanMode::Subtract,
+    );
+
+    // Should have edge tags
+    assert!(
+        !result.edge_tags.is_empty(),
+        "boolean result should have edge tags"
+    );
+    assert_eq!(
+        result.edge_tags.len(),
+        result.half_edges.len(),
+        "edge_tags length should match half_edges"
+    );
+
+    // Some edges should be tagged as boolean boundary
+    let tagged_count = result.edge_tags.iter().filter(|&&t| t != 0).count();
+    assert!(
+        tagged_count > 0,
+        "boolean result should have tagged boundary edges"
+    );
+}
+
+#[test]
+fn boolean_tags_none_when_no_intersection() {
+    // Union of non-overlapping meshes — no boundary edges to tag
+    let target = cube_mesh();
+
+    #[rustfmt::skip]
+    let far_pos = [
+        [-0.2, -0.2, -0.2], [ 0.2, -0.2, -0.2],
+        [ 0.2,  0.2, -0.2], [-0.2,  0.2, -0.2],
+        [-0.2, -0.2,  0.2], [ 0.2, -0.2,  0.2],
+        [ 0.2,  0.2,  0.2], [-0.2,  0.2,  0.2],
+    ];
+    #[rustfmt::skip]
+    let far_idx = [
+        0, 1, 2,  0, 2, 3,
+        5, 4, 7,  5, 7, 6,
+        3, 2, 6,  3, 6, 7,
+        4, 5, 1,  4, 1, 0,
+        1, 5, 6,  1, 6, 2,
+        4, 0, 3,  4, 3, 7,
+    ];
+    let tool = HalfEdgeMesh::from_triangles(&far_pos, &far_idx);
+    let result = boolean::boolean_op(
+        &target,
+        &tool,
+        [5.0, 0.0, 0.0], // far away, no overlap
+        boolean::BooleanMode::Union,
+    );
+
+    // No tagged edges (no intersection boundary)
+    let tagged_count = result.edge_tags.iter().filter(|&&t| t != 0).count();
+    assert_eq!(
+        tagged_count, 0,
+        "non-overlapping union should have no tagged edges"
+    );
+}
+
+#[test]
+fn bevel_tagged_filter() {
+    use super::bevel;
+
+    // Boolean subtract, then bevel only tagged edges
+    let target = cube_mesh();
+
+    #[rustfmt::skip]
+    let small_pos = [
+        [-0.2, -0.2, -0.6], [ 0.2, -0.2, -0.6],
+        [ 0.2,  0.2, -0.6], [-0.2,  0.2, -0.6],
+        [-0.2, -0.2,  0.6], [ 0.2, -0.2,  0.6],
+        [ 0.2,  0.2,  0.6], [-0.2,  0.2,  0.6],
+    ];
+    #[rustfmt::skip]
+    let small_idx = [
+        0, 1, 2,  0, 2, 3,
+        5, 4, 7,  5, 7, 6,
+        3, 2, 6,  3, 6, 7,
+        4, 5, 1,  4, 1, 0,
+        1, 5, 6,  1, 6, 2,
+        4, 0, 3,  4, 3, 7,
+    ];
+    let tool = HalfEdgeMesh::from_triangles(&small_pos, &small_idx);
+    let boolean_result = boolean::boolean_op(
+        &target,
+        &tool,
+        [0.0, 0.0, 0.0],
+        boolean::BooleanMode::Subtract,
+    );
+
+    // Bevel with "tagged" filter should only bevel boundary edges
+    let tagged_bevel = bevel::bevel_seg1(&boolean_result, 0.02, "tagged");
+    // Bevel with "all" filter bevels all sharp edges (more geometry)
+    let all_bevel = bevel::bevel_seg1(&boolean_result, 0.02, "all");
+
+    // Tagged bevel should produce fewer faces than all-edge bevel
+    assert!(
+        tagged_bevel.faces.len() < all_bevel.faces.len(),
+        "tagged bevel ({} faces) should have fewer faces than all bevel ({} faces)",
+        tagged_bevel.faces.len(),
+        all_bevel.faces.len()
+    );
+    assert!(
+        !tagged_bevel.faces.is_empty(),
+        "tagged bevel should produce geometry"
+    );
+}

@@ -661,6 +661,8 @@ pub enum BevelEdges {
     All,
     Depth,
     Profile,
+    /// Only edges tagged by boolean operations (cut boundary edges)
+    Tagged,
 }
 
 impl BevelEdges {
@@ -669,6 +671,7 @@ impl BevelEdges {
             Self::All => "all",
             Self::Depth => "depth",
             Self::Profile => "profile",
+            Self::Tagged => "tagged",
         }
     }
 }
@@ -681,7 +684,7 @@ pub struct BevelArgs {
     /// Number of segments for the bevel curve (3 = rail-peak-rail)
     #[arg(long, default_value = "3")]
     pub segments: u32,
-    /// Which edges to bevel (all, depth=extrusion-direction, profile=cap-outline)
+    /// Which edges to bevel (all, depth, profile, tagged=boolean-boundary)
     #[arg(long, value_enum, default_value = "all")]
     pub edges: BevelEdges,
     /// Bevel profile: 0.0 = concave, 0.5 = circular (default), 1.0 = convex chamfer

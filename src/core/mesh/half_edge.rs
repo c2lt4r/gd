@@ -11,6 +11,9 @@ pub struct HalfEdgeMesh {
     pub vertices: Vec<Vertex>,
     pub half_edges: Vec<HalfEdge>,
     pub faces: Vec<Face>,
+    /// Per-half-edge tags (empty = no tags). When present, length matches `half_edges`.
+    #[serde(default)]
+    pub edge_tags: Vec<u32>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -63,6 +66,7 @@ impl HalfEdgeMesh {
                 .collect(),
             half_edges: Vec::with_capacity(indices.len() * 2),
             faces: Vec::with_capacity(num_faces),
+            edge_tags: Vec::new(),
         };
 
         // Map (from_vertex, to_vertex) -> half-edge index for twin finding
@@ -167,6 +171,7 @@ impl HalfEdgeMesh {
                 .collect(),
             half_edges: Vec::with_capacity(total_he * 2),
             faces: Vec::with_capacity(faces.len()),
+            edge_tags: Vec::new(),
         };
 
         let mut edge_map: HashMap<(usize, usize), usize> = HashMap::new();

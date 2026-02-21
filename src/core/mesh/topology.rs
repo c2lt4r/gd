@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use super::half_edge::HalfEdgeMesh;
 
@@ -7,6 +7,9 @@ pub const WELD_EPSILON: f64 = 1e-6;
 
 /// Epsilon for geometric tests (plane classification, degeneracy).
 pub const GEO_EPS: f64 = 1e-8;
+
+/// Edge tag: boolean intersection boundary.
+pub const EDGE_TAG_BOOLEAN: u32 = 1;
 
 // ── Vector math helpers ──────────────────────────────────────────────
 
@@ -436,4 +439,47 @@ pub fn quadrangulate_ngons(mesh: &HalfEdgeMesh) -> HalfEdgeMesh {
 
     let face_slices: Vec<&[usize]> = faces.iter().map(Vec::as_slice).collect();
     HalfEdgeMesh::from_polygons(&positions, &face_slices)
+}
+
+// ── Edge tagging ────────────────────────────────────────────────────
+
+/// Quantize a position to a grid for hash-based edge matching.
+fn quantize(p: [f64; 3]) -> [i64; 3] {
+    // 1e5 scale → 1e-5 tolerance, well above WELD_EPSILON (1e-6)
+    let s = 1e5;
+    [
+        (p[0] * s).round() as i64,
+        (p[1] * s).round() as i64,
+        (p[2] * s).round() as i64,
+    ]
+}
+
+/// Canonical quantized edge key (smaller first for order independence).
+pub fn quantized_edge_key(a: [f64; 3], b: [f64; 3]) -> ([i64; 3], [i64; 3]) {
+    let qa = quantize(a);
+    let qb = quantize(b);
+    if qa < qb { (qa, qb) } else { (qb, qa) }
+}
+
+/// Tag edges in `mesh` that match the given boundary edge position set.
+///
+/// Sets `mesh.edge_tags` to a per-half-edge tag vector. Edges whose
+/// position pairs appear in `boundary_edges` get `EDGE_TAG_BOOLEAN`.
+pub fn tag_edges_from_positions(
+    mesh: &mut HalfEdgeMesh,
+    boundary_edges: &HashSet<([i64; 3], [i64; 3])>,
+) {
+    if boundary_edges.is_empty() {
+        return;
+    }
+    let mut tags = vec![0u32; mesh.half_edges.len()];
+    for (he_idx, he) in mesh.half_edges.iter().enumerate() {
+        let p_to = mesh.vertices[he.vertex].position;
+        let p_from = mesh.vertices[mesh.half_edges[he.prev].vertex].position;
+        let key = quantized_edge_key(p_from, p_to);
+        if boundary_edges.contains(&key) {
+            tags[he_idx] = EDGE_TAG_BOOLEAN;
+        }
+    }
+    mesh.edge_tags = tags;
 }
