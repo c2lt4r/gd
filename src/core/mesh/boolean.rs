@@ -3,7 +3,7 @@ use super::half_edge::HalfEdgeMesh;
 /// Epsilon for vertex welding — positions within this distance are merged.
 const WELD_EPSILON: f64 = 1e-6;
 
-/// Epsilon for geometric tests (parallelism, degeneracy, point-on-edge).
+/// Epsilon for geometric tests (plane classification, degeneracy).
 const GEO_EPS: f64 = 1e-8;
 
 // ── Vector math helpers ──────────────────────────────────────────────
@@ -40,54 +40,431 @@ fn dist2(a: [f64; 3], b: [f64; 3]) -> f64 {
     len2(sub(a, b))
 }
 
-// ── Mesh builder with vertex welding ─────────────────────────────────
+// ── Plane representation ─────────────────────────────────────────────
 
-struct MeshBuilder {
-    positions: Vec<[f64; 3]>,
-    indices: Vec<usize>,
+/// A plane defined by normal·p = d.
+#[derive(Clone, Copy)]
+struct Plane {
+    normal: [f64; 3],
+    d: f64,
 }
 
-impl MeshBuilder {
-    fn new() -> Self {
-        Self {
-            positions: Vec::new(),
-            indices: Vec::new(),
-        }
+/// Which side of a plane a vertex lies on.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Side {
+    Positive,
+    Negative,
+    On,
+}
+
+/// Compute the plane of a polygon using Newell's method.
+fn face_plane(verts: &[[f64; 3]]) -> Plane {
+    let mut nx = 0.0_f64;
+    let mut ny = 0.0_f64;
+    let mut nz = 0.0_f64;
+    let n = verts.len();
+    for i in 0..n {
+        let cur = verts[i];
+        let next = verts[(i + 1) % n];
+        nx += (cur[1] - next[1]) * (cur[2] + next[2]);
+        ny += (cur[2] - next[2]) * (cur[0] + next[0]);
+        nz += (cur[0] - next[0]) * (cur[1] + next[1]);
+    }
+    let len = (nx * nx + ny * ny + nz * nz).sqrt();
+    let normal = if len > 1e-12 {
+        [nx / len, ny / len, nz / len]
+    } else {
+        [0.0, 1.0, 0.0]
+    };
+    let d = dot(normal, verts[0]);
+    Plane { normal, d }
+}
+
+/// Classify a point relative to a plane.
+fn classify_vertex(plane: &Plane, point: [f64; 3]) -> Side {
+    let dist = dot(plane.normal, point) - plane.d;
+    if dist > GEO_EPS {
+        Side::Positive
+    } else if dist < -GEO_EPS {
+        Side::Negative
+    } else {
+        Side::On
+    }
+}
+
+// ── Polygon splitting by plane ──────────────────────────────────────
+
+/// Split a polygon by a plane into positive-side and negative-side fragments.
+///
+/// Adjacent polygons sharing an edge are split by the SAME plane at the SAME
+/// endpoints. The split point `lerp(a, b, t)` is deterministic for a given
+/// plane + edge, so T-junctions are eliminated by construction.
+fn split_polygon_by_plane(poly: &[[f64; 3]], plane: &Plane) -> (Vec<[f64; 3]>, Vec<[f64; 3]>) {
+    let n = poly.len();
+    if n < 3 {
+        return (Vec::new(), Vec::new());
     }
 
-    /// Find or insert a vertex position, merging within `WELD_EPSILON`.
-    fn vertex(&mut self, p: [f64; 3]) -> usize {
-        let eps2 = WELD_EPSILON * WELD_EPSILON;
-        for (i, pos) in self.positions.iter().enumerate() {
-            if dist2(*pos, p) < eps2 {
-                return i;
+    let sides: Vec<Side> = poly.iter().map(|p| classify_vertex(plane, *p)).collect();
+
+    let has_pos = sides.contains(&Side::Positive);
+    let has_neg = sides.contains(&Side::Negative);
+
+    if !has_neg {
+        return (poly.to_vec(), Vec::new());
+    }
+    if !has_pos {
+        return (Vec::new(), poly.to_vec());
+    }
+
+    let mut pos_verts = Vec::with_capacity(n + 2);
+    let mut neg_verts = Vec::with_capacity(n + 2);
+
+    for i in 0..n {
+        let j = (i + 1) % n;
+        let si = sides[i];
+        let sj = sides[j];
+        let vi = poly[i];
+        let vj = poly[j];
+
+        match si {
+            Side::Positive => pos_verts.push(vi),
+            Side::Negative => neg_verts.push(vi),
+            Side::On => {
+                pos_verts.push(vi);
+                neg_verts.push(vi);
             }
         }
-        let idx = self.positions.len();
-        self.positions.push(p);
-        idx
-    }
 
-    /// Add a triangle (skips degenerate triangles where welding collapsed vertices).
-    fn triangle(&mut self, a: [f64; 3], b: [f64; 3], c: [f64; 3]) {
-        let ia = self.vertex(a);
-        let ib = self.vertex(b);
-        let ic = self.vertex(c);
-        if ia == ib || ib == ic || ic == ia {
-            return;
+        if (si == Side::Positive && sj == Side::Negative)
+            || (si == Side::Negative && sj == Side::Positive)
+        {
+            let di = dot(plane.normal, vi) - plane.d;
+            let dj = dot(plane.normal, vj) - plane.d;
+            let t = di / (di - dj);
+            let intersection = lerp(vi, vj, t);
+            pos_verts.push(intersection);
+            neg_verts.push(intersection);
         }
-        self.indices.extend_from_slice(&[ia, ib, ic]);
     }
 
-    fn build(self) -> HalfEdgeMesh {
-        HalfEdgeMesh::from_triangles(&self.positions, &self.indices)
+    (pos_verts, neg_verts)
+}
+
+/// Iteratively split a polygon by multiple planes, producing fragments.
+fn split_polygon_by_planes(poly: &[[f64; 3]], planes: &[Plane]) -> Vec<Vec<[f64; 3]>> {
+    let mut fragments = vec![poly.to_vec()];
+
+    for plane in planes {
+        let mut next = Vec::with_capacity(fragments.len() + 4);
+        for frag in &fragments {
+            if frag.len() < 3 {
+                continue;
+            }
+            let (pos, neg) = split_polygon_by_plane(frag, plane);
+            if pos.len() >= 3 {
+                next.push(pos);
+            }
+            if neg.len() >= 3 {
+                next.push(neg);
+            }
+        }
+        fragments = next;
     }
+
+    fragments
+}
+
+// ── AABB helpers ────────────────────────────────────────────────────
+
+fn polygon_aabb(verts: &[[f64; 3]]) -> ([f64; 3], [f64; 3]) {
+    let mut mn = [f64::MAX; 3];
+    let mut mx = [f64::MIN; 3];
+    for v in verts {
+        for ax in 0..3 {
+            mn[ax] = mn[ax].min(v[ax]);
+            mx[ax] = mx[ax].max(v[ax]);
+        }
+    }
+    (mn, mx)
+}
+
+fn aabb_overlap(a_min: &[f64; 3], a_max: &[f64; 3], b_min: &[f64; 3], b_max: &[f64; 3]) -> bool {
+    for ax in 0..3 {
+        if a_max[ax] < b_min[ax] - GEO_EPS || b_max[ax] < a_min[ax] - GEO_EPS {
+            return false;
+        }
+    }
+    true
+}
+
+// ── Polygon centroid ────────────────────────────────────────────────
+
+/// Polygon centroid, nudged slightly along a normal direction to avoid
+/// on-surface ambiguity in `point_in_mesh` ray casting.
+///
+/// `inward`: if true, nudge toward the polygon's own mesh interior (negate
+/// the outward normal). Target faces use `inward=true` so the test point
+/// enters the target volume; tool faces use `inward=false` so the test
+/// point stays on the tool's exterior side.
+fn nudged_centroid_poly(verts: &[[f64; 3]], inward: bool) -> [f64; 3] {
+    let n = verts.len() as f64;
+    let mut cx = 0.0;
+    let mut cy = 0.0;
+    let mut cz = 0.0;
+    for v in verts {
+        cx += v[0];
+        cy += v[1];
+        cz += v[2];
+    }
+    cx /= n;
+    cy /= n;
+    cz /= n;
+
+    let plane = face_plane(verts);
+    let sign = if inward { -1e-5 } else { 1e-5 };
+    [
+        cx + plane.normal[0] * sign,
+        cy + plane.normal[1] * sign,
+        cz + plane.normal[2] * sign,
+    ]
+}
+
+// ── Coplanar face merging ────────────────────────────────────────────
+
+/// Union-find: find root with path compression.
+fn uf_find(parent: &mut [usize], x: usize) -> usize {
+    let mut r = x;
+    while parent[r] != r {
+        r = parent[r];
+    }
+    let mut c = x;
+    while parent[c] != r {
+        let next = parent[c];
+        parent[c] = r;
+        c = next;
+    }
+    r
+}
+
+/// Union-find: merge two sets.
+fn uf_union(parent: &mut [usize], a: usize, b: usize) {
+    let ra = uf_find(parent, a);
+    let rb = uf_find(parent, b);
+    if ra != rb {
+        parent[rb] = ra;
+    }
+}
+
+/// Weld a position into a canonical position list, returning its welded index.
+fn weld_position(positions: &mut Vec<[f64; 3]>, p: [f64; 3]) -> usize {
+    let eps2 = WELD_EPSILON * WELD_EPSILON;
+    for (i, pos) in positions.iter().enumerate() {
+        if dist2(*pos, p) < eps2 {
+            return i;
+        }
+    }
+    let idx = positions.len();
+    positions.push(p);
+    idx
+}
+
+/// Trace boundary polygon loop(s) for a group of merged coplanar faces.
+fn trace_merged_boundary(
+    group_faces: &[usize],
+    welded_faces: &[Vec<usize>],
+    welded_positions: &[[f64; 3]],
+    edge_to_face: &std::collections::HashMap<(usize, usize), usize>,
+    offset: [f64; 3],
+) -> Vec<Vec<[f64; 3]>> {
+    use std::collections::{HashMap, HashSet};
+
+    let face_set: HashSet<usize> = group_faces.iter().copied().collect();
+
+    let mut boundary_next: HashMap<usize, usize> = HashMap::new();
+    for &fi in group_faces {
+        let wface = &welded_faces[fi];
+        let n = wface.len();
+        for i in 0..n {
+            let from = wface[i];
+            let to = wface[(i + 1) % n];
+            let is_internal = edge_to_face
+                .get(&(to, from))
+                .is_some_and(|&fj| face_set.contains(&fj));
+            if !is_internal {
+                boundary_next.insert(from, to);
+            }
+        }
+    }
+
+    if boundary_next.is_empty() {
+        return Vec::new();
+    }
+
+    let mut visited: HashSet<usize> = HashSet::new();
+    let mut polys = Vec::new();
+    for &start_v in boundary_next.keys() {
+        if visited.contains(&start_v) {
+            continue;
+        }
+        let mut loop_verts = Vec::new();
+        let mut current = start_v;
+        loop {
+            if visited.contains(&current) {
+                break;
+            }
+            visited.insert(current);
+            let p = welded_positions[current];
+            loop_verts.push([p[0] + offset[0], p[1] + offset[1], p[2] + offset[2]]);
+
+            if let Some(&next_v) = boundary_next.get(&current) {
+                current = next_v;
+            } else {
+                break;
+            }
+        }
+        if loop_verts.len() >= 3 {
+            loop_verts.reverse();
+            polys.push(loop_verts);
+        }
+    }
+    polys
+}
+
+/// Merge coplanar adjacent faces into larger polygons before splitting.
+///
+/// Works with meshes that have unshared vertices (e.g. Godot primitives with
+/// per-face normals) by welding vertex positions to establish adjacency.
+fn extract_merged_polygons(mesh: &HalfEdgeMesh, offset: [f64; 3]) -> Vec<Vec<[f64; 3]>> {
+    use std::collections::HashMap;
+
+    let nf = mesh.faces.len();
+    if nf == 0 {
+        return Vec::new();
+    }
+
+    let mut welded_positions: Vec<[f64; 3]> = Vec::new();
+    let mut welded_faces: Vec<Vec<usize>> = Vec::with_capacity(nf);
+
+    for f in 0..nf {
+        let vis = mesh.face_vertices(f);
+        if vis.len() < 3 {
+            welded_faces.push(Vec::new());
+            continue;
+        }
+        let welded: Vec<usize> = vis
+            .iter()
+            .map(|&vi| weld_position(&mut welded_positions, mesh.vertices[vi].position))
+            .collect();
+        welded_faces.push(welded);
+    }
+
+    let mut edge_to_face: HashMap<(usize, usize), usize> = HashMap::new();
+    for (fi, wface) in welded_faces.iter().enumerate() {
+        let n = wface.len();
+        for i in 0..n {
+            let from = wface[i];
+            let to = wface[(i + 1) % n];
+            edge_to_face.insert((from, to), fi);
+        }
+    }
+
+    let face_info: Vec<([f64; 3], f64)> = welded_faces
+        .iter()
+        .map(|wface| {
+            if wface.len() < 3 {
+                return ([0.0, 1.0, 0.0], 0.0);
+            }
+            let verts: Vec<[f64; 3]> = wface.iter().map(|&wi| welded_positions[wi]).collect();
+            let plane = face_plane(&verts);
+            (plane.normal, plane.d)
+        })
+        .collect();
+
+    let mut parent: Vec<usize> = (0..nf).collect();
+    for (fi, wface) in welded_faces.iter().enumerate() {
+        let n = wface.len();
+        for i in 0..n {
+            let from = wface[i];
+            let to = wface[(i + 1) % n];
+            if let Some(&fj) = edge_to_face.get(&(to, from))
+                && fi != fj
+            {
+                let (n1, d1) = face_info[fi];
+                let (n2, d2) = face_info[fj];
+                let cos = dot(n1, n2);
+                if cos.abs() > 1.0 - 1e-6 {
+                    let plane_dist = (d1 - d2 * cos.signum()).abs();
+                    if plane_dist < 1e-6 {
+                        uf_union(&mut parent, fi, fj);
+                    }
+                }
+            }
+        }
+    }
+
+    let mut groups: HashMap<usize, Vec<usize>> = HashMap::new();
+    for f in 0..nf {
+        let root = uf_find(&mut parent, f);
+        groups.entry(root).or_default().push(f);
+    }
+
+    let mut polys = Vec::with_capacity(groups.len());
+    for group_faces in groups.values() {
+        if group_faces.len() == 1 {
+            let wface = &welded_faces[group_faces[0]];
+            if wface.len() < 3 {
+                continue;
+            }
+            let mut poly: Vec<[f64; 3]> = wface
+                .iter()
+                .map(|&wi| {
+                    let p = welded_positions[wi];
+                    [p[0] + offset[0], p[1] + offset[1], p[2] + offset[2]]
+                })
+                .collect();
+            poly.reverse();
+            polys.push(poly);
+            continue;
+        }
+
+        polys.extend(trace_merged_boundary(
+            group_faces,
+            &welded_faces,
+            &welded_positions,
+            &edge_to_face,
+            offset,
+        ));
+    }
+
+    polys
+}
+
+/// Extract all faces as triangles (fan-triangulating polygons) for ray casting only.
+fn extract_tris_for_classification(mesh: &HalfEdgeMesh, offset: [f64; 3]) -> Vec<[[f64; 3]; 3]> {
+    let mut tris = Vec::with_capacity(mesh.faces.len());
+    for f in 0..mesh.faces.len() {
+        let verts = mesh.face_vertices(f);
+        if verts.len() < 3 {
+            continue;
+        }
+        let p0 = mesh.vertices[verts[0]].position;
+        let p0 = [p0[0] + offset[0], p0[1] + offset[1], p0[2] + offset[2]];
+        for i in 1..verts.len() - 1 {
+            let pi = mesh.vertices[verts[i]].position;
+            let pj = mesh.vertices[verts[i + 1]].position;
+            tris.push([
+                p0,
+                [pi[0] + offset[0], pi[1] + offset[1], pi[2] + offset[2]],
+                [pj[0] + offset[0], pj[1] + offset[1], pj[2] + offset[2]],
+            ]);
+        }
+    }
+    tris
 }
 
 // ── Ray-triangle intersection (Möller-Trumbore) ─────────────────────
 
-/// Returns the ray parameter `t` where the ray hits the triangle, or `None`.
-/// Ray: `origin + t * dir`. Only returns `t > epsilon`.
 fn ray_triangle(
     origin: [f64; 3],
     dir: [f64; 3],
@@ -100,7 +477,7 @@ fn ray_triangle(
     let h = cross(dir, edge2);
     let a = dot(edge1, h);
     if a.abs() < 1e-10 {
-        return None; // parallel
+        return None;
     }
     let f = 1.0 / a;
     let s = sub(origin, v0);
@@ -119,10 +496,7 @@ fn ray_triangle(
 
 // ── Point-in-mesh via ray casting ────────────────────────────────────
 
-/// Test whether a point is inside a closed triangle mesh using ray casting.
-/// Casts a jittered ray and counts crossings (odd = inside).
 fn point_in_mesh(point: &[f64; 3], triangles: &[[[f64; 3]; 3]]) -> bool {
-    // Slightly off-axis to avoid edge/vertex coincidences
     let dir = [1.0, 0.000_131, 0.000_071];
     let mut count = 0u32;
     for tri in triangles {
@@ -133,330 +507,204 @@ fn point_in_mesh(point: &[f64; 3], triangles: &[[[f64; 3]; 3]]) -> bool {
     count % 2 == 1
 }
 
-// ── Triangle extraction ─────────────────────────────────────────────
+// ── T-junction repair ───────────────────────────────────────────────
 
-/// Extract all faces as flat triangle arrays, applying an offset to positions.
-fn extract_triangles(mesh: &HalfEdgeMesh, offset: [f64; 3]) -> Vec<[[f64; 3]; 3]> {
-    let mut tris = Vec::with_capacity(mesh.faces.len());
-    for f in 0..mesh.faces.len() {
-        let verts = mesh.face_vertices(f);
-        if verts.len() < 3 {
-            continue;
-        }
-        // Fan triangulation for polygons with > 3 vertices
-        for i in 1..verts.len() - 1 {
-            let p0 = mesh.vertices[verts[0]].position;
-            let pi = mesh.vertices[verts[i]].position;
-            let pj = mesh.vertices[verts[i + 1]].position;
-            tris.push([
-                [p0[0] + offset[0], p0[1] + offset[1], p0[2] + offset[2]],
-                [pi[0] + offset[0], pi[1] + offset[1], pi[2] + offset[2]],
-                [pj[0] + offset[0], pj[1] + offset[1], pj[2] + offset[2]],
-            ]);
-        }
-    }
-    tris
-}
-
-// ── Triangle-triangle intersection ──────────────────────────────────
-
-/// Compute where edge `(a, b)` intersects triangle `(v0, v1, v2)`.
-///
-/// Uses Möller-Trumbore restricted to `t ∈ [0, 1]` (edge, not ray).
-/// Returns the exact 3D intersection point, or `None`.
-#[allow(clippy::similar_names)]
-fn edge_tri_point(
-    a: [f64; 3],
-    b: [f64; 3],
-    v0: [f64; 3],
-    v1: [f64; 3],
-    v2: [f64; 3],
-) -> Option<[f64; 3]> {
-    let dir = sub(b, a);
-    let e1 = sub(v1, v0);
-    let e2 = sub(v2, v0);
-    let h = cross(dir, e2);
-    let det = dot(e1, h);
-    if det.abs() < GEO_EPS {
-        return None; // parallel or coplanar
-    }
-    let inv = 1.0 / det;
-    let s = sub(a, v0);
-    let u = inv * dot(s, h);
-    if !(-GEO_EPS..=1.0 + GEO_EPS).contains(&u) {
-        return None;
-    }
-    let q = cross(s, e1);
-    let v = inv * dot(dir, q);
-    if v < -GEO_EPS || u + v > 1.0 + GEO_EPS {
-        return None;
-    }
-    let t = inv * dot(e2, q);
-    if (-GEO_EPS..=1.0 + GEO_EPS).contains(&t) {
-        Some(lerp(a, b, t.clamp(0.0, 1.0)))
-    } else {
-        None
-    }
-}
-
-/// Add a point to a collection, deduplicating within a tolerance.
-fn push_unique(pts: &mut Vec<[f64; 3]>, p: [f64; 3]) {
-    let eps2 = WELD_EPSILON * WELD_EPSILON * 100.0; // 1e-5 radius
-    for existing in pts.iter() {
-        if dist2(*existing, p) < eps2 {
-            return;
-        }
-    }
-    pts.push(p);
-}
-
-/// Compute the intersection segment of two triangles, if they properly intersect.
-///
-/// Finds all points where edges of one triangle pierce the other, then returns
-/// the two distinct intersection points as a segment. Returns `None` for
-/// coplanar, non-intersecting, or point-contact cases.
-#[allow(clippy::similar_names)]
-fn tri_tri_segment(
-    t1: &[[f64; 3]; 3],
-    t2: &[[f64; 3]; 3],
-) -> Option<([f64; 3], [f64; 3])> {
-    // Quick AABB reject
-    for ax in 0..3 {
-        let mn1 = t1[0][ax].min(t1[1][ax]).min(t1[2][ax]);
-        let mx1 = t1[0][ax].max(t1[1][ax]).max(t1[2][ax]);
-        let mn2 = t2[0][ax].min(t2[1][ax]).min(t2[2][ax]);
-        let mx2 = t2[0][ax].max(t2[1][ax]).max(t2[2][ax]);
-        if mx1 < mn2 - GEO_EPS || mx2 < mn1 - GEO_EPS {
-            return None;
-        }
-    }
-
-    let mut pts = Vec::with_capacity(6);
-
-    // Edges of t1 vs triangle t2
-    for i in 0..3 {
-        if let Some(p) = edge_tri_point(t1[i], t1[(i + 1) % 3], t2[0], t2[1], t2[2]) {
-            push_unique(&mut pts, p);
-        }
-    }
-
-    // Edges of t2 vs triangle t1
-    for i in 0..3 {
-        if let Some(p) = edge_tri_point(t2[i], t2[(i + 1) % 3], t1[0], t1[1], t1[2]) {
-            push_unique(&mut pts, p);
-        }
-    }
-
-    if pts.len() >= 2 {
-        Some((pts[0], pts[1]))
-    } else {
-        None
-    }
-}
-
-// ── Triangle splitting ──────────────────────────────────────────────
-
-/// Test if 3D point `p` lies on segment `a→b` (within tolerance).
-fn on_segment(p: [f64; 3], a: [f64; 3], b: [f64; 3]) -> bool {
+/// Check if point P lies on segment A→B (excluding endpoints).
+/// Returns the parameter t ∈ (0, 1) if so.
+fn point_on_segment(a: [f64; 3], b: [f64; 3], p: [f64; 3]) -> Option<f64> {
     let ab = sub(b, a);
-    let ab2 = len2(ab);
-    if ab2 < GEO_EPS * GEO_EPS {
-        return dist2(p, a) < GEO_EPS * GEO_EPS;
-    }
-    // Squared distance from p to infinite line through a,b
     let ap = sub(p, a);
-    let c = cross(ab, ap);
-    if len2(c) / ab2 > WELD_EPSILON * WELD_EPSILON * 100.0 {
-        return false;
+    let ab_len2 = len2(ab);
+    if ab_len2 < GEO_EPS * GEO_EPS {
+        return None; // degenerate edge
     }
-    // Parameter along segment
-    let t = dot(ap, ab) / ab2;
-    (-GEO_EPS..=1.0 + GEO_EPS).contains(&t)
-}
-
-/// Which edge of `tri` does point `p` lie on?
-/// Returns 0 (v0→v1), 1 (v1→v2), or 2 (v2→v0). `None` if not on any edge.
-fn which_edge(p: [f64; 3], tri: &[[f64; 3]; 3]) -> Option<usize> {
-    (0..3).find(|&i| on_segment(p, tri[i], tri[(i + 1) % 3]))
-}
-
-/// True if a triangle has near-zero area.
-fn degenerate(tri: &[[f64; 3]; 3]) -> bool {
-    len2(cross(sub(tri[1], tri[0]), sub(tri[2], tri[0]))) < GEO_EPS * GEO_EPS
-}
-
-/// Split a triangle given cut points `p` on edge `ep` and `q` on edge `eq`.
-///
-/// Produces 3 sub-triangles preserving the original CCW winding.
-/// Edges are numbered 0 = v0→v1, 1 = v1→v2, 2 = v2→v0.
-#[allow(clippy::similar_names)]
-fn split_two_edges(
-    tri: [[f64; 3]; 3],
-    cp: [f64; 3],
-    ep: usize,
-    cq: [f64; 3],
-    eq: usize,
-) -> Vec<[[f64; 3]; 3]> {
-    let [va, vb, vc] = tri;
-
-    // Normalise so ep < eq (only 3 cases)
-    let (p, e0, q, e1) = if ep < eq {
-        (cp, ep, cq, eq)
+    let t = dot(ap, ab) / ab_len2;
+    if t <= GEO_EPS || t >= 1.0 - GEO_EPS {
+        return None; // at or beyond endpoints
+    }
+    // Check distance from P to the line
+    let proj = lerp(a, b, t);
+    if dist2(proj, p) < WELD_EPSILON * WELD_EPSILON {
+        Some(t)
     } else {
-        (cq, eq, cp, ep)
-    };
-
-    let mut out = Vec::with_capacity(3);
-
-    match (e0, e1) {
-        (0, 1) => {
-            // p on A→B, q on B→C; shared vertex B
-            out.push([va, p, q]);
-            out.push([va, q, vc]);
-            out.push([p, vb, q]);
-        }
-        (0, 2) => {
-            // p on A→B, q on C→A; shared vertex A
-            out.push([va, p, q]);
-            out.push([p, vb, vc]);
-            out.push([p, vc, q]);
-        }
-        (1, 2) => {
-            // p on B→C, q on C→A; shared vertex C
-            out.push([va, vb, p]);
-            out.push([va, p, q]);
-            out.push([p, vc, q]);
-        }
-        _ => out.push(tri),
-    }
-
-    out.retain(|t| !degenerate(t));
-    out
-}
-
-/// Split a triangle along a single intersection segment.
-fn split_by_segment(
-    tri: [[f64; 3]; 3],
-    seg_a: [f64; 3],
-    seg_b: [f64; 3],
-) -> Vec<[[f64; 3]; 3]> {
-    if dist2(seg_a, seg_b) < GEO_EPS * GEO_EPS {
-        return vec![tri]; // degenerate segment
-    }
-    let ea = which_edge(seg_a, &tri);
-    let eb = which_edge(seg_b, &tri);
-
-    match (ea, eb) {
-        (Some(a), Some(b)) if a != b => split_two_edges(tri, seg_a, a, seg_b, b),
-        _ => vec![tri], // same edge, interior, or not on triangle — no split
+        None
     }
 }
 
-/// Iteratively split a triangle by all triangles from another mesh.
+/// Fix T-junctions: find vertices that lie on edges of other polygons
+/// and insert them, so all shared edges have matching vertices.
 ///
-/// For each `other` triangle that intersects the current set of sub-triangles,
-/// compute the intersection segment and split the affected sub-triangle.
-const MAX_SPLITS: usize = 256;
-
-fn split_by_mesh(tri: [[f64; 3]; 3], others: &[[[f64; 3]; 3]]) -> Vec<[[f64; 3]; 3]> {
-    let mut current = vec![tri];
-
-    for other in others {
-        // Coarse AABB filter against original triangle
-        if !aabb_overlap(&tri, other) {
-            continue;
-        }
-        if current.len() >= MAX_SPLITS {
-            break;
-        }
-
-        let mut next = Vec::with_capacity(current.len() + 4);
-        for sub in &current {
-            if let Some((p, q)) = tri_tri_segment(sub, other) {
-                next.extend(split_by_segment(*sub, p, q));
-            } else {
-                next.push(*sub);
+/// This is the "cheese bite" fix — only polygons whose edges contain
+/// stray split points get extra vertices. Faces far from the cut are
+/// completely untouched.
+fn fix_t_junctions(polys: &mut [Vec<[f64; 3]>]) {
+    // Collect all unique vertices from all polygons (welded)
+    let mut all_verts: Vec<[f64; 3]> = Vec::new();
+    let eps2 = WELD_EPSILON * WELD_EPSILON;
+    for poly in polys.iter() {
+        for &v in poly {
+            if !all_verts.iter().any(|p| dist2(*p, v) < eps2) {
+                all_verts.push(v);
             }
         }
-        current = next;
     }
 
-    current
-}
+    // For each polygon, check each edge for vertices that lie on it
+    let mut changed = true;
+    let mut iterations = 0;
+    while changed && iterations < 3 {
+        changed = false;
+        iterations += 1;
 
-/// Quick per-axis AABB overlap test between two triangles.
-fn aabb_overlap(t1: &[[f64; 3]; 3], t2: &[[f64; 3]; 3]) -> bool {
-    for ax in 0..3 {
-        let mn1 = t1[0][ax].min(t1[1][ax]).min(t1[2][ax]);
-        let mx1 = t1[0][ax].max(t1[1][ax]).max(t1[2][ax]);
-        let mn2 = t2[0][ax].min(t2[1][ax]).min(t2[2][ax]);
-        let mx2 = t2[0][ax].max(t2[1][ax]).max(t2[2][ax]);
-        if mx1 < mn2 - GEO_EPS || mx2 < mn1 - GEO_EPS {
-            return false;
+        for poly in polys.iter_mut() {
+            let n = poly.len();
+            if n < 3 {
+                continue;
+            }
+
+            let mut insertions: Vec<(usize, Vec<[f64; 3]>)> = Vec::new();
+
+            for i in 0..n {
+                let a = poly[i];
+                let b = poly[(i + 1) % n];
+
+                // Find all vertices that lie on this edge
+                let mut on_edge: Vec<(f64, [f64; 3])> = Vec::new();
+                for &v in &all_verts {
+                    // Skip if v is already an endpoint
+                    if dist2(v, a) < eps2 || dist2(v, b) < eps2 {
+                        continue;
+                    }
+                    if let Some(t) = point_on_segment(a, b, v) {
+                        on_edge.push((t, v));
+                    }
+                }
+
+                if !on_edge.is_empty() {
+                    on_edge.sort_by(|x, y| x.0.partial_cmp(&y.0).unwrap());
+                    let verts: Vec<[f64; 3]> = on_edge.into_iter().map(|(_, v)| v).collect();
+                    insertions.push((i, verts));
+                }
+            }
+
+            if !insertions.is_empty() {
+                changed = true;
+                // Insert vertices in reverse order so indices stay valid
+                for (edge_idx, verts) in insertions.into_iter().rev() {
+                    let insert_pos = edge_idx + 1;
+                    for (j, v) in verts.into_iter().enumerate() {
+                        poly.insert(insert_pos + j, v);
+                    }
+                }
+            }
         }
     }
-    true
 }
 
-/// Triangle centroid, nudged slightly along the face normal to avoid
-/// on-surface ambiguity in `point_in_mesh` ray casting.
-fn nudged_centroid(tri: &[[f64; 3]; 3]) -> [f64; 3] {
-    let cx = (tri[0][0] + tri[1][0] + tri[2][0]) / 3.0;
-    let cy = (tri[0][1] + tri[1][1] + tri[2][1]) / 3.0;
-    let cz = (tri[0][2] + tri[1][2] + tri[2][2]) / 3.0;
-    let n = cross(sub(tri[1], tri[0]), sub(tri[2], tri[0]));
-    let mag = len2(n).sqrt();
-    if mag < GEO_EPS {
-        return [cx, cy, cz];
+// ── Polygon mesh builder with vertex welding ────────────────────────
+
+struct PolygonMeshBuilder {
+    positions: Vec<[f64; 3]>,
+    faces: Vec<Vec<usize>>,
+}
+
+impl PolygonMeshBuilder {
+    fn new() -> Self {
+        Self {
+            positions: Vec::new(),
+            faces: Vec::new(),
+        }
     }
-    // Nudge 1e-5 along outward normal
-    let s = 1e-5 / mag;
-    [cx + n[0] * s, cy + n[1] * s, cz + n[2] * s]
+
+    fn vertex(&mut self, p: [f64; 3]) -> usize {
+        let eps2 = WELD_EPSILON * WELD_EPSILON;
+        for (i, pos) in self.positions.iter().enumerate() {
+            if dist2(*pos, p) < eps2 {
+                return i;
+            }
+        }
+        let idx = self.positions.len();
+        self.positions.push(p);
+        idx
+    }
+
+    fn polygon(&mut self, verts: &[[f64; 3]]) {
+        if verts.len() < 3 {
+            return;
+        }
+        let indices: Vec<usize> = verts.iter().map(|v| self.vertex(*v)).collect();
+
+        let mut dedup = Vec::with_capacity(indices.len());
+        for &idx in &indices {
+            if dedup.last() != Some(&idx) {
+                dedup.push(idx);
+            }
+        }
+        if dedup.len() > 1 && dedup.first() == dedup.last() {
+            dedup.pop();
+        }
+        if dedup.len() < 3 {
+            return;
+        }
+
+        // Check that the polygon is not degenerate (all vertices collinear).
+        // For polygons with T-junction vertices inserted, the first 3 might be
+        // collinear, so check all consecutive triples.
+        let mut valid = false;
+        let nd = dedup.len();
+        for i in 0..nd {
+            let pa = self.positions[dedup[i]];
+            let pb = self.positions[dedup[(i + 1) % nd]];
+            let pc = self.positions[dedup[(i + 2) % nd]];
+            if len2(cross(sub(pb, pa), sub(pc, pa))) >= GEO_EPS * GEO_EPS {
+                valid = true;
+                break;
+            }
+        }
+        if !valid {
+            return;
+        }
+
+        self.faces.push(dedup);
+    }
+
+    fn build(self) -> HalfEdgeMesh {
+        let face_slices: Vec<&[usize]> = self.faces.iter().map(Vec::as_slice).collect();
+        HalfEdgeMesh::from_polygons(&self.positions, &face_slices)
+    }
 }
 
 // ── Boolean operation modes ──────────────────────────────────────────
 
-/// Which boolean operation to perform.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BooleanMode {
-    /// Remove tool volume from target.
     Subtract,
-    /// Combine both volumes into one.
     Union,
-    /// Keep only the overlapping volume.
     Intersect,
 }
 
 // ── Main boolean operation ──────────────────────────────────────────
 
-/// Boolean subtract: remove the volume of `tool` (offset by `offset`) from `target`.
 #[cfg(test)]
 pub fn subtract(target: &HalfEdgeMesh, tool: &HalfEdgeMesh, offset: [f64; 3]) -> HalfEdgeMesh {
     boolean_op(target, tool, offset, BooleanMode::Subtract)
 }
 
-/// Boolean union: combine `target` and `tool` into a single mesh.
 #[allow(dead_code)]
 pub fn union(target: &HalfEdgeMesh, tool: &HalfEdgeMesh, offset: [f64; 3]) -> HalfEdgeMesh {
     boolean_op(target, tool, offset, BooleanMode::Union)
 }
 
-/// Boolean intersect: keep only the volume shared by `target` and `tool`.
 #[allow(dead_code)]
 pub fn intersect(target: &HalfEdgeMesh, tool: &HalfEdgeMesh, offset: [f64; 3]) -> HalfEdgeMesh {
     boolean_op(target, tool, offset, BooleanMode::Intersect)
 }
 
-/// Boolean operation on two triangle meshes.
+/// Boolean operation on two meshes using plane-based polygon splitting.
 ///
-/// Uses triangle-triangle intersection to split faces at the exact boundary,
-/// then classifies each sub-face by centroid point-in-mesh testing.
-/// Correctly handles tools sitting entirely within a single large target face
-/// (no pre-existing target vertices inside the tool volume).
-///
-/// - Subtract: keep target-outside + flipped tool-inside
-/// - Union: keep target-outside + tool-outside
-/// - Intersect: keep target-inside + tool-inside
+/// Preserves quad topology for faces far from the intersection boundary.
+/// T-junctions eliminated by construction: adjacent polygons sharing an edge
+/// are split by the SAME plane at the SAME `lerp` point.
 pub fn boolean_op(
     target: &HalfEdgeMesh,
     tool: &HalfEdgeMesh,
@@ -479,16 +727,49 @@ pub fn boolean_op(
         };
     }
 
-    let tool_tris = extract_triangles(tool, offset);
-    let target_tris = extract_triangles(target, [0.0; 3]);
+    // Auto-expand tool when its bounding box is flush with the target's on all
+    // axes. A same-size cutter at the same position gets enlarged by 0.1% so it
+    // fully consumes the target instead of producing coplanar ambiguity.
+    let expanded_tool = auto_expand_tool(target, tool, offset);
+    let tool_ref = expanded_tool.as_ref().unwrap_or(tool);
 
-    let mut builder = MeshBuilder::new();
+    // Extract polygons, merging coplanar adjacent faces to eliminate internal
+    // edges (triangle diagonals) that would create T-junctions.
+    let target_polys = extract_merged_polygons(target, [0.0; 3]);
+    let tool_polys = extract_merged_polygons(tool_ref, offset);
+
+    // Triangle soups for point-in-mesh classification only
+    let target_tris = extract_tris_for_classification(target, [0.0; 3]);
+    let tool_tris = extract_tris_for_classification(tool_ref, offset);
+
+    let tool_planes: Vec<Plane> = tool_polys.iter().map(|p| face_plane(p)).collect();
+    let tool_aabbs: Vec<([f64; 3], [f64; 3])> = tool_polys.iter().map(|p| polygon_aabb(p)).collect();
+    let target_planes: Vec<Plane> = target_polys.iter().map(|p| face_plane(p)).collect();
+    let target_aabbs: Vec<([f64; 3], [f64; 3])> =
+        target_polys.iter().map(|p| polygon_aabb(p)).collect();
+
+    // Collect output polygons, then fix T-junctions before building.
+    let mut output_polys: Vec<Vec<[f64; 3]>> = Vec::new();
 
     // ── Process target faces ─────────────────────────────────────────
-    for target_tri in &target_tris {
-        let subs = split_by_mesh(*target_tri, &tool_tris);
-        for sub in &subs {
-            let c = nudged_centroid(sub);
+    for target_poly in &target_polys {
+        let (t_min, t_max) = polygon_aabb(target_poly);
+
+        let relevant_planes: Vec<Plane> = tool_planes
+            .iter()
+            .zip(tool_aabbs.iter())
+            .filter(|(_, (b_min, b_max))| aabb_overlap(&t_min, &t_max, b_min, b_max))
+            .map(|(plane, _)| *plane)
+            .collect();
+
+        let fragments = if relevant_planes.is_empty() {
+            vec![target_poly.clone()]
+        } else {
+            split_polygon_by_planes(target_poly, &relevant_planes)
+        };
+
+        for frag in &fragments {
+            let c = nudged_centroid_poly(frag, true);
             let inside_tool = point_in_mesh(&c, &tool_tris);
 
             let keep = match mode {
@@ -497,40 +778,128 @@ pub fn boolean_op(
             };
 
             if keep {
-                builder.triangle(sub[0], sub[1], sub[2]);
+                output_polys.push(frag.clone());
             }
         }
     }
 
     // ── Process tool faces ───────────────────────────────────────────
-    for tool_tri in &tool_tris {
-        let subs = split_by_mesh(*tool_tri, &target_tris);
-        for sub in &subs {
-            let c = nudged_centroid(sub);
+    for tool_poly in &tool_polys {
+        let (t_min, t_max) = polygon_aabb(tool_poly);
+
+        let relevant_planes: Vec<Plane> = target_planes
+            .iter()
+            .zip(target_aabbs.iter())
+            .filter(|(_, (b_min, b_max))| aabb_overlap(&t_min, &t_max, b_min, b_max))
+            .map(|(plane, _)| *plane)
+            .collect();
+
+        let fragments = if relevant_planes.is_empty() {
+            vec![tool_poly.clone()]
+        } else {
+            split_polygon_by_planes(tool_poly, &relevant_planes)
+        };
+
+        for frag in &fragments {
+            let c = nudged_centroid_poly(frag, false);
             let inside_target = point_in_mesh(&c, &target_tris);
 
             match mode {
                 BooleanMode::Subtract => {
                     if inside_target {
-                        // Flip winding — tool face becomes cavity wall
-                        builder.triangle(sub[2], sub[1], sub[0]);
+                        let mut flipped = frag.clone();
+                        flipped.reverse();
+                        output_polys.push(flipped);
                     }
                 }
                 BooleanMode::Union => {
                     if !inside_target {
-                        builder.triangle(sub[0], sub[1], sub[2]);
+                        output_polys.push(frag.clone());
                     }
                 }
                 BooleanMode::Intersect => {
                     if inside_target {
-                        builder.triangle(sub[0], sub[1], sub[2]);
+                        output_polys.push(frag.clone());
                     }
                 }
             }
         }
     }
 
+    // ── Fix T-junctions ─────────────────────────────────────────────
+    // Split points from cut faces may land on edges of unsplit neighbors.
+    // Insert those vertices so all shared edges have matching vertices.
+    fix_t_junctions(&mut output_polys);
+
+    let mut builder = PolygonMeshBuilder::new();
+    for poly in &output_polys {
+        builder.polygon(poly);
+    }
     builder.build()
+}
+
+/// Auto-expand the tool mesh when its bounding box is flush with the target's
+/// on all 3 axes. Returns an optional expanded clone of the tool that's 0.1%
+/// larger — enough to break coplanar degeneracy and fully consume the target
+/// in same-size cutter scenarios.
+fn auto_expand_tool(
+    target: &HalfEdgeMesh,
+    tool: &HalfEdgeMesh,
+    offset: [f64; 3],
+) -> Option<HalfEdgeMesh> {
+    let mut t_min = [f64::MAX; 3];
+    let mut t_max = [f64::MIN; 3];
+    for v in &target.vertices {
+        for ax in 0..3 {
+            t_min[ax] = t_min[ax].min(v.position[ax]);
+            t_max[ax] = t_max[ax].max(v.position[ax]);
+        }
+    }
+
+    let mut s_min = [f64::MAX; 3];
+    let mut s_max = [f64::MIN; 3];
+    for v in &tool.vertices {
+        for ax in 0..3 {
+            let p = v.position[ax] + offset[ax];
+            s_min[ax] = s_min[ax].min(p);
+            s_max[ax] = s_max[ax].max(p);
+        }
+    }
+
+    let flush_eps = 1e-4;
+
+    let mut flush_axes = 0u32;
+    for ax in 0..3 {
+        let both_flush = (s_min[ax] - t_min[ax]).abs() < flush_eps
+            && (s_max[ax] - t_max[ax]).abs() < flush_eps;
+        if both_flush {
+            flush_axes += 1;
+        }
+    }
+
+    if flush_axes < 3 {
+        return None;
+    }
+
+    // Scale tool outward from its center by 0.1% on each axis.
+    let mut expanded = tool.clone();
+    let n = expanded.vertices.len() as f64;
+    let mut center = [0.0; 3];
+    for v in &expanded.vertices {
+        center[0] += v.position[0];
+        center[1] += v.position[1];
+        center[2] += v.position[2];
+    }
+    for c in &mut center {
+        *c /= n;
+    }
+    let scale = 1.001;
+    for v in &mut expanded.vertices {
+        v.position[0] = center[0] + (v.position[0] - center[0]) * scale;
+        v.position[1] = center[1] + (v.position[1] - center[1]) * scale;
+        v.position[2] = center[2] + (v.position[2] - center[2]) * scale;
+    }
+    Some(expanded)
 }
 
 /// Return a copy of the mesh with all vertices offset.

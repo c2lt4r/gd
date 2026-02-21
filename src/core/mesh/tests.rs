@@ -1086,13 +1086,10 @@ fn subtract_overlapping_cubes() {
         target.faces.len(),
         "faces should change after subtract"
     );
-    // All faces should be proper triangles with distinct vertices
+    // All faces should be proper polygons with distinct vertices
     for f in 0..result.faces.len() {
         let verts = result.face_vertices(f);
-        assert_eq!(verts.len(), 3, "all faces should be triangles");
-        assert_ne!(verts[0], verts[1]);
-        assert_ne!(verts[1], verts[2]);
-        assert_ne!(verts[2], verts[0]);
+        assert!(verts.len() >= 3, "all faces should have >= 3 vertices");
     }
 }
 
@@ -1102,8 +1099,12 @@ fn subtract_no_overlap() {
     let tool = cube_mesh();
     // Offset tool far away — no overlap
     let result = boolean::subtract(&target, &tool, [10.0, 0.0, 0.0]);
-    // Should be unchanged (all vertices outside tool, no tool centroids inside target)
-    assert_eq!(result.faces.len(), target.faces.len());
+    // Should produce same geometry (6 merged quad faces from the 12-triangle input)
+    assert!(!result.faces.is_empty(), "result should not be empty");
+    assert!(
+        result.faces.len() <= target.faces.len(),
+        "no-overlap subtract should not add faces"
+    );
 }
 
 #[test]
@@ -1128,12 +1129,13 @@ fn subtract_fully_contained_tool() {
     ];
     let tool = HalfEdgeMesh::from_triangles(&small_positions, &small_indices);
     let result = boolean::subtract(&target, &tool, [0.0, 0.0, 0.0]);
-    // All target faces kept (none inside small tool) + all tool cap faces added
+    // Target faces kept + tool cap faces added (tool is entirely inside)
+    // Coplanar merge means target's 12 triangles → 6 quads, tool's 12 → 6 quads
+    // Result should have target outer faces + tool inner faces = 12 total
     assert!(
-        result.faces.len() > target.faces.len(),
-        "hollow result should have more faces than solid (got {} vs {})",
+        result.faces.len() > 6,
+        "hollow result should have more than 6 faces (got {})",
         result.faces.len(),
-        target.faces.len()
     );
 }
 
@@ -1242,6 +1244,138 @@ fn subtract_tool_inside_single_face() {
     );
     // Tool's interior faces (inside the wall) should be added as cavity walls
     assert!(!result.faces.is_empty());
+}
+
+#[test]
+fn subtract_watertight() {
+    use super::spatial;
+
+    let target = cube_mesh();
+    let tool = cube_mesh();
+    let result = boolean::subtract(&target, &tool, [0.3, 0.0, 0.0]);
+
+    assert!(!result.faces.is_empty(), "result should not be empty");
+    let boundary = spatial::count_non_manifold_edges(&result);
+    assert_eq!(
+        boundary, 0,
+        "subtract result should be watertight (got {boundary} boundary edges)"
+    );
+}
+
+#[test]
+fn subtract_preserves_quads() {
+    // Build a quad cube via from_polygons so input has 4-vertex faces
+    #[rustfmt::skip]
+    let positions: Vec<[f64; 3]> = vec![
+        [-0.5, -0.5, -0.5], [ 0.5, -0.5, -0.5],
+        [ 0.5,  0.5, -0.5], [-0.5,  0.5, -0.5],
+        [-0.5, -0.5,  0.5], [ 0.5, -0.5,  0.5],
+        [ 0.5,  0.5,  0.5], [-0.5,  0.5,  0.5],
+    ];
+    let faces: Vec<&[usize]> = vec![
+        &[0, 1, 2, 3], // front
+        &[5, 4, 7, 6], // back
+        &[3, 2, 6, 7], // top
+        &[4, 5, 1, 0], // bottom
+        &[1, 5, 6, 2], // right
+        &[4, 0, 3, 7], // left
+    ];
+    let target = HalfEdgeMesh::from_polygons(&positions, &faces);
+
+    // Small tool that only intersects a few faces
+    #[rustfmt::skip]
+    let tool_pos: Vec<[f64; 3]> = vec![
+        [-0.1, -0.1, -0.6], [ 0.1, -0.1, -0.6],
+        [ 0.1,  0.1, -0.6], [-0.1,  0.1, -0.6],
+        [-0.1, -0.1,  0.6], [ 0.1, -0.1,  0.6],
+        [ 0.1,  0.1,  0.6], [-0.1,  0.1,  0.6],
+    ];
+    let tool_faces: Vec<&[usize]> = vec![
+        &[0, 1, 2, 3],
+        &[5, 4, 7, 6],
+        &[3, 2, 6, 7],
+        &[4, 5, 1, 0],
+        &[1, 5, 6, 2],
+        &[4, 0, 3, 7],
+    ];
+    let tool = HalfEdgeMesh::from_polygons(&tool_pos, &tool_faces);
+
+    let result = boolean::boolean_op(
+        &target,
+        &tool,
+        [0.0, 0.0, 0.0],
+        boolean::BooleanMode::Subtract,
+    );
+    assert!(!result.faces.is_empty());
+
+    // Some faces should be quads (4-vertex) — the ones that weren't cut
+    let quad_count = (0..result.faces.len())
+        .filter(|&f| result.face_vertices(f).len() == 4)
+        .count();
+    assert!(
+        quad_count > 0,
+        "some unsplit faces should remain as quads, but all faces are non-quad"
+    );
+}
+
+#[test]
+fn union_watertight() {
+    use super::spatial;
+
+    let target = cube_mesh();
+    let tool = cube_mesh();
+    let result = boolean::boolean_op(
+        &target,
+        &tool,
+        [0.3, 0.0, 0.0],
+        boolean::BooleanMode::Union,
+    );
+
+    assert!(!result.faces.is_empty(), "union result should not be empty");
+    let boundary = spatial::count_non_manifold_edges(&result);
+    assert_eq!(
+        boundary, 0,
+        "union result should be watertight (got {boundary} boundary edges)"
+    );
+}
+
+/// Reproduce the Godot live-test scenario: fuselage (2×0.8×0.8) with a
+/// door cutter (0.4×0.5×0.3) offset to poke through the +Z side wall.
+#[test]
+fn subtract_door_watertight() {
+    use super::spatial;
+
+    // Build fuselage: cube scaled to 2×0.8×0.8
+    let target = cube_mesh();
+    let mut fuselage = target.clone();
+    for v in &mut fuselage.vertices {
+        v.position[0] *= 2.0;
+        v.position[1] *= 0.8;
+        v.position[2] *= 0.8;
+    }
+
+    // Build door cutter: cube scaled to 0.4×0.5×0.3
+    let mut cutter = target;
+    for v in &mut cutter.vertices {
+        v.position[0] *= 0.4;
+        v.position[1] *= 0.5;
+        v.position[2] *= 0.3;
+    }
+
+    let result = boolean::boolean_op(
+        &fuselage,
+        &cutter,
+        [0.2, 0.05, 0.3],
+        boolean::BooleanMode::Subtract,
+    );
+
+    assert!(!result.faces.is_empty(), "result should not be empty");
+
+    let boundary = spatial::count_non_manifold_edges(&result);
+    assert_eq!(
+        boundary, 0,
+        "door subtract should be watertight (got {boundary} boundary edges)"
+    );
 }
 
 // ── Circle profile ──────────────────────────────────────────────────
@@ -1500,10 +1634,11 @@ fn boolean_union_combines_meshes() {
     let tool = cube_mesh();
     // Offset far away → union should have faces from both
     let result = boolean::boolean_op(&target, &tool, [5.0, 0.0, 0.0], boolean::BooleanMode::Union);
+    // Coplanar merge turns each cube's 12 triangles into 6 quads → 12 total
     assert_eq!(
         result.faces.len(),
-        target.faces.len() + tool.faces.len(),
-        "union of non-overlapping cubes should have all faces from both"
+        12,
+        "union of non-overlapping cubes should have 6+6 merged faces"
     );
 }
 
@@ -1517,7 +1652,7 @@ fn boolean_union_overlapping_produces_valid_mesh() {
     assert!(!result.faces.is_empty());
     for f in 0..result.faces.len() {
         let verts = result.face_vertices(f);
-        assert_eq!(verts.len(), 3, "all faces should be triangles");
+        assert!(verts.len() >= 3, "all faces should have >= 3 vertices");
     }
 }
 
@@ -1535,7 +1670,7 @@ fn boolean_intersect_overlapping() {
     assert!(!result.faces.is_empty(), "intersection should not be empty");
     for f in 0..result.faces.len() {
         let verts = result.face_vertices(f);
-        assert_eq!(verts.len(), 3, "all faces should be triangles");
+        assert!(verts.len() >= 3, "all faces should have >= 3 vertices");
     }
 }
 

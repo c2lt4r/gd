@@ -120,9 +120,13 @@ pub fn cmd_view(args: &ViewArgs) -> Result<()> {
         let _ = run_eval(&clear_script);
     }
 
-    // Restore original camera
-    let restore_script = gdscript::generate_restore_camera();
-    let _ = run_eval(&restore_script);
+    // Restore original camera only when capturing "all" views (multi-view).
+    // For single-view captures, keep the camera active so the user can
+    // visually inspect the scene from that angle.
+    if views.len() > 1 {
+        let restore_script = gdscript::generate_restore_camera();
+        let _ = run_eval(&restore_script);
+    }
 
     match args.format {
         OutputFormat::Json => {

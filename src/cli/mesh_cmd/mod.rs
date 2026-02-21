@@ -30,7 +30,6 @@ mod replay;
 mod revolve;
 mod rotate;
 mod scale;
-mod select;
 mod shading;
 mod snapshot;
 mod solidify;
@@ -104,8 +103,6 @@ pub enum MeshCommand {
     Rotate(RotateArgs),
     /// Scale a part by a factor per axis
     Scale(ScaleArgs),
-    /// Switch the active part by name
-    Select(SelectArgs),
     /// Remove a part from the session
     #[command(name = "remove-part")]
     RemovePart(RemovePartArgs),
@@ -608,16 +605,6 @@ pub struct ScaleArgs {
 }
 
 #[derive(Args)]
-pub struct SelectArgs {
-    /// Name of the part to make active
-    #[arg(long)]
-    pub name: String,
-    /// Output format
-    #[arg(long, default_value = "json")]
-    pub format: OutputFormat,
-}
-
-#[derive(Args)]
 pub struct RemovePartArgs {
     /// Name of the part to remove
     #[arg(long, required_unless_present = "group")]
@@ -1094,7 +1081,6 @@ pub fn exec(args: &MeshArgs) -> Result<()> {
         MeshCommand::Translate(ref a) => translate::cmd_translate(a),
         MeshCommand::Rotate(ref a) => rotate::cmd_rotate(a),
         MeshCommand::Scale(ref a) => scale::cmd_scale(a),
-        MeshCommand::Select(ref a) => select::cmd_select(a),
         MeshCommand::RemovePart(ref a) => remove_part::cmd_remove_part(a),
         MeshCommand::ListVertices(ref a) => list_vertices::cmd_list_vertices(a),
         MeshCommand::Taper(ref a) => taper::cmd_taper(a),
@@ -1144,7 +1130,6 @@ fn command_name(cmd: &MeshCommand) -> &'static str {
         MeshCommand::Translate(_) => "translate",
         MeshCommand::Rotate(_) => "rotate",
         MeshCommand::Scale(_) => "scale",
-        MeshCommand::Select(_) => "select",
         MeshCommand::RemovePart(_) => "remove-part",
         MeshCommand::ListVertices(_) => "list-vertices",
         MeshCommand::Taper(_) => "taper",
@@ -1236,19 +1221,22 @@ pub fn mesh_stats(state: &MeshState) -> serde_json::Value {
         let mesh = &part.mesh;
         let mut q = 0usize;
         let mut t = 0usize;
+        let mut ng = 0usize;
+        let mut godot_tris = 0usize;
         for f in 0..mesh.face_count() {
-            match mesh.face_vertices(f).len() {
-                3 => t += 1,
-                4 => q += 1,
-                n => t += n - 2,
+            let n = mesh.face_vertices(f).len();
+            match n {
+                3 => { t += 1; godot_tris += 1; },
+                4 => { q += 1; godot_tris += 2; },
+                _ => { ng += 1; godot_tris += n - 2; },
             }
         }
-        total_tris_godot += q * 2 + t;
+        total_tris_godot += godot_tris;
         if name == active {
             part_faces = mesh.face_count();
             part_quads = q;
             part_tris = t;
-            part_ngons = mesh.face_count() - q - t;
+            part_ngons = ng;
             boundary = mesh.half_edges.iter().filter(|he| he.face.is_none()).count();
         }
     }
@@ -1312,7 +1300,32 @@ pub fn import_primitive_mesh(parsed: &serde_json::Value, state: &mut MeshState) 
         return;
     }
 
-    let mesh = HalfEdgeMesh::from_triangles(&positions, &indices);
+    // Godot primitives (BoxMesh, SphereMesh, etc.) have unshared vertices
+    // (e.g. 24 verts for a cube instead of 8) for per-face normals. Weld
+    // duplicate positions so the half-edge mesh has proper shared topology
+    // — critical for boolean operations and other adjacency-based algorithms.
+    let eps2: f64 = 1e-6 * 1e-6;
+    let mut welded_positions: Vec<[f64; 3]> = Vec::new();
+    let mut remap: Vec<usize> = Vec::with_capacity(positions.len());
+    for pos in &positions {
+        let existing = welded_positions
+            .iter()
+            .position(|p| {
+                let dx = p[0] - pos[0];
+                let dy = p[1] - pos[1];
+                let dz = p[2] - pos[2];
+                dx * dx + dy * dy + dz * dz < eps2
+            });
+        if let Some(i) = existing {
+            remap.push(i);
+        } else {
+            remap.push(welded_positions.len());
+            welded_positions.push(*pos);
+        }
+    }
+    let welded_indices: Vec<usize> = indices.iter().map(|&i| remap[i]).collect();
+
+    let mesh = HalfEdgeMesh::from_triangles(&welded_positions, &welded_indices);
     if let Ok(part) = state.active_part_mut() {
         part.mesh = mesh;
     }

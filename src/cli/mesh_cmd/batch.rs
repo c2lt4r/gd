@@ -1013,16 +1013,16 @@ pub fn execute_batch_command(
             ))
         }
 
-        "select" => {
-            let name = cmd["name"]
+        "focus" => {
+            let name = cmd["part"]
                 .as_str()
-                .ok_or_else(|| miette!("Command {index}: select needs 'name'"))?;
+                .ok_or_else(|| miette!("Command {index}: focus needs 'part'"))?;
             if !state.parts.contains_key(name) {
                 return Err(miette!("Command {index}: part '{name}' not found"));
             }
             state.active = name.to_string();
             state.save(root)?;
-            Ok(ok_result("select", &serde_json::json!({"active": name})))
+            Ok(ok_result("focus", &serde_json::json!({"active": name})))
         }
 
         other => Err(miette!("Command {index}: unknown batch command '{other}'")),

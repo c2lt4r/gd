@@ -29,7 +29,6 @@ fn should_record(cmd: &MeshCommand) -> bool {
             | MeshCommand::View(_)
             | MeshCommand::Snapshot(_)
             | MeshCommand::Reference(_)
-            | MeshCommand::Focus(_)
             | MeshCommand::ListVertices(_)
             | MeshCommand::Info(_)
             | MeshCommand::Describe(_)
@@ -244,10 +243,6 @@ pub fn command_to_json(cmd: &MeshCommand) -> String {
             }
             v
         }
-        MeshCommand::Select(a) => json!({
-            "command": "select",
-            "name": a.name,
-        }),
         MeshCommand::Group(a) => json!({
             "command": "group",
             "name": a.name,
@@ -257,12 +252,16 @@ pub fn command_to_json(cmd: &MeshCommand) -> String {
             "command": "ungroup",
             "name": a.name,
         }),
+        MeshCommand::Focus(a) => json!({
+            "command": "focus",
+            "part": a.part,
+            "all": a.all,
+        }),
         // Read-only commands are filtered by should_record — unreachable here.
         MeshCommand::Init(_)
         | MeshCommand::View(_)
         | MeshCommand::Snapshot(_)
         | MeshCommand::Reference(_)
-        | MeshCommand::Focus(_)
         | MeshCommand::ListVertices(_)
         | MeshCommand::Info(_)
         | MeshCommand::Describe(_)
