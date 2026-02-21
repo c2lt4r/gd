@@ -1514,6 +1514,80 @@ fn cap_inset_skipped_for_small_profiles() {
     assert_eq!(mesh_no_inset.faces.len(), mesh_with_flag.faces.len());
 }
 
+// ── Grid Fill ───────────────────────────────────────────────────────
+
+use super::profile::grid_fill_ring;
+
+#[test]
+fn grid_fill_even_ring() {
+    // 8 vertices → 2 tris + 2 quads
+    let boundary: Vec<usize> = (0..8).collect();
+    let mut faces: Vec<Vec<usize>> = Vec::new();
+    grid_fill_ring(&boundary, &mut faces, false);
+
+    let tris: Vec<_> = faces.iter().filter(|f| f.len() == 3).collect();
+    let quads: Vec<_> = faces.iter().filter(|f| f.len() == 4).collect();
+    assert_eq!(tris.len(), 2, "even ring should have exactly 2 tris");
+    assert_eq!(quads.len(), 2, "8-vert ring should have 2 quads");
+    assert!(
+        faces.iter().all(|f| f.len() <= 4),
+        "all faces should be tris or quads"
+    );
+}
+
+#[test]
+fn grid_fill_odd_ring() {
+    // 7 vertices → 1 tri + 2 quads
+    let boundary: Vec<usize> = (0..7).collect();
+    let mut faces: Vec<Vec<usize>> = Vec::new();
+    grid_fill_ring(&boundary, &mut faces, false);
+
+    let tris: Vec<_> = faces.iter().filter(|f| f.len() == 3).collect();
+    let quads: Vec<_> = faces.iter().filter(|f| f.len() == 4).collect();
+    assert_eq!(tris.len(), 1, "odd ring should have exactly 1 tri");
+    assert_eq!(quads.len(), 2, "7-vert ring should have 2 quads");
+    assert!(
+        faces.iter().all(|f| f.len() <= 4),
+        "all faces should be tris or quads"
+    );
+}
+
+#[test]
+fn grid_fill_large_produces_quads() {
+    // 64-vertex ring → 2 tris + 30 quads
+    let boundary: Vec<usize> = (0..64).collect();
+    let mut faces: Vec<Vec<usize>> = Vec::new();
+    grid_fill_ring(&boundary, &mut faces, false);
+
+    let tris = faces.iter().filter(|f| f.len() == 3).count();
+    let quads = faces.iter().filter(|f| f.len() == 4).count();
+    assert_eq!(tris, 2, "64-vert even ring should have exactly 2 tris");
+    assert!(quads >= 30, "64-vert ring should have ≥30 quads, got {quads}");
+}
+
+#[test]
+fn revolve_cap_quad_dominant() {
+    use super::revolve;
+    // Revolve a profile with 32 segments → caps built via build_quad_cap_3d
+    let points = [[0.5, 0.0], [1.0, 0.0], [1.0, 1.0], [0.5, 1.0]];
+    let mesh = revolve::revolve(&points, PlaneKind::Front, 1, 180.0, 32, true).unwrap();
+
+    let mut quads = 0;
+    let mut tris = 0;
+    for fi in 0..mesh.faces.len() {
+        match mesh.face_vertices(fi).len() {
+            3 => tris += 1,
+            4 => quads += 1,
+            _ => {}
+        }
+    }
+    // With grid fill, caps should be mostly quads, not all tris
+    assert!(
+        quads > tris,
+        "revolve caps should be quad-dominant: {quads} quads vs {tris} tris"
+    );
+}
+
 // ── Inset (standalone) ──────────────────────────────────────────────
 
 use super::inset;

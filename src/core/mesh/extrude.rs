@@ -76,7 +76,7 @@ pub fn extrude_with_inset(
             inset_factor,
             &mut positions,
             &mut faces,
-        )?;
+        );
     } else {
         build_standard_caps(&cap_indices, cap_flip, n_pts, n_segs, &mut faces);
     }
@@ -140,7 +140,7 @@ fn build_inset_caps(
     inset_factor: f64,
     positions: &mut Vec<[f64; 3]>,
     faces: &mut PolyFaces,
-) -> Option<()> {
+) {
     // Compute 2D centroid
     let cx: f64 = points.iter().map(|p| p[0]).sum::<f64>() / n_pts as f64;
     let cy: f64 = points.iter().map(|p| p[1]).sum::<f64>() / n_pts as f64;
@@ -163,7 +163,7 @@ fn build_inset_caps(
         half,
         positions,
         faces,
-    )?;
+    );
 
     build_multi_ring_cap_one_side(
         points,
@@ -179,9 +179,7 @@ fn build_inset_caps(
         -half,
         positions,
         faces,
-    )?;
-
-    Some(())
+    );
 }
 
 /// Build one multi-ring inset cap (front or back).
@@ -200,7 +198,7 @@ fn build_multi_ring_cap_one_side(
     depth: f64,
     positions: &mut Vec<[f64; 3]>,
     faces: &mut PolyFaces,
-) -> Option<()> {
+) {
     let mut prev_base = outer_base;
 
     for k in 0..rings {
@@ -235,21 +233,14 @@ fn build_multi_ring_cap_one_side(
         prev_base = ring_base;
     }
 
-    // Innermost ring: triangulate with earcut
-    // Build the final inset 2D points at full inset_factor
-    let inner_2d: Vec<[f64; 2]> = points
-        .iter()
-        .map(|p| {
-            [
-                p[0] + (cx - p[0]) * inset_factor,
-                p[1] + (cy - p[1]) * inset_factor,
-            ]
-        })
-        .collect();
-
+    // Innermost ring at full inset_factor
     let inner_base = positions.len();
-    for ip in &inner_2d {
-        positions.push(map_2d_to_3d_at_depth(ip, plane, depth));
+    for p in points {
+        let ip = [
+            p[0] + (cx - p[0]) * inset_factor,
+            p[1] + (cy - p[1]) * inset_factor,
+        ];
+        positions.push(map_2d_to_3d_at_depth(&ip, plane, depth));
     }
 
     // Quad ring between last intermediate ring and innermost ring
@@ -266,25 +257,9 @@ fn build_multi_ring_cap_one_side(
         }
     }
 
-    // Inner polygon — earcut for the innermost ring
-    let inner_cap_indices = triangulate_2d(&inner_2d)?;
-    for tri in inner_cap_indices.chunks(3) {
-        if cap_flip == is_back {
-            faces.push(vec![
-                inner_base + tri[0],
-                inner_base + tri[1],
-                inner_base + tri[2],
-            ]);
-        } else {
-            faces.push(vec![
-                inner_base + tri[2],
-                inner_base + tri[1],
-                inner_base + tri[0],
-            ]);
-        }
-    }
-
-    Some(())
+    // Inner fill: grid-fill with quads instead of earcut triangulation
+    let inner_indices: Vec<usize> = (inner_base..inner_base + n_pts).collect();
+    super::profile::grid_fill_ring(&inner_indices, faces, cap_flip != is_back);
 }
 
 /// Linear extrusion with hole contours.

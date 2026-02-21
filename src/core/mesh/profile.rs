@@ -185,25 +185,9 @@ pub fn build_quad_cap_3d(
     }
     emit_quad_ring(&prev, inner_base, n, flip, faces);
 
-    // Inner fan: project innermost ring to local 2D, earcut
+    // Inner fill: grid-fill the innermost ring with quads + 2 tris
     let inner_indices: Vec<usize> = (inner_base..inner_base + n).collect();
-    let pts_2d = project_boundary_to_2d(&inner_indices, positions);
-    let tri_idx = triangulate_2d(&pts_2d)?;
-    for tri in tri_idx.chunks(3) {
-        if flip {
-            faces.push(vec![
-                inner_indices[tri[2]],
-                inner_indices[tri[1]],
-                inner_indices[tri[0]],
-            ]);
-        } else {
-            faces.push(vec![
-                inner_indices[tri[0]],
-                inner_indices[tri[1]],
-                inner_indices[tri[2]],
-            ]);
-        }
-    }
+    grid_fill_ring(&inner_indices, faces, flip);
 
     Some(())
 }
@@ -227,6 +211,52 @@ fn emit_quad_ring(
             faces.push(vec![oi, ii, ij, oj]);
         } else {
             faces.push(vec![oi, oj, ij, ii]);
+        }
+    }
+}
+
+/// Fill a ring of vertices with quads by bridging opposite sides.
+///
+/// Splits the ring at vertices 0 and n/2, then bridges corresponding
+/// vertices with quads. Produces 2 triangles (at the bridge endpoints
+/// where sides share a vertex) and (n/2 - 2) quads for even n, or
+/// 1 triangle and (n/2 - 1) quads for odd n.
+///
+/// Only meaningful for n >= 5; smaller rings should use earcut.
+pub fn grid_fill_ring(boundary: &[usize], faces: &mut Vec<Vec<usize>>, flip: bool) {
+    let n = boundary.len();
+    if n < 3 {
+        return;
+    }
+    let half = n / 2;
+    // Side A: boundary[0..=half] (forward)
+    // Side B: boundary[0], boundary[n-1], boundary[n-2], ..., boundary[half] (backward)
+    for k in 0..half {
+        let a0 = boundary[k];
+        let a1 = boundary[k + 1];
+        let b0 = boundary[if k == 0 { 0 } else { n - k }];
+        let b1 = boundary[n - k - 1];
+
+        if a0 == b0 && a1 == b1 {
+            // Both shared — degenerate, skip
+        } else if a0 == b0 {
+            // Shared start vertex → triangle
+            if flip {
+                faces.push(vec![a0, b1, a1]);
+            } else {
+                faces.push(vec![a0, a1, b1]);
+            }
+        } else if a1 == b1 {
+            // Shared end vertex → triangle (a0, a1=b1, b0)
+            if flip {
+                faces.push(vec![a0, b0, a1]);
+            } else {
+                faces.push(vec![a0, a1, b0]);
+            }
+        } else if flip {
+            faces.push(vec![a0, b0, b1, a1]);
+        } else {
+            faces.push(vec![a0, a1, b1, b0]);
         }
     }
 }
