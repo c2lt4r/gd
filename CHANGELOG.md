@@ -1,15 +1,52 @@
 # Changelog
 
-## [Unreleased]
+## [0.2.21] - 2026-02-21
 
 ### Added
+- **Rust-native primitives** — cube, sphere, and cylinder are now built entirely in Rust with correct CCW winding. Godot becomes display-only; eliminates the CW/CCW winding mismatch that caused boolean normal inversions.
+- **Boolean rewrite** — plane-based polygon splitting replaces the old triangle-triangle approach. Produces watertight output with quad-dominant topology. Pipeline: split → classify → T-junction repair → dissolve coplanar → quadrangulate n-gons → tag boundary edges.
+- **N-gon quadrangulation** — boolean output n-gons (5+ vertices) are converted to quad-ring topology for clean bevel and subdivision behavior.
+- **Coplanar edge dissolution** — fragments from plane-based splitting are merged back into larger polygons. Degenerate near-zero-area faces are unconditionally merged with neighbors.
+- **Edge tagging for boolean boundaries** — boundary edges from boolean operations are tagged so `gd mesh bevel --edges tagged` can selectively bevel only the cut edges.
+- **Grid-fill caps** — replaced earcut inner fan triangulation with grid-fill for quad-dominant cap topology. All generators (extrude, revolve, loft) now emit quads for side walls and multi-ring quad caps.
 - **`gd mesh extrude-face`** — extrude selected faces along their normals by a given depth. Use `--where "y>0.4"` to select faces by spatial filter on centroid position.
 - **`gd mesh boolean --count --spacing`** — array boolean: repeat a boolean operation N times with incremental offset. Useful for cutting repeating patterns (rail teeth, vent slits, magazine holes) in a single command.
 - **`gd mesh profile --hole`** — multi-contour profiles with holes. Repeatable flag accepts hole polygons for hollow cross-sections (rings, frames). Earcut triangulates caps with holes natively.
-- **`gd mesh bevel --where`** — edge-selective bevel via spatial filter (e.g. `--where "y>0.4"` bevels only top edges).
+- **`gd mesh bevel --where`** / **`--edges tagged`** — edge-selective bevel via spatial filter or boolean boundary tags.
 - **`gd mesh inset --where`** — face-selective inset via spatial filter (e.g. `--where "z<-0.3"` insets only back faces).
-- **Spatial filter system** (`--where` flag) — shared `axis op value` expressions (e.g. `y>0.12`, `z<=-0.5`) for face centroid and edge midpoint filtering. Used by `bevel`, `inset`, and `extrude-face`.
+- **`gd mesh flip-normals --where`** — flip normals on faces matching a spatial filter.
+- **Spatial filter system** (`--where` flag) — shared `axis op value` expressions (e.g. `y>0.12`, `z<=-0.5`) for face centroid and edge midpoint filtering. Used by `bevel`, `inset`, `extrude-face`, and `flip-normals`.
 - **Multi-ring concentric cap topology** — circle/polygon caps with >= 5 vertices now generate N concentric quad rings (auto: `max(1, n_pts/8)`, capped at 3) instead of a single fan triangulation. Eliminates pole singularity for UV unwrapping.
+- **Quad-ring cap topology for revolve and loft** — consistent with extrude caps.
+- **Mesh command recording & replay** — `gd mesh replay` replays recorded JSONL command sequences for reproducible builds.
+- **Part groups** — `gd mesh group`, `ungroup`, `groups` for batch operations on named sets of parts.
+- **Per-response mesh stats** — all mesh commands now include `_stats` in JSON output (face count, quad/tri/ngon breakdown, boundary edges).
+- **Material preset persistence** — presets (glass, metal, rubber, etc.) are stored and re-applied on push.
+- **Transform bake** — transforms are baked into vertex positions for correct world-space boolean operations.
+- **Overlap tier detection** — `gd mesh check` detects overlapping/floating parts with configurable margin.
+- **Flat shading default** — new mesh sessions default to flat (per-face) shading instead of smooth.
+- **Auto-focus** — part operations automatically focus the affected part.
+
+### Changed
+- **Boolean output is now watertight and quad-dominant** — 0 boundary edges, 88-97% quad ratio across all tested primitive combinations (cube×cube, cylinder×cube, cube×cylinder, sphere×ngon).
+- **Area-weighted vertex normals** — accumulates raw (unnormalized) Newell vectors instead of unit face normals. Degenerate zero-area faces get near-zero weight, preventing fallback normals from corrupting neighbors.
+- **Bevel vertex caps emit quads** instead of triangle fans.
+- **Solidify and merge preserve quad topology** — no longer triangulate during shell and merge operations.
+- **Mesh subcommand count: 46** (was 42) — added `extrude-face`, `replay`, `group`, `ungroup`.
+
+### Fixed
+- **Boolean winding reversal hack removed** — the unconditional `poly.reverse()` in boolean output is gone. Rust-side CCW primitives eliminate the CW/CCW mismatch.
+- **Boolean degenerate face merging** — thin sliver fragments from plane splitting at tangent intersections are merged with neighbors during dissolve, preventing fallback normals.
+- **Boolean dissolve fallback** — if coplanar dissolution breaks watertightness, falls back to the raw (guaranteed watertight) mesh.
+- **Bevel watertightness** — strip winding derived from half-edge direction instead of heuristic.
+- **Bevel concave crash** — no longer panics on concave polygon bevels.
+- **Snapshot data loss** — non-destructive bake eliminates `load()` cache issues during export.
+- **Hole winding** in multi-contour profiles corrected.
+- **Focus desync** between Rust `MeshState` and Godot scene.
+- **Checkpoint restore** reliability improved.
+- **`merge-verts --all`** now works across all parts.
+- **`extrude-face` corruption** on complex meshes fixed.
+- **`--parts` batch material** — fixed variable scope bug that skipped parts.
 
 ## [0.2.20] - 2026-02-20
 
