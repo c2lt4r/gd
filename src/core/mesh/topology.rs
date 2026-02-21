@@ -395,3 +395,45 @@ pub fn find_poles(mesh: &HalfEdgeMesh) -> Vec<(usize, PoleType, [f64; 3])> {
     }
     poles
 }
+
+// ── N-gon quadrangulation ───────────────────────────────────────────
+
+/// Convert n-gon faces (5+ vertices) to quad ring topology.
+///
+/// Faces with ≤4 vertices pass through unchanged. N-gon faces are converted
+/// to concentric quad rings with an earcut core, reusing `build_quad_cap_3d`.
+pub fn quadrangulate_ngons(mesh: &HalfEdgeMesh) -> HalfEdgeMesh {
+    let nf = mesh.faces.len();
+    if nf == 0 {
+        return HalfEdgeMesh::default();
+    }
+
+    // Fast path: if no face has >4 vertices, return clone
+    let has_ngons = (0..nf).any(|f| mesh.face_vertices(f).len() > 4);
+    if !has_ngons {
+        return mesh.clone();
+    }
+
+    let mut positions: Vec<[f64; 3]> = mesh.vertices.iter().map(|v| v.position).collect();
+    let mut faces: Vec<Vec<usize>> = Vec::with_capacity(nf);
+
+    for f in 0..nf {
+        let vis = mesh.face_vertices(f);
+        if vis.len() <= 4 {
+            faces.push(vis.clone());
+            continue;
+        }
+        // N-gon: convert to quad rings via build_quad_cap_3d
+        let pos_before = positions.len();
+        let faces_before = faces.len();
+        if super::profile::build_quad_cap_3d(&vis, &mut positions, &mut faces, false).is_none() {
+            // Earcut failed — restore state and keep the original n-gon
+            positions.truncate(pos_before);
+            faces.truncate(faces_before);
+            faces.push(vis.clone());
+        }
+    }
+
+    let face_slices: Vec<&[usize]> = faces.iter().map(Vec::as_slice).collect();
+    HalfEdgeMesh::from_polygons(&positions, &face_slices)
+}

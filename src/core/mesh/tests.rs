@@ -3260,3 +3260,184 @@ fn pole_detection_cube() {
         n_poles.len()
     );
 }
+
+// ── Topology: n-gon quadrangulation ─────────────────────────────────
+
+#[test]
+fn quadrangulate_preserves_small_faces() {
+    // A cube after dissolution has 6 quads — quadrangulate should not change it
+    let positions: Vec<[f64; 3]> = vec![
+        [-0.5, -0.5, -0.5],
+        [0.5, -0.5, -0.5],
+        [0.5, 0.5, -0.5],
+        [-0.5, 0.5, -0.5],
+        [-0.5, -0.5, 0.5],
+        [0.5, -0.5, 0.5],
+        [0.5, 0.5, 0.5],
+        [-0.5, 0.5, 0.5],
+    ];
+    let faces: Vec<&[usize]> = vec![
+        &[0, 1, 2, 3],
+        &[5, 4, 7, 6],
+        &[3, 2, 6, 7],
+        &[4, 5, 1, 0],
+        &[1, 5, 6, 2],
+        &[4, 0, 3, 7],
+    ];
+    let mesh = HalfEdgeMesh::from_polygons(&positions, &faces);
+    let result = topology::quadrangulate_ngons(&mesh);
+
+    assert_eq!(result.faces.len(), 6, "cube quads should pass through unchanged");
+    for f in 0..result.faces.len() {
+        assert_eq!(result.face_vertices(f).len(), 4, "face {f} should be a quad");
+    }
+}
+
+#[test]
+fn quadrangulate_converts_hexagon() {
+    // A regular hexagon (6 vertices) should be converted to quads + tris
+    use std::f64::consts::TAU;
+    let n = 6;
+    let mut positions: Vec<[f64; 3]> = Vec::new();
+    for i in 0..n {
+        let angle = TAU * i as f64 / n as f64;
+        positions.push([angle.cos(), angle.sin(), 0.0]);
+    }
+    let indices: Vec<usize> = (0..n).collect();
+    let faces: Vec<&[usize]> = vec![indices.as_slice()];
+    let mesh = HalfEdgeMesh::from_polygons(&positions, &faces);
+
+    let result = topology::quadrangulate_ngons(&mesh);
+
+    assert!(
+        result.faces.len() > 1,
+        "hexagon should produce multiple faces, got {}",
+        result.faces.len()
+    );
+    for f in 0..result.faces.len() {
+        let vcount = result.face_vertices(f).len();
+        assert!(
+            vcount <= 4,
+            "face {f} has {vcount} vertices, expected ≤4"
+        );
+    }
+}
+
+#[test]
+fn quadrangulate_large_circle() {
+    // A 64-gon should produce quad rings with many quads
+    use std::f64::consts::TAU;
+    let n = 64;
+    let mut positions: Vec<[f64; 3]> = Vec::new();
+    for i in 0..n {
+        let angle = TAU * i as f64 / n as f64;
+        positions.push([angle.cos(), angle.sin(), 0.0]);
+    }
+    let indices: Vec<usize> = (0..n).collect();
+    let faces: Vec<&[usize]> = vec![indices.as_slice()];
+    let mesh = HalfEdgeMesh::from_polygons(&positions, &faces);
+
+    let result = topology::quadrangulate_ngons(&mesh);
+
+    let quad_count = (0..result.faces.len())
+        .filter(|&f| result.face_vertices(f).len() == 4)
+        .count();
+    assert!(
+        quad_count >= 64,
+        "64-gon should produce ≥64 quads, got {quad_count}"
+    );
+    for f in 0..result.faces.len() {
+        let vcount = result.face_vertices(f).len();
+        assert!(
+            vcount <= 4,
+            "face {f} has {vcount} vertices, expected ≤4"
+        );
+    }
+}
+
+#[test]
+fn quadrangulate_mixed_faces() {
+    // Mesh with tri + quad + pentagon: only the pentagon should be expanded
+    let positions: Vec<[f64; 3]> = vec![
+        // Triangle (face 0)
+        [0.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [0.5, 1.0, 0.0],
+        // Quad (face 1) — offset in X
+        [2.0, 0.0, 0.0],
+        [3.0, 0.0, 0.0],
+        [3.0, 1.0, 0.0],
+        [2.0, 1.0, 0.0],
+        // Pentagon (face 2) — offset in X
+        [4.0, 0.0, 0.0],
+        [5.0, 0.0, 0.0],
+        [5.3, 0.8, 0.0],
+        [4.5, 1.3, 0.0],
+        [3.7, 0.8, 0.0],
+    ];
+    let faces: Vec<&[usize]> = vec![&[0, 1, 2], &[3, 4, 5, 6], &[7, 8, 9, 10, 11]];
+    let mesh = HalfEdgeMesh::from_polygons(&positions, &faces);
+
+    let result = topology::quadrangulate_ngons(&mesh);
+
+    // Should have more faces than original 3 (pentagon expanded)
+    assert!(
+        result.faces.len() > 3,
+        "pentagon should expand, got {} faces",
+        result.faces.len()
+    );
+    for f in 0..result.faces.len() {
+        let vcount = result.face_vertices(f).len();
+        assert!(
+            vcount <= 4,
+            "face {f} has {vcount} vertices, expected ≤4"
+        );
+    }
+}
+
+#[test]
+fn boolean_quadrangulate_watertight() {
+    use super::spatial;
+
+    // Boolean subtract with quadrangulation should produce a watertight mesh
+    let target = cube_mesh();
+
+    #[rustfmt::skip]
+    let small_pos = [
+        [-0.2, -0.2, -0.6], [ 0.2, -0.2, -0.6],
+        [ 0.2,  0.2, -0.6], [-0.2,  0.2, -0.6],
+        [-0.2, -0.2,  0.6], [ 0.2, -0.2,  0.6],
+        [ 0.2,  0.2,  0.6], [-0.2,  0.2,  0.6],
+    ];
+    #[rustfmt::skip]
+    let small_idx = [
+        0, 1, 2,  0, 2, 3,
+        5, 4, 7,  5, 7, 6,
+        3, 2, 6,  3, 6, 7,
+        4, 5, 1,  4, 1, 0,
+        1, 5, 6,  1, 6, 2,
+        4, 0, 3,  4, 3, 7,
+    ];
+    let tool = HalfEdgeMesh::from_triangles(&small_pos, &small_idx);
+    let result = boolean::boolean_op(
+        &target,
+        &tool,
+        [0.0, 0.0, 0.0],
+        boolean::BooleanMode::Subtract,
+    );
+
+    assert!(!result.faces.is_empty(), "boolean result should have faces");
+
+    // All faces should be ≤4 vertices (quadrangulation applied)
+    for f in 0..result.faces.len() {
+        let vcount = result.face_vertices(f).len();
+        assert!(
+            vcount <= 4,
+            "face {f} has {vcount} vertices after quadrangulation, expected ≤4"
+        );
+    }
+
+    // Should be watertight
+    let boundary = spatial::count_non_manifold_edges(&result);
+    assert_eq!(boundary, 0, "quadrangulated boolean result should be watertight");
+}

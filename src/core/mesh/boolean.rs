@@ -712,7 +712,12 @@ pub fn boolean_op(
     // Merge coplanar fragments back into larger polygons. This collapses
     // spinal edges from plane-based splitting (e.g. a cube face split
     // into dozens of fragments gets restored to a single quad).
-    topology::dissolve_coplanar_edges(&raw)
+    let dissolved = topology::dissolve_coplanar_edges(&raw);
+
+    // ── Quadrangulate n-gons ────────────────────────────────────────
+    // Convert boundary n-gons (5+ vertices) to quad ring topology for
+    // clean bevel and subdivision behavior.
+    topology::quadrangulate_ngons(&dissolved)
 }
 
 /// Auto-expand the tool mesh when its bounding box is flush with the target's
