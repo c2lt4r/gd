@@ -229,6 +229,22 @@ pub fn generate_create(name: &str, primitive: &str) -> String {
          \t_af_node.name = \"_AutoFocus\"\n\
          \t_af_node.set_script(_af_scr)\n\
          \thelper.add_child(_af_node)\n\
+         \tvar _ih_src = \"extends Node\\n\\nfunc _input(event):\\n\"\n\
+         \t_ih_src += \"\\tif not (event is InputEventKey and event.pressed and not event.echo): return\\n\"\n\
+         \t_ih_src += \"\\tvar rig = get_parent().get_node_or_null('_CameraRig')\\n\"\n\
+         \t_ih_src += \"\\tif not rig: return\\n\"\n\
+         \t_ih_src += \"\\tvar cam_map = {{KEY_1:'Front', KEY_2:'Side', KEY_3:'Top', KEY_4:'Back', KEY_5:'Left', KEY_6:'Bottom', KEY_7:'HighFrontRight', KEY_8:'HighFrontLeft', KEY_9:'HighBackRight', KEY_0:'HighBackLeft'}}\\n\"\n\
+         \t_ih_src += \"\\tvar cam_name = cam_map.get(event.keycode, '')\\n\"\n\
+         \t_ih_src += \"\\tif cam_name == '': return\\n\"\n\
+         \t_ih_src += \"\\tvar cam = rig.get_node_or_null(cam_name)\\n\"\n\
+         \t_ih_src += \"\\tif cam: cam.current = true\\n\"\n\
+         \tvar _ih_scr = GDScript.new()\n\
+         \t_ih_scr.source_code = _ih_src\n\
+         \t_ih_scr.reload()\n\
+         \tvar _ih_node = Node.new()\n\
+         \t_ih_node.name = \"_InputHandler\"\n\
+         \t_ih_node.set_script(_ih_scr)\n\
+         \thelper.add_child(_ih_node)\n\
          \tvar mesh_inst = MeshInstance3D.new()\n\
          \tmesh_inst.name = \"{name}\"\n\
          \thelper.add_child(mesh_inst)\n\
@@ -587,6 +603,7 @@ pub fn generate_check(margin: f64, max_overlap: f64) -> String {
     )
 }
 
+#[cfg(test)]
 pub fn generate_translate(part: Option<&str>, x: f64, y: f64, z: f64, relative: bool) -> String {
     let target = part.map_or(
         String::from("\tvar name = helper.get_meta(\"active_mesh\")\n"),
@@ -618,6 +635,7 @@ pub fn generate_translate(part: Option<&str>, x: f64, y: f64, z: f64, relative: 
 /// Generate the GDScript for `mesh translate --relative-to`.
 ///
 /// Positions the target part at `ref_part_center + offset`.
+#[cfg(test)]
 pub fn generate_translate_relative_to(
     part: Option<&str>,
     ref_part: &str,
@@ -654,6 +672,7 @@ pub fn generate_translate_relative_to(
 }
 
 /// Generate the GDScript for `mesh rotate`.
+#[cfg(test)]
 pub fn generate_rotate(part: Option<&str>, rx: f64, ry: f64, rz: f64) -> String {
     let target = part.map_or(
         String::from("\tvar name = helper.get_meta(\"active_mesh\")\n"),
@@ -678,6 +697,7 @@ pub fn generate_rotate(part: Option<&str>, rx: f64, ry: f64, rz: f64) -> String 
 }
 
 /// Generate the GDScript for `mesh scale`.
+#[cfg(test)]
 pub fn generate_scale(part: Option<&str>, sx: f64, sy: f64, sz: f64, remap: bool) -> String {
     let target = part.map_or(
         String::from("\tvar name = helper.get_meta(\"active_mesh\")\n"),
@@ -1511,6 +1531,93 @@ pub fn generate_focus(name: &str) -> String {
          \td[\"vertex_count\"] = vc\n\
          \treturn JSON.stringify(d)\n"
     )
+}
+
+/// Generate the GDScript for `mesh overlay edges`.
+///
+/// Creates an `_EdgeOverlay` `MeshInstance3D` with three surfaces:
+/// boundary (red), sharp (yellow), interior (gray, semi-transparent).
+/// Uses `FLAG_DISABLE_DEPTH_TEST` for x-ray visibility.
+pub fn generate_edge_overlay(data: &super::overlay::EdgeOverlayData) -> String {
+    use std::fmt::Write;
+
+    // Build surface blocks for each edge class
+    let mut surfaces = String::new();
+    let classes: [(&[(usize, usize)], &str); 3] = [
+        (&data.boundary, "Color(1, 0.2, 0.2)"),
+        (&data.sharp, "Color(1, 0.85, 0.2)"),
+        (&data.interior, "Color(0.5, 0.5, 0.5, 0.4)"),
+    ];
+
+    for (idx, (edges, color)) in classes.iter().enumerate() {
+        if edges.is_empty() {
+            continue;
+        }
+        let _ = writeln!(surfaces, "\tvar st{idx} = SurfaceTool.new()");
+        let _ = writeln!(surfaces, "\tst{idx}.begin(Mesh.PRIMITIVE_LINES)");
+        for &(a, b) in *edges {
+            let pa = data.positions[a];
+            let pb = data.positions[b];
+            let _ = writeln!(
+                surfaces,
+                "\tst{idx}.add_vertex(Vector3({}, {}, {}))",
+                pa[0], pa[1], pa[2]
+            );
+            let _ = writeln!(
+                surfaces,
+                "\tst{idx}.add_vertex(Vector3({}, {}, {}))",
+                pb[0], pb[1], pb[2]
+            );
+        }
+        let _ = writeln!(surfaces, "\tvar mat{idx} = StandardMaterial3D.new()");
+        let _ = writeln!(surfaces, "\tmat{idx}.albedo_color = {color}");
+        let _ = writeln!(
+            surfaces,
+            "\tmat{idx}.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED"
+        );
+        let _ = writeln!(surfaces, "\tmat{idx}.no_depth_test = true");
+        let _ = writeln!(
+            surfaces,
+            "\tmat{idx}.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA"
+        );
+        let _ = writeln!(surfaces, "\tst{idx}.set_material(mat{idx})");
+        let _ = writeln!(surfaces, "\tst{idx}.commit(amesh)");
+    }
+
+    let mut script = String::from(
+        "extends Node\n\
+         \n\
+         func run():\n\
+         \tvar root = get_tree().get_root()\n\
+         \tvar helper = root.get_node_or_null(\"_GdMeshHelper\")\n\
+         \tif helper == null: return \"ERROR: no mesh session\"\n\
+         \tvar old = helper.get_node_or_null(\"_EdgeOverlay\")\n\
+         \tif old: old.queue_free()\n\
+         \tvar amesh = ArrayMesh.new()\n",
+    );
+    script.push_str(&surfaces);
+    script.push_str(
+        "\tvar overlay = MeshInstance3D.new()\n\
+         \toverlay.name = \"_EdgeOverlay\"\n\
+         \toverlay.mesh = amesh\n\
+         \thelper.add_child(overlay)\n\
+         \treturn \"ok\"\n",
+    );
+    script
+}
+
+/// Generate the GDScript to remove the edge overlay.
+pub fn generate_remove_edge_overlay() -> String {
+    "extends Node\n\
+     \n\
+     func run():\n\
+     \tvar root = get_tree().get_root()\n\
+     \tvar helper = root.get_node_or_null(\"_GdMeshHelper\")\n\
+     \tif helper == null: return \"ok\"\n\
+     \tvar overlay = helper.get_node_or_null(\"_EdgeOverlay\")\n\
+     \tif overlay: overlay.queue_free()\n\
+     \treturn \"ok\"\n"
+        .to_string()
 }
 
 /// Generate the GDScript for `mesh focus --all`.

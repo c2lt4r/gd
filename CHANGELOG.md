@@ -33,13 +33,18 @@
 - **Overlap tier detection** — `gd mesh check` detects overlapping/floating parts with configurable margin.
 - **Flat shading default** — new mesh sessions default to flat (per-face) shading instead of smooth.
 - **Auto-focus** — part operations automatically focus the affected part.
+- **`gd mesh overlay edges/off`** — toggle edge wireframe overlay in the Godot viewport. Edges are color-classified: boundary (red), sharp (yellow, >30° dihedral), interior (gray). X-ray style (depth test disabled). Hidden automatically during `gd mesh view` screenshots.
+- **Camera keyboard shortcuts** — press 1–0 in the Godot viewport to switch camera angles (Front, Side, Top, Back, Left, Bottom, and four 3/4 views).
+- **`HalfEdgeMesh::classified_edges()`** — extract deduplicated edges classified by type (boundary, sharp, interior) based on dihedral angle.
 
 ### Changed
 - **Boolean output is now watertight and quad-dominant** — 0 boundary edges, 88-97% quad ratio across all tested primitive combinations (cube×cube, cylinder×cube, cube×cylinder, sphere×ngon).
 - **Area-weighted vertex normals** — accumulates raw (unnormalized) Newell vectors instead of unit face normals. Degenerate zero-area faces get near-zero weight, preventing fallback normals from corrupting neighbors.
 - **Bevel vertex caps emit quads** instead of triangle fans.
 - **Solidify and merge preserve quad topology** — no longer triangulate during shell and merge operations.
-- **Mesh subcommand count: 46** (was 42) — added `extrude-face`, `replay`, `group`, `ungroup`.
+- **Mesh subcommand count: 47** (was 42) — added `extrude-face`, `replay`, `group`, `ungroup`, `overlay`.
+- **Transforms bake into vertices** — `translate`, `rotate`, `scale` now modify mesh vertex positions directly in Rust instead of round-tripping through Godot GDScript. Faster and more reliable.
+- **Bevel vertex caps use concentric ring fill** — caps with 5+ vertices use `build_quad_cap_3d` (same as extrude/boolean caps) instead of paired fan, producing cleaner quad topology.
 
 ### Fixed
 - **Boolean winding reversal hack removed** — the unconditional `poly.reverse()` in boolean output is gone. Rust-side CCW primitives eliminate the CW/CCW mismatch.
@@ -54,6 +59,8 @@
 - **`merge-verts --all`** now works across all parts.
 - **`extrude-face` corruption** on complex meshes fixed.
 - **`--parts` batch material** — fixed variable scope bug that skipped parts.
+- **Boolean degenerate sliver filter** — Newell's method area check rejects near-zero-area polygon fragments from plane splitting.
+- **Dissolve multi-loop fallback** — when coplanar dissolution produces multiple boundary loops (hole through a face), falls back to original fragment faces instead of producing invalid polygons with holes.
 
 ## [0.2.20] - 2026-02-20
 

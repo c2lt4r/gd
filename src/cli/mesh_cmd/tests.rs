@@ -402,3 +402,56 @@ fn parse_3d_invalid() {
     assert!(super::parse_3d("1,2,3,4").is_err());
     assert!(super::parse_3d("a,b,c").is_err());
 }
+
+// ── Edge overlay ─────────────────────────────────────────────────────
+
+#[test]
+fn edge_overlay_parses() {
+    use super::overlay::EdgeOverlayData;
+
+    let data = EdgeOverlayData {
+        positions: vec![
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [1.0, 1.0, 0.0],
+            [0.0, 1.0, 0.0],
+        ],
+        boundary: vec![(0, 1)],
+        sharp: vec![(1, 2)],
+        interior: vec![(2, 3), (3, 0)],
+    };
+    assert_parses(&gdscript::generate_edge_overlay(&data));
+}
+
+#[test]
+fn remove_edge_overlay_parses() {
+    assert_parses(&gdscript::generate_remove_edge_overlay());
+}
+
+// ── Classified edges ────────────────────────────────────────────────
+
+#[test]
+fn classified_edges_cube() {
+    let mesh = crate::core::mesh::primitives::cube();
+    let edges = mesh.classified_edges();
+    // A closed cube has 12 edges, all sharp (90° dihedral)
+    assert!(
+        edges.boundary.is_empty(),
+        "Cube should have no boundary edges"
+    );
+    assert_eq!(edges.sharp.len(), 12, "Cube should have 12 sharp edges");
+    assert!(
+        edges.interior.is_empty(),
+        "Cube should have no interior edges"
+    );
+}
+
+#[test]
+fn classified_edges_sphere() {
+    let mesh = crate::core::mesh::primitives::sphere(8, 4);
+    let edges = mesh.classified_edges();
+    assert!(
+        edges.boundary.is_empty(),
+        "Closed sphere should have no boundary edges"
+    );
+}

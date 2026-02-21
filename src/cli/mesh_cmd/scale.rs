@@ -1,9 +1,8 @@
 use miette::Result;
 use owo_colors::OwoColorize;
 
-use crate::core::mesh::MeshState;
+use crate::core::mesh::{MeshState, Transform3D};
 
-use super::gdscript;
 use super::{OutputFormat, ScaleArgs, inject_stats, parse_scale, project_root, run_eval};
 use crate::cprintln;
 
@@ -13,44 +12,64 @@ pub fn cmd_scale(args: &ScaleArgs) -> Result<()> {
     }
 
     let (sx, sy, sz) = parse_scale(&args.factor)?;
-    let script = gdscript::generate_scale(args.part.as_deref(), sx, sy, sz, args.remap);
-    let result = run_eval(&script)?;
-    let mut parsed: serde_json::Value = serde_json::from_str(&result)
-        .map_err(|e| miette::miette!("Failed to parse result: {e}"))?;
-
-    // Update Rust-side transform from Godot result
     let root = project_root()?;
-    if let Ok(mut state) = MeshState::load(&root) {
-        let part_name = parsed["name"].as_str().unwrap_or(&state.active).to_string();
-        if let Ok(part) = state.resolve_part_mut(Some(&part_name)) {
-            if let Some(sc) = parsed["scale"].as_array() {
-                part.transform.scale = [
-                    sc[0].as_f64().unwrap_or(1.0),
-                    sc[1].as_f64().unwrap_or(1.0),
-                    sc[2].as_f64().unwrap_or(1.0),
-                ];
-            }
-            if let Some(pos) = parsed["position"].as_array() {
-                part.transform.position = [
-                    pos[0].as_f64().unwrap_or(0.0),
-                    pos[1].as_f64().unwrap_or(0.0),
-                    pos[2].as_f64().unwrap_or(0.0),
-                ];
-            }
-        }
-        let _ = state.save(&root);
-        inject_stats(&mut parsed, &state);
+    let mut state = MeshState::load(&root)?;
+
+    let part_name = args.part.as_deref().unwrap_or(&state.active).to_string();
+    let part = state.resolve_part_mut(Some(&part_name))?;
+
+    // Bake scale into mesh vertices
+    let transform = Transform3D {
+        scale: [sx, sy, sz],
+        ..Transform3D::default()
+    };
+    for v in &mut part.mesh.vertices {
+        v.position = transform.apply_point(v.position);
     }
+
+    // Remap: recenter after scaling
+    if args.remap {
+        let (aabb_min, aabb_max) = part.mesh.aabb();
+        let center = [
+            (aabb_min[0] + aabb_max[0]) * 0.5,
+            (aabb_min[1] + aabb_max[1]) * 0.5,
+            (aabb_min[2] + aabb_max[2]) * 0.5,
+        ];
+        for v in &mut part.mesh.vertices {
+            v.position[0] -= center[0];
+            v.position[1] -= center[1];
+            v.position[2] -= center[2];
+        }
+    }
+
+    // Scale is now baked — reset stored scale to identity
+    part.transform.scale = [1.0; 3];
+    state.save(&root)?;
+
+    // Re-push to Godot so the visual matches
+    let push = state.generate_push_script(&part_name)?;
+    let _ = run_eval(&push)?;
+
+    let part = state.resolve_part(Some(&part_name))?;
+    let (aabb_min, aabb_max) = part.mesh.aabb();
+
+    let mut result = serde_json::json!({
+        "name": part_name,
+        "scale": [sx, sy, sz],
+        "remap": args.remap,
+        "aabb_min": aabb_min,
+        "aabb_max": aabb_max,
+    });
+    inject_stats(&mut result, &state);
 
     match args.format {
         OutputFormat::Json => {
-            cprintln!("{}", serde_json::to_string_pretty(&parsed).unwrap());
+            cprintln!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
         OutputFormat::Text => {
-            let name = parsed["name"].as_str().unwrap_or("?");
             cprintln!(
                 "Scaled {}: ({sx:.2}, {sy:.2}, {sz:.2})",
-                name.green().bold(),
+                part_name.green().bold(),
             );
         }
     }
@@ -68,30 +87,43 @@ fn cmd_scale_group(args: &ScaleArgs, group_name: &str) -> Result<()> {
         .ok_or_else(|| miette::miette!("Group '{group_name}' not found"))?
         .clone();
 
-    for name in &members {
-        let script = gdscript::generate_scale(Some(name.as_str()), sx, sy, sz, args.remap);
-        let result = run_eval(&script)?;
-        let parsed: serde_json::Value = serde_json::from_str(&result)
-            .map_err(|e| miette::miette!("Failed to parse result: {e}"))?;
+    let transform = Transform3D {
+        scale: [sx, sy, sz],
+        ..Transform3D::default()
+    };
 
-        if let Some(part) = state.parts.get_mut(name) {
-            if let Some(sc) = parsed["scale"].as_array() {
-                part.transform.scale = [
-                    sc[0].as_f64().unwrap_or(1.0),
-                    sc[1].as_f64().unwrap_or(1.0),
-                    sc[2].as_f64().unwrap_or(1.0),
-                ];
-            }
-            if let Some(pos) = parsed["position"].as_array() {
-                part.transform.position = [
-                    pos[0].as_f64().unwrap_or(0.0),
-                    pos[1].as_f64().unwrap_or(0.0),
-                    pos[2].as_f64().unwrap_or(0.0),
-                ];
+    for name in &members {
+        let part = state
+            .parts
+            .get_mut(name)
+            .ok_or_else(|| miette::miette!("Part '{name}' not found"))?;
+
+        for v in &mut part.mesh.vertices {
+            v.position = transform.apply_point(v.position);
+        }
+
+        if args.remap {
+            let (aabb_min, aabb_max) = part.mesh.aabb();
+            let center = [
+                (aabb_min[0] + aabb_max[0]) * 0.5,
+                (aabb_min[1] + aabb_max[1]) * 0.5,
+                (aabb_min[2] + aabb_max[2]) * 0.5,
+            ];
+            for v in &mut part.mesh.vertices {
+                v.position[0] -= center[0];
+                v.position[1] -= center[1];
+                v.position[2] -= center[2];
             }
         }
+
+        part.transform.scale = [1.0; 3];
     }
-    let _ = state.save(&root);
+    state.save(&root)?;
+
+    for name in &members {
+        let push = state.generate_push_script(name)?;
+        let _ = run_eval(&push)?;
+    }
 
     let mut result = serde_json::json!({
         "group": group_name,

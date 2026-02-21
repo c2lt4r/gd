@@ -36,6 +36,7 @@ fn should_record(cmd: &MeshCommand) -> bool {
             | MeshCommand::Batch(_)
             | MeshCommand::Replay(_)
             | MeshCommand::Groups(_)
+            | MeshCommand::Overlay(_)
     )
 }
 
@@ -268,7 +269,8 @@ pub fn command_to_json(cmd: &MeshCommand) -> String {
         | MeshCommand::Check(_)
         | MeshCommand::Batch(_)
         | MeshCommand::Replay(_)
-        | MeshCommand::Groups(_) => unreachable!(),
+        | MeshCommand::Groups(_)
+        | MeshCommand::Overlay(_) => unreachable!(),
     };
     serde_json::to_string(&value).unwrap()
 }

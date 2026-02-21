@@ -705,22 +705,36 @@ pub fn execute_batch_command(
                     .get(group_name)
                     .ok_or_else(|| miette!("Command {index}: group '{group_name}' not found"))?
                     .clone();
-                for member in &members {
-                    let script =
-                        gdscript::generate_translate(Some(member.as_str()), x, y, z, relative);
-                    let result = run_eval(&script)?;
-                    sync_transform_from_result(&result, state);
+                for name in &members {
+                    let part = state
+                        .parts
+                        .get_mut(name)
+                        .ok_or_else(|| miette!("Part '{name}' not found"))?;
+                    bake_translate(part, x, y, z, relative);
                 }
                 state.save(root)?;
+                for name in &members {
+                    let push = state.generate_push_script(name)?;
+                    let _ = run_eval(&push)?;
+                }
                 Ok(ok_result(
                     "translate",
                     &serde_json::json!({"group": group_name, "count": members.len()}),
                 ))
             } else {
-                let script = gdscript::generate_translate(cmd["part"].as_str(), x, y, z, relative);
-                let result = eval_and_sync("translate", &script, state);
+                let part_name = cmd["part"]
+                    .as_str()
+                    .unwrap_or(&state.active)
+                    .to_string();
+                let part = state.resolve_part_mut(Some(&part_name))?;
+                bake_translate(part, x, y, z, relative);
                 state.save(root)?;
-                Ok(result)
+                let push = state.generate_push_script(&part_name)?;
+                let _ = run_eval(&push)?;
+                Ok(ok_result(
+                    "translate",
+                    &serde_json::json!({"name": part_name, "position": [x, y, z]}),
+                ))
             }
         }
         "rotate" => {
@@ -728,6 +742,10 @@ pub fn execute_batch_command(
                 .as_str()
                 .ok_or_else(|| miette!("Command {index}: rotate needs 'degrees'"))?;
             let (rx, ry, rz) = super::parse_3d(degrees)?;
+            let transform = Transform3D {
+                rotation: [rx, ry, rz],
+                ..Transform3D::default()
+            };
 
             if let Some(group_name) = cmd["group"].as_str() {
                 let members = state
@@ -735,21 +753,42 @@ pub fn execute_batch_command(
                     .get(group_name)
                     .ok_or_else(|| miette!("Command {index}: group '{group_name}' not found"))?
                     .clone();
-                for member in &members {
-                    let script = gdscript::generate_rotate(Some(member.as_str()), rx, ry, rz);
-                    let result = run_eval(&script)?;
-                    sync_transform_from_result(&result, state);
+                for name in &members {
+                    let part = state
+                        .parts
+                        .get_mut(name)
+                        .ok_or_else(|| miette!("Part '{name}' not found"))?;
+                    for v in &mut part.mesh.vertices {
+                        v.position = transform.apply_point(v.position);
+                    }
+                    part.transform.rotation = [0.0; 3];
                 }
                 state.save(root)?;
+                for name in &members {
+                    let push = state.generate_push_script(name)?;
+                    let _ = run_eval(&push)?;
+                }
                 Ok(ok_result(
                     "rotate",
                     &serde_json::json!({"group": group_name, "count": members.len()}),
                 ))
             } else {
-                let script = gdscript::generate_rotate(cmd["part"].as_str(), rx, ry, rz);
-                let result = eval_and_sync("rotate", &script, state);
+                let part_name = cmd["part"]
+                    .as_str()
+                    .unwrap_or(&state.active)
+                    .to_string();
+                let part = state.resolve_part_mut(Some(&part_name))?;
+                for v in &mut part.mesh.vertices {
+                    v.position = transform.apply_point(v.position);
+                }
+                part.transform.rotation = [0.0; 3];
                 state.save(root)?;
-                Ok(result)
+                let push = state.generate_push_script(&part_name)?;
+                let _ = run_eval(&push)?;
+                Ok(ok_result(
+                    "rotate",
+                    &serde_json::json!({"name": part_name, "rotation": [rx, ry, rz]}),
+                ))
             }
         }
         "scale" => {
@@ -758,6 +797,10 @@ pub fn execute_batch_command(
                 .ok_or_else(|| miette!("Command {index}: scale needs 'factor'"))?;
             let (sx, sy, sz) = super::parse_scale(factor)?;
             let remap = cmd["remap"].as_bool().unwrap_or(false);
+            let transform = Transform3D {
+                scale: [sx, sy, sz],
+                ..Transform3D::default()
+            };
 
             if let Some(group_name) = cmd["group"].as_str() {
                 let members = state
@@ -765,21 +808,68 @@ pub fn execute_batch_command(
                     .get(group_name)
                     .ok_or_else(|| miette!("Command {index}: group '{group_name}' not found"))?
                     .clone();
-                for member in &members {
-                    let script = gdscript::generate_scale(Some(member.as_str()), sx, sy, sz, remap);
-                    let result = run_eval(&script)?;
-                    sync_transform_from_result(&result, state);
+                for name in &members {
+                    let part = state
+                        .parts
+                        .get_mut(name)
+                        .ok_or_else(|| miette!("Part '{name}' not found"))?;
+                    for v in &mut part.mesh.vertices {
+                        v.position = transform.apply_point(v.position);
+                    }
+                    if remap {
+                        let (aabb_min, aabb_max) = part.mesh.aabb();
+                        let center = [
+                            (aabb_min[0] + aabb_max[0]) * 0.5,
+                            (aabb_min[1] + aabb_max[1]) * 0.5,
+                            (aabb_min[2] + aabb_max[2]) * 0.5,
+                        ];
+                        for v in &mut part.mesh.vertices {
+                            v.position[0] -= center[0];
+                            v.position[1] -= center[1];
+                            v.position[2] -= center[2];
+                        }
+                    }
+                    part.transform.scale = [1.0; 3];
                 }
                 state.save(root)?;
+                for name in &members {
+                    let push = state.generate_push_script(name)?;
+                    let _ = run_eval(&push)?;
+                }
                 Ok(ok_result(
                     "scale",
                     &serde_json::json!({"group": group_name, "count": members.len()}),
                 ))
             } else {
-                let script = gdscript::generate_scale(cmd["part"].as_str(), sx, sy, sz, remap);
-                let result = eval_and_sync("scale", &script, state);
+                let part_name = cmd["part"]
+                    .as_str()
+                    .unwrap_or(&state.active)
+                    .to_string();
+                let part = state.resolve_part_mut(Some(&part_name))?;
+                for v in &mut part.mesh.vertices {
+                    v.position = transform.apply_point(v.position);
+                }
+                if remap {
+                    let (aabb_min, aabb_max) = part.mesh.aabb();
+                    let center = [
+                        (aabb_min[0] + aabb_max[0]) * 0.5,
+                        (aabb_min[1] + aabb_max[1]) * 0.5,
+                        (aabb_min[2] + aabb_max[2]) * 0.5,
+                    ];
+                    for v in &mut part.mesh.vertices {
+                        v.position[0] -= center[0];
+                        v.position[1] -= center[1];
+                        v.position[2] -= center[2];
+                    }
+                }
+                part.transform.scale = [1.0; 3];
                 state.save(root)?;
-                Ok(result)
+                let push = state.generate_push_script(&part_name)?;
+                let _ = run_eval(&push)?;
+                Ok(ok_result(
+                    "scale",
+                    &serde_json::json!({"name": part_name, "scale": [sx, sy, sz]}),
+                ))
             }
         }
 
@@ -1169,61 +1259,28 @@ fn ok_result(cmd: &str, data: &serde_json::Value) -> serde_json::Value {
     })
 }
 
-/// Sync `MeshPart.transform` fields from a GDScript eval result JSON string.
-///
-/// The GDScript for translate/scale/rotate returns JSON with `name`, `position`,
-/// `scale`, and `rotation` fields. This updates the Rust-side `MeshPart.transform`
-/// so that subsequent operations (e.g. boolean) see correct world-space geometry.
-fn sync_transform_from_result(result_str: &str, state: &mut MeshState) {
-    let Ok(parsed) = serde_json::from_str::<serde_json::Value>(result_str) else {
-        return;
-    };
-    let part_name = parsed["name"].as_str().unwrap_or(&state.active).to_string();
-    let Some(part) = state.parts.get_mut(&part_name) else {
-        return;
-    };
-    if let Some(pos) = parsed["position"].as_array() {
-        part.transform.position = [
-            pos[0].as_f64().unwrap_or(0.0),
-            pos[1].as_f64().unwrap_or(0.0),
-            pos[2].as_f64().unwrap_or(0.0),
-        ];
-    }
-    if let Some(sc) = parsed["scale"].as_array() {
-        part.transform.scale = [
-            sc[0].as_f64().unwrap_or(1.0),
-            sc[1].as_f64().unwrap_or(1.0),
-            sc[2].as_f64().unwrap_or(1.0),
-        ];
-    }
-    if let Some(rot) = parsed["rotation"].as_array() {
-        part.transform.rotation = [
-            rot[0].as_f64().unwrap_or(0.0),
-            rot[1].as_f64().unwrap_or(0.0),
-            rot[2].as_f64().unwrap_or(0.0),
-        ];
-    }
-}
-
-/// Run a GDScript eval, sync transforms, and wrap the result.
-fn eval_and_sync(cmd_type: &str, script: &str, state: &mut MeshState) -> serde_json::Value {
-    match run_eval(script) {
-        Ok(result) => {
-            sync_transform_from_result(&result, state);
-            let parsed: serde_json::Value = serde_json::from_str(&result)
-                .unwrap_or_else(|_| serde_json::json!({ "raw": result }));
-            serde_json::json!({
-                "command": cmd_type,
-                "ok": true,
-                "result": parsed,
-            })
+/// Bake translation directly into mesh vertices.
+fn bake_translate(part: &mut MeshPart, x: f64, y: f64, z: f64, relative: bool) {
+    if relative {
+        for v in &mut part.mesh.vertices {
+            v.position[0] += x;
+            v.position[1] += y;
+            v.position[2] += z;
         }
-        Err(e) => serde_json::json!({
-            "command": cmd_type,
-            "ok": false,
-            "error": e.to_string(),
-        }),
+    } else {
+        let (amin, amax) = part.mesh.aabb();
+        let delta = [
+            x - (amin[0] + amax[0]) * 0.5,
+            y - (amin[1] + amax[1]) * 0.5,
+            z - (amin[2] + amax[2]) * 0.5,
+        ];
+        for v in &mut part.mesh.vertices {
+            v.position[0] += delta[0];
+            v.position[1] += delta[1];
+            v.position[2] += delta[2];
+        }
     }
+    part.transform.position = [0.0; 3];
 }
 
 fn eval_and_wrap(cmd_type: &str, script: &str) -> serde_json::Value {

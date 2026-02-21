@@ -22,6 +22,7 @@ mod loop_cut;
 mod material;
 mod merge;
 mod move_vertex;
+mod overlay;
 mod profile;
 pub mod record;
 mod reference;
@@ -169,6 +170,8 @@ pub enum MeshCommand {
     Ungroup(UngroupArgs),
     /// List all defined groups
     Groups(GroupsArgs),
+    /// Toggle visual overlays (edge wireframe)
+    Overlay(OverlayArgs),
 }
 
 #[derive(Clone, Debug, ValueEnum)]
@@ -1032,6 +1035,22 @@ pub struct GroupsArgs {
     pub format: OutputFormat,
 }
 
+#[derive(Args)]
+pub struct OverlayArgs {
+    /// What to overlay: edges, off
+    #[arg(value_enum)]
+    pub mode: OverlayMode,
+    /// Output format
+    #[arg(long, default_value = "json")]
+    pub format: OutputFormat,
+}
+
+#[derive(Clone, Debug, ValueEnum)]
+pub enum OverlayMode {
+    Edges,
+    Off,
+}
+
 #[derive(Clone, Debug)]
 pub enum OutputFormat {
     Text,
@@ -1112,6 +1131,7 @@ pub fn exec(args: &MeshArgs) -> Result<()> {
         MeshCommand::Group(ref a) => group::cmd_group(a),
         MeshCommand::Ungroup(ref a) => group::cmd_ungroup(a),
         MeshCommand::Groups(ref a) => group::cmd_groups(a),
+        MeshCommand::Overlay(ref a) => overlay::cmd_overlay(a),
     }
 }
 
@@ -1161,6 +1181,7 @@ fn command_name(cmd: &MeshCommand) -> &'static str {
         MeshCommand::Group(_) => "group",
         MeshCommand::Ungroup(_) => "ungroup",
         MeshCommand::Groups(_) => "groups",
+        MeshCommand::Overlay(_) => "overlay",
     }
 }
 

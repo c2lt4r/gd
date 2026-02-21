@@ -533,6 +533,22 @@ impl PolygonMeshBuilder {
             return;
         }
 
+        // Newell's method area check — reject thin slivers whose total area
+        // is negligible even though some cross-product triple is nonzero.
+        {
+            let (mut nx, mut ny, mut nz) = (0.0_f64, 0.0_f64, 0.0_f64);
+            for i in 0..nd {
+                let pi = self.positions[dedup[i]];
+                let pj = self.positions[dedup[(i + 1) % nd]];
+                nx += (pi[1] - pj[1]) * (pi[2] + pj[2]);
+                ny += (pi[2] - pj[2]) * (pi[0] + pj[0]);
+                nz += (pi[0] - pj[0]) * (pi[1] + pj[1]);
+            }
+            if nx * nx + ny * ny + nz * nz < GEO_EPS * GEO_EPS {
+                return;
+            }
+        }
+
         self.faces.push(dedup);
     }
 
@@ -839,3 +855,4 @@ fn offset_mesh(mesh: &HalfEdgeMesh, offset: [f64; 3]) -> HalfEdgeMesh {
     }
     result
 }
+

@@ -112,8 +112,7 @@ pub fn cylinder(segments: u32) -> HalfEdgeMesh {
         .collect();
 
     // Extrude 1.0 unit along Y with auto-inset caps (0.15 for smooth cap topology)
-    extrude_with_inset(&points, PlaneKind::Top, 1.0, 1, 0.15)
-        .unwrap_or_default()
+    extrude_with_inset(&points, PlaneKind::Top, 1.0, 1, 0.15).unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -130,7 +129,10 @@ mod tests {
             assert_eq!(mesh.face_vertices(f).len(), 4, "face {f} should be a quad");
         }
         // Watertight
-        assert!(mesh.boundary_edges().is_empty(), "cube should be watertight");
+        assert!(
+            mesh.boundary_edges().is_empty(),
+            "cube should be watertight"
+        );
     }
 
     #[test]
@@ -143,7 +145,10 @@ mod tests {
             let fc = face_centroid(&mesh, &verts);
             let outward = [fc[0] - center[0], fc[1] - center[1], fc[2] - center[2]];
             let dot = normal[0] * outward[0] + normal[1] * outward[1] + normal[2] * outward[2];
-            assert!(dot > 0.0, "face {f} normal should point outward (dot={dot})");
+            assert!(
+                dot > 0.0,
+                "face {f} normal should point outward (dot={dot})"
+            );
         }
     }
 

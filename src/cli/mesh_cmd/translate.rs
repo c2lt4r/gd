@@ -1,11 +1,29 @@
 use miette::Result;
 use owo_colors::OwoColorize;
 
-use crate::core::mesh::MeshState;
+use crate::core::mesh::{MeshPart, MeshState};
 
-use super::gdscript;
 use super::{OutputFormat, TranslateArgs, inject_stats, parse_3d, project_root, run_eval};
 use crate::cprintln;
+
+/// Compute the AABB center of a mesh part.
+fn aabb_center(part: &MeshPart) -> [f64; 3] {
+    let (amin, amax) = part.mesh.aabb();
+    [
+        (amin[0] + amax[0]) * 0.5,
+        (amin[1] + amax[1]) * 0.5,
+        (amin[2] + amax[2]) * 0.5,
+    ]
+}
+
+/// Translate all vertices by a delta.
+fn translate_verts(part: &mut MeshPart, delta: [f64; 3]) {
+    for v in &mut part.mesh.vertices {
+        v.position[0] += delta[0];
+        v.position[1] += delta[1];
+        v.position[2] += delta[2];
+    }
+}
 
 pub fn cmd_translate(args: &TranslateArgs) -> Result<()> {
     if let Some(ref group_name) = args.group {
@@ -13,58 +31,69 @@ pub fn cmd_translate(args: &TranslateArgs) -> Result<()> {
     }
 
     let (x, y, z) = parse_3d(&args.to)?;
-    let script = if let Some(ref ref_part) = args.relative_to {
-        gdscript::generate_translate_relative_to(args.part.as_deref(), ref_part, x, y, z)
-    } else {
-        gdscript::generate_translate(args.part.as_deref(), x, y, z, args.relative)
-    };
-    let result = run_eval(&script)?;
-    let mut parsed: serde_json::Value = serde_json::from_str(&result)
-        .map_err(|e| miette::miette!("Failed to parse result: {e}"))?;
+    let root = project_root()?;
+    let mut state = MeshState::load(&root)?;
 
-    // Update Rust-side transform from Godot result
-    if let Some(pos) = parsed["position"].as_array() {
-        let root = project_root()?;
-        if let Ok(mut state) = MeshState::load(&root) {
-            let part_name = parsed["name"].as_str().unwrap_or(&state.active).to_string();
-            if let Ok(part) = state.resolve_part_mut(Some(&part_name)) {
-                part.transform.position = [
-                    pos[0].as_f64().unwrap_or(0.0),
-                    pos[1].as_f64().unwrap_or(0.0),
-                    pos[2].as_f64().unwrap_or(0.0),
-                ];
-            }
-            let _ = state.save(&root);
-            inject_stats(&mut parsed, &state);
-        }
+    let part_name = args.part.as_deref().unwrap_or(&state.active).to_string();
+
+    // Bake translation into mesh vertices
+    if args.relative {
+        let part = state.resolve_part_mut(Some(&part_name))?;
+        translate_verts(part, [x, y, z]);
+    } else if let Some(ref ref_name) = args.relative_to {
+        let ref_center = aabb_center(state.resolve_part(Some(ref_name))?);
+        let target = [ref_center[0] + x, ref_center[1] + y, ref_center[2] + z];
+        let part = state.resolve_part_mut(Some(&part_name))?;
+        let center = aabb_center(part);
+        translate_verts(part, [target[0] - center[0], target[1] - center[1], target[2] - center[2]]);
+    } else {
+        let part = state.resolve_part_mut(Some(&part_name))?;
+        let center = aabb_center(part);
+        translate_verts(part, [x - center[0], y - center[1], z - center[2]]);
     }
+
+    // Position is now baked — clear stored transform position
+    let part = state.resolve_part_mut(Some(&part_name))?;
+    part.transform.position = [0.0; 3];
+    let new_center = aabb_center(part);
+    state.save(&root)?;
+
+    // Re-push to Godot (node transform will be identity)
+    let push = state.generate_push_script(&part_name)?;
+    let _ = run_eval(&push)?;
+
+    let mut result = serde_json::json!({
+        "name": part_name,
+        "position": new_center,
+    });
+    if let Some(ref ref_name) = args.relative_to {
+        result["relative_to"] = serde_json::json!(ref_name);
+    }
+    inject_stats(&mut result, &state);
 
     match args.format {
         OutputFormat::Json => {
-            cprintln!("{}", serde_json::to_string_pretty(&parsed).unwrap());
+            cprintln!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
         OutputFormat::Text => {
-            let name = parsed["name"].as_str().unwrap_or("?");
-            let new_pos = parsed["position"].as_array();
-            if let Some(pos) = new_pos {
-                if let Some(ref_name) = parsed["relative_to"].as_str() {
-                    cprintln!(
-                        "Translated {} relative to {}: ({:.2}, {:.2}, {:.2})",
-                        name.green().bold(),
-                        ref_name.cyan(),
-                        pos[0].as_f64().unwrap_or(0.0),
-                        pos[1].as_f64().unwrap_or(0.0),
-                        pos[2].as_f64().unwrap_or(0.0),
-                    );
-                } else {
-                    cprintln!(
-                        "Translated {}: ({:.2}, {:.2}, {:.2})",
-                        name.green().bold(),
-                        pos[0].as_f64().unwrap_or(0.0),
-                        pos[1].as_f64().unwrap_or(0.0),
-                        pos[2].as_f64().unwrap_or(0.0),
-                    );
-                }
+            let name = result["name"].as_str().unwrap_or("?");
+            if let Some(ref_name) = result["relative_to"].as_str() {
+                cprintln!(
+                    "Translated {} relative to {}: ({:.2}, {:.2}, {:.2})",
+                    name.green().bold(),
+                    ref_name.cyan(),
+                    new_center[0],
+                    new_center[1],
+                    new_center[2],
+                );
+            } else {
+                cprintln!(
+                    "Translated {}: ({:.2}, {:.2}, {:.2})",
+                    name.green().bold(),
+                    new_center[0],
+                    new_center[1],
+                    new_center[2],
+                );
             }
         }
     }
@@ -82,25 +111,26 @@ fn cmd_translate_group(args: &TranslateArgs, group_name: &str) -> Result<()> {
         .ok_or_else(|| miette::miette!("Group '{group_name}' not found"))?
         .clone();
 
-    let mut results = Vec::new();
     for name in &members {
-        let script = gdscript::generate_translate(Some(name.as_str()), x, y, z, args.relative);
-        let result = run_eval(&script)?;
-        let parsed: serde_json::Value = serde_json::from_str(&result)
-            .map_err(|e| miette::miette!("Failed to parse result: {e}"))?;
+        let part = state
+            .parts
+            .get_mut(name)
+            .ok_or_else(|| miette::miette!("Part '{name}' not found"))?;
 
-        if let Some(pos) = parsed["position"].as_array()
-            && let Some(part) = state.parts.get_mut(name)
-        {
-            part.transform.position = [
-                pos[0].as_f64().unwrap_or(0.0),
-                pos[1].as_f64().unwrap_or(0.0),
-                pos[2].as_f64().unwrap_or(0.0),
-            ];
+        if args.relative {
+            translate_verts(part, [x, y, z]);
+        } else {
+            let center = aabb_center(part);
+            translate_verts(part, [x - center[0], y - center[1], z - center[2]]);
         }
-        results.push(parsed);
+        part.transform.position = [0.0; 3];
     }
-    let _ = state.save(&root);
+    state.save(&root)?;
+
+    for name in &members {
+        let push = state.generate_push_script(name)?;
+        let _ = run_eval(&push)?;
+    }
 
     let mut result = serde_json::json!({
         "group": group_name,

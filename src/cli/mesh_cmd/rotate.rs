@@ -1,9 +1,8 @@
 use miette::Result;
 use owo_colors::OwoColorize;
 
-use crate::core::mesh::MeshState;
+use crate::core::mesh::{MeshState, Transform3D};
 
-use super::gdscript;
 use super::{OutputFormat, RotateArgs, inject_stats, parse_3d, project_root, run_eval};
 use crate::cprintln;
 
@@ -13,37 +12,43 @@ pub fn cmd_rotate(args: &RotateArgs) -> Result<()> {
     }
 
     let (rx, ry, rz) = parse_3d(&args.degrees)?;
-    let script = gdscript::generate_rotate(args.part.as_deref(), rx, ry, rz);
-    let result = run_eval(&script)?;
-    let mut parsed: serde_json::Value = serde_json::from_str(&result)
-        .map_err(|e| miette::miette!("Failed to parse result: {e}"))?;
+    let root = project_root()?;
+    let mut state = MeshState::load(&root)?;
 
-    // Update Rust-side transform from Godot result
-    if let Some(rot) = parsed["rotation"].as_array() {
-        let root = project_root()?;
-        if let Ok(mut state) = MeshState::load(&root) {
-            let part_name = parsed["name"].as_str().unwrap_or(&state.active).to_string();
-            if let Ok(part) = state.resolve_part_mut(Some(&part_name)) {
-                part.transform.rotation = [
-                    rot[0].as_f64().unwrap_or(0.0),
-                    rot[1].as_f64().unwrap_or(0.0),
-                    rot[2].as_f64().unwrap_or(0.0),
-                ];
-            }
-            let _ = state.save(&root);
-            inject_stats(&mut parsed, &state);
-        }
+    let part_name = args.part.as_deref().unwrap_or(&state.active).to_string();
+    let part = state.resolve_part_mut(Some(&part_name))?;
+
+    // Bake rotation into mesh vertices
+    let transform = Transform3D {
+        rotation: [rx, ry, rz],
+        ..Transform3D::default()
+    };
+    for v in &mut part.mesh.vertices {
+        v.position = transform.apply_point(v.position);
     }
+
+    // Rotation is now baked — reset stored rotation to identity
+    part.transform.rotation = [0.0; 3];
+    state.save(&root)?;
+
+    // Re-push to Godot
+    let push = state.generate_push_script(&part_name)?;
+    let _ = run_eval(&push)?;
+
+    let mut result = serde_json::json!({
+        "name": part_name,
+        "rotation": [rx, ry, rz],
+    });
+    inject_stats(&mut result, &state);
 
     match args.format {
         OutputFormat::Json => {
-            cprintln!("{}", serde_json::to_string_pretty(&parsed).unwrap());
+            cprintln!("{}", serde_json::to_string_pretty(&result).unwrap());
         }
         OutputFormat::Text => {
-            let name = parsed["name"].as_str().unwrap_or("?");
             cprintln!(
                 "Rotated {}: ({rx:.1}, {ry:.1}, {rz:.1}) degrees",
-                name.green().bold(),
+                part_name.green().bold(),
             );
         }
     }
@@ -61,23 +66,28 @@ fn cmd_rotate_group(args: &RotateArgs, group_name: &str) -> Result<()> {
         .ok_or_else(|| miette::miette!("Group '{group_name}' not found"))?
         .clone();
 
-    for name in &members {
-        let script = gdscript::generate_rotate(Some(name.as_str()), rx, ry, rz);
-        let result = run_eval(&script)?;
-        let parsed: serde_json::Value = serde_json::from_str(&result)
-            .map_err(|e| miette::miette!("Failed to parse result: {e}"))?;
+    let transform = Transform3D {
+        rotation: [rx, ry, rz],
+        ..Transform3D::default()
+    };
 
-        if let Some(rot) = parsed["rotation"].as_array()
-            && let Some(part) = state.parts.get_mut(name)
-        {
-            part.transform.rotation = [
-                rot[0].as_f64().unwrap_or(0.0),
-                rot[1].as_f64().unwrap_or(0.0),
-                rot[2].as_f64().unwrap_or(0.0),
-            ];
+    for name in &members {
+        let part = state
+            .parts
+            .get_mut(name)
+            .ok_or_else(|| miette::miette!("Part '{name}' not found"))?;
+
+        for v in &mut part.mesh.vertices {
+            v.position = transform.apply_point(v.position);
         }
+        part.transform.rotation = [0.0; 3];
     }
-    let _ = state.save(&root);
+    state.save(&root)?;
+
+    for name in &members {
+        let push = state.generate_push_script(name)?;
+        let _ = run_eval(&push)?;
+    }
 
     let mut result = serde_json::json!({
         "group": group_name,

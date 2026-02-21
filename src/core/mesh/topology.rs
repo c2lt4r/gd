@@ -288,7 +288,11 @@ pub fn dissolve_coplanar_edges(mesh: &HalfEdgeMesh) -> HalfEdgeMesh {
     // Step 4: union-find to group coplanar + degenerate adjacent faces
     let mut parent: Vec<usize> = (0..nf).collect();
     merge_coplanar_and_degenerate(
-        &welded_faces, &welded_positions, &face_planes, &edge_to_face, &mut parent,
+        &welded_faces,
+        &welded_positions,
+        &face_planes,
+        &edge_to_face,
+        &mut parent,
     );
 
     // Step 5: group faces by union-find root
@@ -316,7 +320,20 @@ pub fn dissolve_coplanar_edges(mesh: &HalfEdgeMesh) -> HalfEdgeMesh {
             &welded_positions,
             &edge_to_face,
         );
-        out_faces.extend(boundary_polys);
+
+        // If tracing produces multiple loops, the group has interior holes
+        // (e.g. a boolean cut through a coplanar face).  We can't represent
+        // a polygon with holes, so fall back to the original un-merged faces.
+        if boundary_polys.len() > 1 {
+            for &fi in group_faces {
+                let wface = &welded_faces[fi];
+                if wface.len() >= 3 {
+                    out_faces.push(wface.clone());
+                }
+            }
+        } else {
+            out_faces.extend(boundary_polys);
+        }
     }
 
     let face_slices: Vec<&[usize]> = out_faces.iter().map(Vec::as_slice).collect();

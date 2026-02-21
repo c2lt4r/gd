@@ -376,21 +376,29 @@ pub fn bevel_with_profile(
             })
         };
 
-        // Emit cap as quads (paired fan from cap[0]).
-        // Groups consecutive triangle pairs into quads, preserving all
-        // outer edges for correct twin matching with neighboring faces.
-        // Odd vertex count: one trailing triangle at most.
-        if flip {
-            cap.reverse();
-        }
-        let cn = cap.len();
-        let mut ci = 1;
-        while ci + 2 < cn {
-            poly_faces.push(vec![cap[0], cap[ci], cap[ci + 1], cap[ci + 2]]);
-            ci += 2;
-        }
-        if ci + 1 < cn {
-            poly_faces.push(vec![cap[0], cap[ci], cap[ci + 1]]);
+        // Concentric ring quad-grid fill for caps (same as boolean/extrude caps).
+        // Small caps (tri/quad) are emitted directly — too few vertices for ring inset.
+        if cap.len() < 5 {
+            if flip {
+                cap.reverse();
+            }
+            poly_faces.push(cap);
+        } else if super::profile::build_quad_cap_3d(&cap, &mut positions, &mut poly_faces, flip)
+            .is_none()
+        {
+            // Fallback: paired fan from cap[0] if ring fill fails (degenerate projection)
+            if flip {
+                cap.reverse();
+            }
+            let cn = cap.len();
+            let mut ci = 1;
+            while ci + 2 < cn {
+                poly_faces.push(vec![cap[0], cap[ci], cap[ci + 1], cap[ci + 2]]);
+                ci += 2;
+            }
+            if ci + 1 < cn {
+                poly_faces.push(vec![cap[0], cap[ci], cap[ci + 1]]);
+            }
         }
     }
 
@@ -513,9 +521,7 @@ fn find_sharp_edges(
             let include = match filter {
                 "depth" => is_depth_edge(mesh, i),
                 "profile" => is_profile_edge(mesh, i),
-                "tagged" => {
-                    !mesh.edge_tags.is_empty() && mesh.edge_tags[i] != 0
-                }
+                "tagged" => !mesh.edge_tags.is_empty() && mesh.edge_tags[i] != 0,
                 _ => true, // "all"
             };
             // Apply spatial filter

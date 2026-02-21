@@ -22,6 +22,18 @@ fn capture_view(
         _ => None, // perspective cameras: no grid
     };
 
+    // Hide edge overlay during capture (visual-only, not for screenshots)
+    let hide_overlay_script = "extends Node\n\
+         \n\
+         func run():\n\
+         \tvar root = get_tree().get_root()\n\
+         \tvar helper = root.get_node_or_null(\"_GdMeshHelper\")\n\
+         \tif helper == null: return \"ok\"\n\
+         \tvar ov = helper.get_node_or_null(\"_EdgeOverlay\")\n\
+         \tif ov: ov.visible = false\n\
+         \treturn \"ok\"\n";
+    let _ = run_eval(hide_overlay_script);
+
     // Add grid if requested (scaled to camera size)
     if grid && let Some(plane) = grid_plane {
         let grid_script = gdscript::generate_grid(plane, camera_half_size);
@@ -51,6 +63,18 @@ fn capture_view(
         let remove_script = gdscript::generate_remove_grid();
         let _ = run_eval(&remove_script);
     }
+
+    // Restore edge overlay visibility
+    let show_overlay_script = "extends Node\n\
+         \n\
+         func run():\n\
+         \tvar root = get_tree().get_root()\n\
+         \tvar helper = root.get_node_or_null(\"_GdMeshHelper\")\n\
+         \tif helper == null: return \"ok\"\n\
+         \tvar ov = helper.get_node_or_null(\"_EdgeOverlay\")\n\
+         \tif ov: ov.visible = true\n\
+         \treturn \"ok\"\n";
+    let _ = run_eval(show_overlay_script);
 
     let path = screenshot["path"]
         .as_str()

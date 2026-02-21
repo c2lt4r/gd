@@ -43,6 +43,16 @@ pub struct Face {
     pub half_edge: usize,
 }
 
+/// Deduplicated edges classified by type (boundary, sharp, interior).
+pub struct ClassifiedEdges {
+    /// Edges with no face on one side (open boundary).
+    pub boundary: Vec<(usize, usize)>,
+    /// Edges between faces with dihedral angle > 30°.
+    pub sharp: Vec<(usize, usize)>,
+    /// Edges between faces with dihedral angle ≤ 30°.
+    pub interior: Vec<(usize, usize)>,
+}
+
 impl HalfEdgeMesh {
     /// Build a half-edge mesh from indexed triangle data.
     ///
@@ -730,6 +740,57 @@ impl HalfEdgeMesh {
     /// Number of vertices.
     pub fn vertex_count(&self) -> usize {
         self.vertices.len()
+    }
+
+    /// Extract deduplicated edges classified by type.
+    pub fn classified_edges(&self) -> ClassifiedEdges {
+        use std::collections::HashSet;
+
+        let sharp_threshold = 30.0_f64.to_radians();
+
+        // Pre-compute face normals
+        let face_normals: Vec<[f64; 3]> = (0..self.faces.len())
+            .map(|f| super::normals::compute_face_normal(self, f))
+            .collect();
+
+        let mut seen = HashSet::new();
+        let mut boundary = Vec::new();
+        let mut sharp = Vec::new();
+        let mut interior = Vec::new();
+
+        for he in &self.half_edges {
+            // Skip boundary half-edges themselves (we detect them from interior side)
+            let Some(f1) = he.face else { continue };
+
+            let v_to = he.vertex;
+            let v_from = self.half_edges[he.prev].vertex;
+            let key = (v_from.min(v_to), v_from.max(v_to));
+
+            if !seen.insert(key) {
+                continue;
+            }
+
+            let twin = &self.half_edges[he.twin];
+            if let Some(f2) = twin.face {
+                let n1 = &face_normals[f1];
+                let n2 = &face_normals[f2];
+                let dot = n1[0] * n2[0] + n1[1] * n2[1] + n1[2] * n2[2];
+                let angle = dot.clamp(-1.0, 1.0).acos();
+                if angle > sharp_threshold {
+                    sharp.push(key);
+                } else {
+                    interior.push(key);
+                }
+            } else {
+                boundary.push(key);
+            }
+        }
+
+        ClassifiedEdges {
+            boundary,
+            sharp,
+            interior,
+        }
     }
 }
 
