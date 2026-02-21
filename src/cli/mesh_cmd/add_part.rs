@@ -5,7 +5,7 @@ use crate::core::mesh::{MeshPart, MeshState};
 
 use super::gdscript;
 use super::{
-    AddPartArgs, OutputFormat, import_primitive_mesh, inject_stats, project_root, run_eval,
+    AddPartArgs, OutputFormat, build_primitive_mesh, inject_stats, project_root, run_eval,
 };
 use crate::cprintln;
 
@@ -24,9 +24,15 @@ pub fn cmd_add_part(args: &AddPartArgs) -> Result<()> {
     let mut parsed: serde_json::Value = serde_json::from_str(&result)
         .map_err(|e| miette::miette!("Failed to parse result: {e}"))?;
 
-    // Import primitive mesh arrays (cube/sphere/cylinder) into Rust state
-    import_primitive_mesh(&parsed, &mut state);
+    // Build primitive mesh in Rust (CCW winding, no Godot round-trip)
+    build_primitive_mesh(args.from.as_str(), &mut state);
     state.save(&root)?;
+
+    // Push Rust-built mesh to Godot for display
+    if state.active_part().is_ok_and(|p| p.mesh.face_count() > 0) {
+        let push = state.generate_push_script(&state.active.clone())?;
+        let _ = run_eval(&push)?;
+    }
 
     let pc = state.parts.len();
     let vc = parsed["vertex_count"].as_u64().unwrap_or(0);

@@ -792,12 +792,15 @@ pub fn execute_batch_command(
             state.save(root)?;
 
             let script = gdscript::generate_create(name, from);
-            let result = run_eval(&script)?;
-            let parsed: serde_json::Value =
-                serde_json::from_str(&result).unwrap_or_else(|_| serde_json::json!({}));
+            let _result = run_eval(&script)?;
 
-            super::import_primitive_mesh(&parsed, state);
+            super::build_primitive_mesh(from, state);
             state.save(root)?;
+
+            if state.active_part().is_ok_and(|p| p.mesh.face_count() > 0) {
+                let push = state.generate_push_script(&state.active.clone())?;
+                let _ = run_eval(&push)?;
+            }
 
             Ok(ok_result(
                 "create",
@@ -816,11 +819,16 @@ pub fn execute_batch_command(
 
             let script = gdscript::generate_add_part(name, from);
             let result = run_eval(&script)?;
-            let parsed: serde_json::Value =
+            let _parsed: serde_json::Value =
                 serde_json::from_str(&result).unwrap_or_else(|_| serde_json::json!({}));
 
-            super::import_primitive_mesh(&parsed, state);
+            super::build_primitive_mesh(from, state);
             state.save(root)?;
+
+            if state.active_part().is_ok_and(|p| p.mesh.face_count() > 0) {
+                let push = state.generate_push_script(&state.active.clone())?;
+                let _ = run_eval(&push)?;
+            }
 
             Ok(ok_result(
                 "add-part",

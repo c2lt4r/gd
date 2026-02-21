@@ -7,11 +7,12 @@ const PALETTE: &str = "[Color(0.69,0.69,0.69),Color(0.88,0.44,0.31),\
 /// Generate the GDScript for `mesh create`.
 #[allow(clippy::too_many_lines)]
 pub fn generate_create(name: &str, primitive: &str) -> String {
-    let (primitive_line, primitive_size) = match primitive {
-        "cube" => ("\tmesh_inst.mesh = BoxMesh.new()\n", "[1, 1, 1]"),
-        "sphere" => ("\tmesh_inst.mesh = SphereMesh.new()\n", "[2, 2, 2]"),
-        "cylinder" => ("\tmesh_inst.mesh = CylinderMesh.new()\n", "[2, 2, 2]"),
-        _ => ("", "[0, 0, 0]"),
+    // Primitives are built in Rust and pushed via generate_push_script.
+    // The GDScript only creates the scene node (no Godot mesh assignment).
+    let primitive_size = match primitive {
+        "cube" => "[1, 1, 1]",
+        "sphere" | "cylinder" => "[2, 2, 2]",
+        _ => "[0, 0, 0]",
     };
 
     format!(
@@ -230,7 +231,6 @@ pub fn generate_create(name: &str, primitive: &str) -> String {
          \thelper.add_child(_af_node)\n\
          \tvar mesh_inst = MeshInstance3D.new()\n\
          \tmesh_inst.name = \"{name}\"\n\
-         {primitive_line}\
          \thelper.add_child(mesh_inst)\n\
          \thelper.set_meta(\"active_mesh\", \"{name}\")\n\
          \thelper.set_meta(\"mesh_parts\", [\"{name}\"])\n\
@@ -242,22 +242,11 @@ pub fn generate_create(name: &str, primitive: &str) -> String {
          \tvar _mat = StandardMaterial3D.new()\n\
          \t_mat.albedo_color = _color\n\
          \tmesh_inst.material_override = _mat\n\
-         \tvar vc = 0\n\
          \tvar d = {{}}\n\
-         \tif mesh_inst.mesh and mesh_inst.mesh.get_surface_count() > 0:\n\
-         \t\tvar _arrays = mesh_inst.mesh.surface_get_arrays(0)\n\
-         \t\tvar _v = _arrays[Mesh.ARRAY_VERTEX]\n\
-         \t\tvc = _v.size()\n\
-         \t\tvar _idx = _arrays[Mesh.ARRAY_INDEX]\n\
-         \t\tif _v.size() > 0 and _idx:\n\
-         \t\t\tvar _vf = []\n\
-         \t\t\tfor _p in _v: _vf.append_array([_p.x, _p.y, _p.z])\n\
-         \t\t\td[\"vertices\"] = _vf\n\
-         \t\t\td[\"indices\"] = Array(_idx)\n\
          \td[\"name\"] = \"{name}\"\n\
          \td[\"primitive\"] = \"{primitive}\"\n\
          \td[\"default_size\"] = {primitive_size}\n\
-         \td[\"vertex_count\"] = vc\n\
+         \td[\"vertex_count\"] = 0\n\
          \treturn JSON.stringify(d)\n"
     )
 }
@@ -1424,14 +1413,10 @@ pub fn generate_duplicate_part(src: &str, dst: &str) -> String {
 }
 
 /// Generate the GDScript for `mesh add-part`.
-pub fn generate_add_part(name: &str, primitive: &str) -> String {
-    let primitive_line = match primitive {
-        "cube" => "\tmesh_inst.mesh = BoxMesh.new()\n",
-        "sphere" => "\tmesh_inst.mesh = SphereMesh.new()\n",
-        "cylinder" => "\tmesh_inst.mesh = CylinderMesh.new()\n",
-        _ => "",
-    };
-
+///
+/// Primitives are built in Rust and pushed via `generate_push_script`.
+/// The GDScript only creates the scene node (no Godot mesh assignment).
+pub fn generate_add_part(name: &str, _primitive: &str) -> String {
     format!(
         "extends Node\n\
          \n\
@@ -1455,7 +1440,6 @@ pub fn generate_add_part(name: &str, primitive: &str) -> String {
          \t\tif p == \"{name}\": return \"ERROR: part '{name}' already exists\"\n\
          \tvar mesh_inst = MeshInstance3D.new()\n\
          \tmesh_inst.name = \"{name}\"\n\
-         {primitive_line}\
          \thelper.add_child(mesh_inst)\n\
          \tparts.append(\"{name}\")\n\
          \thelper.set_meta(\"mesh_parts\", parts)\n\
@@ -1465,7 +1449,7 @@ pub fn generate_add_part(name: &str, primitive: &str) -> String {
          \tfor child in helper.get_children():\n\
          \t\tif child is MeshInstance3D and not child.name.begins_with(\"_\"):\n\
          \t\t\tchild.visible = (child.name == \"{name}\")\n\
-         \tvar aabb = mesh_inst.get_aabb() if mesh_inst.mesh else AABB(Vector3.ZERO, Vector3(2, 2, 2))\n\
+         \tvar aabb = AABB(Vector3.ZERO, Vector3(2, 2, 2))\n\
          \tvar center = aabb.get_center()\n\
          \tvar dims = aabb.size\n\
          \tvar sz = max(max(dims.x, dims.y), dims.z) * 1.5\n\
@@ -1477,21 +1461,10 @@ pub fn generate_add_part(name: &str, primitive: &str) -> String {
          \tvar _mat = StandardMaterial3D.new()\n\
          \t_mat.albedo_color = _color\n\
          \tmesh_inst.material_override = _mat\n\
-         \tvar vc = 0\n\
          \tvar d = {{}}\n\
-         \tif mesh_inst.mesh and mesh_inst.mesh.get_surface_count() > 0:\n\
-         \t\tvar _arrays = mesh_inst.mesh.surface_get_arrays(0)\n\
-         \t\tvar _v = _arrays[Mesh.ARRAY_VERTEX]\n\
-         \t\tvc = _v.size()\n\
-         \t\tvar _idx = _arrays[Mesh.ARRAY_INDEX]\n\
-         \t\tif _v.size() > 0 and _idx:\n\
-         \t\t\tvar _vf = []\n\
-         \t\t\tfor _p in _v: _vf.append_array([_p.x, _p.y, _p.z])\n\
-         \t\t\td[\"vertices\"] = _vf\n\
-         \t\t\td[\"indices\"] = Array(_idx)\n\
          \td[\"name\"] = \"{name}\"\n\
          \td[\"part_count\"] = parts.size()\n\
-         \td[\"vertex_count\"] = vc\n\
+         \td[\"vertex_count\"] = 0\n\
          \treturn JSON.stringify(d)\n"
     )
 }

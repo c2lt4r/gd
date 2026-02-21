@@ -10,6 +10,7 @@ pub mod loop_cut;
 pub mod merge;
 pub mod mirror;
 pub mod normals;
+pub mod primitives;
 pub mod profile;
 pub mod revolve;
 pub mod solidify;

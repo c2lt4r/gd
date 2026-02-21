@@ -25,7 +25,7 @@ fn two_triangles() -> HalfEdgeMesh {
 }
 
 fn cube_mesh() -> HalfEdgeMesh {
-    // A simple cube: 8 vertices, 12 triangles
+    // A simple cube: 8 vertices, 12 triangles (CCW winding = outward normals)
     #[rustfmt::skip]
     let positions = [
         [-0.5, -0.5, -0.5], [ 0.5, -0.5, -0.5],
@@ -35,18 +35,18 @@ fn cube_mesh() -> HalfEdgeMesh {
     ];
     #[rustfmt::skip]
     let indices = [
-        // Front face (z = -0.5)
-        0, 1, 2,  0, 2, 3,
-        // Back face (z = 0.5)
-        5, 4, 7,  5, 7, 6,
-        // Top face (y = 0.5)
-        3, 2, 6,  3, 6, 7,
-        // Bottom face (y = -0.5)
-        4, 5, 1,  4, 1, 0,
-        // Right face (x = 0.5)
-        1, 5, 6,  1, 6, 2,
-        // Left face (x = -0.5)
-        4, 0, 3,  4, 3, 7,
+        // Front face (z = -0.5), normal -Z
+        0, 2, 1,  0, 3, 2,
+        // Back face (z = 0.5), normal +Z
+        5, 7, 4,  5, 6, 7,
+        // Top face (y = 0.5), normal +Y
+        3, 6, 2,  3, 7, 6,
+        // Bottom face (y = -0.5), normal -Y
+        4, 1, 5,  4, 0, 1,
+        // Right face (x = 0.5), normal +X
+        1, 6, 5,  1, 2, 6,
+        // Left face (x = -0.5), normal -X
+        4, 3, 0,  4, 7, 3,
     ];
     HalfEdgeMesh::from_triangles(&positions, &indices)
 }
@@ -1120,12 +1120,12 @@ fn subtract_fully_contained_tool() {
     ];
     #[rustfmt::skip]
     let small_indices = [
-        0, 1, 2,  0, 2, 3,
-        5, 4, 7,  5, 7, 6,
-        3, 2, 6,  3, 6, 7,
-        4, 5, 1,  4, 1, 0,
-        1, 5, 6,  1, 6, 2,
-        4, 0, 3,  4, 3, 7,
+        0, 2, 1,  0, 3, 2,
+        5, 7, 4,  5, 6, 7,
+        3, 6, 2,  3, 7, 6,
+        4, 1, 5,  4, 0, 1,
+        1, 6, 5,  1, 2, 6,
+        4, 3, 0,  4, 7, 3,
     ];
     let tool = HalfEdgeMesh::from_triangles(&small_positions, &small_indices);
     let result = boolean::subtract(&target, &tool, [0.0, 0.0, 0.0]);
@@ -1198,18 +1198,18 @@ fn subtract_tool_inside_single_face() {
     ];
     #[rustfmt::skip]
     let big_indices = [
-        // Front
-        0, 1, 2,  0, 2, 3,
-        // Back
-        5, 4, 7,  5, 7, 6,
-        // Top
-        3, 2, 6,  3, 6, 7,
-        // Bottom
-        4, 5, 1,  4, 1, 0,
-        // Right
-        1, 5, 6,  1, 6, 2,
-        // Left
-        4, 0, 3,  4, 3, 7,
+        // Front (CCW, normal -Z)
+        0, 2, 1,  0, 3, 2,
+        // Back (normal +Z)
+        5, 7, 4,  5, 6, 7,
+        // Top (normal +Y)
+        3, 6, 2,  3, 7, 6,
+        // Bottom (normal -Y)
+        4, 1, 5,  4, 0, 1,
+        // Right (normal +X)
+        1, 6, 5,  1, 2, 6,
+        // Left (normal -X)
+        4, 3, 0,  4, 7, 3,
     ];
     let target = HalfEdgeMesh::from_triangles(&big_positions, &big_indices);
 
@@ -1223,12 +1223,12 @@ fn subtract_tool_inside_single_face() {
     ];
     #[rustfmt::skip]
     let door_indices = [
-        0, 1, 2,  0, 2, 3,
-        5, 4, 7,  5, 7, 6,
-        3, 2, 6,  3, 6, 7,
-        4, 5, 1,  4, 1, 0,
-        1, 5, 6,  1, 6, 2,
-        4, 0, 3,  4, 3, 7,
+        0, 2, 1,  0, 3, 2,
+        5, 7, 4,  5, 6, 7,
+        3, 6, 2,  3, 7, 6,
+        4, 1, 5,  4, 0, 1,
+        1, 6, 5,  1, 2, 6,
+        4, 3, 0,  4, 7, 3,
     ];
     let tool = HalfEdgeMesh::from_triangles(&door_pos, &door_indices);
 
@@ -1274,12 +1274,12 @@ fn subtract_preserves_quads() {
         [ 0.5,  0.5,  0.5], [-0.5,  0.5,  0.5],
     ];
     let faces: Vec<&[usize]> = vec![
-        &[0, 1, 2, 3], // front
-        &[5, 4, 7, 6], // back
-        &[3, 2, 6, 7], // top
-        &[4, 5, 1, 0], // bottom
-        &[1, 5, 6, 2], // right
-        &[4, 0, 3, 7], // left
+        &[4, 5, 6, 7], // front (+Z)
+        &[1, 0, 3, 2], // back  (-Z)
+        &[3, 7, 6, 2], // top   (+Y)
+        &[0, 1, 5, 4], // bottom(-Y)
+        &[5, 1, 2, 6], // right (+X)
+        &[0, 4, 7, 3], // left  (-X)
     ];
     let target = HalfEdgeMesh::from_polygons(&positions, &faces);
 
@@ -1292,12 +1292,12 @@ fn subtract_preserves_quads() {
         [ 0.1,  0.1,  0.6], [-0.1,  0.1,  0.6],
     ];
     let tool_faces: Vec<&[usize]> = vec![
-        &[0, 1, 2, 3],
-        &[5, 4, 7, 6],
-        &[3, 2, 6, 7],
-        &[4, 5, 1, 0],
-        &[1, 5, 6, 2],
-        &[4, 0, 3, 7],
+        &[4, 5, 6, 7],
+        &[1, 0, 3, 2],
+        &[3, 7, 6, 2],
+        &[0, 1, 5, 4],
+        &[5, 1, 2, 6],
+        &[0, 4, 7, 3],
     ];
     let tool = HalfEdgeMesh::from_polygons(&tool_pos, &tool_faces);
 
@@ -2233,12 +2233,12 @@ fn boolean_array_subtract() {
     ];
     #[rustfmt::skip]
     let small_idx = [
-        0, 1, 2,  0, 2, 3,
-        5, 4, 7,  5, 7, 6,
-        3, 2, 6,  3, 6, 7,
-        4, 5, 1,  4, 1, 0,
-        1, 5, 6,  1, 6, 2,
-        4, 0, 3,  4, 3, 7,
+        0, 2, 1,  0, 3, 2,
+        5, 7, 4,  5, 6, 7,
+        3, 6, 2,  3, 7, 6,
+        4, 1, 5,  4, 0, 1,
+        1, 6, 5,  1, 2, 6,
+        4, 3, 0,  4, 7, 3,
     ];
     let tool = HalfEdgeMesh::from_triangles(&small_pos, &small_idx);
 
@@ -3272,12 +3272,12 @@ fn boolean_dissolve_non_axis_aligned() {
     ];
     #[rustfmt::skip]
     let small_idx = [
-        0, 1, 2,  0, 2, 3,
-        5, 4, 7,  5, 7, 6,
-        3, 2, 6,  3, 6, 7,
-        4, 5, 1,  4, 1, 0,
-        1, 5, 6,  1, 6, 2,
-        4, 0, 3,  4, 3, 7,
+        0, 2, 1,  0, 3, 2,
+        5, 7, 4,  5, 6, 7,
+        3, 6, 2,  3, 7, 6,
+        4, 1, 5,  4, 0, 1,
+        1, 6, 5,  1, 2, 6,
+        4, 3, 0,  4, 7, 3,
     ];
     let tool = HalfEdgeMesh::from_triangles(&small_pos, &small_idx);
     let result = boolean::boolean_op(
@@ -3312,12 +3312,12 @@ fn pole_detection_cube() {
         [ 0.5,  0.5,  0.5], [-0.5,  0.5,  0.5],
     ];
     let faces: Vec<&[usize]> = vec![
-        &[0, 1, 2, 3],
-        &[5, 4, 7, 6],
-        &[3, 2, 6, 7],
-        &[4, 5, 1, 0],
-        &[1, 5, 6, 2],
-        &[4, 0, 3, 7],
+        &[4, 5, 6, 7],
+        &[1, 0, 3, 2],
+        &[3, 7, 6, 2],
+        &[0, 1, 5, 4],
+        &[5, 1, 2, 6],
+        &[0, 4, 7, 3],
     ];
     let mesh = HalfEdgeMesh::from_polygons(&positions, &faces);
 
@@ -3351,12 +3351,12 @@ fn quadrangulate_preserves_small_faces() {
         [-0.5, 0.5, 0.5],
     ];
     let faces: Vec<&[usize]> = vec![
-        &[0, 1, 2, 3],
-        &[5, 4, 7, 6],
-        &[3, 2, 6, 7],
-        &[4, 5, 1, 0],
-        &[1, 5, 6, 2],
-        &[4, 0, 3, 7],
+        &[4, 5, 6, 7],
+        &[1, 0, 3, 2],
+        &[3, 7, 6, 2],
+        &[0, 1, 5, 4],
+        &[5, 1, 2, 6],
+        &[0, 4, 7, 3],
     ];
     let mesh = HalfEdgeMesh::from_polygons(&positions, &faces);
     let result = topology::quadrangulate_ngons(&mesh);
@@ -3485,12 +3485,12 @@ fn boolean_quadrangulate_watertight() {
     ];
     #[rustfmt::skip]
     let small_idx = [
-        0, 1, 2,  0, 2, 3,
-        5, 4, 7,  5, 7, 6,
-        3, 2, 6,  3, 6, 7,
-        4, 5, 1,  4, 1, 0,
-        1, 5, 6,  1, 6, 2,
-        4, 0, 3,  4, 3, 7,
+        0, 2, 1,  0, 3, 2,
+        5, 7, 4,  5, 6, 7,
+        3, 6, 2,  3, 7, 6,
+        4, 1, 5,  4, 0, 1,
+        1, 6, 5,  1, 2, 6,
+        4, 3, 0,  4, 7, 3,
     ];
     let tool = HalfEdgeMesh::from_triangles(&small_pos, &small_idx);
     let result = boolean::boolean_op(
@@ -3532,12 +3532,12 @@ fn boolean_tags_boundary_edges() {
     ];
     #[rustfmt::skip]
     let small_idx = [
-        0, 1, 2,  0, 2, 3,
-        5, 4, 7,  5, 7, 6,
-        3, 2, 6,  3, 6, 7,
-        4, 5, 1,  4, 1, 0,
-        1, 5, 6,  1, 6, 2,
-        4, 0, 3,  4, 3, 7,
+        0, 2, 1,  0, 3, 2,
+        5, 7, 4,  5, 6, 7,
+        3, 6, 2,  3, 7, 6,
+        4, 1, 5,  4, 0, 1,
+        1, 6, 5,  1, 2, 6,
+        4, 3, 0,  4, 7, 3,
     ];
     let tool = HalfEdgeMesh::from_triangles(&small_pos, &small_idx);
     let result = boolean::boolean_op(
@@ -3580,12 +3580,12 @@ fn boolean_tags_none_when_no_intersection() {
     ];
     #[rustfmt::skip]
     let far_idx = [
-        0, 1, 2,  0, 2, 3,
-        5, 4, 7,  5, 7, 6,
-        3, 2, 6,  3, 6, 7,
-        4, 5, 1,  4, 1, 0,
-        1, 5, 6,  1, 6, 2,
-        4, 0, 3,  4, 3, 7,
+        0, 2, 1,  0, 3, 2,
+        5, 7, 4,  5, 6, 7,
+        3, 6, 2,  3, 7, 6,
+        4, 1, 5,  4, 0, 1,
+        1, 6, 5,  1, 2, 6,
+        4, 3, 0,  4, 7, 3,
     ];
     let tool = HalfEdgeMesh::from_triangles(&far_pos, &far_idx);
     let result = boolean::boolean_op(
@@ -3619,12 +3619,12 @@ fn bevel_tagged_filter() {
     ];
     #[rustfmt::skip]
     let small_idx = [
-        0, 1, 2,  0, 2, 3,
-        5, 4, 7,  5, 7, 6,
-        3, 2, 6,  3, 6, 7,
-        4, 5, 1,  4, 1, 0,
-        1, 5, 6,  1, 6, 2,
-        4, 0, 3,  4, 3, 7,
+        0, 2, 1,  0, 3, 2,
+        5, 7, 4,  5, 6, 7,
+        3, 6, 2,  3, 7, 6,
+        4, 1, 5,  4, 0, 1,
+        1, 6, 5,  1, 2, 6,
+        4, 3, 0,  4, 7, 3,
     ];
     let tool = HalfEdgeMesh::from_triangles(&small_pos, &small_idx);
     let boolean_result = boolean::boolean_op(

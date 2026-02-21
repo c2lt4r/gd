@@ -1276,70 +1276,19 @@ pub fn inject_stats(response: &mut serde_json::Value, state: &MeshState) {
     }
 }
 
-/// Import primitive mesh arrays from Godot JSON response into `MeshState`.
+/// Build a Rust-native primitive mesh and assign it to the active part.
 ///
-/// When `--from cube/sphere/cylinder` is used, the GDScript returns `vertices`
-/// (flat `[x,y,z,...]`) and `indices` arrays. This imports them into the Rust
-/// `HalfEdgeMesh` so subsequent operations (scale, bevel, etc.) work correctly.
-pub fn import_primitive_mesh(parsed: &serde_json::Value, state: &mut MeshState) {
-    use crate::core::mesh::half_edge::HalfEdgeMesh;
+/// Replaces the old Godot round-trip approach. All primitives are CCW winding,
+/// eliminating the winding mismatch that caused boolean normal inversion.
+pub fn build_primitive_mesh(primitive: &str, state: &mut MeshState) {
+    use crate::core::mesh::primitives;
 
-    let Some(verts_json) = parsed["vertices"].as_array() else {
-        return;
+    let mesh = match primitive {
+        "cube" => primitives::cube(),
+        "sphere" => primitives::sphere(32, 16),
+        "cylinder" => primitives::cylinder(32),
+        _ => return,
     };
-    let Some(idx_json) = parsed["indices"].as_array() else {
-        return;
-    };
-
-    let positions: Vec<[f64; 3]> = verts_json
-        .chunks(3)
-        .filter_map(|c| {
-            if c.len() == 3 {
-                Some([
-                    c[0].as_f64().unwrap_or(0.0),
-                    c[1].as_f64().unwrap_or(0.0),
-                    c[2].as_f64().unwrap_or(0.0),
-                ])
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    #[allow(clippy::cast_possible_truncation)]
-    let indices: Vec<usize> = idx_json
-        .iter()
-        .filter_map(|v| v.as_u64().map(|n| n as usize))
-        .collect();
-
-    if positions.is_empty() || indices.is_empty() {
-        return;
-    }
-
-    // Godot primitives (BoxMesh, SphereMesh, etc.) have unshared vertices
-    // (e.g. 24 verts for a cube instead of 8) for per-face normals. Weld
-    // duplicate positions so the half-edge mesh has proper shared topology
-    // — critical for boolean operations and other adjacency-based algorithms.
-    let eps2: f64 = 1e-6 * 1e-6;
-    let mut welded_positions: Vec<[f64; 3]> = Vec::new();
-    let mut remap: Vec<usize> = Vec::with_capacity(positions.len());
-    for pos in &positions {
-        let existing = welded_positions.iter().position(|p| {
-            let dx = p[0] - pos[0];
-            let dy = p[1] - pos[1];
-            let dz = p[2] - pos[2];
-            dx * dx + dy * dy + dz * dz < eps2
-        });
-        if let Some(i) = existing {
-            remap.push(i);
-        } else {
-            remap.push(welded_positions.len());
-            welded_positions.push(*pos);
-        }
-    }
-    let welded_indices: Vec<usize> = indices.iter().map(|&i| remap[i]).collect();
-
-    let mesh = HalfEdgeMesh::from_triangles(&welded_positions, &welded_indices);
     if let Ok(part) = state.active_part_mut() {
         part.mesh = mesh;
     }

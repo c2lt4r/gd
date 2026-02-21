@@ -199,7 +199,6 @@ fn trace_merged_boundary(
             }
         }
         if loop_verts.len() >= 3 {
-            loop_verts.reverse();
             polys.push(loop_verts);
         }
     }
@@ -286,14 +285,13 @@ fn extract_merged_polygons(mesh: &HalfEdgeMesh, offset: [f64; 3]) -> Vec<Vec<[f6
             if wface.len() < 3 {
                 continue;
             }
-            let mut poly: Vec<[f64; 3]> = wface
+            let poly: Vec<[f64; 3]> = wface
                 .iter()
                 .map(|&wi| {
                     let p = welded_positions[wi];
                     [p[0] + offset[0], p[1] + offset[1], p[2] + offset[2]]
                 })
                 .collect();
-            poly.reverse();
             polys.push(poly);
             continue;
         }
