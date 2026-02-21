@@ -52,26 +52,33 @@ pub fn merge_by_distance(mesh: &HalfEdgeMesh, distance: f64) -> (HalfEdgeMesh, u
         }
     }
 
-    // Extract faces with remapped indices, skip degenerate
-    let mut indices: Vec<usize> = Vec::new();
+    // Extract faces with remapped indices, preserving polygon topology
+    let mut faces: Vec<Vec<usize>> = Vec::new();
     for fi in 0..mesh.faces.len() {
         let verts = mesh.face_vertices(fi);
         if verts.len() < 3 {
             continue;
         }
-        for i in 1..verts.len() - 1 {
-            let a = new_index[verts[0]].unwrap_or(0);
-            let b = new_index[verts[i]].unwrap_or(0);
-            let c = new_index[verts[i + 1]].unwrap_or(0);
-            // Skip degenerate triangles
-            if a != b && b != c && c != a {
-                indices.extend_from_slice(&[a, b, c]);
+        // Remap and deduplicate consecutive vertices (from welding)
+        let mut face: Vec<usize> = Vec::with_capacity(verts.len());
+        for &v in &verts {
+            let idx = new_index[v].unwrap_or(0);
+            if face.last() != Some(&idx) {
+                face.push(idx);
             }
+        }
+        // Remove wrap-around duplicate
+        if face.len() > 1 && face.first() == face.last() {
+            face.pop();
+        }
+        if face.len() >= 3 {
+            faces.push(face);
         }
     }
 
+    let face_slices: Vec<&[usize]> = faces.iter().map(Vec::as_slice).collect();
     (
-        HalfEdgeMesh::from_triangles(&positions, &indices),
+        HalfEdgeMesh::from_polygons(&positions, &face_slices),
         merged_count,
     )
 }

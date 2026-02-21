@@ -31,46 +31,36 @@ pub fn solidify(mesh: &HalfEdgeMesh, thickness: f64) -> HalfEdgeMesh {
         ]);
     }
 
-    let mut indices: Vec<usize> = Vec::new();
+    let mut faces: Vec<Vec<usize>> = Vec::new();
 
-    // Outer faces: same winding
+    // Outer faces: preserve original polygon topology
     for fi in 0..mesh.faces.len() {
         let verts = mesh.face_vertices(fi);
-        for i in 1..verts.len() - 1 {
-            indices.extend_from_slice(&[verts[0], verts[i], verts[i + 1]]);
+        if verts.len() >= 3 {
+            faces.push(verts.clone());
         }
     }
 
     // Inner faces: reversed winding, offset indices by n_verts
     for fi in 0..mesh.faces.len() {
         let verts = mesh.face_vertices(fi);
-        for i in 1..verts.len() - 1 {
-            indices.extend_from_slice(&[
-                verts[0] + n_verts,
-                verts[i + 1] + n_verts,
-                verts[i] + n_verts,
-            ]);
+        if verts.len() >= 3 {
+            let mut inner: Vec<usize> = verts.iter().map(|&v| v + n_verts).collect();
+            inner.reverse();
+            faces.push(inner);
         }
     }
 
-    // Side walls along boundary edges
+    // Side walls along boundary edges — emit quads
     let boundary = mesh.boundary_edges();
     for &he_idx in &boundary {
         let he = &mesh.half_edges[he_idx];
         let v_to = he.vertex;
         let v_from = mesh.half_edges[he.prev].vertex;
 
-        // Outer edge: v_from → v_to
-        // Inner edge: v_from+n → v_to+n
-        // Quad: (outer_from, outer_to, inner_to, inner_from)
-        let of = v_from;
-        let ot = v_to;
-        let it = v_to + n_verts;
-        let if_ = v_from + n_verts;
-
-        indices.extend_from_slice(&[of, ot, it]);
-        indices.extend_from_slice(&[of, it, if_]);
+        faces.push(vec![v_from, v_to, v_to + n_verts, v_from + n_verts]);
     }
 
-    HalfEdgeMesh::from_triangles(&positions, &indices)
+    let face_slices: Vec<&[usize]> = faces.iter().map(Vec::as_slice).collect();
+    HalfEdgeMesh::from_polygons(&positions, &face_slices)
 }
