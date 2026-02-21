@@ -150,7 +150,18 @@ fn build_inset_caps(
 
     // Build one cap side (front or back) with multi-ring inset
     build_multi_ring_cap_one_side(
-        points, plane, cx, cy, inset_factor, rings, cap_flip, false, 0, n_pts, half, positions,
+        points,
+        plane,
+        cx,
+        cy,
+        inset_factor,
+        rings,
+        cap_flip,
+        false,
+        0,
+        n_pts,
+        half,
+        positions,
         faces,
     )?;
 

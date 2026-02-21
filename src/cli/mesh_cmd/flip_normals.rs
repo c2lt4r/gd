@@ -5,7 +5,9 @@ use crate::core::mesh::MeshState;
 use crate::core::mesh::normals;
 use crate::core::mesh::spatial_filter;
 
-use super::{FlipNormalsArgs, OutputFormat, inject_stats, match_part_pattern, project_root, run_eval};
+use super::{
+    FlipNormalsArgs, OutputFormat, inject_stats, match_part_pattern, project_root, run_eval,
+};
 use crate::{ceprintln, cprintln};
 
 pub fn cmd_flip_normals(args: &FlipNormalsArgs) -> Result<()> {

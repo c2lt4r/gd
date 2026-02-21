@@ -21,10 +21,7 @@ fn transform_mesh(mesh: &HalfEdgeMesh, t: &crate::core::mesh::Transform3D) -> Ha
 }
 
 /// Apply inverse transform to all vertices (un-translate → un-rotate → un-scale).
-fn inverse_transform_mesh(
-    mesh: &HalfEdgeMesh,
-    t: &crate::core::mesh::Transform3D,
-) -> HalfEdgeMesh {
+fn inverse_transform_mesh(mesh: &HalfEdgeMesh, t: &crate::core::mesh::Transform3D) -> HalfEdgeMesh {
     if t.is_identity() {
         return mesh.clone();
     }

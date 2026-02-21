@@ -499,9 +499,7 @@ fn bool_op_str(op: &super::BooleanOp) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::mesh_cmd::{
-        Axis, CreateArgs, ExtrudeArgs, OutputFormat, Primitive, TaperArgs,
-    };
+    use crate::cli::mesh_cmd::{Axis, CreateArgs, ExtrudeArgs, OutputFormat, Primitive, TaperArgs};
 
     #[test]
     fn record_extrude_command() {

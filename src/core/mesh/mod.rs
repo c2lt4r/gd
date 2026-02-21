@@ -17,6 +17,7 @@ pub mod spatial;
 pub mod spatial_filter;
 pub mod subdivide;
 pub mod taper;
+pub mod topology;
 
 #[cfg(test)]
 mod tests;
@@ -84,7 +85,11 @@ impl Transform3D {
     /// Apply this transform to a point: scale → rotate (YXZ euler) → translate.
     pub fn apply_point(&self, p: [f64; 3]) -> [f64; 3] {
         // Scale
-        let s = [p[0] * self.scale[0], p[1] * self.scale[1], p[2] * self.scale[2]];
+        let s = [
+            p[0] * self.scale[0],
+            p[1] * self.scale[1],
+            p[2] * self.scale[2],
+        ];
         // Rotate (Godot YXZ euler order)
         let r = self.rotation_matrix();
         let rotated = mat3_mul(r, s);
@@ -109,9 +114,21 @@ impl Transform3D {
         let rt = mat3_transpose(r);
         let unrotated = mat3_mul(rt, t);
         // Un-scale
-        let sx = if self.scale[0].abs() > 1e-12 { 1.0 / self.scale[0] } else { 0.0 };
-        let sy = if self.scale[1].abs() > 1e-12 { 1.0 / self.scale[1] } else { 0.0 };
-        let sz = if self.scale[2].abs() > 1e-12 { 1.0 / self.scale[2] } else { 0.0 };
+        let sx = if self.scale[0].abs() > 1e-12 {
+            1.0 / self.scale[0]
+        } else {
+            0.0
+        };
+        let sy = if self.scale[1].abs() > 1e-12 {
+            1.0 / self.scale[1]
+        } else {
+            0.0
+        };
+        let sz = if self.scale[2].abs() > 1e-12 {
+            1.0 / self.scale[2]
+        } else {
+            0.0
+        };
         [unrotated[0] * sx, unrotated[1] * sy, unrotated[2] * sz]
     }
 
@@ -141,17 +158,9 @@ impl Transform3D {
 
         // R = Ry * Rx * Rz (Godot's YXZ convention)
         [
-            [
-                cy * cz + sy * sx * sz,
-                -cy * sz + sy * sx * cz,
-                sy * cx,
-            ],
+            [cy * cz + sy * sx * sz, -cy * sz + sy * sx * cz, sy * cx],
             [cx * sz, cx * cz, -sx],
-            [
-                -sy * cz + cy * sx * sz,
-                sy * sz + cy * sx * cz,
-                cy * cx,
-            ],
+            [-sy * cz + cy * sx * sz, sy * sz + cy * sx * cz, cy * cx],
         ]
     }
 }
@@ -429,7 +438,9 @@ fn write_material_restore(script: &mut String, part: &MeshPart) {
         }
         // Set PBR properties based on preset
         let pbr = match preset.as_str() {
-            "glass" => "\t_mat.metallic = 0.0\n\t_mat.roughness = 0.05\n\t_mat.specular = 0.5\n\t_mat.transparency = 1\n\t_mat.albedo_color.a = 0.3\n\t_mat.refraction_enabled = true\n\t_mat.refraction_scale = 0.02\n",
+            "glass" => {
+                "\t_mat.metallic = 0.0\n\t_mat.roughness = 0.05\n\t_mat.specular = 0.5\n\t_mat.transparency = 1\n\t_mat.albedo_color.a = 0.3\n\t_mat.refraction_enabled = true\n\t_mat.refraction_scale = 0.02\n"
+            }
             "metal" => "\t_mat.metallic = 0.9\n\t_mat.roughness = 0.3\n\t_mat.specular = 0.8\n",
             "chrome" => "\t_mat.metallic = 1.0\n\t_mat.roughness = 0.05\n\t_mat.specular = 1.0\n",
             "rubber" => "\t_mat.metallic = 0.0\n\t_mat.roughness = 0.95\n\t_mat.specular = 0.1\n",

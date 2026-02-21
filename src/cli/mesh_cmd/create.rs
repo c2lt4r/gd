@@ -4,7 +4,9 @@ use owo_colors::OwoColorize;
 use crate::core::mesh::MeshState;
 
 use super::gdscript;
-use super::{CreateArgs, OutputFormat, import_primitive_mesh, inject_stats, project_root, run_eval};
+use super::{
+    CreateArgs, OutputFormat, import_primitive_mesh, inject_stats, project_root, run_eval,
+};
 use crate::cprintln;
 
 pub fn cmd_create(args: &CreateArgs) -> Result<()> {

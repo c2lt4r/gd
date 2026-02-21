@@ -2,6 +2,7 @@ use std::collections::HashSet;
 
 use super::half_edge::HalfEdgeMesh;
 use super::normals::compute_face_normal;
+use super::topology::tri_normal;
 
 /// Extrude selected faces along their normals by `depth`.
 ///
@@ -132,14 +133,4 @@ fn face_centroid(mesh: &HalfEdgeMesh, fi: usize) -> [f64; 3] {
         c[2] += p[2];
     }
     [c[0] / n, c[1] / n, c[2] / n]
-}
-
-fn tri_normal(a: [f64; 3], b: [f64; 3], c: [f64; 3]) -> [f64; 3] {
-    let u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
-    let v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
-    [
-        u[1] * v[2] - u[2] * v[1],
-        u[2] * v[0] - u[0] * v[2],
-        u[0] * v[1] - u[1] * v[0],
-    ]
 }

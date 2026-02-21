@@ -1,96 +1,8 @@
 use super::half_edge::HalfEdgeMesh;
-
-/// Epsilon for vertex welding — positions within this distance are merged.
-const WELD_EPSILON: f64 = 1e-6;
-
-/// Epsilon for geometric tests (plane classification, degeneracy).
-const GEO_EPS: f64 = 1e-8;
-
-// ── Vector math helpers ──────────────────────────────────────────────
-
-fn sub(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
-    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
-}
-
-fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
-    [
-        a[1] * b[2] - a[2] * b[1],
-        a[2] * b[0] - a[0] * b[2],
-        a[0] * b[1] - a[1] * b[0],
-    ]
-}
-
-fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
-    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
-}
-
-fn lerp(a: [f64; 3], b: [f64; 3], t: f64) -> [f64; 3] {
-    [
-        a[0] + t * (b[0] - a[0]),
-        a[1] + t * (b[1] - a[1]),
-        a[2] + t * (b[2] - a[2]),
-    ]
-}
-
-fn len2(v: [f64; 3]) -> f64 {
-    dot(v, v)
-}
-
-fn dist2(a: [f64; 3], b: [f64; 3]) -> f64 {
-    len2(sub(a, b))
-}
-
-// ── Plane representation ─────────────────────────────────────────────
-
-/// A plane defined by normal·p = d.
-#[derive(Clone, Copy)]
-struct Plane {
-    normal: [f64; 3],
-    d: f64,
-}
-
-/// Which side of a plane a vertex lies on.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Side {
-    Positive,
-    Negative,
-    On,
-}
-
-/// Compute the plane of a polygon using Newell's method.
-fn face_plane(verts: &[[f64; 3]]) -> Plane {
-    let mut nx = 0.0_f64;
-    let mut ny = 0.0_f64;
-    let mut nz = 0.0_f64;
-    let n = verts.len();
-    for i in 0..n {
-        let cur = verts[i];
-        let next = verts[(i + 1) % n];
-        nx += (cur[1] - next[1]) * (cur[2] + next[2]);
-        ny += (cur[2] - next[2]) * (cur[0] + next[0]);
-        nz += (cur[0] - next[0]) * (cur[1] + next[1]);
-    }
-    let len = (nx * nx + ny * ny + nz * nz).sqrt();
-    let normal = if len > 1e-12 {
-        [nx / len, ny / len, nz / len]
-    } else {
-        [0.0, 1.0, 0.0]
-    };
-    let d = dot(normal, verts[0]);
-    Plane { normal, d }
-}
-
-/// Classify a point relative to a plane.
-fn classify_vertex(plane: &Plane, point: [f64; 3]) -> Side {
-    let dist = dot(plane.normal, point) - plane.d;
-    if dist > GEO_EPS {
-        Side::Positive
-    } else if dist < -GEO_EPS {
-        Side::Negative
-    } else {
-        Side::On
-    }
-}
+use super::topology::{
+    self, GEO_EPS, Plane, Side, WELD_EPSILON, classify_vertex, cross, dist2, dot, face_plane, len2,
+    lerp, sub, uf_find, uf_union, weld_position,
+};
 
 // ── Polygon splitting by plane ──────────────────────────────────────
 
@@ -232,43 +144,6 @@ fn nudged_centroid_poly(verts: &[[f64; 3]], inward: bool) -> [f64; 3] {
 
 // ── Coplanar face merging ────────────────────────────────────────────
 
-/// Union-find: find root with path compression.
-fn uf_find(parent: &mut [usize], x: usize) -> usize {
-    let mut r = x;
-    while parent[r] != r {
-        r = parent[r];
-    }
-    let mut c = x;
-    while parent[c] != r {
-        let next = parent[c];
-        parent[c] = r;
-        c = next;
-    }
-    r
-}
-
-/// Union-find: merge two sets.
-fn uf_union(parent: &mut [usize], a: usize, b: usize) {
-    let ra = uf_find(parent, a);
-    let rb = uf_find(parent, b);
-    if ra != rb {
-        parent[rb] = ra;
-    }
-}
-
-/// Weld a position into a canonical position list, returning its welded index.
-fn weld_position(positions: &mut Vec<[f64; 3]>, p: [f64; 3]) -> usize {
-    let eps2 = WELD_EPSILON * WELD_EPSILON;
-    for (i, pos) in positions.iter().enumerate() {
-        if dist2(*pos, p) < eps2 {
-            return i;
-        }
-    }
-    let idx = positions.len();
-    positions.push(p);
-    idx
-}
-
 /// Trace boundary polygon loop(s) for a group of merged coplanar faces.
 fn trace_merged_boundary(
     group_faces: &[usize],
@@ -369,15 +244,17 @@ fn extract_merged_polygons(mesh: &HalfEdgeMesh, offset: [f64; 3]) -> Vec<Vec<[f6
         }
     }
 
-    let face_info: Vec<([f64; 3], f64)> = welded_faces
+    let face_planes: Vec<Plane> = welded_faces
         .iter()
         .map(|wface| {
             if wface.len() < 3 {
-                return ([0.0, 1.0, 0.0], 0.0);
+                return Plane {
+                    normal: [0.0, 1.0, 0.0],
+                    d: 0.0,
+                };
             }
             let verts: Vec<[f64; 3]> = wface.iter().map(|&wi| welded_positions[wi]).collect();
-            let plane = face_plane(&verts);
-            (plane.normal, plane.d)
+            face_plane(&verts)
         })
         .collect();
 
@@ -389,16 +266,9 @@ fn extract_merged_polygons(mesh: &HalfEdgeMesh, offset: [f64; 3]) -> Vec<Vec<[f6
             let to = wface[(i + 1) % n];
             if let Some(&fj) = edge_to_face.get(&(to, from))
                 && fi != fj
+                && topology::planes_coplanar(&face_planes[fi], &face_planes[fj])
             {
-                let (n1, d1) = face_info[fi];
-                let (n2, d2) = face_info[fj];
-                let cos = dot(n1, n2);
-                if cos.abs() > 1.0 - 1e-6 {
-                    let plane_dist = (d1 - d2 * cos.signum()).abs();
-                    if plane_dist < 1e-6 {
-                        uf_union(&mut parent, fi, fj);
-                    }
-                }
+                uf_union(&mut parent, fi, fj);
             }
         }
     }
@@ -743,7 +613,8 @@ pub fn boolean_op(
     let tool_tris = extract_tris_for_classification(tool_ref, offset);
 
     let tool_planes: Vec<Plane> = tool_polys.iter().map(|p| face_plane(p)).collect();
-    let tool_aabbs: Vec<([f64; 3], [f64; 3])> = tool_polys.iter().map(|p| polygon_aabb(p)).collect();
+    let tool_aabbs: Vec<([f64; 3], [f64; 3])> =
+        tool_polys.iter().map(|p| polygon_aabb(p)).collect();
     let target_planes: Vec<Plane> = target_polys.iter().map(|p| face_plane(p)).collect();
     let target_aabbs: Vec<([f64; 3], [f64; 3])> =
         target_polys.iter().map(|p| polygon_aabb(p)).collect();
@@ -835,7 +706,13 @@ pub fn boolean_op(
     for poly in &output_polys {
         builder.polygon(poly);
     }
-    builder.build()
+    let raw = builder.build();
+
+    // ── Dissolve coplanar edges ──────────────────────────────────────
+    // Merge coplanar fragments back into larger polygons. This collapses
+    // spinal edges from plane-based splitting (e.g. a cube face split
+    // into dozens of fragments gets restored to a single quad).
+    topology::dissolve_coplanar_edges(&raw)
 }
 
 /// Auto-expand the tool mesh when its bounding box is flush with the target's
@@ -870,8 +747,8 @@ fn auto_expand_tool(
 
     let mut flush_axes = 0u32;
     for ax in 0..3 {
-        let both_flush = (s_min[ax] - t_min[ax]).abs() < flush_eps
-            && (s_max[ax] - t_max[ax]).abs() < flush_eps;
+        let both_flush =
+            (s_min[ax] - t_min[ax]).abs() < flush_eps && (s_max[ax] - t_max[ax]).abs() < flush_eps;
         if both_flush {
             flush_axes += 1;
         }

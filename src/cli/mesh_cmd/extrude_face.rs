@@ -25,8 +25,7 @@ pub fn cmd_extrude_face(args: &ExtrudeFaceArgs) -> Result<()> {
         ));
     }
 
-    let result =
-        crate::core::mesh::extrude_face::extrude_faces(&part.mesh, args.depth, &selected);
+    let result = crate::core::mesh::extrude_face::extrude_faces(&part.mesh, args.depth, &selected);
 
     let vc = result.vertex_count();
     let fc = result.face_count();

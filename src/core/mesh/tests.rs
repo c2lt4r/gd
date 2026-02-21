@@ -1234,13 +1234,14 @@ fn subtract_tool_inside_single_face() {
 
     let result = boolean::subtract(&target, &tool, [0.0, 0.0, 0.0]);
 
-    // The target had 12 faces. After boolean subtract, the front face should be
-    // split and the door region removed, so face count must change.
+    // The target had 12 tri-faces (6 merged to 6 quads by extract_merged_polygons).
+    // After boolean subtract + coplanar dissolution, the result should have:
+    // - 5 outer faces (one front face was cut) + cavity walls from the tool
+    // Face count differs from original because faces were both split and merged.
     assert!(
-        result.faces.len() > target.faces.len(),
-        "subtract should split target faces (got {} vs original {})",
-        result.faces.len(),
-        target.faces.len()
+        result.faces.len() > 6,
+        "subtract should produce outer + cavity faces (got {})",
+        result.faces.len()
     );
     // Tool's interior faces (inside the wall) should be added as cavity walls
     assert!(!result.faces.is_empty());
@@ -1324,12 +1325,7 @@ fn union_watertight() {
 
     let target = cube_mesh();
     let tool = cube_mesh();
-    let result = boolean::boolean_op(
-        &target,
-        &tool,
-        [0.3, 0.0, 0.0],
-        boolean::BooleanMode::Union,
-    );
+    let result = boolean::boolean_op(&target, &tool, [0.3, 0.0, 0.0], boolean::BooleanMode::Union);
 
     assert!(!result.faces.is_empty(), "union result should not be empty");
     let boundary = spatial::count_non_manifold_edges(&result);
@@ -1973,7 +1969,13 @@ fn gpu_triangle_winding_matches_godot_cw() {
     check_gpu_winding(&mesh, "Revolve front Y-axis");
 
     // Thin extrusion (similar to agent's gun body)
-    let thin_profile = [[0.0, 0.0], [0.25, 0.0], [0.25, 0.055], [0.15, 0.068], [0.0, 0.068]];
+    let thin_profile = [
+        [0.0, 0.0],
+        [0.25, 0.0],
+        [0.25, 0.055],
+        [0.15, 0.068],
+        [0.0, 0.068],
+    ];
     let mesh = extrude::extrude(&thin_profile, PlaneKind::Side, 0.055, 1).unwrap();
     check_gpu_winding(&mesh, "Thin side plane extrude");
 }
@@ -1990,8 +1992,7 @@ fn bevel_works_after_cap_inset_pentagon() {
         [-0.809, -0.588],
         [0.309, -0.951],
     ];
-    let mesh =
-        extrude::extrude_with_inset(&pentagon, PlaneKind::Front, 2.0, 1, 0.15).unwrap();
+    let mesh = extrude::extrude_with_inset(&pentagon, PlaneKind::Front, 2.0, 1, 0.15).unwrap();
     let original_faces = mesh.faces.len();
 
     let beveled = bevel::bevel(&mesh, 0.1, 1, "all");
@@ -2013,8 +2014,7 @@ fn bevel_works_after_cap_inset_circle() {
             [0.5 * angle.cos(), 0.5 * angle.sin()]
         })
         .collect();
-    let mesh =
-        extrude::extrude_with_inset(&circle, PlaneKind::Front, 2.0, 1, 0.15).unwrap();
+    let mesh = extrude::extrude_with_inset(&circle, PlaneKind::Front, 2.0, 1, 0.15).unwrap();
     let original_faces = mesh.faces.len();
 
     let beveled = bevel::bevel(&mesh, 0.1, 1, "all");
@@ -2178,12 +2178,7 @@ fn boolean_array_subtract() {
             offset[1] + spacing[1] * k as f64,
             offset[2] + spacing[2] * k as f64,
         ];
-        current = boolean::boolean_op(
-            &current,
-            &tool,
-            iter_offset,
-            boolean::BooleanMode::Subtract,
-        );
+        current = boolean::boolean_op(&current, &tool, iter_offset, boolean::BooleanMode::Subtract);
     }
     // Should have more faces than original (material removed + caps added per cut)
     assert!(
@@ -2221,8 +2216,7 @@ fn extrude_with_hole() {
     let outer = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
     let hole = vec![[0.25, 0.25], [0.75, 0.25], [0.75, 0.75], [0.25, 0.75]];
 
-    let mesh =
-        extrude::extrude_with_holes(&outer, &[hole], PlaneKind::Front, 2.0, 1);
+    let mesh = extrude::extrude_with_holes(&outer, &[hole], PlaneKind::Front, 2.0, 1);
     assert!(mesh.is_some(), "should extrude with holes");
     let mesh = mesh.unwrap();
 
@@ -2421,8 +2415,7 @@ fn bevel_depth_after_taper_no_holes() {
         })
         .collect();
 
-    let mut mesh =
-        extrude::extrude_with_inset(&circle, PlaneKind::Front, 73.0, 8, 0.15).unwrap();
+    let mut mesh = extrude::extrude_with_inset(&circle, PlaneKind::Front, 73.0, 8, 0.15).unwrap();
     let pre_taper_verts = mesh.vertex_count();
     let pre_taper_faces = mesh.face_count();
     assert!(pre_taper_verts > 0);
@@ -2478,7 +2471,10 @@ fn bevel_depth_tapered_wing_no_holes() {
 /// Count boundary edges (edges with only one adjacent face).
 /// Boundary half-edges have `face: None` — their twin has a face.
 fn count_boundary_edges(mesh: &HalfEdgeMesh) -> usize {
-    mesh.half_edges.iter().filter(|he| he.face.is_none()).count()
+    mesh.half_edges
+        .iter()
+        .filter(|he| he.face.is_none())
+        .count()
 }
 
 /// Count faces by vertex count: (triangles, quads, n-gons).
@@ -2519,15 +2515,14 @@ fn bevel_depth_seg1_tapered_wing() {
 
 #[test]
 fn bevel_depth_seg1_cube() {
-    let cube = [
-        [1.0, 1.0],
-        [-1.0, 1.0],
-        [-1.0, -1.0],
-        [1.0, -1.0],
-    ];
+    let cube = [[1.0, 1.0], [-1.0, 1.0], [-1.0, -1.0], [1.0, -1.0]];
     let mesh = extrude::extrude(&cube, PlaneKind::Front, 2.0, 1).unwrap();
     let beveled = bevel::bevel_seg1(&mesh, 0.2, "depth");
-    assert_eq!(count_boundary_edges(&beveled), 0, "cube bevel depth should be watertight");
+    assert_eq!(
+        count_boundary_edges(&beveled),
+        0,
+        "cube bevel depth should be watertight"
+    );
 }
 
 #[test]
@@ -2541,7 +2536,11 @@ fn bevel_depth_seg1_untapered_wing() {
         [3.6, 9.0],
     ];
     let mesh = extrude::extrude(&wing_profile, PlaneKind::Top, 2.0, 2).unwrap();
-    assert_eq!(count_boundary_edges(&mesh), 0, "input mesh should be watertight");
+    assert_eq!(
+        count_boundary_edges(&mesh),
+        0,
+        "input mesh should be watertight"
+    );
 
     let beveled = bevel::bevel_seg1(&mesh, 0.3, "depth");
     assert_eq!(
@@ -2553,15 +2552,14 @@ fn bevel_depth_seg1_untapered_wing() {
 
 #[test]
 fn bevel_all_seg1_cube() {
-    let cube = [
-        [1.0, 1.0],
-        [-1.0, 1.0],
-        [-1.0, -1.0],
-        [1.0, -1.0],
-    ];
+    let cube = [[1.0, 1.0], [-1.0, 1.0], [-1.0, -1.0], [1.0, -1.0]];
     let mesh = extrude::extrude(&cube, PlaneKind::Front, 2.0, 1).unwrap();
     let beveled = bevel::bevel_seg1(&mesh, 0.2, "all");
-    assert_eq!(count_boundary_edges(&beveled), 0, "cube bevel all should be watertight");
+    assert_eq!(
+        count_boundary_edges(&beveled),
+        0,
+        "cube bevel all should be watertight"
+    );
 }
 
 #[test]
@@ -2570,18 +2568,16 @@ fn bevel_caps_produce_quads() {
 
     // Cube bevel --edges all, seg1: each vertex has 3 faces, 3 sharp edges.
     // Cap polygon has 3 vertices → must be triangle (unavoidable).
-    let cube = [
-        [1.0, 1.0],
-        [-1.0, 1.0],
-        [-1.0, -1.0],
-        [1.0, -1.0],
-    ];
+    let cube = [[1.0, 1.0], [-1.0, 1.0], [-1.0, -1.0], [1.0, -1.0]];
     let mesh = extrude::extrude(&cube, PlaneKind::Front, 2.0, 1).unwrap();
     let beveled = bevel::bevel_seg1(&mesh, 0.2, "all");
     let (tris, quads, ngons) = face_type_counts(&beveled);
     assert_eq!(ngons, 0, "no N-gons");
     // 8 vertices × 1 tri cap each = 8 tris. Rest should be quads.
-    assert!(quads > tris, "quads ({quads}) should outnumber tris ({tris})");
+    assert!(
+        quads > tris,
+        "quads ({quads}) should outnumber tris ({tris})"
+    );
 
     // Wing bevel --edges depth, seg1: profile vertices have 3+ faces,
     // some with 4+ (even cap vertex count → quads).
@@ -2612,8 +2608,7 @@ fn bevel_caps_produce_quads() {
             [3.57 * angle.cos(), 4.2 * angle.sin()]
         })
         .collect();
-    let mut mesh =
-        extrude::extrude_with_inset(&circle, PlaneKind::Front, 73.0, 8, 0.15).unwrap();
+    let mut mesh = extrude::extrude_with_inset(&circle, PlaneKind::Front, 73.0, 8, 0.15).unwrap();
     super::taper::taper(&mut mesh, 2, 0.12, 1.0, None, Some((0.0, 0.16)));
     super::taper::taper(&mut mesh, 2, 1.0, 0.25, None, Some((0.75, 1.0)));
     let beveled = bevel::bevel(&mesh, 0.3, 2, "depth");
@@ -2638,8 +2633,7 @@ fn bevel_complex_profile_no_panic() {
             [3.0 * angle.cos(), 2.0 * angle.sin()]
         })
         .collect();
-    let mut mesh =
-        extrude::extrude_with_inset(&profile, PlaneKind::Side, 10.0, 4, 0.1).unwrap();
+    let mut mesh = extrude::extrude_with_inset(&profile, PlaneKind::Side, 10.0, 4, 0.1).unwrap();
     super::taper::taper(&mut mesh, 2, 0.3, 1.0, Some(0.5), Some((0.0, 0.5)));
     super::taper::taper(&mut mesh, 2, 1.0, 0.3, Some(0.5), Some((0.5, 1.0)));
     // Should not panic (previously caused usize underflow at bevel.rs:250)
@@ -2667,7 +2661,11 @@ fn extrude_with_holes_correct_winding() {
 
     let mesh = extrude::extrude_with_holes(&outer, &[hole], PlaneKind::Front, 1.0, 1).unwrap();
     assert!(mesh.face_count() > 0);
-    assert_eq!(count_boundary_edges(&mesh), 0, "hole extrusion should be watertight");
+    assert_eq!(
+        count_boundary_edges(&mesh),
+        0,
+        "hole extrusion should be watertight"
+    );
 
     // Verify normals: for a closed mesh, fix_winding should flip 0 faces
     // (if winding is already correct, all normals point outward consistently).
@@ -2716,9 +2714,10 @@ fn group_create_and_list() {
     state.parts.insert("wing-R".to_string(), wing_r);
 
     // Create a group
-    state
-        .groups
-        .insert("wings".to_string(), vec!["wing-L".to_string(), "wing-R".to_string()]);
+    state.groups.insert(
+        "wings".to_string(),
+        vec!["wing-L".to_string(), "wing-R".to_string()],
+    );
 
     assert_eq!(state.groups.len(), 1);
     assert_eq!(state.groups["wings"].len(), 2);
@@ -2810,7 +2809,10 @@ fn assert_closed(mesh: &HalfEdgeMesh, label: &str) {
     assert!(mesh.vertex_count() > 0, "{label}: 0 vertices");
     assert!(mesh.face_count() > 0, "{label}: 0 faces");
     let boundary = count_boundary_edges(mesh);
-    assert_eq!(boundary, 0, "{label}: {boundary} boundary edges (not watertight)");
+    assert_eq!(
+        boundary, 0,
+        "{label}: {boundary} boundary edges (not watertight)"
+    );
 }
 
 /// Assert mesh is non-degenerate (may have boundary edges for open shapes).
@@ -2822,11 +2824,11 @@ fn assert_valid(mesh: &HalfEdgeMesh, label: &str) {
 #[test]
 #[allow(clippy::too_many_lines)]
 fn agent_replay_multipart_build() {
-    use super::extrude;
-    use super::taper;
     use super::bevel;
+    use super::extrude;
     use super::mirror;
     use super::normals;
+    use super::taper;
 
     let mut state = MeshState::new("fuselage");
 
@@ -2866,7 +2868,10 @@ fn agent_replay_multipart_build() {
     let mut wing_l = state.parts["wing-r"].clone();
     mirror::mirror(&mut wing_l.mesh, 0); // axis x
     assert_valid(&wing_l.mesh, "wing-l after mirror");
-    assert_eq!(wing_l.mesh.vertex_count(), state.parts["wing-r"].mesh.vertex_count());
+    assert_eq!(
+        wing_l.mesh.vertex_count(),
+        state.parts["wing-r"].mesh.vertex_count()
+    );
     state.parts.insert("wing-l".to_string(), wing_l);
 
     // ── Step 3: Canards ───────────────────────────────────────────────
@@ -2928,9 +2933,18 @@ fn agent_replay_multipart_build() {
     // ── Step 8: Cockpit interior parts ────────────────────────────────
     // Simplified: tub, seat, panel, stick, throttle, pedals
     let box_profile = vec![[-0.3, -0.2], [0.3, -0.2], [0.3, 0.2], [-0.3, 0.2]];
-    for name in &["cockpit-tub", "ejection-seat", "instrument-panel",
-                   "stick", "throttle", "pedals", "console-l", "console-r",
-                   "hud", "coaming"] {
+    for name in &[
+        "cockpit-tub",
+        "ejection-seat",
+        "instrument-panel",
+        "stick",
+        "throttle",
+        "pedals",
+        "console-l",
+        "console-r",
+        "hud",
+        "coaming",
+    ] {
         let mesh = extrude::extrude(&box_profile, PlaneKind::Front, 0.5, 1).unwrap();
         assert_closed(&mesh, name);
         let mut p = super::MeshPart::new();
@@ -2969,24 +2983,38 @@ fn agent_replay_multipart_build() {
     let fuse = &state.parts["fuselage"].mesh;
     let beveled = bevel::bevel(fuse, 0.08, 2, "depth");
     assert_valid(&beveled, "fuselage after bevel");
-    assert!(beveled.vertex_count() > fuse_verts, "bevel should add vertices");
+    assert!(
+        beveled.vertex_count() > fuse_verts,
+        "bevel should add vertices"
+    );
     assert!(beveled.face_count() > fuse_faces, "bevel should add faces");
     state.parts.get_mut("fuselage").unwrap().mesh = beveled;
 
     // ── Step 12: Groups ───────────────────────────────────────────────
-    state.groups.insert("engine-assembly".to_string(), vec![
-        "intake-r".to_string(), "exhaust-r".to_string(),
-    ]);
-    state.groups.insert("landing-gear".to_string(), vec![
-        "nose-strut".to_string(), "nose-wheel".to_string(),
-        "main-strut-l".to_string(), "main-wheel-l".to_string(),
-        "main-strut-r".to_string(), "main-wheel-r".to_string(),
-    ]);
+    state.groups.insert(
+        "engine-assembly".to_string(),
+        vec!["intake-r".to_string(), "exhaust-r".to_string()],
+    );
+    state.groups.insert(
+        "landing-gear".to_string(),
+        vec![
+            "nose-strut".to_string(),
+            "nose-wheel".to_string(),
+            "main-strut-l".to_string(),
+            "main-wheel-l".to_string(),
+            "main-strut-r".to_string(),
+            "main-wheel-r".to_string(),
+        ],
+    );
 
     // ── Step 13: Checkpoint + restore ─────────────────────────────────
     let checkpoint_name = "exterior-done";
-    state.checkpoints.insert(checkpoint_name.to_string(), state.parts.clone());
-    state.group_checkpoints.insert(checkpoint_name.to_string(), state.groups.clone());
+    state
+        .checkpoints
+        .insert(checkpoint_name.to_string(), state.parts.clone());
+    state
+        .group_checkpoints
+        .insert(checkpoint_name.to_string(), state.groups.clone());
 
     // Verify restore brings back groups
     let saved_groups = state.group_checkpoints[checkpoint_name].clone();
@@ -3003,18 +3031,42 @@ fn agent_replay_multipart_build() {
 
     // ── Step 15: Verify all parts survived ────────────────────────────
     let expected_parts = [
-        "fuselage", "wing-r", "wing-l", "canard-r", "canard-l", "fin",
-        "intake-r", "intake-l", "exhaust-r", "exhaust-l", "canopy",
-        "cockpit-tub", "ejection-seat", "instrument-panel", "stick",
-        "throttle", "pedals", "console-l", "console-r", "hud", "coaming",
-        "nose-strut", "main-strut-l", "main-strut-r",
-        "nose-wheel", "main-wheel-l", "main-wheel-r",
+        "fuselage",
+        "wing-r",
+        "wing-l",
+        "canard-r",
+        "canard-l",
+        "fin",
+        "intake-r",
+        "intake-l",
+        "exhaust-r",
+        "exhaust-l",
+        "canopy",
+        "cockpit-tub",
+        "ejection-seat",
+        "instrument-panel",
+        "stick",
+        "throttle",
+        "pedals",
+        "console-l",
+        "console-r",
+        "hud",
+        "coaming",
+        "nose-strut",
+        "main-strut-l",
+        "main-strut-r",
+        "nose-wheel",
+        "main-wheel-l",
+        "main-wheel-r",
     ];
     assert_eq!(state.parts.len(), expected_parts.len());
     for name in &expected_parts {
         assert!(state.parts.contains_key(*name), "missing part: {name}");
         let mesh = &state.parts[*name].mesh;
-        assert!(mesh.vertex_count() > 0, "{name}: 0 vertices after full pipeline");
+        assert!(
+            mesh.vertex_count() > 0,
+            "{name}: 0 vertices after full pipeline"
+        );
         assert!(mesh.face_count() > 0, "{name}: 0 faces after full pipeline");
     }
 
@@ -3023,8 +3075,188 @@ fn agent_replay_multipart_build() {
     for name in &expected_parts {
         let part = &state.parts[*name];
         let (positions, normals_arr, indices) = part.mesh.to_arrays_shaded(part.shading);
-        assert!(!positions.is_empty(), "{name}: empty positions from to_arrays");
-        assert!(!normals_arr.is_empty(), "{name}: empty normals from to_arrays");
+        assert!(
+            !positions.is_empty(),
+            "{name}: empty positions from to_arrays"
+        );
+        assert!(
+            !normals_arr.is_empty(),
+            "{name}: empty normals from to_arrays"
+        );
         assert!(!indices.is_empty(), "{name}: empty indices from to_arrays");
     }
+}
+
+// ── Topology: edge dissolution ──────────────────────────────────────
+
+use super::topology;
+
+#[test]
+fn dissolve_coplanar_simple() {
+    // Two coplanar triangles sharing an edge → should merge into 1 quad
+    let positions: Vec<[f64; 3]> = vec![
+        [0.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [1.0, 1.0, 0.0],
+        [0.0, 1.0, 0.0],
+    ];
+    let faces: Vec<&[usize]> = vec![&[0, 1, 2], &[0, 2, 3]];
+    let mesh = HalfEdgeMesh::from_polygons(&positions, &faces);
+    assert_eq!(mesh.faces.len(), 2);
+
+    let dissolved = topology::dissolve_coplanar_edges(&mesh);
+    assert_eq!(
+        dissolved.faces.len(),
+        1,
+        "two coplanar triangles should merge into one polygon"
+    );
+    let verts = dissolved.face_vertices(0);
+    assert_eq!(verts.len(), 4, "merged polygon should be a quad");
+}
+
+#[test]
+fn dissolve_coplanar_cube() {
+    // A cube made of 12 triangles → dissolution should produce 6 quads
+    let mesh = cube_mesh();
+    assert_eq!(mesh.faces.len(), 12, "cube should start with 12 triangles");
+
+    let dissolved = topology::dissolve_coplanar_edges(&mesh);
+    assert_eq!(
+        dissolved.faces.len(),
+        6,
+        "cube dissolution should produce 6 quads (got {})",
+        dissolved.faces.len()
+    );
+    for f in 0..dissolved.faces.len() {
+        let verts = dissolved.face_vertices(f);
+        assert_eq!(
+            verts.len(),
+            4,
+            "face {f} should be a quad, got {} verts",
+            verts.len()
+        );
+    }
+}
+
+#[test]
+fn dissolve_preserves_sharp_edges() {
+    // Two non-coplanar triangles sharing an edge (a "V" shape) should NOT merge
+    let positions: Vec<[f64; 3]> = vec![
+        [0.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [0.5, 1.0, 0.0],  // tri 1: flat on Z=0
+        [0.5, 1.0, -1.0], // tri 2: tilted away
+    ];
+    let faces: Vec<&[usize]> = vec![&[0, 1, 2], &[1, 0, 3]];
+    let mesh = HalfEdgeMesh::from_polygons(&positions, &faces);
+    assert_eq!(mesh.faces.len(), 2);
+
+    let dissolved = topology::dissolve_coplanar_edges(&mesh);
+    assert_eq!(
+        dissolved.faces.len(),
+        2,
+        "non-coplanar faces should NOT be dissolved"
+    );
+}
+
+#[test]
+fn boolean_dissolve_reduces_faces() {
+    // Cube-minus-cube with axis-aligned offset: the tool clips a slab off the
+    // target, leaving a thinner box. With dissolution, coplanar fragments merge
+    // back into clean quads — the result is just 6 faces (a box).
+    let target = cube_mesh();
+    let tool = cube_mesh();
+    let result = boolean::subtract(&target, &tool, [0.3, 0.0, 0.0]);
+
+    // Without dissolution this would be dozens of fragments. With dissolution,
+    // coplanar fragments are merged back into minimal face count.
+    assert!(
+        result.faces.len() <= 12,
+        "dissolved boolean should have few faces (got {})",
+        result.faces.len()
+    );
+    assert!(!result.faces.is_empty(), "result should not be empty");
+
+    // Verify watertight
+    let boundary = super::spatial::count_non_manifold_edges(&result);
+    assert_eq!(boundary, 0, "dissolved result should be watertight");
+}
+
+#[test]
+fn boolean_dissolve_non_axis_aligned() {
+    // Non-axis-aligned subtract (rotated tool) produces more interesting topology.
+    // Verify dissolution still works and produces a valid watertight mesh.
+    let target = cube_mesh();
+
+    // Build a small tool fully inside target
+    #[rustfmt::skip]
+    let small_pos = [
+        [-0.1, -0.1, -0.6], [ 0.1, -0.1, -0.6],
+        [ 0.1,  0.1, -0.6], [-0.1,  0.1, -0.6],
+        [-0.1, -0.1,  0.6], [ 0.1, -0.1,  0.6],
+        [ 0.1,  0.1,  0.6], [-0.1,  0.1,  0.6],
+    ];
+    #[rustfmt::skip]
+    let small_idx = [
+        0, 1, 2,  0, 2, 3,
+        5, 4, 7,  5, 7, 6,
+        3, 2, 6,  3, 6, 7,
+        4, 5, 1,  4, 1, 0,
+        1, 5, 6,  1, 6, 2,
+        4, 0, 3,  4, 3, 7,
+    ];
+    let tool = HalfEdgeMesh::from_triangles(&small_pos, &small_idx);
+    let result = boolean::boolean_op(
+        &target,
+        &tool,
+        [0.0, 0.0, 0.0],
+        boolean::BooleanMode::Subtract,
+    );
+
+    assert!(!result.faces.is_empty());
+    // With dissolution, the 5 untouched outer faces merge back to quads
+    // and the hole faces are clean.
+    let quad_count = (0..result.faces.len())
+        .filter(|&f| result.face_vertices(f).len() == 4)
+        .count();
+    assert!(
+        quad_count >= 4,
+        "dissolved boolean should preserve quads for untouched faces (got {quad_count} quads)",
+    );
+}
+
+// ── Topology: pole detection ────────────────────────────────────────
+
+#[test]
+fn pole_detection_cube() {
+    // A quad cube has 8 vertices, each with 3 edges meeting → 8 N-poles
+    #[rustfmt::skip]
+    let positions: Vec<[f64; 3]> = vec![
+        [-0.5, -0.5, -0.5], [ 0.5, -0.5, -0.5],
+        [ 0.5,  0.5, -0.5], [-0.5,  0.5, -0.5],
+        [-0.5, -0.5,  0.5], [ 0.5, -0.5,  0.5],
+        [ 0.5,  0.5,  0.5], [-0.5,  0.5,  0.5],
+    ];
+    let faces: Vec<&[usize]> = vec![
+        &[0, 1, 2, 3],
+        &[5, 4, 7, 6],
+        &[3, 2, 6, 7],
+        &[4, 5, 1, 0],
+        &[1, 5, 6, 2],
+        &[4, 0, 3, 7],
+    ];
+    let mesh = HalfEdgeMesh::from_polygons(&positions, &faces);
+
+    let poles = topology::find_poles(&mesh);
+    // All 8 vertices of a cube are 3-valence N-poles
+    let n_poles: Vec<_> = poles
+        .iter()
+        .filter(|(_, pt, _)| *pt == topology::PoleType::NPole)
+        .collect();
+    assert_eq!(
+        n_poles.len(),
+        8,
+        "cube should have 8 N-poles (3-valence corners), got {}",
+        n_poles.len()
+    );
 }

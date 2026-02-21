@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use super::half_edge::HalfEdgeMesh;
 use super::normals::compute_face_normal;
 use super::spatial_filter::{self, SpatialFilter};
+use super::topology::{canonical_edge as canonical, cross, dot, sub};
 
 /// Bevel sharp edges of a mesh by inserting chamfer geometry.
 ///
@@ -185,8 +186,8 @@ pub fn bevel_with_profile(
         // The strip must have twin a1→b1, which is flip=true: [a1, b1, b2, a2].
         let fi1_verts = mesh.face_vertices(fi1);
         let fi1_n = fi1_verts.len();
-        let fi1_has_va_to_vb = (0..fi1_n)
-            .any(|i| fi1_verts[i] == va && fi1_verts[(i + 1) % fi1_n] == vb);
+        let fi1_has_va_to_vb =
+            (0..fi1_n).any(|i| fi1_verts[i] == va && fi1_verts[(i + 1) % fi1_n] == vb);
         let flip_strip = !fi1_has_va_to_vb;
 
         if segments <= 1 {
@@ -429,26 +430,6 @@ fn vertex_face_ring(mesh: &HalfEdgeMesh, v: usize) -> Vec<(usize, usize)> {
     ring
 }
 
-fn canonical(a: usize, b: usize) -> (usize, usize) {
-    if a < b { (a, b) } else { (b, a) }
-}
-
-fn sub(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
-    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
-}
-
-fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
-    [
-        a[1] * b[2] - a[2] * b[1],
-        a[2] * b[0] - a[0] * b[2],
-        a[0] * b[1] - a[1] * b[0],
-    ]
-}
-
-fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
-    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
-}
-
 fn midpoint(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
     [
         (a[0] + b[0]) * 0.5,
@@ -535,8 +516,7 @@ fn find_sharp_edges(
                 _ => true, // "all"
             };
             // Apply spatial filter
-            let spatial_ok =
-                spatial.is_none_or(|sf| spatial_filter::edge_matches(mesh, i, sf));
+            let spatial_ok = spatial.is_none_or(|sf| spatial_filter::edge_matches(mesh, i, sf));
             if include && spatial_ok {
                 sharp.push(i);
             }

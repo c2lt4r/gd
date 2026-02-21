@@ -103,13 +103,12 @@ fn cmd_duplicate_group(args: &DuplicatePartArgs) -> Result<()> {
     let mut new_members: Vec<String> = Vec::new();
 
     for src_name in &members {
-        let new_name = if let (Some(find), Some(replace)) =
-            (args.replace.as_deref(), args.with.as_deref())
-        {
-            src_name.replace(find, replace)
-        } else {
-            format!("{src_name}-{}", args.as_name)
-        };
+        let new_name =
+            if let (Some(find), Some(replace)) = (args.replace.as_deref(), args.with.as_deref()) {
+                src_name.replace(find, replace)
+            } else {
+                format!("{src_name}-{}", args.as_name)
+            };
 
         let src_part = state
             .parts

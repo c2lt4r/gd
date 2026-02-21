@@ -6,7 +6,9 @@ use owo_colors::OwoColorize;
 use crate::core::mesh::{MeshState, PlaneKind};
 
 use super::gdscript;
-use super::{OutputFormat, ProfileArgs, ProfileShape, inject_stats, parse_points, project_root, run_eval};
+use super::{
+    OutputFormat, ProfileArgs, ProfileShape, inject_stats, parse_points, project_root, run_eval,
+};
 use crate::cprintln;
 
 pub fn cmd_profile(args: &ProfileArgs) -> Result<()> {
@@ -111,7 +113,12 @@ fn parse_holes(hole_args: &[String]) -> Result<Vec<Vec<[f64; 2]>>> {
     Ok(holes)
 }
 
-fn print_result(resolved: &ResolvedProfile, hole_count: usize, format: &OutputFormat, state: &MeshState) {
+fn print_result(
+    resolved: &ResolvedProfile,
+    hole_count: usize,
+    format: &OutputFormat,
+    state: &MeshState,
+) {
     let mut result = serde_json::json!({
         "plane": resolved.plane.as_str(),
         "point_count": resolved.points.len(),

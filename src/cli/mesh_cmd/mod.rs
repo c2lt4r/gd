@@ -1226,9 +1226,18 @@ pub fn mesh_stats(state: &MeshState) -> serde_json::Value {
         for f in 0..mesh.face_count() {
             let n = mesh.face_vertices(f).len();
             match n {
-                3 => { t += 1; godot_tris += 1; },
-                4 => { q += 1; godot_tris += 2; },
-                _ => { ng += 1; godot_tris += n - 2; },
+                3 => {
+                    t += 1;
+                    godot_tris += 1;
+                }
+                4 => {
+                    q += 1;
+                    godot_tris += 2;
+                }
+                _ => {
+                    ng += 1;
+                    godot_tris += n - 2;
+                }
             }
         }
         total_tris_godot += godot_tris;
@@ -1237,7 +1246,11 @@ pub fn mesh_stats(state: &MeshState) -> serde_json::Value {
             part_quads = q;
             part_tris = t;
             part_ngons = ng;
-            boundary = mesh.half_edges.iter().filter(|he| he.face.is_none()).count();
+            boundary = mesh
+                .half_edges
+                .iter()
+                .filter(|he| he.face.is_none())
+                .count();
         }
     }
 
@@ -1308,14 +1321,12 @@ pub fn import_primitive_mesh(parsed: &serde_json::Value, state: &mut MeshState) 
     let mut welded_positions: Vec<[f64; 3]> = Vec::new();
     let mut remap: Vec<usize> = Vec::with_capacity(positions.len());
     for pos in &positions {
-        let existing = welded_positions
-            .iter()
-            .position(|p| {
-                let dx = p[0] - pos[0];
-                let dy = p[1] - pos[1];
-                let dz = p[2] - pos[2];
-                dx * dx + dy * dy + dz * dz < eps2
-            });
+        let existing = welded_positions.iter().position(|p| {
+            let dx = p[0] - pos[0];
+            let dy = p[1] - pos[1];
+            let dz = p[2] - pos[2];
+            dx * dx + dy * dy + dz * dz < eps2
+        });
         if let Some(i) = existing {
             remap.push(i);
         } else {

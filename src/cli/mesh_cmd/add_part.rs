@@ -4,7 +4,9 @@ use owo_colors::OwoColorize;
 use crate::core::mesh::{MeshPart, MeshState};
 
 use super::gdscript;
-use super::{AddPartArgs, OutputFormat, import_primitive_mesh, inject_stats, project_root, run_eval};
+use super::{
+    AddPartArgs, OutputFormat, import_primitive_mesh, inject_stats, project_root, run_eval,
+};
 use crate::cprintln;
 
 pub fn cmd_add_part(args: &AddPartArgs) -> Result<()> {

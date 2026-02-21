@@ -40,7 +40,11 @@ pub fn cmd_replay(args: &ReplayArgs) -> Result<()> {
 
         if args.dry_run {
             if matches!(args.format, OutputFormat::Text) {
-                cprintln!("  {} {}", format!("[{}/{}]", i + 1, total_lines).dimmed(), cmd_type.cyan());
+                cprintln!(
+                    "  {} {}",
+                    format!("[{}/{}]", i + 1, total_lines).dimmed(),
+                    cmd_type.cyan()
+                );
             }
             results.push(serde_json::json!({
                 "command": cmd_type,

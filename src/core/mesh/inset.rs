@@ -1,5 +1,6 @@
 use super::half_edge::HalfEdgeMesh;
 use super::normals::compute_face_normal;
+use super::topology::{dot, tri_normal};
 
 /// Inset all faces of a mesh by moving each vertex toward the face centroid.
 ///
@@ -105,18 +106,4 @@ pub fn inset_selected(
 
     let face_slices: Vec<&[usize]> = poly_faces.iter().map(Vec::as_slice).collect();
     HalfEdgeMesh::from_polygons(&positions, &face_slices)
-}
-
-fn tri_normal(a: [f64; 3], b: [f64; 3], c: [f64; 3]) -> [f64; 3] {
-    let u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
-    let v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
-    [
-        u[1] * v[2] - u[2] * v[1],
-        u[2] * v[0] - u[0] * v[2],
-        u[0] * v[1] - u[1] * v[0],
-    ]
-}
-
-fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
-    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 }

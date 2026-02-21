@@ -1,5 +1,5 @@
-use super::{MeshState, Transform3D};
 use super::half_edge::HalfEdgeMesh;
+use super::{MeshState, Transform3D};
 
 /// Kind of spatial relationship issue between parts.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -184,41 +184,44 @@ pub fn is_watertight(mesh: &HalfEdgeMesh) -> bool {
 /// Build a relationship report for describe output.
 pub fn relationship_report(state: &MeshState) -> Vec<serde_json::Value> {
     let issues = check_part_relationships(state);
-    issues.iter().map(|issue| {
-        let mut entry = serde_json::json!({
-            "parts": [issue.part_a, issue.part_b],
-            "error": issue.detail,
-        });
-        match issue.kind {
-            IssueKind::Overlap => {
-                entry["status"] = serde_json::json!("overlapping");
+    issues
+        .iter()
+        .map(|issue| {
+            let mut entry = serde_json::json!({
+                "parts": [issue.part_a, issue.part_b],
+                "error": issue.detail,
+            });
+            match issue.kind {
+                IssueKind::Overlap => {
+                    entry["status"] = serde_json::json!("overlapping");
+                }
+                IssueKind::Floating => {
+                    entry["status"] = serde_json::json!("floating");
+                }
             }
-            IssueKind::Floating => {
-                entry["status"] = serde_json::json!("floating");
-            }
-        }
-        entry
-    }).collect()
+            entry
+        })
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::mesh::{MeshPart, MeshState, Transform3D};
     use crate::core::mesh::half_edge::HalfEdgeMesh;
+    use crate::core::mesh::{MeshPart, MeshState, Transform3D};
 
     /// Build a simple box mesh at the origin with the given half-extents.
     fn make_box(hx: f64, hy: f64, hz: f64) -> HalfEdgeMesh {
         // 8 vertices of an axis-aligned box
         let positions = vec![
             [-hx, -hy, -hz],
-            [ hx, -hy, -hz],
-            [ hx,  hy, -hz],
-            [-hx,  hy, -hz],
-            [-hx, -hy,  hz],
-            [ hx, -hy,  hz],
-            [ hx,  hy,  hz],
-            [-hx,  hy,  hz],
+            [hx, -hy, -hz],
+            [hx, hy, -hz],
+            [-hx, hy, -hz],
+            [-hx, -hy, hz],
+            [hx, -hy, hz],
+            [hx, hy, hz],
+            [-hx, hy, hz],
         ];
         // 6 faces (quads)
         let faces: Vec<&[usize]> = vec![
@@ -294,9 +297,7 @@ mod tests {
 
     #[test]
     fn test_single_part_no_issues() {
-        let state = make_state_with_parts(vec![
-            ("body", make_box(1.0, 1.0, 1.0), [0.0, 0.0, 0.0]),
-        ]);
+        let state = make_state_with_parts(vec![("body", make_box(1.0, 1.0, 1.0), [0.0, 0.0, 0.0])]);
         let issues = check_part_relationships(&state);
         assert!(issues.is_empty());
     }
@@ -319,10 +320,7 @@ mod tests {
     #[test]
     fn test_watertight_closed_mesh() {
         let mesh = make_box(1.0, 1.0, 1.0);
-        assert!(
-            is_watertight(&mesh),
-            "Closed box should be watertight"
-        );
+        assert!(is_watertight(&mesh), "Closed box should be watertight");
     }
 
     #[test]

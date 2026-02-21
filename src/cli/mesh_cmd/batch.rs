@@ -3,8 +3,10 @@ use std::path::Path;
 use miette::{Result, miette};
 use owo_colors::OwoColorize;
 
-use crate::core::mesh::{MeshPart, MeshState, PlaneKind, ShadingMode, Transform3D, normals, spatial};
 use crate::core::mesh::half_edge::HalfEdgeMesh;
+use crate::core::mesh::{
+    MeshPart, MeshState, PlaneKind, ShadingMode, Transform3D, normals, spatial,
+};
 
 use crate::cprintln;
 
@@ -82,9 +84,9 @@ pub fn execute_batch_command(
                     .profile_points
                     .clone()
                     .ok_or_else(|| miette!("Command {index}: part '{source}' has no profile"))?;
-                let plane = src
-                    .profile_plane
-                    .ok_or_else(|| miette!("Command {index}: part '{source}' has no profile plane"))?;
+                let plane = src.profile_plane.ok_or_else(|| {
+                    miette!("Command {index}: part '{source}' has no profile plane")
+                })?;
                 let holes = src.profile_holes.clone();
                 let pc = points.len();
 
@@ -92,8 +94,7 @@ pub fn execute_batch_command(
                 part.profile_points = Some(points.clone());
                 part.profile_plane = Some(plane);
                 part.profile_holes = holes;
-                if let Some(mesh) =
-                    crate::core::mesh::profile::triangulate_profile(&points, plane)
+                if let Some(mesh) = crate::core::mesh::profile::triangulate_profile(&points, plane)
                 {
                     part.mesh = mesh;
                 }
@@ -425,9 +426,7 @@ pub fn execute_batch_command(
             let sf = crate::core::mesh::spatial_filter::parse_where(where_str)?;
             let part = state.active_part_mut()?;
             let selected: Vec<usize> = (0..part.mesh.faces.len())
-                .filter(|&fi| {
-                    crate::core::mesh::spatial_filter::face_matches(&part.mesh, fi, &sf)
-                })
+                .filter(|&fi| crate::core::mesh::spatial_filter::face_matches(&part.mesh, fi, &sf))
                 .collect();
             let result =
                 crate::core::mesh::extrude_face::extrude_faces(&part.mesh, depth, &selected);
@@ -660,7 +659,9 @@ pub fn execute_batch_command(
                 } else if let Some(c) = color {
                     gdscript::generate_material_multi(&pattern, c)
                 } else {
-                    return Err(miette!("Command {index}: material needs 'color' or 'preset'"));
+                    return Err(miette!(
+                        "Command {index}: material needs 'color' or 'preset'"
+                    ));
                 };
                 return Ok(eval_and_wrap("material", &script));
             }
@@ -672,7 +673,9 @@ pub fn execute_batch_command(
                 } else if let Some(c) = color {
                     gdscript::generate_material_multi(pattern, c)
                 } else {
-                    return Err(miette!("Command {index}: material needs 'color' or 'preset'"));
+                    return Err(miette!(
+                        "Command {index}: material needs 'color' or 'preset'"
+                    ));
                 };
                 return Ok(eval_and_wrap("material", &script));
             }
@@ -683,7 +686,9 @@ pub fn execute_batch_command(
             } else if let Some(c) = color {
                 gdscript::generate_material(part, c)
             } else {
-                return Err(miette!("Command {index}: material needs 'color' or 'preset'"));
+                return Err(miette!(
+                    "Command {index}: material needs 'color' or 'preset'"
+                ));
             };
             Ok(eval_and_wrap("material", &script))
         }
@@ -712,8 +717,7 @@ pub fn execute_batch_command(
                     &serde_json::json!({"group": group_name, "count": members.len()}),
                 ))
             } else {
-                let script =
-                    gdscript::generate_translate(cmd["part"].as_str(), x, y, z, relative);
+                let script = gdscript::generate_translate(cmd["part"].as_str(), x, y, z, relative);
                 let result = eval_and_sync("translate", &script, state);
                 state.save(root)?;
                 Ok(result)
@@ -762,8 +766,7 @@ pub fn execute_batch_command(
                     .ok_or_else(|| miette!("Command {index}: group '{group_name}' not found"))?
                     .clone();
                 for member in &members {
-                    let script =
-                        gdscript::generate_scale(Some(member.as_str()), sx, sy, sz, remap);
+                    let script = gdscript::generate_scale(Some(member.as_str()), sx, sy, sz, remap);
                     let result = run_eval(&script)?;
                     sync_transform_from_result(&result, state);
                 }
@@ -773,8 +776,7 @@ pub fn execute_batch_command(
                     &serde_json::json!({"group": group_name, "count": members.len()}),
                 ))
             } else {
-                let script =
-                    gdscript::generate_scale(cmd["part"].as_str(), sx, sy, sz, remap);
+                let script = gdscript::generate_scale(cmd["part"].as_str(), sx, sy, sz, remap);
                 let result = eval_and_sync("scale", &script, state);
                 state.save(root)?;
                 Ok(result)
@@ -791,8 +793,8 @@ pub fn execute_batch_command(
 
             let script = gdscript::generate_create(name, from);
             let result = run_eval(&script)?;
-            let parsed: serde_json::Value = serde_json::from_str(&result)
-                .unwrap_or_else(|_| serde_json::json!({}));
+            let parsed: serde_json::Value =
+                serde_json::from_str(&result).unwrap_or_else(|_| serde_json::json!({}));
 
             super::import_primitive_mesh(&parsed, state);
             state.save(root)?;
@@ -814,8 +816,8 @@ pub fn execute_batch_command(
 
             let script = gdscript::generate_add_part(name, from);
             let result = run_eval(&script)?;
-            let parsed: serde_json::Value = serde_json::from_str(&result)
-                .unwrap_or_else(|_| serde_json::json!({}));
+            let parsed: serde_json::Value =
+                serde_json::from_str(&result).unwrap_or_else(|_| serde_json::json!({}));
 
             super::import_primitive_mesh(&parsed, state);
             state.save(root)?;
@@ -847,9 +849,9 @@ pub fn execute_batch_command(
                     &serde_json::json!({"group": group_name, "count": members.len()}),
                 ))
             } else {
-                let name = cmd["name"]
-                    .as_str()
-                    .ok_or_else(|| miette!("Command {index}: remove-part needs 'name' or 'group'"))?;
+                let name = cmd["name"].as_str().ok_or_else(|| {
+                    miette!("Command {index}: remove-part needs 'name' or 'group'")
+                })?;
                 let script = gdscript::generate_remove_part(name);
                 let _ = run_eval(&script);
                 state.parts.shift_remove(name);
@@ -857,10 +859,7 @@ pub fn execute_batch_command(
                     state.active = state.parts.keys().next().cloned().unwrap_or_default();
                 }
                 state.save(root)?;
-                Ok(ok_result(
-                    "remove-part",
-                    &serde_json::json!({"name": name}),
-                ))
+                Ok(ok_result("remove-part", &serde_json::json!({"name": name})))
             }
         }
         "duplicate-part" => {
@@ -878,15 +877,12 @@ pub fn execute_batch_command(
                 .clone();
 
             let mut new_part = src_part;
-            let mirror_axis = cmd["mirror"]
-                .as_str()
-                .or_else(|| cmd["symmetric"].as_str());
+            let mirror_axis = cmd["mirror"].as_str().or_else(|| cmd["symmetric"].as_str());
 
             if let Some(axis_str) = mirror_axis {
                 let axis_idx = parse_axis(axis_str, index)?;
                 crate::core::mesh::mirror::mirror(&mut new_part.mesh, axis_idx);
-                new_part.transform.position[axis_idx] =
-                    -new_part.transform.position[axis_idx];
+                new_part.transform.position[axis_idx] = -new_part.transform.position[axis_idx];
             }
 
             state.parts.insert(dst.to_string(), new_part);
@@ -1007,10 +1003,7 @@ pub fn execute_batch_command(
             state.groups.remove(name);
             state.save(root)?;
 
-            Ok(ok_result(
-                "ungroup",
-                &serde_json::json!({"name": name}),
-            ))
+            Ok(ok_result("ungroup", &serde_json::json!({"name": name})))
         }
 
         "focus" => {
@@ -1177,10 +1170,7 @@ fn sync_transform_from_result(result_str: &str, state: &mut MeshState) {
     let Ok(parsed) = serde_json::from_str::<serde_json::Value>(result_str) else {
         return;
     };
-    let part_name = parsed["name"]
-        .as_str()
-        .unwrap_or(&state.active)
-        .to_string();
+    let part_name = parsed["name"].as_str().unwrap_or(&state.active).to_string();
     let Some(part) = state.parts.get_mut(&part_name) else {
         return;
     };
@@ -1208,11 +1198,7 @@ fn sync_transform_from_result(result_str: &str, state: &mut MeshState) {
 }
 
 /// Run a GDScript eval, sync transforms, and wrap the result.
-fn eval_and_sync(
-    cmd_type: &str,
-    script: &str,
-    state: &mut MeshState,
-) -> serde_json::Value {
+fn eval_and_sync(cmd_type: &str, script: &str, state: &mut MeshState) -> serde_json::Value {
     match run_eval(script) {
         Ok(result) => {
             sync_transform_from_result(&result, state);

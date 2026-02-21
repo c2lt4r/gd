@@ -6,8 +6,8 @@ use super::half_edge::HalfEdgeMesh;
 
 /// A spatial filter that tests positions against a threshold on one axis.
 pub struct SpatialFilter {
-    pub axis: usize,   // 0=x, 1=y, 2=z
-    pub op: Ordering,  // Greater or Less
+    pub axis: usize,  // 0=x, 1=y, 2=z
+    pub op: Ordering, // Greater or Less
     pub value: f64,
 }
 
@@ -35,7 +35,11 @@ pub fn parse_where(expr: &str) -> Result<SpatialFilter> {
         'x' | 'X' => 0,
         'y' | 'Y' => 1,
         'z' | 'Z' => 2,
-        _ => return Err(miette!("--where must start with x, y, or z (got '{axis_char}')")),
+        _ => {
+            return Err(miette!(
+                "--where must start with x, y, or z (got '{axis_char}')"
+            ));
+        }
     };
 
     let rest = &expr[1..];

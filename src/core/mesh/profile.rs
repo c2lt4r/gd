@@ -251,7 +251,10 @@ fn project_boundary_to_2d(indices: &[usize], positions: &[[f64; 3]]) -> Vec<[f64
     let len = (nx * nx + ny * ny + nz * nz).sqrt();
     if len < 1e-12 {
         // Degenerate — fall back to XY
-        return indices.iter().map(|&i| [positions[i][0], positions[i][1]]).collect();
+        return indices
+            .iter()
+            .map(|&i| [positions[i][0], positions[i][1]])
+            .collect();
     }
     let normal = [nx / len, ny / len, nz / len];
 

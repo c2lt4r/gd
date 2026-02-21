@@ -248,10 +248,7 @@ pub fn flip_caps(mesh: &mut HalfEdgeMesh, axis: usize) -> usize {
 /// Flip only faces whose centroid passes a spatial filter.
 ///
 /// Uses collect-then-rebuild to avoid corrupting twin relationships from partial flips.
-pub fn flip_where(
-    mesh: &mut HalfEdgeMesh,
-    filter: &super::spatial_filter::SpatialFilter,
-) -> usize {
+pub fn flip_where(mesh: &mut HalfEdgeMesh, filter: &super::spatial_filter::SpatialFilter) -> usize {
     let face_count = mesh.faces.len();
     if face_count == 0 {
         return 0;
