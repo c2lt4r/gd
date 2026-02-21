@@ -2,22 +2,26 @@ use std::collections::VecDeque;
 
 use super::half_edge::HalfEdgeMesh;
 
-/// Compute per-vertex normals by averaging incident face normals.
+/// Compute per-vertex normals using area-weighted face normals.
+///
+/// Accumulates the raw (unnormalized) Newell vectors from each face.
+/// This gives degenerate zero-area faces near-zero weight, preventing
+/// their fallback normals from corrupting neighbors' averaged normals.
 pub fn compute_vertex_normals(mesh: &HalfEdgeMesh) -> Vec<[f64; 3]> {
-    // First compute per-face normals
-    let face_normals: Vec<[f64; 3]> = (0..mesh.faces.len())
-        .map(|f| compute_face_normal(mesh, f))
+    // Compute raw (unnormalized) Newell vectors — magnitude ∝ face area
+    let raw_normals: Vec<[f64; 3]> = (0..mesh.faces.len())
+        .map(|f| compute_face_normal_raw(mesh, f))
         .collect();
 
-    // Average face normals per vertex
+    // Accumulate area-weighted normals per vertex
     let mut vertex_normals = vec![[0.0_f64; 3]; mesh.vertices.len()];
 
-    for (f, normal) in face_normals.iter().enumerate() {
+    for (f, raw) in raw_normals.iter().enumerate() {
         let verts = mesh.face_vertices(f);
         for &v in &verts {
-            vertex_normals[v][0] += normal[0];
-            vertex_normals[v][1] += normal[1];
-            vertex_normals[v][2] += normal[2];
+            vertex_normals[v][0] += raw[0];
+            vertex_normals[v][1] += raw[1];
+            vertex_normals[v][2] += raw[2];
         }
     }
 
@@ -34,6 +38,30 @@ pub fn compute_vertex_normals(mesh: &HalfEdgeMesh) -> Vec<[f64; 3]> {
     }
 
     vertex_normals
+}
+
+/// Compute the raw (unnormalized) Newell normal for a face.
+/// Magnitude is proportional to the face's area — degenerate faces get near-zero.
+fn compute_face_normal_raw(mesh: &HalfEdgeMesh, f: usize) -> [f64; 3] {
+    let verts = mesh.face_vertices(f);
+    if verts.len() < 3 {
+        return [0.0, 0.0, 0.0];
+    }
+
+    let mut nx = 0.0_f64;
+    let mut ny = 0.0_f64;
+    let mut nz = 0.0_f64;
+
+    let n = verts.len();
+    for i in 0..n {
+        let cur = mesh.vertices[verts[i]].position;
+        let next = mesh.vertices[verts[(i + 1) % n]].position;
+        nx += (cur[1] - next[1]) * (cur[2] + next[2]);
+        ny += (cur[2] - next[2]) * (cur[0] + next[0]);
+        nz += (cur[0] - next[0]) * (cur[1] + next[1]);
+    }
+
+    [nx, ny, nz]
 }
 
 /// Compute the face normal using Newell's method (robust for any polygon size).

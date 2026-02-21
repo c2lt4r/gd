@@ -3651,3 +3651,252 @@ fn bevel_tagged_filter() {
         "tagged bevel should produce geometry"
     );
 }
+
+#[test]
+fn cylinder_subtract_from_cube_watertight() {
+    // Reproduce the exact CLI scenario: cube at origin, cylinder rotated 90° on Z
+    // and translated to (0.5, 0, 0) — cuts a cylindrical hole through the cube.
+    use super::primitives;
+
+    let target = primitives::cube();
+
+    // Build cylinder, then apply Transform3D rotation + translation
+    let cyl = primitives::cylinder(32);
+    let t = super::Transform3D {
+        position: [0.5, 0.0, 0.0],
+        rotation: [0.0, 0.0, 90.0],
+        scale: [1.0; 3],
+    };
+    let mut tool = cyl.clone();
+    for v in &mut tool.vertices {
+        v.position = t.apply_point(v.position);
+    }
+
+    let result = boolean::boolean_op(
+        &target,
+        &tool,
+        [0.0, 0.0, 0.0],
+        boolean::BooleanMode::Subtract,
+    );
+
+    assert!(
+        !result.faces.is_empty(),
+        "cylinder subtract from cube should produce geometry"
+    );
+
+    let boundary = result.boundary_edges();
+    if !boundary.is_empty() {
+        eprintln!("=== {}/{} faces, {} verts, {} boundary half-edges ===",
+            result.face_count(), result.faces.len(), result.vertex_count(), boundary.len());
+        for &he_idx in &boundary {
+            let he = &result.half_edges[he_idx];
+            let v_to = he.vertex;
+            let twin = he.twin;
+            let v_from = if twin < result.half_edges.len() {
+                result.half_edges[twin].vertex
+            } else {
+                usize::MAX
+            };
+            let pa = if v_from < result.vertices.len() { result.vertices[v_from].position } else { [f64::NAN; 3] };
+            let pb = result.vertices[v_to].position;
+            eprintln!("  boundary he{he_idx}: v{v_from}({:.4},{:.4},{:.4}) -> v{v_to}({:.4},{:.4},{:.4})",
+                pa[0], pa[1], pa[2], pb[0], pb[1], pb[2]);
+        }
+    }
+    assert_eq!(
+        boundary.len(), 0,
+        "cylinder-from-cube boolean should be watertight (got {} boundary edges)", boundary.len()
+    );
+
+    // Note: centroid-based normal check doesn't work for concave meshes
+    // (cube with cylindrical hole). Skip for now — visual verification is
+    // the correct way to check normals on boolean results.
+
+    // Check quad dominance
+    let mut quads = 0;
+    let mut tris = 0;
+    for f in 0..result.face_count() {
+        match result.face_vertices(f).len() {
+            4 => quads += 1,
+            3 => tris += 1,
+            _ => {}
+        }
+    }
+    let total = result.face_count();
+    let quad_ratio = quads as f64 / total as f64;
+    assert!(
+        quad_ratio > 0.8,
+        "result should be quad-dominant (quads={quads}, tris={tris}, total={total}, ratio={quad_ratio:.2})"
+    );
+}
+
+#[test]
+fn cylinder_subtract_normals_diagnostic() {
+    use super::primitives;
+
+    let target = primitives::cube();
+    let cyl = primitives::cylinder(32);
+    let t = super::Transform3D {
+        position: [0.5, 0.0, 0.0],
+        rotation: [0.0, 0.0, 90.0],
+        scale: [1.0; 3],
+    };
+    let mut tool = cyl.clone();
+    for v in &mut tool.vertices {
+        v.position = t.apply_point(v.position);
+    }
+
+    let result = boolean::boolean_op(
+        &target, &tool, [0.0, 0.0, 0.0], boolean::BooleanMode::Subtract,
+    );
+    let (inverted, degenerate) = count_inverted_normals(&result);
+    eprintln!("cylinder-cube: degenerate={degenerate}, real inverted={inverted}/{}", result.face_count());
+    assert_eq!(inverted, 0, "non-degenerate inverted normals: {inverted} (degenerate: {degenerate})");
+}
+
+#[test]
+fn cube_subtract_normals_diagnostic() {
+    use super::primitives;
+
+    let target = primitives::cube();
+    let tool = primitives::cube();
+    let result = boolean::boolean_op(&target, &tool, [0.5, 0.0, 0.0], boolean::BooleanMode::Subtract);
+
+    assert_eq!(result.boundary_edges().len(), 0, "cube-on-cube should be watertight");
+    let (inverted, degenerate) = count_inverted_normals(&result);
+    eprintln!("cube-on-cube: {} faces, degenerate={degenerate}, inverted={inverted}", result.face_count());
+    assert_eq!(inverted, 0, "cube-on-cube should have 0 inverted normals");
+}
+
+/// Count non-degenerate faces with inverted normals using ray-casting.
+/// Returns (inverted_count, degenerate_count).
+fn count_inverted_normals(mesh: &super::half_edge::HalfEdgeMesh) -> (usize, usize) {
+    use super::normals::compute_face_normal;
+
+    // Build triangle soup for ray-casting
+    let mut tris: Vec<[[f64; 3]; 3]> = Vec::new();
+    for f in 0..mesh.faces.len() {
+        let verts = mesh.face_vertices(f);
+        if verts.len() < 3 { continue; }
+        let p0 = mesh.vertices[verts[0]].position;
+        for i in 1..verts.len() - 1 {
+            tris.push([p0, mesh.vertices[verts[i]].position, mesh.vertices[verts[i + 1]].position]);
+        }
+    }
+
+    let mut inverted = 0;
+    let mut degenerate = 0;
+    for f in 0..mesh.face_count() {
+        let verts = mesh.face_vertices(f);
+        if verts.len() < 3 { continue; }
+        let normal = compute_face_normal(mesh, f);
+
+        // Check if face is degenerate via Newell magnitude
+        let positions: Vec<[f64; 3]> = verts.iter().map(|&vi| mesh.vertices[vi].position).collect();
+        let mut nx = 0.0_f64;
+        let mut ny = 0.0_f64;
+        let mut nz = 0.0_f64;
+        for i in 0..positions.len() {
+            let (cur, next) = (positions[i], positions[(i + 1) % positions.len()]);
+            nx += (cur[1] - next[1]) * (cur[2] + next[2]);
+            ny += (cur[2] - next[2]) * (cur[0] + next[0]);
+            nz += (cur[0] - next[0]) * (cur[1] + next[1]);
+        }
+        if (nx * nx + ny * ny + nz * nz).sqrt() < 1e-10 {
+            degenerate += 1;
+            continue;
+        }
+
+        // Nudge centroid along normal — should end up OUTSIDE the mesh
+        let n = verts.len() as f64;
+        let mut c = [0.0; 3];
+        for &vi in &verts {
+            let p = mesh.vertices[vi].position;
+            c[0] += p[0]; c[1] += p[1]; c[2] += p[2];
+        }
+        let test_pt = [c[0] / n + normal[0] * 1e-4, c[1] / n + normal[1] * 1e-4, c[2] / n + normal[2] * 1e-4];
+
+        let dir = [1.0, 0.000_131, 0.000_071];
+        let hits: u32 = tris.iter()
+            .filter(|tri| ray_tri_test(test_pt, dir, tri[0], tri[1], tri[2]))
+            .count() as u32;
+        if hits % 2 == 1 { inverted += 1; }
+    }
+    (inverted, degenerate)
+}
+
+#[test]
+fn box_subtract_from_cylinder_diagnostic() {
+    use super::primitives;
+
+    let target = primitives::cylinder(32);
+    let tool = primitives::cube();
+    // Scale box to 0.6x0.4x1.2, translate to (0,0,0.5) — cuts into cylinder from +Z
+    let t = super::Transform3D {
+        position: [0.0, 0.0, 0.5],
+        rotation: [0.0, 0.0, 0.0],
+        scale: [0.6, 0.4, 1.2],
+    };
+    let mut tool = tool.clone();
+    for v in &mut tool.vertices {
+        v.position = t.apply_point(v.position);
+    }
+
+    let result = boolean::boolean_op(
+        &target, &tool, [0.0, 0.0, 0.0], boolean::BooleanMode::Subtract,
+    );
+
+    assert!(!result.faces.is_empty(), "box subtract from cylinder should produce geometry");
+    let boundary = result.boundary_edges();
+    eprintln!("box-from-cylinder: {} faces, {} verts, {} boundary edges",
+        result.face_count(), result.vertex_count(), boundary.len());
+
+    // Count quad/tri
+    let mut quads = 0;
+    let mut tris = 0;
+    for f in 0..result.face_count() {
+        match result.face_vertices(f).len() {
+            4 => quads += 1,
+            3 => tris += 1,
+            _ => {}
+        }
+    }
+    eprintln!("  quads={quads}, tris={tris}, ratio={:.2}", quads as f64 / result.face_count() as f64);
+
+    assert_eq!(boundary.len(), 0, "box-from-cylinder should be watertight (got {} boundary)", boundary.len());
+
+    let (inverted, degenerate) = count_inverted_normals(&result);
+    eprintln!("  degenerate={degenerate}, real inverted={inverted}");
+    assert_eq!(inverted, 0, "non-degenerate inverted normals: {inverted} (degenerate: {degenerate})");
+}
+
+/// Möller-Trumbore ray-triangle intersection for test use.
+fn ray_tri_test(
+    origin: [f64; 3],
+    dir: [f64; 3],
+    v0: [f64; 3],
+    v1: [f64; 3],
+    v2: [f64; 3],
+) -> bool {
+    use super::topology::{cross, dot, sub};
+    let edge1 = sub(v1, v0);
+    let edge2 = sub(v2, v0);
+    let h = cross(dir, edge2);
+    let a = dot(edge1, h);
+    if a.abs() < 1e-10 {
+        return false;
+    }
+    let f = 1.0 / a;
+    let s = sub(origin, v0);
+    let u = f * dot(s, h);
+    if !(0.0..=1.0).contains(&u) {
+        return false;
+    }
+    let q = cross(s, edge1);
+    let v = f * dot(dir, q);
+    if v < 0.0 || u + v > 1.0 {
+        return false;
+    }
+    let t = f * dot(edge2, q);
+    t > 1e-10
+}

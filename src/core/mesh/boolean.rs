@@ -740,7 +740,19 @@ pub fn boolean_op(
     // Merge coplanar fragments back into larger polygons. This collapses
     // spinal edges from plane-based splitting (e.g. a cube face split
     // into dozens of fragments gets restored to a single quad).
-    let dissolved = topology::dissolve_coplanar_edges(&raw);
+    //
+    // Dissolving can drop T-junction vertices that are on internal edges
+    // of merged coplanar groups but are required by adjacent non-coplanar
+    // faces. If dissolve introduces boundary edges (broken watertightness),
+    // fall back to the raw mesh which is guaranteed watertight.
+    let dissolved = {
+        let candidate = topology::dissolve_coplanar_edges(&raw);
+        if candidate.boundary_edges().is_empty() {
+            candidate
+        } else {
+            raw.clone()
+        }
+    };
 
     // ── Quadrangulate n-gons ────────────────────────────────────────
     // Convert boundary n-gons (5+ vertices) to quad ring topology for

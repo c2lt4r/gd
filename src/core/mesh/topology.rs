@@ -166,10 +166,76 @@ pub fn weld_position(positions: &mut Vec<[f64; 3]>, p: [f64; 3]) -> usize {
 
 // ── Edge dissolution ─────────────────────────────────────────────────
 
+/// Compute the raw Newell normal magnitude for a polygon (proportional to area).
+fn newell_magnitude(verts: &[[f64; 3]]) -> f64 {
+    let n = verts.len();
+    let mut nx = 0.0_f64;
+    let mut ny = 0.0_f64;
+    let mut nz = 0.0_f64;
+    for i in 0..n {
+        let cur = verts[i];
+        let next = verts[(i + 1) % n];
+        nx += (cur[1] - next[1]) * (cur[2] + next[2]);
+        ny += (cur[2] - next[2]) * (cur[0] + next[0]);
+        nz += (cur[0] - next[0]) * (cur[1] + next[1]);
+    }
+    (nx * nx + ny * ny + nz * nz).sqrt()
+}
+
+/// Merge coplanar adjacent faces via union-find, AND merge degenerate
+/// (near-zero area) faces with any neighbor unconditionally.
+fn merge_coplanar_and_degenerate(
+    welded_faces: &[Vec<usize>],
+    welded_positions: &[[f64; 3]],
+    face_planes: &[Plane],
+    edge_to_face: &HashMap<(usize, usize), usize>,
+    parent: &mut [usize],
+) {
+    // Pass 1: merge coplanar adjacent faces
+    for (fi, wface) in welded_faces.iter().enumerate() {
+        let n = wface.len();
+        for i in 0..n {
+            let from = wface[i];
+            let to = wface[(i + 1) % n];
+            if let Some(&fj) = edge_to_face.get(&(to, from))
+                && fi != fj
+                && planes_coplanar(&face_planes[fi], &face_planes[fj])
+            {
+                uf_union(parent, fi, fj);
+            }
+        }
+    }
+
+    // Pass 2: merge degenerate (near-zero area) faces with any neighbor.
+    // These have unreliable normals so planes_coplanar fails. Safe because
+    // the degenerate face contributes essentially zero area.
+    for (fi, wface) in welded_faces.iter().enumerate() {
+        if wface.len() < 3 {
+            continue;
+        }
+        let verts: Vec<[f64; 3]> = wface.iter().map(|&wi| welded_positions[wi]).collect();
+        if newell_magnitude(&verts) >= 1e-10 {
+            continue;
+        }
+        let n = wface.len();
+        for i in 0..n {
+            let from = wface[i];
+            let to = wface[(i + 1) % n];
+            if let Some(&fj) = edge_to_face.get(&(to, from))
+                && fi != fj
+            {
+                uf_union(parent, fi, fj);
+                break;
+            }
+        }
+    }
+}
+
 /// Dissolve edges between coplanar adjacent faces, merging them into larger polygons.
 ///
 /// Returns a new mesh with fewer faces. Only dissolves where BOTH adjacent faces
-/// lie on the same plane (within epsilon).
+/// lie on the same plane (within epsilon). Degenerate faces (near-zero area) are
+/// unconditionally merged with a neighbor to prevent fallback normals.
 pub fn dissolve_coplanar_edges(mesh: &HalfEdgeMesh) -> HalfEdgeMesh {
     let nf = mesh.faces.len();
     if nf == 0 {
@@ -219,21 +285,11 @@ pub fn dissolve_coplanar_edges(mesh: &HalfEdgeMesh) -> HalfEdgeMesh {
         })
         .collect();
 
-    // Step 4: union-find to group coplanar adjacent faces
+    // Step 4: union-find to group coplanar + degenerate adjacent faces
     let mut parent: Vec<usize> = (0..nf).collect();
-    for (fi, wface) in welded_faces.iter().enumerate() {
-        let n = wface.len();
-        for i in 0..n {
-            let from = wface[i];
-            let to = wface[(i + 1) % n];
-            if let Some(&fj) = edge_to_face.get(&(to, from))
-                && fi != fj
-                && planes_coplanar(&face_planes[fi], &face_planes[fj])
-            {
-                uf_union(&mut parent, fi, fj);
-            }
-        }
-    }
+    merge_coplanar_and_degenerate(
+        &welded_faces, &welded_positions, &face_planes, &edge_to_face, &mut parent,
+    );
 
     // Step 5: group faces by union-find root
     let mut groups: HashMap<usize, Vec<usize>> = HashMap::new();
@@ -474,6 +530,9 @@ pub fn tag_edges_from_positions(
     }
     let mut tags = vec![0u32; mesh.half_edges.len()];
     for (he_idx, he) in mesh.half_edges.iter().enumerate() {
+        if he.prev >= mesh.half_edges.len() {
+            continue; // skip boundary half-edges with unlinked prev
+        }
         let p_to = mesh.vertices[he.vertex].position;
         let p_from = mesh.vertices[mesh.half_edges[he.prev].vertex].position;
         let key = quantized_edge_key(p_from, p_to);
