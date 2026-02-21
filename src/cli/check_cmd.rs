@@ -391,20 +391,26 @@ fn check_variant_node(node: Node, source: &str, errors: &mut Vec<StructuralError
             .is_some_and(|t| t.kind() == "inferred_type");
         if is_inferred
             && let Some(value) = node.child_by_field_name("value")
-            && is_variant_producing_expr(&value, source)
         {
-            let var_name = node
-                .child_by_field_name("name")
-                .and_then(|n| n.utf8_text(source.as_bytes()).ok())
-                .unwrap_or("?");
-            let pos = node.start_position();
-            errors.push(StructuralError {
-                line: pos.row as u32 + 1,
-                column: pos.column as u32 + 1,
-                message: format!(
-                    "`:=` infers Variant for `{var_name}` — use an explicit type annotation",
-                ),
-            });
+            let should_flag = if is_variant_producing_expr(&value, source) {
+                true
+            } else {
+                is_unresolvable_property_access(&value, source)
+            };
+            if should_flag {
+                let var_name = node
+                    .child_by_field_name("name")
+                    .and_then(|n| n.utf8_text(source.as_bytes()).ok())
+                    .unwrap_or("?");
+                let pos = node.start_position();
+                errors.push(StructuralError {
+                    line: pos.row as u32 + 1,
+                    column: pos.column as u32 + 1,
+                    message: format!(
+                        "`:=` infers Variant for `{var_name}` — use an explicit type annotation",
+                    ),
+                });
+            }
         }
     }
 
@@ -417,6 +423,118 @@ fn check_variant_node(node: Node, source: &str, errors: &mut Vec<StructuralError
             }
         }
     }
+}
+
+/// Check if a value expression is a property access on a variable typed as a Godot
+/// Object-derived class — e.g. `event.physical_keycode` where `event: InputEvent`.
+/// Property access on base classes resolves to Variant in Godot's type system.
+fn is_unresolvable_property_access(value: &Node, source: &str) -> bool {
+    // Only check `attribute` nodes (property access), not method calls
+    if value.kind() != "attribute" {
+        return false;
+    }
+
+    // If this attribute has an `attribute_call` child, it's a method call — skip
+    let mut cursor = value.walk();
+    for child in value.children(&mut cursor) {
+        if child.kind() == "attribute_call" {
+            return false;
+        }
+    }
+
+    // Get the object part (first named child)
+    let Some(obj) = value.named_child(0) else {
+        return false;
+    };
+    if obj.kind() != "identifier" {
+        return false;
+    }
+    let Ok(obj_name) = obj.utf8_text(source.as_bytes()) else {
+        return false;
+    };
+
+    // Skip `self.property`
+    if obj_name == "self" {
+        return false;
+    }
+
+    // Find the receiver's declared type — only flag if it's a ClassDB class
+    let Some(receiver_type) = find_receiver_type(value, obj_name, source) else {
+        return false;
+    };
+    crate::class_db::class_exists(&receiver_type)
+}
+
+/// Walk up the AST from `node` to find the enclosing function, then look up
+/// the type annotation for a parameter or local variable named `name`.
+fn find_receiver_type(node: &Node, name: &str, source: &str) -> Option<String> {
+    let bytes = source.as_bytes();
+
+    // Walk up to find the enclosing function
+    let mut current = *node;
+    let func = loop {
+        let parent = current.parent()?;
+        if parent.kind() == "function_definition" || parent.kind() == "constructor_definition" {
+            break parent;
+        }
+        current = parent;
+    };
+
+    // Check function parameters — typed_parameter / typed_default_parameter
+    // These don't have a `name` field; the identifier is the first named child.
+    if let Some(params) = func.child_by_field_name("parameters") {
+        let mut cursor = params.walk();
+        for param in params.named_children(&mut cursor) {
+            let param_name = match param.kind() {
+                "typed_parameter" | "typed_default_parameter" => {
+                    first_identifier_text(&param, bytes)
+                }
+                _ => None,
+            };
+            if let Some(pname) = param_name
+                && pname == name
+                && let Some(type_node) = param.child_by_field_name("type")
+                && type_node.kind() != "inferred_type"
+                && let Ok(type_text) = type_node.utf8_text(bytes)
+            {
+                return Some(type_text.to_string());
+            }
+        }
+    }
+
+    // Check local variable declarations in the function body before this node
+    if let Some(body) = func.child_by_field_name("body") {
+        let target_row = node.start_position().row;
+        let mut cursor = body.walk();
+        for child in body.children(&mut cursor) {
+            if child.start_position().row >= target_row {
+                break;
+            }
+            if child.kind() == "variable_statement"
+                && let Some(var_name) = child.child_by_field_name("name")
+                && let Ok(vname) = var_name.utf8_text(bytes)
+                && vname == name
+                && let Some(type_node) = child.child_by_field_name("type")
+                && type_node.kind() != "inferred_type"
+                && let Ok(type_text) = type_node.utf8_text(bytes)
+            {
+                return Some(type_text.to_string());
+            }
+        }
+    }
+
+    None
+}
+
+/// Extract the first `identifier` child's text from a node.
+fn first_identifier_text<'a>(node: &Node, source: &'a [u8]) -> Option<&'a str> {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == "identifier" {
+            return child.utf8_text(source).ok();
+        }
+    }
+    None
 }
 
 /// Check if an expression is known to produce Variant (losing type information).
@@ -441,6 +559,10 @@ fn is_variant_producing_expr(node: &Node, source: &str) -> bool {
         // Binary/comparison operators with a Variant operand produce Variant
         // e.g., dict["key"] == "switch", dict["key"] + 1
         "binary_operator" | "comparison_operator" => {
+            // `in` / `not in` return Variant in Godot's static type system
+            if is_in_operator(node, source) {
+                return true;
+            }
             node.named_child(0)
                 .is_some_and(|c| is_variant_producing_expr(&c, source))
                 || node
@@ -470,6 +592,21 @@ fn is_variant_producing_expr(node: &Node, source: &str) -> bool {
         }
         _ => false,
     }
+}
+
+/// Check if a binary/comparison operator uses `in` or `not in`.
+/// These return Variant in Godot's static type system.
+fn is_in_operator(node: &Node, source: &str) -> bool {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if !child.is_named()
+            && let Ok(text) = child.utf8_text(source.as_bytes())
+            && (text == "in" || text == "not")
+        {
+            return true;
+        }
+    }
+    false
 }
 
 // ---------------------------------------------------------------------------
@@ -844,6 +981,106 @@ mod tests {
     fn region_markers_valid_at_top_level() {
         let source =
             "extends Node\n\n#region Signals\nsignal foo\n#endregion\n\nfunc _ready():\n\tpass\n";
+        assert!(structural_errors(source).is_empty());
+    }
+
+    // -- `in` / `not in` variant inference --
+
+    #[test]
+    fn variant_infer_from_in_operator() {
+        let source = "\
+var ACTIONS := [\"move_left\", \"move_right\"]
+func f(action: String):
+\tvar is_move := action in ACTIONS
+";
+        let errs = structural_errors(source);
+        assert_eq!(errs.len(), 1);
+        assert!(errs[0].message.contains("Variant"));
+        assert!(errs[0].message.contains("is_move"));
+    }
+
+    #[test]
+    fn variant_infer_from_not_in() {
+        let source = "\
+var ACTIONS := [\"move_left\", \"move_right\"]
+func f(action: String):
+\tvar missing := action not in ACTIONS
+";
+        let errs = structural_errors(source);
+        assert_eq!(errs.len(), 1);
+        assert!(errs[0].message.contains("Variant"));
+        assert!(errs[0].message.contains("missing"));
+    }
+
+    #[test]
+    fn no_variant_from_in_with_explicit_type() {
+        let source = "\
+var ACTIONS := [\"move_left\", \"move_right\"]
+func f(action: String):
+\tvar is_move: bool = action in ACTIONS
+";
+        assert!(structural_errors(source).is_empty());
+    }
+
+    // -- Unresolvable property access variant inference --
+
+    #[test]
+    fn variant_infer_from_base_class_property() {
+        let source = "\
+func handle(event: InputEvent):
+\tvar keycode := event.physical_keycode
+";
+        let errs = structural_errors(source);
+        assert_eq!(errs.len(), 1);
+        assert!(errs[0].message.contains("Variant"));
+        assert!(errs[0].message.contains("keycode"));
+    }
+
+    #[test]
+    fn no_variant_self_property() {
+        let source = "\
+var speed := 10.0
+func f():
+\tvar s := self.speed
+";
+        assert!(structural_errors(source).is_empty());
+    }
+
+    #[test]
+    fn no_variant_explicit_type_on_property() {
+        let source = "\
+func handle(event: InputEvent):
+\tvar keycode: int = event.physical_keycode
+";
+        assert!(structural_errors(source).is_empty());
+    }
+
+    #[test]
+    fn no_variant_from_known_type_property() {
+        // Vector2.x is a known float — should not be flagged
+        let source = "\
+func f(pos: Vector2):
+\tvar x := pos.x
+";
+        assert!(structural_errors(source).is_empty());
+    }
+
+    #[test]
+    fn no_variant_from_method_call() {
+        // Method calls should not trigger the property access check
+        let source = "\
+func f(node: Node):
+\tvar name := node.get_name()
+";
+        assert!(structural_errors(source).is_empty());
+    }
+
+    #[test]
+    fn no_variant_from_class_constant() {
+        let source = "\
+func f():
+\tvar zero := Vector2.ZERO
+";
         assert!(structural_errors(source).is_empty());
     }
 

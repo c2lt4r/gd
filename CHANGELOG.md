@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.22] - 2026-02-21
+
+### Fixed
+- **`gd check`: detect `:=` with `in`/`not in` operator** — `var x := action in arr` now correctly flags as Variant inference error. Godot rejects this at parse time because `in`/`not in` return Variant in its static type system.
+- **`gd check`: detect `:=` on unresolvable property access** — `var keycode := event.physical_keycode` (where `event` is typed as a base class like `InputEvent`) now flags as Variant inference error. Only triggers when the receiver is typed as a ClassDB class; builtin types (`Vector2.x`), `self`, and method calls are excluded.
+- **`look-at-before-tree`: detect `global_*` property assignments** — setting `global_position`, `global_rotation`, `global_rotation_degrees`, `global_transform`, or `global_basis` on a node before `add_child()` now triggers a warning. Previously the rule only caught method calls.
+
 ## [0.2.21] - 2026-02-21
 
 ### Added

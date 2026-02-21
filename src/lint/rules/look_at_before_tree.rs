@@ -88,6 +88,27 @@ fn scan_statements(
             continue;
         }
 
+        // Check for global_* property assignment on unattached variables
+        // Tree-sitter: `expression_statement > assignment` or `assignment_statement`
+        if let Some((obj, prop)) = extract_global_property_assignment(&child, source)
+            && unattached.contains_key(&obj)
+            && !attached.contains(&obj)
+        {
+            diags.push(LintDiagnostic {
+                rule: "look-at-before-tree",
+                message: format!(
+                    "`{obj}.{prop}` set before `{obj}` is added to the scene tree"
+                ),
+                severity: Severity::Warning,
+                line: child.start_position().row,
+                column: child.start_position().column,
+                end_column: Some(child.end_position().column),
+                fix: None,
+                context_lines: None,
+            });
+            continue;
+        }
+
         // x = SomeClass.new() (reassignment)
         if child.kind() == "assignment_statement" {
             if let Some((var_name, _line)) = extract_new_reassignment(&child, source) {
@@ -308,6 +329,56 @@ fn extract_first_arg(node: &Node, source: &str) -> Option<String> {
     None
 }
 
+/// Global properties that are silently wrong when set before the node is in the tree.
+const GLOBAL_PROPERTIES: &[&str] = &[
+    "global_position",
+    "global_rotation",
+    "global_rotation_degrees",
+    "global_transform",
+    "global_basis",
+];
+
+/// Extract `(object_name, property_name)` from assignments like `obj.global_position = ...`.
+/// Handles both `assignment_statement` and `expression_statement > assignment`.
+fn extract_global_property_assignment(node: &Node, source: &str) -> Option<(String, String)> {
+    let assign = if node.kind() == "expression_statement" {
+        // Look for `assignment` or `augmented_assignment` inside
+        let mut cursor = node.walk();
+        let mut found = None;
+        for child in node.children(&mut cursor) {
+            if child.kind() == "assignment" || child.kind() == "augmented_assignment" {
+                found = Some(child);
+                break;
+            }
+        }
+        found?
+    } else if node.kind() == "assignment_statement"
+        || node.kind() == "augmented_assignment_statement"
+    {
+        *node
+    } else {
+        return None;
+    };
+
+    // LHS is the first named child
+    let lhs = assign.named_child(0)?;
+    if lhs.kind() != "attribute" {
+        return None;
+    }
+    let obj = lhs.named_child(0)?;
+    if obj.kind() != "identifier" {
+        return None;
+    }
+    let obj_name = obj.utf8_text(source.as_bytes()).ok()?;
+    let prop = lhs.named_child(1)?;
+    let prop_name = prop.utf8_text(source.as_bytes()).ok()?;
+    if GLOBAL_PROPERTIES.contains(&prop_name) {
+        Some((obj_name.to_string(), prop_name.to_string()))
+    } else {
+        None
+    }
+}
+
 /// Extract (object_name, method_name) from `obj.method(...)` call.
 fn extract_method_call(node: &Node, source: &str) -> Option<(String, String)> {
     if node.kind() != "attribute" {
@@ -438,6 +509,68 @@ func setup():
 \tvar y := \"hello\"
 ";
         assert!(check(source).is_empty());
+    }
+
+    #[test]
+    fn detects_global_position_before_add_child() {
+        let source = "\
+func setup():
+\tvar zone := Node3D.new()
+\tzone.global_position = Vector3(100, 5, 0)
+\tadd_child(zone)
+";
+        let diags = check(source);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("global_position"));
+        assert!(diags[0].message.contains("before"));
+    }
+
+    #[test]
+    fn no_warning_local_position() {
+        let source = "\
+func setup():
+\tvar zone := Node3D.new()
+\tzone.position = Vector3(100, 5, 0)
+\tadd_child(zone)
+";
+        assert!(check(source).is_empty());
+    }
+
+    #[test]
+    fn no_warning_global_after_add_child() {
+        let source = "\
+func setup():
+\tvar zone := Node3D.new()
+\tadd_child(zone)
+\tzone.global_position = Vector3(100, 5, 0)
+";
+        assert!(check(source).is_empty());
+    }
+
+    #[test]
+    fn detects_global_rotation() {
+        let source = "\
+func setup():
+\tvar node := Node3D.new()
+\tnode.global_rotation = Vector3(0, 1.5, 0)
+\tadd_child(node)
+";
+        let diags = check(source);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("global_rotation"));
+    }
+
+    #[test]
+    fn detects_global_transform() {
+        let source = "\
+func setup():
+\tvar node := Node3D.new()
+\tnode.global_transform = Transform3D.IDENTITY
+\tadd_child(node)
+";
+        let diags = check(source);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("global_transform"));
     }
 
     #[test]

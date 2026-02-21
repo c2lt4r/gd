@@ -652,7 +652,7 @@ severity = "warning"       # re-enable despite maintenance = "off"
 | `infer-unknown-member` | type_safety | Detect `:=` inference from unknown engine class members | warning | |
 | `integer-division` | suspicious | Warn on integer literal division truncation | warning | |
 | `long-function` | complexity | Warn on functions exceeding line threshold | warning | |
-| `look-at-before-tree` | godot | Detect tree-dependent calls before `add_child()` | warning | |
+| `look-at-before-tree` | godot | Detect tree-dependent calls and `global_*` assignments before `add_child()` | warning | |
 | `loop-variable-name` | style | Enforce snake_case loop variables | warning | yes |
 | `magic-number` | type_safety | Flag unexplained numeric literals | warning | |
 | `max-file-lines` | complexity | Enforce maximum file length | warning | |
