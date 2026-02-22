@@ -551,7 +551,37 @@ fn is_variant_producing_expr(node: &Node, source: &str) -> bool {
                     && let Some(name_node) = child.named_child(0)
                     && let Ok(method_name) = name_node.utf8_text(source.as_bytes())
                 {
-                    return matches!(method_name, "get" | "get_or_add" | "values" | "keys");
+                    // Dict methods that always return Variant
+                    if matches!(method_name, "get" | "get_or_add" | "values" | "keys") {
+                        return true;
+                    }
+
+                    // load(...).instantiate() — load() returns Resource which has
+                    // no instantiate(); Godot rejects this. preload() is fine.
+                    if let Some(obj) = node.named_child(0)
+                        && obj.kind() == "call"
+                        && let Some(func) = obj
+                            .child_by_field_name("function")
+                            .or_else(|| obj.named_child(0))
+                        && let Ok(func_name) = func.utf8_text(source.as_bytes())
+                        && func_name == "load"
+                    {
+                        return true;
+                    }
+
+                    // ClassDB method returning Variant on a typed receiver
+                    if let Some(obj) = node.named_child(0)
+                        && obj.kind() == "identifier"
+                        && let Ok(obj_name) = obj.utf8_text(source.as_bytes())
+                        && obj_name != "self"
+                        && let Some(receiver_type) = find_receiver_type(node, obj_name, source)
+                        && crate::class_db::method_return_type(&receiver_type, method_name)
+                            == Some("Variant")
+                    {
+                        return true;
+                    }
+
+                    return false;
                 }
             }
             false
@@ -1080,6 +1110,61 @@ func f(node: Node):
         let source = "\
 func f():
 \tvar zero := Vector2.ZERO
+";
+        assert!(structural_errors(source).is_empty());
+    }
+
+    // -- load().instantiate() variant inference --
+
+    #[test]
+    fn variant_infer_from_load_instantiate() {
+        let source = "\
+func f():
+\tvar popup := load(\"res://popup.tscn\").instantiate()
+";
+        let errs = structural_errors(source);
+        assert_eq!(errs.len(), 1);
+        assert!(errs[0].message.contains("Variant"));
+        assert!(errs[0].message.contains("popup"));
+    }
+
+    #[test]
+    fn no_variant_from_preload_instantiate() {
+        let source = "\
+func f():
+\tvar popup := preload(\"res://popup.tscn\").instantiate()
+";
+        assert!(structural_errors(source).is_empty());
+    }
+
+    // -- ClassDB Variant-return method inference --
+
+    #[test]
+    fn variant_infer_from_classdb_variant_method() {
+        let source = "\
+func f(node: Node):
+\tvar meta := node.get_meta(\"key\")
+";
+        let errs = structural_errors(source);
+        assert_eq!(errs.len(), 1);
+        assert!(errs[0].message.contains("Variant"));
+        assert!(errs[0].message.contains("meta"));
+    }
+
+    #[test]
+    fn no_variant_from_classdb_concrete_method() {
+        let source = "\
+func f(node: Node):
+\tvar child := node.get_child(0)
+";
+        assert!(structural_errors(source).is_empty());
+    }
+
+    #[test]
+    fn no_variant_from_untyped_receiver_method() {
+        let source = "\
+func f(node):
+\tvar meta := node.get_meta(\"key\")
 ";
         assert!(structural_errors(source).is_empty());
     }
