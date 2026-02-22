@@ -236,6 +236,7 @@ fn merge_coplanar_and_degenerate(
 /// Returns a new mesh with fewer faces. Only dissolves where BOTH adjacent faces
 /// lie on the same plane (within epsilon). Degenerate faces (near-zero area) are
 /// unconditionally merged with a neighbor to prevent fallback normals.
+#[allow(clippy::too_many_lines)]
 pub fn dissolve_coplanar_edges(mesh: &HalfEdgeMesh) -> HalfEdgeMesh {
     let nf = mesh.faces.len();
     if nf == 0 {
@@ -321,18 +322,42 @@ pub fn dissolve_coplanar_edges(mesh: &HalfEdgeMesh) -> HalfEdgeMesh {
             &edge_to_face,
         );
 
-        // If tracing produces multiple loops, the group has interior holes
-        // (e.g. a boolean cut through a coplanar face).  We can't represent
-        // a polygon with holes, so fall back to the original un-merged faces.
-        if boundary_polys.len() > 1 {
-            for &fi in group_faces {
-                let wface = &welded_faces[fi];
-                if wface.len() >= 3 {
-                    out_faces.push(wface.clone());
+        match boundary_polys.len() {
+            // Exactly 2 loops: annular region (e.g. boolean hole through coplanar face).
+            // Bridge the outer and inner loops with quads/tris.
+            2 => {
+                let group_normal = face_planes[group_faces[0]].normal;
+                let bridged = bridge_annular_loops(
+                    &boundary_polys[0],
+                    &boundary_polys[1],
+                    &welded_positions,
+                    group_normal,
+                );
+                if bridged.is_empty() {
+                    // Guard: fallback if bridging fails
+                    for &fi in group_faces {
+                        let wface = &welded_faces[fi];
+                        if wface.len() >= 3 {
+                            out_faces.push(wface.clone());
+                        }
+                    }
+                } else {
+                    out_faces.extend(bridged);
                 }
             }
-        } else {
-            out_faces.extend(boundary_polys);
+            // 3+ loops: can't bridge, keep original fragments
+            3.. => {
+                for &fi in group_faces {
+                    let wface = &welded_faces[fi];
+                    if wface.len() >= 3 {
+                        out_faces.push(wface.clone());
+                    }
+                }
+            }
+            // Single loop: emit the dissolved polygon directly
+            _ => {
+                out_faces.extend(boundary_polys);
+            }
         }
     }
 
@@ -401,6 +426,143 @@ fn trace_dissolution_boundary(
         }
     }
     result_polys
+}
+
+// ── Annular quad bridging ────────────────────────────────────────────
+
+/// Compute signed area of a 3D polygon projected onto the plane defined by `normal`.
+/// Positive = CCW when viewed from the direction `normal` points.
+fn signed_area_projected(loop_verts: &[usize], positions: &[[f64; 3]], normal: [f64; 3]) -> f64 {
+    // Choose the two axes with the largest normal projection for a stable 2D projection
+    let abs_n = [normal[0].abs(), normal[1].abs(), normal[2].abs()];
+    let (ax_u, ax_v) = if abs_n[0] >= abs_n[1] && abs_n[0] >= abs_n[2] {
+        (1, 2) // drop X
+    } else if abs_n[1] >= abs_n[2] {
+        (0, 2) // drop Y
+    } else {
+        (0, 1) // drop Z
+    };
+
+    let n = loop_verts.len();
+    let mut area = 0.0;
+    for i in 0..n {
+        let j = (i + 1) % n;
+        let pi = positions[loop_verts[i]];
+        let pj = positions[loop_verts[j]];
+        area += pi[ax_u] * pj[ax_v] - pj[ax_u] * pi[ax_v];
+    }
+
+    // Sign depends on whether the dominant normal component is positive
+    let dominant = if abs_n[0] >= abs_n[1] && abs_n[0] >= abs_n[2] {
+        normal[0]
+    } else if abs_n[1] >= abs_n[2] {
+        normal[1]
+    } else {
+        normal[2]
+    };
+    if dominant < 0.0 { -area } else { area }
+}
+
+/// Bridge two boundary loops of an annular (hole-in-face) region with quads and tris.
+///
+/// `loop_a` and `loop_b` are vertex index loops from `trace_dissolution_boundary`.
+/// Returns face index lists (all CCW relative to `group_normal`), or empty on failure.
+fn bridge_annular_loops(
+    loop_a: &[usize],
+    loop_b: &[usize],
+    positions: &[[f64; 3]],
+    group_normal: [f64; 3],
+) -> Vec<Vec<usize>> {
+    if loop_a.len() < 3 || loop_b.len() < 3 {
+        return Vec::new();
+    }
+
+    // 1. Determine outer vs inner by projected area magnitude
+    let area_a = signed_area_projected(loop_a, positions, group_normal);
+    let area_b = signed_area_projected(loop_b, positions, group_normal);
+
+    let (outer_raw, inner_raw) = if area_a.abs() >= area_b.abs() {
+        (loop_a, loop_b)
+    } else {
+        (loop_b, loop_a)
+    };
+
+    let n_outer = outer_raw.len();
+    let n_inner = inner_raw.len();
+
+    // 2. Normalize winding: outer should be CCW (+area), inner CW (-area)
+    // relative to group_normal. The boundary tracer gives outer=CCW, inner=CW.
+    let outer_area = signed_area_projected(outer_raw, positions, group_normal);
+    let inner_area = signed_area_projected(inner_raw, positions, group_normal);
+
+    let outer: Vec<usize> = if outer_area < 0.0 {
+        outer_raw.iter().rev().copied().collect()
+    } else {
+        outer_raw.to_vec()
+    };
+    // Inner should walk CW (negative area) for correct bridge winding
+    let inner_ccw: Vec<usize> = if inner_area > 0.0 {
+        inner_raw.iter().rev().copied().collect()
+    } else {
+        inner_raw.to_vec()
+    };
+
+    // 3. Find alignment: rotate outer to start at vertex nearest inner[0]
+    let inner_start_pos = positions[inner_ccw[0]];
+    let best_outer_start = (0..n_outer)
+        .min_by(|&a, &b| {
+            let da = dist2(positions[outer[a]], inner_start_pos);
+            let db = dist2(positions[outer[b]], inner_start_pos);
+            da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .unwrap_or(0);
+
+    let outer_rotated: Vec<usize> = outer[best_outer_start..]
+        .iter()
+        .chain(outer[..best_outer_start].iter())
+        .copied()
+        .collect();
+
+    // 4. Parametric zip walk: distribute outer steps across inner steps
+    let mut faces: Vec<Vec<usize>> = Vec::with_capacity(n_outer);
+    let mut o_idx = 0_usize; // current position in outer loop
+
+    for j in 0..n_inner {
+        let j_next = (j + 1) % n_inner;
+        // How many outer verts to consume for this inner step
+        let target = ((j + 1) * n_outer + n_inner / 2) / n_inner;
+        let k = target.saturating_sub(o_idx).max(1);
+
+        // Emit (k-1) triangles fanning from inner[j], then 1 quad
+        for step in 0..k {
+            let o_cur = o_idx % n_outer;
+            let o_next = (o_idx + 1) % n_outer;
+            if step < k - 1 {
+                // Triangle: outer[o_cur], outer[o_next], inner[j]
+                faces.push(vec![
+                    outer_rotated[o_cur],
+                    outer_rotated[o_next],
+                    inner_ccw[j],
+                ]);
+            } else {
+                // Quad: outer[o_cur], outer[o_next], inner[j_next], inner[j]
+                faces.push(vec![
+                    outer_rotated[o_cur],
+                    outer_rotated[o_next],
+                    inner_ccw[j_next],
+                    inner_ccw[j],
+                ]);
+            }
+            o_idx += 1;
+        }
+    }
+
+    // Verify we consumed all outer vertices
+    if o_idx != n_outer {
+        return Vec::new();
+    }
+
+    faces
 }
 
 // ── Pole detection ───────────────────────────────────────────────────

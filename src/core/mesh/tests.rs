@@ -4470,3 +4470,219 @@ fn boolean_cylinder_hole_is_open() {
         }
     }
 }
+
+// ── Annular quad bridging tests ─────────────────────────────────────
+
+#[test]
+fn bridge_annular_loops_equal_counts() {
+    // 4 outer + 4 inner (both squares), coplanar annular quads.
+    // Dissolve → bridge → should produce 4 faces (all tris/quads).
+    // Note: this is an open surface, so boundary edges are expected on the rims.
+    use super::topology;
+
+    let positions: Vec<[f64; 3]> = vec![
+        // Outer square (CCW when viewed from +Y)
+        [-1.0, 0.0, -1.0], // 0
+        [ 1.0, 0.0, -1.0], // 1
+        [ 1.0, 0.0,  1.0], // 2
+        [-1.0, 0.0,  1.0], // 3
+        // Inner square
+        [-0.5, 0.0, -0.5], // 4
+        [ 0.5, 0.0, -0.5], // 5
+        [ 0.5, 0.0,  0.5], // 6
+        [-0.5, 0.0,  0.5], // 7
+    ];
+
+    let faces: Vec<&[usize]> = vec![
+        &[0, 1, 5, 4], // bottom strip
+        &[1, 2, 6, 5], // right strip
+        &[2, 3, 7, 6], // top strip
+        &[3, 0, 4, 7], // left strip
+    ];
+    let mesh = HalfEdgeMesh::from_polygons(&positions, &faces);
+    assert_eq!(mesh.faces.len(), 4);
+
+    let dissolved = topology::dissolve_coplanar_edges(&mesh);
+
+    // Should produce 4 faces (equal outer/inner → all quads)
+    assert_eq!(
+        dissolved.faces.len(), 4,
+        "equal-count bridge should produce 4 faces, got {}",
+        dissolved.faces.len()
+    );
+
+    // All faces should be tris or quads
+    for f in 0..dissolved.faces.len() {
+        let verts = dissolved.face_vertices(f);
+        assert!(
+            verts.len() == 3 || verts.len() == 4,
+            "bridged face should be tri or quad, got {} verts",
+            verts.len()
+        );
+    }
+}
+
+#[test]
+fn bridge_annular_loops_2to1_ratio() {
+    // 8 outer + 4 inner → bridge should produce exactly 8 faces
+    use std::f64::consts::PI;
+    use super::topology;
+
+    let mut positions: Vec<[f64; 3]> = Vec::new();
+
+    // Outer: 8 vertices on radius 1.0, Y=0 plane
+    for i in 0..8 {
+        let angle = 2.0 * PI * (i as f64) / 8.0;
+        positions.push([angle.cos(), 0.0, angle.sin()]);
+    }
+    // Inner: 4 vertices on radius 0.5
+    for i in 0..4 {
+        let angle = 2.0 * PI * (i as f64) / 4.0;
+        positions.push([0.5 * angle.cos(), 0.0, 0.5 * angle.sin()]);
+    }
+
+    // Build 8 bridging faces (2:1 ratio = alternating tris and quads)
+    let faces: Vec<&[usize]> = vec![
+        &[0, 1, 8],        // tri
+        &[1, 2, 9, 8],     // quad
+        &[2, 3, 9],        // tri
+        &[3, 4, 10, 9],    // quad
+        &[4, 5, 10],       // tri
+        &[5, 6, 11, 10],   // quad
+        &[6, 7, 11],       // tri
+        &[7, 0, 8, 11],    // quad
+    ];
+
+    let mesh = HalfEdgeMesh::from_polygons(&positions, &faces);
+    assert_eq!(mesh.faces.len(), 8);
+
+    let dissolved = topology::dissolve_coplanar_edges(&mesh);
+
+    // Should produce exactly 8 faces (bridge reconnects the coplanar group)
+    assert_eq!(
+        dissolved.faces.len(), 8,
+        "2:1 bridge should produce 8 faces, got {}",
+        dissolved.faces.len()
+    );
+
+    // All faces should be tris or quads
+    for f in 0..dissolved.faces.len() {
+        let verts = dissolved.face_vertices(f);
+        assert!(
+            verts.len() == 3 || verts.len() == 4,
+            "face {f} has {} verts, expected 3 or 4",
+            verts.len()
+        );
+    }
+}
+
+#[test]
+fn bridge_annular_loops_realistic() {
+    // 36 outer + 16 inner (realistic cylinder-through-cube ratios)
+    // → should produce 36 faces = 16 quads + 20 tris
+    use std::f64::consts::PI;
+    use super::topology;
+
+    let mut positions: Vec<[f64; 3]> = Vec::new();
+
+    let n_outer = 36;
+    for i in 0..n_outer {
+        let angle = 2.0 * PI * (i as f64) / n_outer as f64;
+        positions.push([2.0 * angle.cos(), 0.0, 2.0 * angle.sin()]);
+    }
+    let n_inner = 16;
+    for i in 0..n_inner {
+        let angle = 2.0 * PI * (i as f64) / n_inner as f64;
+        positions.push([angle.cos(), 0.0, angle.sin()]);
+    }
+
+    // Build bridging faces manually matching the expected distribution
+    let mut face_vecs: Vec<Vec<usize>> = Vec::new();
+    let mut o: usize = 0;
+    for j in 0..n_inner {
+        let j_next = (j + 1) % n_inner;
+        let i_j = n_outer + j;
+        let i_jn = n_outer + j_next;
+        let target: usize = ((j + 1) * n_outer + n_inner / 2) / n_inner;
+        let k = target.saturating_sub(o).max(1);
+        for step in 0..k {
+            let o_cur = o % n_outer;
+            let o_next = (o + 1) % n_outer;
+            if step < k - 1 {
+                face_vecs.push(vec![o_cur, o_next, i_j]);
+            } else {
+                face_vecs.push(vec![o_cur, o_next, i_jn, i_j]);
+            }
+            o += 1;
+        }
+    }
+
+    assert_eq!(face_vecs.len(), n_outer, "should produce {n_outer} faces");
+
+    let faces: Vec<&[usize]> = face_vecs.iter().map(Vec::as_slice).collect();
+    let mesh = HalfEdgeMesh::from_polygons(&positions, &faces);
+
+    let dissolved = topology::dissolve_coplanar_edges(&mesh);
+
+    assert_eq!(
+        dissolved.faces.len(), n_outer,
+        "realistic bridge should produce {n_outer} faces, got {}",
+        dissolved.faces.len()
+    );
+}
+
+#[test]
+fn cylinder_subtract_annular_bridge() {
+    // Cube minus cylinder(32): verify annular bridging produces watertight result.
+    // 32-segment cylinder creates annular coplanar groups that trigger bridging.
+    use super::primitives;
+
+    let target = primitives::cube();
+    let cyl = primitives::cylinder(32);
+    let t = super::Transform3D {
+        position: [0.5, 0.0, 0.0],
+        rotation: [0.0, 0.0, 90.0],
+        scale: [1.0; 3],
+    };
+    let mut tool = cyl;
+    for v in &mut tool.vertices {
+        v.position = t.apply_point(v.position);
+    }
+
+    let result = boolean::boolean_op(
+        &target,
+        &tool,
+        [0.0, 0.0, 0.0],
+        boolean::BooleanMode::Subtract,
+    );
+
+    assert!(
+        !result.faces.is_empty(),
+        "cylinder subtract should produce geometry"
+    );
+
+    // With annular bridging, hole faces should have clean quad/tri strips
+    // instead of starburst fragments. Verify the result is reasonable.
+    let total_faces = result.face_count();
+    eprintln!("cylinder_subtract_annular_bridge: {total_faces} faces");
+
+    // Watertight check
+    let boundary = result.boundary_edges();
+    assert_eq!(
+        boundary.len(), 0,
+        "cylinder subtract with annular bridge should be watertight (got {} boundary edges)",
+        boundary.len()
+    );
+
+    // Quad/tri ratio diagnostic
+    let mut quads = 0;
+    let mut tris = 0;
+    for f in 0..result.face_count() {
+        match result.face_vertices(f).len() {
+            4 => quads += 1,
+            3 => tris += 1,
+            _ => {}
+        }
+    }
+    eprintln!("  quads={quads}, tris={tris}, total={total_faces}");
+}

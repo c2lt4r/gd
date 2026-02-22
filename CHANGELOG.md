@@ -6,6 +6,9 @@
 - **`gd lsp move-file`** — move/rename a file and update all references (preload, load, ext_resource, project.godot autoloads) across the project. Supports `--dry-run` for preview.
 - **`gd lsp create-file --force`** — overwrite an existing file intentionally (bypasses the existence check).
 
+### Improved
+- **Boolean annular quad bridging** — when a boolean cut creates a hole through a coplanar face (e.g. cylinder through cube), the annular region (outer square + inner circle) is now bridged with structured quad/tri strips instead of keeping ~112 starburst fragments. Produces clean radial edge flow suitable for bevel and subdivision.
+
 ### Fixed
 - **`gd resource set-property`: multi-line value replacement** — replacing a property with a multi-line value (arrays, dictionaries) now correctly removes all continuation lines instead of leaving orphaned fragments.
 - **`gd scene set-property`: duplicate property on blank-line separator** — when a blank line separated the `[node]` header from existing properties, set-property inserted a duplicate instead of replacing. Fixed ordering so replacement always takes priority.

@@ -16,7 +16,7 @@ Built with [tree-sitter-gdscript](https://github.com/PrestonKnopp/tree-sitter-gd
 - **Scene management** &mdash; create scenes, add/remove nodes, set properties, wire connections, attach/detach scripts &mdash; plus validate `.tscn`/`.tres` files and visualize scene hierarchies
 - **Debug** a running Godot game via Godot's binary debug protocol &mdash; breakpoints, stepping, variable inspection, expression evaluation, live scene tree, node inspection, game speed control, and hot-reload
 - **Godot LSP proxy** &mdash; forward hover, completion, and go-to-definition to Godot's built-in LSP when the editor is running
-- **3D mesh editing** &mdash; procedural mesh construction from Rust-native primitives, 2D profiles, and transforms with watertight boolean operations, quad-dominant topology, multi-part assembly, materials, and batch execution
+- **3D mesh editing** *(experimental)* &mdash; procedural mesh construction from Rust-native primitives, 2D profiles, and transforms with watertight boolean operations, quad-dominant topology, multi-part assembly, materials, and batch execution
 - **Analyze** your project with dependency graphs, class trees, and code statistics
 
 ## Installation
@@ -82,7 +82,7 @@ gd run
 | `gd env` | Show environment info (gd version, Godot version/path, OS, project root) |
 | `gd man` | Generate man page |
 | `gd upgrade` | Self-update to latest release |
-| `gd mesh` | Procedural 3D mesh editing (46 subcommands: profiles, extrude, revolve, boolean, inset, solidify, bevel, array, multi-part, materials, shading, batch, replay) |
+| `gd mesh` | *(experimental)* Procedural 3D mesh editing (46 subcommands: profiles, extrude, revolve, boolean, inset, solidify, bevel, array, multi-part, materials, shading, batch, replay) |
 | `gd llm` | Print AI-readable command reference (like llms.txt) |
 
 ### Formatter
@@ -491,7 +491,9 @@ gd debug mouse-hover --node "MenuItem"
 
 All automation commands support `--format json` for structured output.
 
-### 3D Mesh Editing
+### 3D Mesh Editing *(experimental)*
+
+> **Note:** The mesh API is experimental and under active development. Commands, flags, and output formats may change between versions. Use it if you want to test and provide feedback, but don't depend on it for production workflows yet.
 
 Build 3D meshes from 2D profiles, primitives, and transforms — all from the terminal. Powered by a Rust-side half-edge mesh engine (21 core modules). Designed for AI agent workflows with JSON output and batch execution.
 
