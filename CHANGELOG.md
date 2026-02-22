@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.2.22-dev2] - 2026-02-22
+
+### Improved
+- **Bevel spherical arc interpolation** — for circular profile (default 0.5), arc intermediates between beveled edges now use spherical interpolation on the bevel sphere instead of quadratic bezier. Eliminates the ~57% radius shortfall that caused concave pinch artifacts at corners. All cap vertices now sit at consistent distance from the original vertex.
+- **Bevel corner patches** — when 3+ beveled edges meet at a vertex, cap fill now uses structured K-fold symmetric kite quads (S=2) or concentric sphere-projected rings (S≥3) instead of flat-centroid ring inset. Center vertex is projected onto the bevel sphere for smooth geometry.
+
 ## [0.2.22-dev1] - 2026-02-22
 
 ### Added

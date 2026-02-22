@@ -196,6 +196,12 @@ pub fn bevel_with_profile(
             let clamped = profile.clamp(0.0, 1.0);
             let va_orig = mesh.vertices[va].position;
             let vb_orig = mesh.vertices[vb].position;
+            // For circular profile (0.5), use spherical interpolation on the
+            // bevel sphere centered at the original vertex.  This places arc
+            // intermediates ON the sphere instead of inside it (bezier with
+            // control at the original vertex only reaches ~43% of radius for
+            // 90-degree cube corners).
+            let use_sphere = (clamped - 0.5).abs() < 0.001;
             let mid_a = midpoint(positions[a1], positions[a2]);
             let mid_b = midpoint(positions[b1], positions[b2]);
             let va_pos = lerp_pos(va_orig, mid_a, (clamped - 0.5) * 2.0);
@@ -206,11 +212,21 @@ pub fn bevel_with_profile(
             let mut va_mids = Vec::new();
             let mut vb_mids = Vec::new();
 
+            // Cache endpoint positions before pushing intermediates
+            let a1_pos = positions[a1];
+            let a2_pos = positions[a2];
+            let b1_pos = positions[b1];
+            let b2_pos = positions[b2];
+
             for s in 1..=segments {
                 let t = f64::from(s) / f64::from(segments);
                 let next_a = if s < segments {
                     let idx = positions.len();
-                    positions.push(bezier_quad(positions[a1], va_pos, positions[a2], t));
+                    if use_sphere {
+                        positions.push(sphere_interp(a1_pos, a2_pos, va_orig, t));
+                    } else {
+                        positions.push(bezier_quad(a1_pos, va_pos, a2_pos, t));
+                    }
                     va_mids.push(idx);
                     idx
                 } else {
@@ -218,7 +234,11 @@ pub fn bevel_with_profile(
                 };
                 let next_b = if s < segments {
                     let idx = positions.len();
-                    positions.push(bezier_quad(positions[b1], vb_pos, positions[b2], t));
+                    if use_sphere {
+                        positions.push(sphere_interp(b1_pos, b2_pos, vb_orig, t));
+                    } else {
+                        positions.push(bezier_quad(b1_pos, vb_pos, b2_pos, t));
+                    }
                     vb_mids.push(idx);
                     idx
                 } else {
@@ -376,13 +396,34 @@ pub fn bevel_with_profile(
             })
         };
 
-        // Concentric ring quad-grid fill for caps (same as boolean/extrude caps).
-        // Small caps (tri/quad) are emitted directly — too few vertices for ring inset.
+        // Count distinct inset vertices (BoundVerts) in the cap.
+        let k_count = cap
+            .iter()
+            .enumerate()
+            .filter(|&(idx, _)| idx % (segments.max(1) as usize) == 0)
+            .count();
+        let is_structured = k_count >= 3
+            && segments >= 2
+            && cap.len() == k_count * (segments as usize)
+            && cap.iter().all(|&vi| vi != v);
+
         if cap.len() < 5 {
             if flip {
                 cap.reverse();
             }
             poly_faces.push(cap);
+        } else if is_structured
+            && fill_corner_patch(
+                &cap,
+                k_count,
+                segments as usize,
+                mesh.vertices[v].position,
+                &mut positions,
+                &mut poly_faces,
+                flip,
+            )
+        {
+            // Structured corner patch fill succeeded
         } else if super::profile::build_quad_cap_3d(&cap, &mut positions, &mut poly_faces, flip)
             .is_none()
         {
@@ -404,6 +445,134 @@ pub fn bevel_with_profile(
 
     let face_slices: Vec<&[usize]> = poly_faces.iter().map(Vec::as_slice).collect();
     HalfEdgeMesh::from_polygons(&positions, &face_slices)
+}
+
+// ── Corner patch fill ────────────────────────────────────────────────
+
+/// Fill a structured bevel corner cap with sphere-projected vertices.
+///
+/// For S=2: center vertex on the bevel sphere + K kite quads.
+/// For S>=3: concentric sphere-projected rings + inner grid fill.
+///
+/// `cap` — ordered boundary vertices (K*S total, K arcs of S each).
+/// `k` — number of beveled edges at this vertex (BoundVerts).
+/// `s` — segment count.
+/// `v_pos` — original vertex position (sphere center).
+fn fill_corner_patch(
+    cap: &[usize],
+    k: usize,
+    s: usize,
+    v_pos: [f64; 3],
+    positions: &mut Vec<[f64; 3]>,
+    faces: &mut Vec<Vec<usize>>,
+    flip: bool,
+) -> bool {
+    let n = cap.len();
+    if n < 6 || k < 3 || n != k * s {
+        return false;
+    }
+
+    // Compute average bevel sphere radius from cap vertex distances
+    let avg_r = {
+        let sum: f64 = cap.iter().map(|&vi| length(sub(positions[vi], v_pos))).sum();
+        sum / n as f64
+    };
+    if avg_r < 1e-12 {
+        return false;
+    }
+
+    // Average direction from original vertex to cap → sphere center direction
+    let mut avg_dir = [0.0; 3];
+    for &vi in cap {
+        let d = sub(positions[vi], v_pos);
+        avg_dir[0] += d[0];
+        avg_dir[1] += d[1];
+        avg_dir[2] += d[2];
+    }
+    let dir_len = length(avg_dir);
+    if dir_len < 1e-12 {
+        return false;
+    }
+
+    let center_pos = [
+        v_pos[0] + avg_dir[0] / dir_len * avg_r,
+        v_pos[1] + avg_dir[1] / dir_len * avg_r,
+        v_pos[2] + avg_dir[2] / dir_len * avg_r,
+    ];
+
+    if s == 2 {
+        // S=2: single center vertex on sphere + K kite quads
+        let center_idx = positions.len();
+        positions.push(center_pos);
+
+        for j in 0..k {
+            let bv = cap[j * 2];
+            let mid_fwd = cap[j * 2 + 1];
+            let mid_bwd = cap[((j * 2) + k * 2 - 1) % (k * 2)];
+            if flip {
+                faces.push(vec![mid_bwd, center_idx, mid_fwd, bv]);
+            } else {
+                faces.push(vec![bv, mid_fwd, center_idx, mid_bwd]);
+            }
+        }
+        return true;
+    }
+
+    // S >= 3: concentric rings projected onto the bevel sphere.
+    // Same topology as build_quad_cap_3d but with sphere projection
+    // to eliminate the flat-centroid pinch artifact.
+    let rings = (n / 8).clamp(1, 3);
+    let mut prev: Vec<usize> = cap.to_vec();
+
+    for r in 0..rings {
+        let t = 0.15 * (r + 1) as f64 / (rings + 1) as f64;
+        let ring_base = positions.len();
+        for &vi in cap {
+            let p = positions[vi];
+            let interp = lerp_pos(p, center_pos, t);
+            positions.push(sphere_project(interp, v_pos, avg_r));
+        }
+        emit_quad_ring_slice(&prev, ring_base, n, flip, faces);
+        prev = (ring_base..ring_base + n).collect();
+    }
+
+    // Innermost ring
+    let inner_base = positions.len();
+    for &vi in cap {
+        let p = positions[vi];
+        let interp = lerp_pos(p, center_pos, 0.15);
+        positions.push(sphere_project(interp, v_pos, avg_r));
+    }
+    emit_quad_ring_slice(&prev, inner_base, n, flip, faces);
+
+    // Grid fill innermost ring
+    let inner_indices: Vec<usize> = (inner_base..inner_base + n).collect();
+    super::profile::grid_fill_ring(&inner_indices, faces, flip);
+
+    true
+}
+
+/// Emit a ring of quads connecting `prev` vertex indices to a new ring
+/// starting at `ring_base`.  (Local version that takes a slice.)
+fn emit_quad_ring_slice(
+    prev: &[usize],
+    ring_base: usize,
+    n: usize,
+    flip: bool,
+    faces: &mut Vec<Vec<usize>>,
+) {
+    for i in 0..n {
+        let j = (i + 1) % n;
+        let oi = prev[i];
+        let oj = prev[j];
+        let ii = ring_base + i;
+        let ij = ring_base + j;
+        if flip {
+            faces.push(vec![oi, ii, ij, oj]);
+        } else {
+            faces.push(vec![oi, oj, ij, ii]);
+        }
+    }
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -436,6 +605,46 @@ fn vertex_face_ring(mesh: &HalfEdgeMesh, v: usize) -> Vec<(usize, usize)> {
         }
     }
     ring
+}
+
+/// Spherical interpolation of two points on a sphere centered at `center`.
+/// Returns a point on the sphere at parameter `t` (0 → a, 1 → b).
+fn sphere_interp(a: [f64; 3], b: [f64; 3], center: [f64; 3], t: f64) -> [f64; 3] {
+    let da = sub(a, center);
+    let db = sub(b, center);
+    let ra = length(da);
+    let rb = length(db);
+    if ra < 1e-12 || rb < 1e-12 {
+        return lerp_pos(a, b, t);
+    }
+    let r = ra * (1.0 - t) + rb * t;
+    // Normalized linear interpolation of directions (nlerp)
+    let dx = da[0] * (1.0 - t) + db[0] * t;
+    let dy = da[1] * (1.0 - t) + db[1] * t;
+    let dz = da[2] * (1.0 - t) + db[2] * t;
+    let d_len = (dx * dx + dy * dy + dz * dz).sqrt();
+    if d_len < 1e-12 {
+        return lerp_pos(a, b, t);
+    }
+    [
+        center[0] + dx / d_len * r,
+        center[1] + dy / d_len * r,
+        center[2] + dz / d_len * r,
+    ]
+}
+
+/// Project a point onto the sphere centered at `center` with radius `r`.
+fn sphere_project(p: [f64; 3], center: [f64; 3], r: f64) -> [f64; 3] {
+    let d = sub(p, center);
+    let d_len = length(d);
+    if d_len < 1e-12 {
+        return p;
+    }
+    [
+        center[0] + d[0] / d_len * r,
+        center[1] + d[1] / d_len * r,
+        center[2] + d[2] / d_len * r,
+    ]
 }
 
 fn midpoint(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {

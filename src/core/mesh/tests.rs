@@ -4686,3 +4686,44 @@ fn cylinder_subtract_annular_bridge() {
     }
     eprintln!("  quads={quads}, tris={tris}, total={total_faces}");
 }
+
+// ── Bevel cap quality tests ──────────────────────────────────────────
+
+#[test]
+fn bevel_cube_all_segments_watertight() {
+    // Cube bevel --edges all at segments 2, 3, 4: all must be watertight,
+    // quad-dominant, no n-gons.
+    use super::primitives;
+
+    let cube = primitives::cube();
+
+    for seg in [2, 3, 4] {
+        let beveled = bevel::bevel(&cube, 0.05, seg, "all");
+        let boundary = count_boundary_edges(&beveled);
+        let (tris, quads, ngons) = face_type_counts(&beveled);
+
+        eprintln!(
+            "bevel_cube seg={seg}: {} faces ({quads} quads, {tris} tris, {ngons} ngons), {boundary} boundary",
+            beveled.face_count(),
+        );
+
+        assert_eq!(ngons, 0, "no N-gons at seg={seg}");
+        assert_eq!(boundary, 0, "watertight at seg={seg}");
+        assert!(quads > tris, "quad-dominant at seg={seg}: {quads} quads vs {tris} tris");
+    }
+}
+
+#[test]
+fn bevel_cube_partial_depth_watertight() {
+    // Bevel with --edges depth on a cube: not all edges are beveled.
+    // Must still be watertight with no n-gons.
+    use super::primitives;
+
+    let cube = primitives::cube();
+    let beveled = bevel::bevel(&cube, 0.05, 2, "depth");
+    let boundary = count_boundary_edges(&beveled);
+    let (_tris, _quads, ngons) = face_type_counts(&beveled);
+
+    assert_eq!(ngons, 0, "no N-gons");
+    assert_eq!(boundary, 0, "watertight even with partial bevel");
+}
