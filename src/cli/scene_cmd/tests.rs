@@ -436,8 +436,7 @@ fn set_property_replaces_multiline_value() {
                   [node name=\"Player\" type=\"CharacterBody2D\" parent=\".\"]\n\
                   data = [\n  \"a\",\n  \"b\"\n]\n\
                   speed = 100\n";
-    let result =
-        set_property::apply_set_property(source, "Player", "data", "[\"new\"]").unwrap();
+    let result = set_property::apply_set_property(source, "Player", "data", "[\"new\"]").unwrap();
     assert!(result.contains("data = [\"new\"]"));
     assert!(!result.contains("\"a\""));
     assert!(!result.contains("\"b\""));

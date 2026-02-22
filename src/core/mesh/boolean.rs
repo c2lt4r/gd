@@ -855,4 +855,3 @@ fn offset_mesh(mesh: &HalfEdgeMesh, offset: [f64; 3]) -> HalfEdgeMesh {
     }
     result
 }
-

@@ -96,9 +96,7 @@ fn scan_statements(
         {
             diags.push(LintDiagnostic {
                 rule: "look-at-before-tree",
-                message: format!(
-                    "`{obj}.{prop}` set before `{obj}` is added to the scene tree"
-                ),
+                message: format!("`{obj}.{prop}` set before `{obj}` is added to the scene tree"),
                 severity: Severity::Warning,
                 line: child.start_position().row,
                 column: child.start_position().column,

@@ -474,7 +474,10 @@ fn fill_corner_patch(
 
     // Compute average bevel sphere radius from cap vertex distances
     let avg_r = {
-        let sum: f64 = cap.iter().map(|&vi| length(sub(positions[vi], v_pos))).sum();
+        let sum: f64 = cap
+            .iter()
+            .map(|&vi| length(sub(positions[vi], v_pos)))
+            .sum();
         sum / n as f64
     };
     if avg_r < 1e-12 {

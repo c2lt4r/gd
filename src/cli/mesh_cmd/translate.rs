@@ -45,7 +45,14 @@ pub fn cmd_translate(args: &TranslateArgs) -> Result<()> {
         let target = [ref_center[0] + x, ref_center[1] + y, ref_center[2] + z];
         let part = state.resolve_part_mut(Some(&part_name))?;
         let center = aabb_center(part);
-        translate_verts(part, [target[0] - center[0], target[1] - center[1], target[2] - center[2]]);
+        translate_verts(
+            part,
+            [
+                target[0] - center[0],
+                target[1] - center[1],
+                target[2] - center[2],
+            ],
+        );
     } else {
         let part = state.resolve_part_mut(Some(&part_name))?;
         let center = aabb_center(part);

@@ -234,9 +234,7 @@ pub fn method_signature(class: &str, method: &str) -> Option<MethodSignature> {
     let mut current = class;
     loop {
         let key = format!("{current}.{method}");
-        if let Ok(i) =
-            generated::METHOD_SIGNATURES.binary_search_by_key(&key.as_str(), |s| s.key)
-        {
+        if let Ok(i) = generated::METHOD_SIGNATURES.binary_search_by_key(&key.as_str(), |s| s.key) {
             let sig = &generated::METHOD_SIGNATURES[i];
             return Some(MethodSignature {
                 return_type: sig.return_type,

@@ -722,10 +722,7 @@ pub fn execute_batch_command(
                     &serde_json::json!({"group": group_name, "count": members.len()}),
                 ))
             } else {
-                let part_name = cmd["part"]
-                    .as_str()
-                    .unwrap_or(&state.active)
-                    .to_string();
+                let part_name = cmd["part"].as_str().unwrap_or(&state.active).to_string();
                 let part = state.resolve_part_mut(Some(&part_name))?;
                 bake_translate(part, x, y, z, relative);
                 state.save(root)?;
@@ -773,10 +770,7 @@ pub fn execute_batch_command(
                     &serde_json::json!({"group": group_name, "count": members.len()}),
                 ))
             } else {
-                let part_name = cmd["part"]
-                    .as_str()
-                    .unwrap_or(&state.active)
-                    .to_string();
+                let part_name = cmd["part"].as_str().unwrap_or(&state.active).to_string();
                 let part = state.resolve_part_mut(Some(&part_name))?;
                 for v in &mut part.mesh.vertices {
                     v.position = transform.apply_point(v.position);
@@ -841,10 +835,7 @@ pub fn execute_batch_command(
                     &serde_json::json!({"group": group_name, "count": members.len()}),
                 ))
             } else {
-                let part_name = cmd["part"]
-                    .as_str()
-                    .unwrap_or(&state.active)
-                    .to_string();
+                let part_name = cmd["part"].as_str().unwrap_or(&state.active).to_string();
                 let part = state.resolve_part_mut(Some(&part_name))?;
                 for v in &mut part.mesh.vertices {
                     v.position = transform.apply_point(v.position);

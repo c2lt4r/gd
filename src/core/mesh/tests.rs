@@ -4292,7 +4292,10 @@ fn bevel_after_boolean_no_degenerate_faces() {
             bool_degen += 1;
         }
     }
-    eprintln!("boolean degenerate faces: {bool_degen}/{}", cut.face_count());
+    eprintln!(
+        "boolean degenerate faces: {bool_degen}/{}",
+        cut.face_count()
+    );
     assert!(
         bool_degen < cut.face_count() / 10,
         "too many boolean degenerate faces: {bool_degen}/{}",
@@ -4408,9 +4411,7 @@ fn boolean_cylinder_hole_is_open() {
         v.position = rotate_t.apply_point(v.position);
     }
 
-    let cut = boolean::boolean_op(
-        &target, &tool, [0.0; 3], boolean::BooleanMode::Subtract,
-    );
+    let cut = boolean::boolean_op(&target, &tool, [0.0; 3], boolean::BooleanMode::Subtract);
 
     // Count faces on the cube surface (X≈±0.5) whose centroid is inside
     // the cylinder radius — these would cap the hole if present.
@@ -4421,15 +4422,25 @@ fn boolean_cylinder_hole_is_open() {
         let (mut cx, mut cy, mut cz) = (0.0, 0.0, 0.0);
         for &vi in &verts {
             let p = cut.vertices[vi].position;
-            cx += p[0]; cy += p[1]; cz += p[2];
+            cx += p[0];
+            cy += p[1];
+            cz += p[2];
         }
-        cx /= n; cy /= n; cz /= n;
+        cx /= n;
+        cy /= n;
+        cz /= n;
         if (cx.abs() - 0.5).abs() < 0.02 && (cy * cy + cz * cz).sqrt() < 0.14 {
             capping += 1;
         }
     }
-    assert_eq!(capping, 0, "hole should be open, not capped ({capping} capping faces)");
-    assert!(cut.boundary_edges().is_empty(), "result should be watertight");
+    assert_eq!(
+        capping, 0,
+        "hole should be open, not capped ({capping} capping faces)"
+    );
+    assert!(
+        cut.boundary_edges().is_empty(),
+        "result should be watertight"
+    );
 
     // Count edges between coplanar faces (these should NOT be beveled)
     let mut coplanar_edges = 0;
@@ -4443,7 +4454,7 @@ fn boolean_cylinder_hole_is_open() {
         };
         let n1 = super::normals::compute_face_normal(&cut, f1);
         let n2 = super::normals::compute_face_normal(&cut, f2);
-        let d = n1[0]*n2[0] + n1[1]*n2[1] + n1[2]*n2[2];
+        let d = n1[0] * n2[0] + n1[1] * n2[1] + n1[2] * n2[2];
         if d >= 0.7 {
             coplanar_edges += 1;
         } else {
@@ -4454,17 +4465,27 @@ fn boolean_cylinder_hole_is_open() {
 
     // Check vertex valences at cube corners (should be ~3, not 20+)
     let corners = [
-        [-0.5, -0.5, -0.5], [-0.5, -0.5, 0.5], [-0.5, 0.5, -0.5], [-0.5, 0.5, 0.5],
-        [0.5, -0.5, -0.5], [0.5, -0.5, 0.5], [0.5, 0.5, -0.5], [0.5, 0.5, 0.5],
+        [-0.5, -0.5, -0.5],
+        [-0.5, -0.5, 0.5],
+        [-0.5, 0.5, -0.5],
+        [-0.5, 0.5, 0.5],
+        [0.5, -0.5, -0.5],
+        [0.5, -0.5, 0.5],
+        [0.5, 0.5, -0.5],
+        [0.5, 0.5, 0.5],
     ];
     for corner in &corners {
         for vi in 0..cut.vertex_count() {
             let p = cut.vertices[vi].position;
-            let d2 = (p[0]-corner[0]).powi(2) + (p[1]-corner[1]).powi(2) + (p[2]-corner[2]).powi(2);
+            let d2 = (p[0] - corner[0]).powi(2)
+                + (p[1] - corner[1]).powi(2)
+                + (p[2] - corner[2]).powi(2);
             if d2 < 0.001 {
                 let val = super::topology::vertex_valence(&cut, vi);
-                eprintln!("  corner ({:.1},{:.1},{:.1}): vertex {vi}, valence {val}",
-                    corner[0], corner[1], corner[2]);
+                eprintln!(
+                    "  corner ({:.1},{:.1},{:.1}): vertex {vi}, valence {val}",
+                    corner[0], corner[1], corner[2]
+                );
                 break;
             }
         }
@@ -4483,14 +4504,14 @@ fn bridge_annular_loops_equal_counts() {
     let positions: Vec<[f64; 3]> = vec![
         // Outer square (CCW when viewed from +Y)
         [-1.0, 0.0, -1.0], // 0
-        [ 1.0, 0.0, -1.0], // 1
-        [ 1.0, 0.0,  1.0], // 2
-        [-1.0, 0.0,  1.0], // 3
+        [1.0, 0.0, -1.0],  // 1
+        [1.0, 0.0, 1.0],   // 2
+        [-1.0, 0.0, 1.0],  // 3
         // Inner square
         [-0.5, 0.0, -0.5], // 4
-        [ 0.5, 0.0, -0.5], // 5
-        [ 0.5, 0.0,  0.5], // 6
-        [-0.5, 0.0,  0.5], // 7
+        [0.5, 0.0, -0.5],  // 5
+        [0.5, 0.0, 0.5],   // 6
+        [-0.5, 0.0, 0.5],  // 7
     ];
 
     let faces: Vec<&[usize]> = vec![
@@ -4506,7 +4527,8 @@ fn bridge_annular_loops_equal_counts() {
 
     // Should produce 4 faces (equal outer/inner → all quads)
     assert_eq!(
-        dissolved.faces.len(), 4,
+        dissolved.faces.len(),
+        4,
         "equal-count bridge should produce 4 faces, got {}",
         dissolved.faces.len()
     );
@@ -4525,8 +4547,8 @@ fn bridge_annular_loops_equal_counts() {
 #[test]
 fn bridge_annular_loops_2to1_ratio() {
     // 8 outer + 4 inner → bridge should produce exactly 8 faces
-    use std::f64::consts::PI;
     use super::topology;
+    use std::f64::consts::PI;
 
     let mut positions: Vec<[f64; 3]> = Vec::new();
 
@@ -4543,14 +4565,14 @@ fn bridge_annular_loops_2to1_ratio() {
 
     // Build 8 bridging faces (2:1 ratio = alternating tris and quads)
     let faces: Vec<&[usize]> = vec![
-        &[0, 1, 8],        // tri
-        &[1, 2, 9, 8],     // quad
-        &[2, 3, 9],        // tri
-        &[3, 4, 10, 9],    // quad
-        &[4, 5, 10],       // tri
-        &[5, 6, 11, 10],   // quad
-        &[6, 7, 11],       // tri
-        &[7, 0, 8, 11],    // quad
+        &[0, 1, 8],      // tri
+        &[1, 2, 9, 8],   // quad
+        &[2, 3, 9],      // tri
+        &[3, 4, 10, 9],  // quad
+        &[4, 5, 10],     // tri
+        &[5, 6, 11, 10], // quad
+        &[6, 7, 11],     // tri
+        &[7, 0, 8, 11],  // quad
     ];
 
     let mesh = HalfEdgeMesh::from_polygons(&positions, &faces);
@@ -4560,7 +4582,8 @@ fn bridge_annular_loops_2to1_ratio() {
 
     // Should produce exactly 8 faces (bridge reconnects the coplanar group)
     assert_eq!(
-        dissolved.faces.len(), 8,
+        dissolved.faces.len(),
+        8,
         "2:1 bridge should produce 8 faces, got {}",
         dissolved.faces.len()
     );
@@ -4580,8 +4603,8 @@ fn bridge_annular_loops_2to1_ratio() {
 fn bridge_annular_loops_realistic() {
     // 36 outer + 16 inner (realistic cylinder-through-cube ratios)
     // → should produce 36 faces = 16 quads + 20 tris
-    use std::f64::consts::PI;
     use super::topology;
+    use std::f64::consts::PI;
 
     let mut positions: Vec<[f64; 3]> = Vec::new();
 
@@ -4625,7 +4648,8 @@ fn bridge_annular_loops_realistic() {
     let dissolved = topology::dissolve_coplanar_edges(&mesh);
 
     assert_eq!(
-        dissolved.faces.len(), n_outer,
+        dissolved.faces.len(),
+        n_outer,
         "realistic bridge should produce {n_outer} faces, got {}",
         dissolved.faces.len()
     );
@@ -4669,7 +4693,8 @@ fn cylinder_subtract_annular_bridge() {
     // Watertight check
     let boundary = result.boundary_edges();
     assert_eq!(
-        boundary.len(), 0,
+        boundary.len(),
+        0,
         "cylinder subtract with annular bridge should be watertight (got {} boundary edges)",
         boundary.len()
     );
@@ -4709,7 +4734,10 @@ fn bevel_cube_all_segments_watertight() {
 
         assert_eq!(ngons, 0, "no N-gons at seg={seg}");
         assert_eq!(boundary, 0, "watertight at seg={seg}");
-        assert!(quads > tris, "quad-dominant at seg={seg}: {quads} quads vs {tris} tris");
+        assert!(
+            quads > tris,
+            "quad-dominant at seg={seg}: {quads} quads vs {tris} tris"
+        );
     }
 }
 

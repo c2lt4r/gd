@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.2.22] - 2026-02-22
+## [0.2.23] - 2026-02-22
 
 ### Added
 - **`duplicate-variable` lint rule** (correctness, default-enabled) — detects duplicate `var` declarations at class scope. Catches cases like `replace-symbol` leaving stale declarations that Godot rejects at load time.

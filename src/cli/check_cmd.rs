@@ -389,9 +389,7 @@ fn check_variant_node(node: Node, source: &str, errors: &mut Vec<StructuralError
         let is_inferred = node
             .child_by_field_name("type")
             .is_some_and(|t| t.kind() == "inferred_type");
-        if is_inferred
-            && let Some(value) = node.child_by_field_name("value")
-        {
+        if is_inferred && let Some(value) = node.child_by_field_name("value") {
             let should_flag = if is_variant_producing_expr(&value, source) {
                 true
             } else {

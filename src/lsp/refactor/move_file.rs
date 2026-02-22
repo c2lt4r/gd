@@ -16,10 +16,7 @@ pub fn move_file(
     project_root: &Path,
 ) -> Result<MoveFileOutput> {
     if !from.exists() {
-        return Err(miette::miette!(
-            "source file not found: {}",
-            from.display()
-        ));
+        return Err(miette::miette!("source file not found: {}", from.display()));
     }
     if to.exists() {
         return Err(miette::miette!(
@@ -117,8 +114,8 @@ pub fn move_file(
         }
         // Try rename first; fall back to copy+delete for cross-device moves
         if std::fs::rename(from, to).is_err() {
-            let content = std::fs::read(from)
-                .map_err(|e| miette::miette!("cannot read source file: {e}"))?;
+            let content =
+                std::fs::read(from).map_err(|e| miette::miette!("cannot read source file: {e}"))?;
             std::fs::write(to, &content)
                 .map_err(|e| miette::miette!("cannot write destination file: {e}"))?;
             std::fs::remove_file(from)
@@ -307,11 +304,7 @@ mod tests {
         )
         .expect("write project.godot");
         fs::create_dir_all(temp.path().join("scripts")).unwrap();
-        fs::write(
-            temp.path().join("scripts/global.gd"),
-            "extends Node\n",
-        )
-        .unwrap();
+        fs::write(temp.path().join("scripts/global.gd"), "extends Node\n").unwrap();
 
         let result = move_file(
             &temp.path().join("scripts/global.gd"),

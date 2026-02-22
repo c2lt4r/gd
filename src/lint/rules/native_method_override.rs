@@ -98,9 +98,7 @@ fn check_table(symbols: &SymbolTable, diags: &mut Vec<LintDiagnostic>) {
                 && let Some(&native_type) = native_types.get(i)
             {
                 let normalized = normalize_type(native_type);
-                if !ann.name.eq_ignore_ascii_case(normalized)
-                    && ann.name != native_type
-                {
+                if !ann.name.eq_ignore_ascii_case(normalized) && ann.name != native_type {
                     mismatches.push(format!(
                         "parameter `{}` should be `{}` (got `{}`)",
                         param.name, normalized, ann.name,
