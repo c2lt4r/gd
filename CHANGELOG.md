@@ -1,42 +1,27 @@
 # Changelog
 
-## [0.2.22-dev3] - 2026-02-22
+## [0.2.22] - 2026-02-22
 
 ### Added
 - **`duplicate-variable` lint rule** (correctness, default-enabled) — detects duplicate `var` declarations at class scope. Catches cases like `replace-symbol` leaving stale declarations that Godot rejects at load time.
 - **`native-method-override` signature checking** — now detects parameter type mismatches (e.g. `String` vs `NodePath`), return type mismatches (e.g. `String` vs `StringName`), and parameter count errors when overriding native methods. Previously only checked method name.
 - **Method signatures in ClassDB** — `generate_class_db.py` now emits `METHOD_SIGNATURES` table with return type, required/total param counts, and param types for all engine methods.
-
-### Fixed
-- **`variant-inference`: detect `:=` with `in`/`not in` operator** — `var x := action in arr` now flags as a Variant inference error. Godot's parser treats `in`/`not in` as returning Variant even though it's always bool at runtime.
-
-## [0.2.22-dev2] - 2026-02-22
-
-### Improved
-- **Bevel spherical arc interpolation** — for circular profile (default 0.5), arc intermediates between beveled edges now use spherical interpolation on the bevel sphere instead of quadratic bezier. Eliminates the ~57% radius shortfall that caused concave pinch artifacts at corners. All cap vertices now sit at consistent distance from the original vertex.
-- **Bevel corner patches** — when 3+ beveled edges meet at a vertex, cap fill now uses structured K-fold symmetric kite quads (S=2) or concentric sphere-projected rings (S≥3) instead of flat-centroid ring inset. Center vertex is projected onto the bevel sphere for smooth geometry.
-
-## [0.2.22-dev1] - 2026-02-22
-
-### Added
 - **`gd lsp move-file`** — move/rename a file and update all references (preload, load, ext_resource, project.godot autoloads) across the project. Supports `--dry-run` for preview.
 - **`gd lsp create-file --force`** — overwrite an existing file intentionally (bypasses the existence check).
 
 ### Improved
+- **Bevel spherical arc interpolation** — for circular profile (default 0.5), arc intermediates between beveled edges now use spherical interpolation on the bevel sphere instead of quadratic bezier. Eliminates the ~57% radius shortfall that caused concave pinch artifacts at corners. All cap vertices now sit at consistent distance from the original vertex.
+- **Bevel corner patches** — when 3+ beveled edges meet at a vertex, cap fill now uses structured K-fold symmetric kite quads (S=2) or concentric sphere-projected rings (S≥3) instead of flat-centroid ring inset. Center vertex is projected onto the bevel sphere for smooth geometry.
 - **Boolean annular quad bridging** — when a boolean cut creates a hole through a coplanar face (e.g. cylinder through cube), the annular region (outer square + inner circle) is now bridged with structured quad/tri strips instead of keeping ~112 starburst fragments. Produces clean radial edge flow suitable for bevel and subdivision.
 
 ### Fixed
+- **`gd mesh create` fails on second invocation** — `queue_free()` on the old `_GdMeshHelper` node deferred deletion until end of frame, causing a name collision when the replacement node was added immediately. Godot auto-renamed the new node, making subsequent push scripts unable to find it. Fixed by using `remove_child()` before `queue_free()` to immediately free the name slot. Same fix applied to `_GdMeshGrid` overlay recreation.
+- **`variant-inference`: detect `:=` with `in`/`not in` operator** — `var x := action in arr` now flags as a Variant inference error. Godot's parser treats `in`/`not in` as returning Variant even though it's always bool at runtime.
+- **`gd check`: detect `:=` on unresolvable property access** — `var keycode := event.physical_keycode` (where `event` is typed as a base class like `InputEvent`) now flags as Variant inference error. Only triggers when the receiver is typed as a ClassDB class; builtin types (`Vector2.x`), `self`, and method calls are excluded.
+- **`look-at-before-tree`: detect `global_*` property assignments** — setting `global_position`, `global_rotation`, `global_rotation_degrees`, `global_transform`, or `global_basis` on a node before `add_child()` now triggers a warning. Previously the rule only caught method calls.
 - **`gd resource set-property`: multi-line value replacement** — replacing a property with a multi-line value (arrays, dictionaries) now correctly removes all continuation lines instead of leaving orphaned fragments.
 - **`gd scene set-property`: duplicate property on blank-line separator** — when a blank line separated the `[node]` header from existing properties, set-property inserted a duplicate instead of replacing. Fixed ordering so replacement always takes priority.
 - **`gd scene set-property`: multi-line value replacement** — same multi-line consumption fix as resource set-property.
-
-## [0.2.22] - 2026-02-22
-
-### Fixed
-- **`gd mesh create` fails on second invocation** — `queue_free()` on the old `_GdMeshHelper` node deferred deletion until end of frame, causing a name collision when the replacement node was added immediately. Godot auto-renamed the new node, making subsequent push scripts unable to find it. Fixed by using `remove_child()` before `queue_free()` to immediately free the name slot. Same fix applied to `_GdMeshGrid` overlay recreation.
-- **`gd check`: detect `:=` with `in`/`not in` operator** — `var x := action in arr` now correctly flags as Variant inference error. Godot rejects this at parse time because `in`/`not in` return Variant in its static type system.
-- **`gd check`: detect `:=` on unresolvable property access** — `var keycode := event.physical_keycode` (where `event` is typed as a base class like `InputEvent`) now flags as Variant inference error. Only triggers when the receiver is typed as a ClassDB class; builtin types (`Vector2.x`), `self`, and method calls are excluded.
-- **`look-at-before-tree`: detect `global_*` property assignments** — setting `global_position`, `global_rotation`, `global_rotation_degrees`, `global_transform`, or `global_basis` on a node before `add_child()` now triggers a warning. Previously the rule only caught method calls.
 
 ## [0.2.21] - 2026-02-21
 
