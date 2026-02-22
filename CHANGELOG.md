@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.2.24] - 2026-02-22
+
+### Added
+- **`nullable-current-scene` lint rule** (suspicious, default-enabled) — detects `get_tree().current_scene.method()` without a null check. `current_scene` is null when scenes use `root.add_child()` instead of `change_scene_to_file()`. Also catches aliased access (`var s = get_tree().current_scene; s.method()`).
+- **`untyped-array-argument` lint rule** (type_safety, default-enabled) — detects passing an untyped `Array` or wrong-element `Array[X]` to a parameter expecting `Array[T]`. Resolves parameters from same-file symbol table and cross-file `ProjectIndex`.
+- **`unused-private-function` lint rule** (maintenance, opt-in) — detects functions with no cross-file callers. Excludes Godot virtual methods (`_ready`, `_process`, etc.) and engine method overrides.
+- **`unused-class-signal` lint rule** (maintenance, opt-in) — detects signals with no cross-file `connect()`/`emit()` references. Also scans `.tscn` files for `[connection signal="name"]`. Skips signals starting with `_`.
+- **`unused-class-variable` lint rule** (maintenance, opt-in) — detects class-scope variables with no cross-file references. Excludes `@export`, `@onready`, constants, and autoload class members.
+- **`ParamSummary` in `ProjectIndex`** — function summaries now include parameter names and types for cross-file argument checking.
+- **`ProjectIndex::files()` / `project_root()` / `is_autoload()` accessors** — public API for cross-file lint rules.
+
 ## [0.2.23] - 2026-02-22
 
 ### Added

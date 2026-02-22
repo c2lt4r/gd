@@ -12,11 +12,20 @@ use crate::core::parser;
 use crate::core::project::parse_autoloads;
 use crate::core::symbol_table::{self, FuncDecl, SymbolTable, VarDecl};
 
+/// Summary of a function parameter (no AST references).
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct ParamSummary {
+    pub name: String,
+    pub type_name: Option<String>,
+}
+
 /// Summary of a function declaration (no AST references).
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct FuncSummary {
     pub name: String,
+    pub params: Vec<ParamSummary>,
     pub return_type: Option<String>,
     pub is_static: bool,
     /// `##` doc comment text, if any.
@@ -276,6 +285,25 @@ impl ProjectIndex {
     pub fn is_empty(&self) -> bool {
         self.files.is_empty()
     }
+
+    /// Returns a slice of all indexed files.
+    pub fn files(&self) -> &[FileSymbols] {
+        &self.files
+    }
+
+    /// Returns the project root directory.
+    pub fn project_root(&self) -> &Path {
+        &self.project_root
+    }
+
+    /// Check if a name matches an autoload (by autoload name or class_name).
+    pub fn is_autoload(&self, name: &str) -> bool {
+        self.autoloads.contains_key(name)
+            || self
+                .autoloads
+                .values()
+                .any(|fs| fs.class_name.as_deref() == Some(name))
+    }
 }
 
 /// Parse a single `.gd` file into `FileSymbols`.
@@ -302,6 +330,18 @@ fn symbols_from_table(path: PathBuf, table: &SymbolTable) -> FileSymbols {
 fn func_summary(f: &FuncDecl) -> FuncSummary {
     FuncSummary {
         name: f.name.clone(),
+        params: f
+            .params
+            .iter()
+            .map(|p| ParamSummary {
+                name: p.name.clone(),
+                type_name: p
+                    .type_ann
+                    .as_ref()
+                    .filter(|t| !t.is_inferred && !t.name.is_empty())
+                    .map(|t| t.name.clone()),
+            })
+            .collect(),
         return_type: f.return_type.as_ref().map(|t| t.name.clone()),
         is_static: f.is_static,
         doc: f.doc.clone(),

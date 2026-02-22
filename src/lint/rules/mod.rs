@@ -79,9 +79,14 @@ pub mod unused_parameter;
 pub mod unused_private_class_variable;
 
 pub mod missing_tool;
+pub mod nullable_current_scene;
 pub mod shadowed_variable_base_class;
 pub mod static_called_on_instance;
 pub mod unnamed_node;
+pub mod untyped_array_argument;
+pub mod unused_class_signal;
+pub mod unused_class_variable;
+pub mod unused_private_function;
 
 use std::collections::HashMap;
 use std::fmt;
@@ -354,6 +359,11 @@ pub fn all_rules(
         Box::new(enum_name_collision::EnumNameCollision),
         Box::new(unnamed_node::UnnamedNode),
         Box::new(infer_unknown_member::InferUnknownMember),
+        Box::new(nullable_current_scene::NullableCurrentScene),
+        Box::new(untyped_array_argument::UntypedArrayArgument),
+        Box::new(unused_private_function::UnusedPrivateFunction),
+        Box::new(unused_class_signal::UnusedClassSignal),
+        Box::new(unused_class_variable::UnusedClassVariable),
     ];
     all.into_iter()
         .filter(|r| {
