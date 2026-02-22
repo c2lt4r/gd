@@ -220,6 +220,38 @@ pub fn method_return_type(class: &str, method: &str) -> Option<&'static str> {
     }
 }
 
+/// Method signature info for override checking.
+pub struct MethodSignature {
+    pub return_type: &'static str,
+    pub required_params: u8,
+    pub total_params: u8,
+    /// Comma-separated list of parameter types.
+    pub param_types: &'static str,
+}
+
+/// Look up the full signature of a method on a class, walking the inheritance chain.
+pub fn method_signature(class: &str, method: &str) -> Option<MethodSignature> {
+    let mut current = class;
+    loop {
+        let key = format!("{current}.{method}");
+        if let Ok(i) =
+            generated::METHOD_SIGNATURES.binary_search_by_key(&key.as_str(), |s| s.key)
+        {
+            let sig = &generated::METHOD_SIGNATURES[i];
+            return Some(MethodSignature {
+                return_type: sig.return_type,
+                required_params: sig.required_params,
+                total_params: sig.total_params,
+                param_types: sig.param_types,
+            });
+        }
+        match parent_class(current) {
+            Some(parent) => current = parent,
+            None => return None,
+        }
+    }
+}
+
 /// Curated list of methods that require the node to be in the scene tree.
 pub fn is_tree_dependent_method(method: &str) -> bool {
     matches!(

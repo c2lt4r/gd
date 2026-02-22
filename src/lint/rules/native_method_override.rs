@@ -39,6 +39,17 @@ impl LintRule for NativeMethodOverride {
     }
 }
 
+/// Normalize a ClassDB type for comparison with a GDScript annotation.
+/// Strips `enum::` prefix and class-qualified enum names.
+fn normalize_type(db_type: &str) -> &str {
+    if let Some(rest) = db_type.strip_prefix("enum::") {
+        // "enum::Node.InternalMode" → "InternalMode"
+        rest.rsplit('.').next().unwrap_or(rest)
+    } else {
+        db_type
+    }
+}
+
 fn check_table(symbols: &SymbolTable, diags: &mut Vec<LintDiagnostic>) {
     let Some(ref extends) = symbols.extends else {
         return;
@@ -50,8 +61,69 @@ fn check_table(symbols: &SymbolTable, diags: &mut Vec<LintDiagnostic>) {
             continue;
         }
 
-        // Check engine classes via ClassDB
-        if crate::class_db::method_exists(extends, &func.name) {
+        let Some(native_sig) = crate::class_db::method_signature(extends, &func.name) else {
+            continue;
+        };
+
+        // Check for signature mismatches
+        let mut mismatches = Vec::new();
+
+        // Parameter count: user must provide at least required_params
+        let user_params = func.params.len();
+        let native_required = native_sig.required_params as usize;
+        let native_total = native_sig.total_params as usize;
+        if user_params < native_required || user_params > native_total {
+            mismatches.push(format!(
+                "expects {} parameter{} (got {})",
+                if native_required == native_total {
+                    format!("{native_total}")
+                } else {
+                    format!("{native_required}..{native_total}")
+                },
+                if native_total == 1 { "" } else { "s" },
+                user_params,
+            ));
+        }
+
+        // Parameter types: compare typed params against native signature
+        let native_types: Vec<&str> = if native_sig.param_types.is_empty() {
+            Vec::new()
+        } else {
+            native_sig.param_types.split(',').collect()
+        };
+
+        for (i, param) in func.params.iter().enumerate() {
+            if let Some(ref ann) = param.type_ann
+                && !ann.is_inferred
+                && let Some(&native_type) = native_types.get(i)
+            {
+                let normalized = normalize_type(native_type);
+                if !ann.name.eq_ignore_ascii_case(normalized)
+                    && ann.name != native_type
+                {
+                    mismatches.push(format!(
+                        "parameter `{}` should be `{}` (got `{}`)",
+                        param.name, normalized, ann.name,
+                    ));
+                }
+            }
+        }
+
+        // Return type: compare if user specified one
+        if let Some(ref user_ret) = func.return_type {
+            let native_ret = normalize_type(native_sig.return_type);
+            if !user_ret.name.eq_ignore_ascii_case(native_ret)
+                && user_ret.name != native_sig.return_type
+            {
+                mismatches.push(format!(
+                    "should return `{}` (got `{}`)",
+                    native_ret, user_ret.name,
+                ));
+            }
+        }
+
+        if mismatches.is_empty() {
+            // Name matches but signature is compatible — still warn about shadowing
             diags.push(LintDiagnostic {
                 rule: "native-method-override",
                 message: format!(
@@ -65,8 +137,22 @@ fn check_table(symbols: &SymbolTable, diags: &mut Vec<LintDiagnostic>) {
                 fix: None,
                 context_lines: None,
             });
-            // User-defined base class methods are NOT flagged — overriding them
-            // is normal polymorphism (e.g. State pattern: enter/exit/update).
+        } else {
+            // Signature mismatch — higher severity, more helpful message
+            let details = mismatches.join("; ");
+            diags.push(LintDiagnostic {
+                rule: "native-method-override",
+                message: format!(
+                    "`{}()` overrides native `{extends}.{}()` with incompatible signature: {details}",
+                    func.name, func.name,
+                ),
+                severity: Severity::Error,
+                line: func.line,
+                column: 0,
+                end_column: None,
+                fix: None,
+                context_lines: None,
+            });
         }
     }
 }
@@ -132,5 +218,46 @@ mod tests {
     #[test]
     fn opt_in_rule() {
         assert!(!NativeMethodOverride.default_enabled());
+    }
+
+    #[test]
+    fn detects_param_type_mismatch() {
+        // get_node(NodePath) but user declares get_node(String)
+        let source = "extends Node\nfunc get_node(pool_name: String) -> Node:\n\treturn null\n";
+        let diags = check(source);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("incompatible"));
+        assert!(diags[0].message.contains("NodePath"));
+        assert!(diags[0].message.contains("String"));
+    }
+
+    #[test]
+    fn detects_return_type_mismatch() {
+        // get_name() -> StringName but user declares -> String
+        let source = "extends Node\nfunc get_name() -> String:\n\treturn \"test\"\n";
+        let diags = check(source);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("incompatible"));
+        assert!(diags[0].message.contains("StringName"));
+        assert!(diags[0].message.contains("String"));
+    }
+
+    #[test]
+    fn detects_param_count_mismatch() {
+        // get_node takes 1 param, user provides 0
+        let source = "extends Node\nfunc get_node() -> Node:\n\treturn null\n";
+        let diags = check(source);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("incompatible"));
+        assert!(diags[0].message.contains("parameter"));
+    }
+
+    #[test]
+    fn compatible_signature_still_warns() {
+        // add_child with matching required param — still warns about shadowing
+        let source = "extends Node\nfunc add_child(node: Node):\n\tpass\n";
+        let diags = check(source);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("overrides a native method"));
     }
 }

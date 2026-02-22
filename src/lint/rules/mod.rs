@@ -9,6 +9,7 @@ pub mod comparison_with_itself;
 pub mod duplicate_function;
 pub mod duplicate_key;
 pub mod duplicate_signal;
+pub mod duplicate_variable;
 pub mod duplicated_load;
 pub mod empty_function;
 pub mod float_comparison;
@@ -294,6 +295,7 @@ pub fn all_rules(
         Box::new(private_method_access::PrivateMethodAccess),
         Box::new(untyped_array::UntypedArray),
         Box::new(duplicate_function::DuplicateFunction),
+        Box::new(duplicate_variable::DuplicateVariable),
         Box::new(unused_signal::UnusedSignal),
         Box::new(duplicate_key::DuplicateKey),
         Box::new(await_in_ready::AwaitInReady),

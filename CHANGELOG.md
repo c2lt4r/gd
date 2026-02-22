@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.2.22-dev3] - 2026-02-22
+
+### Added
+- **`duplicate-variable` lint rule** (correctness, default-enabled) — detects duplicate `var` declarations at class scope. Catches cases like `replace-symbol` leaving stale declarations that Godot rejects at load time.
+- **`native-method-override` signature checking** — now detects parameter type mismatches (e.g. `String` vs `NodePath`), return type mismatches (e.g. `String` vs `StringName`), and parameter count errors when overriding native methods. Previously only checked method name.
+- **Method signatures in ClassDB** — `generate_class_db.py` now emits `METHOD_SIGNATURES` table with return type, required/total param counts, and param types for all engine methods.
+
+### Fixed
+- **`variant-inference`: detect `:=` with `in`/`not in` operator** — `var x := action in arr` now flags as a Variant inference error. Godot's parser treats `in`/`not in` as returning Variant even though it's always bool at runtime.
+
 ## [0.2.22-dev2] - 2026-02-22
 
 ### Improved

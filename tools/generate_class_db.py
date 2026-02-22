@@ -21,6 +21,7 @@ def main():
     constants = []
     enum_members = []
     methods = []
+    method_signatures = []
     properties = []
     signals = []
 
@@ -45,6 +46,11 @@ def main():
             method_name = method["name"]
             ret = method.get("return_value", {}).get("type", "void")
             methods.append((f"{name}.{method_name}", ret))
+            # Build signature info for override checking
+            args = method.get("arguments", [])
+            param_types = ",".join(a["type"] for a in args)
+            required = sum(1 for a in args if "default_value" not in a)
+            method_signatures.append((f"{name}.{method_name}", ret, required, len(args), param_types))
 
         for prop in cls.get("properties", []):
             prop_name = prop["name"]
@@ -74,6 +80,7 @@ def main():
     constants.sort(key=lambda x: x[0])
     enum_members.sort(key=lambda x: x[0])
     methods.sort(key=lambda x: x[0])
+    method_signatures.sort(key=lambda x: x[0])
     properties.sort(key=lambda x: x[0])
     signals.sort()
 
@@ -109,6 +116,21 @@ def main():
     print(f'pub static METHODS: &[(&str, &str)] = &[')
     for key, val in methods:
         print(f'    ("{key}", "{val}"),')
+    print('];')
+    print()
+
+    # Method signatures: (key, return_type, required_params, total_params, param_types)
+    print('pub struct MethodSig {')
+    print('    pub key: &\'static str,')
+    print('    pub return_type: &\'static str,')
+    print('    pub required_params: u8,')
+    print('    pub total_params: u8,')
+    print('    pub param_types: &\'static str,')
+    print('}')
+    print()
+    print(f'pub static METHOD_SIGNATURES: &[MethodSig] = &[')
+    for key, ret, required, total, params in method_signatures:
+        print(f'    MethodSig {{ key: "{key}", return_type: "{ret}", required_params: {required}, total_params: {total}, param_types: "{params}" }},')
     print('];')
     print()
 
