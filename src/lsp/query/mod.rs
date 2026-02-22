@@ -19,7 +19,7 @@ pub use refactor::{
     query_bulk_delete_symbol, query_bulk_rename, query_change_signature, query_delete_symbol,
     query_extract_class, query_extract_method, query_inline_delegate, query_inline_method,
     query_inline_method_by_name, query_introduce_parameter, query_introduce_variable,
-    query_move_symbol,
+    query_move_file, query_move_symbol,
 };
 
 use std::path::{Path, PathBuf};

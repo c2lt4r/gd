@@ -145,6 +145,7 @@ pub fn query_create_file(
     extends: &str,
     class_name: Option<&str>,
     custom_content: Option<&str>,
+    force: bool,
     dry_run: bool,
 ) -> Result<CreateFileOutput> {
     let path = std::path::Path::new(file);
@@ -157,7 +158,7 @@ pub fn query_create_file(
             .join(path)
     };
 
-    if full_path.exists() {
+    if full_path.exists() && !force {
         return Err(miette::miette!("file already exists: {file}"));
     }
 

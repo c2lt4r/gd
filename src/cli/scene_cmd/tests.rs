@@ -409,6 +409,41 @@ fn set_property_node_not_found() {
     assert!(result.is_err());
 }
 
+#[test]
+fn set_property_with_blank_line_before_existing() {
+    // Bug: blank line between [node] header and existing properties caused duplicate
+    let source = "[gd_scene format=3]\n\n\
+                  [node name=\"Root\" type=\"Node2D\"]\n\n\
+                  [node name=\"Player\" type=\"CharacterBody2D\" parent=\".\"]\n\
+                  \n\
+                  visible = true\n\
+                  position = Vector2(100, 200)\n";
+    let result = set_property::apply_set_property(source, "Player", "visible", "false").unwrap();
+    assert!(result.contains("visible = false"));
+    // Must not have duplicates
+    assert_eq!(
+        result.matches("visible").count(),
+        1,
+        "should replace, not duplicate: {result}"
+    );
+    assert!(result.contains("position = Vector2(100, 200)"));
+}
+
+#[test]
+fn set_property_replaces_multiline_value() {
+    let source = "[gd_scene format=3]\n\n\
+                  [node name=\"Root\" type=\"Node2D\"]\n\n\
+                  [node name=\"Player\" type=\"CharacterBody2D\" parent=\".\"]\n\
+                  data = [\n  \"a\",\n  \"b\"\n]\n\
+                  speed = 100\n";
+    let result =
+        set_property::apply_set_property(source, "Player", "data", "[\"new\"]").unwrap();
+    assert!(result.contains("data = [\"new\"]"));
+    assert!(!result.contains("\"a\""));
+    assert!(!result.contains("\"b\""));
+    assert!(result.contains("speed = 100"));
+}
+
 // ── add_connection ──────────────────────────────────────────────────────────
 
 #[test]

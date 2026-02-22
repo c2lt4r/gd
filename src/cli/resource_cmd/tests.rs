@@ -61,6 +61,28 @@ fn set_property_no_resource_section() {
     assert!(result.is_err());
 }
 
+#[test]
+fn set_property_replaces_multiline_value() {
+    let source = "[gd_resource type=\"Resource\" format=3]\n\n[resource]\n\
+                  phases = [\n  \"phase_one\",\n  \"phase_two\"\n]\n\
+                  name = \"test\"\n";
+    let result = set_property::apply_set_property(source, "phases", "[\"new\"]").unwrap();
+    assert!(result.contains("phases = [\"new\"]"));
+    assert!(!result.contains("phase_one"));
+    assert!(!result.contains("phase_two"));
+    assert!(result.contains("name = \"test\""));
+}
+
+#[test]
+fn set_property_replaces_multiline_dict() {
+    let source = "[gd_resource type=\"Resource\" format=3]\n\n[resource]\n\
+                  data = {\n  \"a\": 1,\n  \"b\": 2\n}\nother = 5\n";
+    let result = set_property::apply_set_property(source, "data", "{}").unwrap();
+    assert!(result.contains("data = {}"));
+    assert!(!result.contains("\"a\": 1"));
+    assert!(result.contains("other = 5"));
+}
+
 // ── get_property (via parsed data) ──────────────────────────────────────────
 
 #[test]

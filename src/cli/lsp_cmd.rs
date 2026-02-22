@@ -396,6 +396,9 @@ pub enum LspCommand {
         /// Read initial content from a file instead of generating boilerplate
         #[arg(long)]
         input_file: Option<String>,
+        /// Overwrite the file if it already exists
+        #[arg(long)]
+        force: bool,
         /// Preview without writing
         #[arg(long)]
         dry_run: bool,
@@ -513,6 +516,21 @@ pub enum LspCommand {
         /// Show only nodes (compact output)
         #[arg(long)]
         nodes_only: bool,
+        /// Output format: json or human (default: human)
+        #[arg(long)]
+        format: Option<String>,
+    },
+    /// Move/rename a file and update all references (preload, load, ext_resource, autoload)
+    MoveFile {
+        /// Source file path (relative to project root)
+        #[arg(long)]
+        from: String,
+        /// Destination file path (relative to project root)
+        #[arg(long)]
+        to: String,
+        /// Preview without writing changes
+        #[arg(long)]
+        dry_run: bool,
         /// Output format: json or human (default: human)
         #[arg(long)]
         format: Option<String>,
@@ -1018,6 +1036,33 @@ fn print_extract_class_human(r: &crate::lsp::refactor::ExtractClassOutput) {
         names.join(", ").bold(),
         dry_run_suffix(r.applied),
     );
+    for w in &r.warnings {
+        cprintln!("  {}: {w}", "warning".yellow());
+    }
+}
+
+fn print_move_file_human(r: &crate::lsp::refactor::MoveFileOutput) {
+    use owo_colors::OwoColorize;
+    let total = r.updated_scripts.len() + r.updated_resources.len();
+    cprintln!(
+        "{} {} {} {} ({} reference{}){}",
+        if r.applied { "Moved" } else { "Would move" },
+        r.from.cyan(),
+        "→".dimmed(),
+        r.to.cyan(),
+        total,
+        if total == 1 { "" } else { "s" },
+        dry_run_suffix(r.applied),
+    );
+    for u in &r.updated_scripts {
+        cprintln!("  {}:{}", u.file.cyan(), u.line);
+    }
+    for u in &r.updated_resources {
+        cprintln!("  {}:{}", u.file.cyan(), u.line);
+    }
+    if let Some(ref name) = r.updated_autoload {
+        cprintln!("  autoload {} updated", name.green());
+    }
     for w in &r.warnings {
         cprintln!("  {}: {w}", "warning".yellow());
     }
@@ -1713,6 +1758,7 @@ pub fn exec(args: LspArgs) -> Result<()> {
             extends,
             class_name,
             input_file,
+            force,
             dry_run,
             format,
         } => {
@@ -1728,6 +1774,7 @@ pub fn exec(args: LspArgs) -> Result<()> {
                 &extends,
                 class_name.as_deref(),
                 custom_content.as_deref(),
+                force,
                 dry_run,
             )?;
             if is_json(format.as_ref()) {
@@ -1957,6 +2004,22 @@ pub fn exec(args: LspArgs) -> Result<()> {
                 cprintln!("{json}");
             } else {
                 print_extract_class_human(&result);
+            }
+            Ok(())
+        }
+        LspCommand::MoveFile {
+            from,
+            to,
+            dry_run,
+            format,
+        } => {
+            let result = crate::lsp::query::query_move_file(&from, &to, dry_run)?;
+            if is_json(format.as_ref()) {
+                let json =
+                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+                cprintln!("{json}");
+            } else {
+                print_move_file_human(&result);
             }
             Ok(())
         }

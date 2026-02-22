@@ -173,6 +173,23 @@ pub fn query_introduce_parameter(
     )
 }
 
+// ── Move file ────────────────────────────────────────────────────────────────
+
+pub fn query_move_file(
+    from: &str,
+    to: &str,
+    dry_run: bool,
+) -> Result<crate::lsp::refactor::MoveFileOutput> {
+    let from_path = resolve_file(from)?;
+    let project_root = find_root(&from_path)?;
+    let to_path = if std::path::Path::new(to).is_absolute() {
+        std::path::PathBuf::from(to)
+    } else {
+        project_root.join(to)
+    };
+    crate::lsp::refactor::move_file(&from_path, &to_path, dry_run, &project_root)
+}
+
 // ── Bulk operations ──────────────────────────────────────────────────────────
 
 pub fn query_bulk_delete_symbol(

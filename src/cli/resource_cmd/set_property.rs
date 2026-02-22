@@ -41,6 +41,7 @@ pub(crate) fn apply_set_property(source: &str, key: &str, value: &str) -> Result
     let mut replaced = false;
     let mut resource_found = false;
     let mut insert_after = None;
+    let mut consuming_multiline = false;
 
     for (i, line) in lines.iter().enumerate() {
         let trimmed = line.trim();
@@ -49,17 +50,31 @@ pub(crate) fn apply_set_property(source: &str, key: &str, value: &str) -> Result
             in_resource = true;
             resource_found = true;
             insert_after = Some(i);
+            consuming_multiline = false;
             result.push((*line).to_string());
             continue;
         }
 
         if in_resource && trimmed.starts_with('[') {
             in_resource = false;
+            consuming_multiline = false;
+        }
+
+        // Skip continuation lines of a replaced multi-line value
+        if consuming_multiline {
+            if is_continuation_line(trimmed) {
+                continue;
+            }
+            consuming_multiline = false;
         }
 
         if in_resource && trimmed.starts_with(&prop_prefix) {
             result.push(new_line.clone());
             replaced = true;
+            // Check if the old value spans multiple lines (e.g. array/dict literal)
+            if is_multiline_start(trimmed, &prop_prefix) {
+                consuming_multiline = true;
+            }
             continue;
         }
 
@@ -86,4 +101,42 @@ pub(crate) fn apply_set_property(source: &str, key: &str, value: &str) -> Result
         output.push('\n');
     }
     Ok(output)
+}
+
+/// Check if a property line starts a multi-line value (unclosed bracket/brace).
+fn is_multiline_start(line: &str, prop_prefix: &str) -> bool {
+    let val = &line[prop_prefix.len()..];
+    let open_brackets = val.chars().filter(|&c| c == '[').count();
+    let close_brackets = val.chars().filter(|&c| c == ']').count();
+    let open_braces = val.chars().filter(|&c| c == '{').count();
+    let close_braces = val.chars().filter(|&c| c == '}').count();
+    (open_brackets > close_brackets) || (open_braces > close_braces)
+}
+
+/// Check if a line is a continuation of a multi-line value (not a new property
+/// or section header).
+fn is_continuation_line(trimmed: &str) -> bool {
+    // A new property: `identifier = value`
+    // A section header: `[...]`
+    // A blank line: end of property in Godot format
+    if trimmed.is_empty() || trimmed.starts_with('[') {
+        return false;
+    }
+    // A new property line has the pattern: identifier space = space value
+    // Continuation lines are things like: `  "item",` or `]` or `}`
+    !looks_like_property(trimmed)
+}
+
+/// Heuristic: does this line look like a Godot resource property (`key = value`)?
+fn looks_like_property(trimmed: &str) -> bool {
+    // Property keys are identifiers: start with letter/underscore, contain alphanum/_
+    if let Some(eq_pos) = trimmed.find(" = ") {
+        let key = &trimmed[..eq_pos];
+        !key.is_empty()
+            && key
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '/')
+    } else {
+        false
+    }
 }

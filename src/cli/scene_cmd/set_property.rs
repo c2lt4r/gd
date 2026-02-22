@@ -47,7 +47,7 @@ pub(crate) fn apply_set_property(
     let mut in_target_node = false;
     let mut property_set = false;
     let mut node_found = false;
-    let mut needs_insert = false;
+    let mut consuming_multiline = false;
 
     for line in &lines {
         let trimmed = line.trim();
@@ -56,20 +56,6 @@ pub(crate) fn apply_set_property(
         if trimmed.starts_with("[node ") && trimmed.contains(&node_pattern) {
             in_target_node = true;
             node_found = true;
-            result.push((*line).to_string());
-            needs_insert = true;
-            continue;
-        }
-
-        // When we need to insert a new property, do it right after the header
-        // (before any blank lines or the next section)
-        if needs_insert && !property_set && (trimmed.is_empty() || trimmed.starts_with('[')) {
-            result.push(format!("{key} = {value}"));
-            property_set = true;
-            needs_insert = false;
-            if trimmed.starts_with('[') {
-                in_target_node = false;
-            }
             result.push((*line).to_string());
             continue;
         }
@@ -81,19 +67,28 @@ pub(crate) fn apply_set_property(
                 property_set = true;
             }
             in_target_node = false;
+            consuming_multiline = false;
+        }
+
+        // Skip continuation lines of a replaced multi-line value
+        if consuming_multiline {
+            if is_scene_continuation_line(trimmed) {
+                continue;
+            }
+            consuming_multiline = false;
         }
 
         // Replace existing property if we're in the target node
         if in_target_node && trimmed.starts_with(&prop_prefix) {
-            result.push(format!("{key} = {value}"));
-            property_set = true;
-            needs_insert = false;
+            if !property_set {
+                result.push(format!("{key} = {value}"));
+                property_set = true;
+            }
+            // Check if old value spans multiple lines
+            if is_scene_multiline_start(trimmed, &prop_prefix) {
+                consuming_multiline = true;
+            }
             continue;
-        }
-
-        // If we encounter a non-blank property line, the insert point has passed
-        if needs_insert && !trimmed.is_empty() {
-            needs_insert = false;
         }
 
         result.push((*line).to_string());
@@ -113,4 +108,36 @@ pub(crate) fn apply_set_property(
         output.push('\n');
     }
     Ok(output)
+}
+
+/// Check if a property value starts a multi-line block (unclosed bracket/brace).
+fn is_scene_multiline_start(line: &str, prop_prefix: &str) -> bool {
+    let val = &line[prop_prefix.len()..];
+    let open_brackets = val.chars().filter(|&c| c == '[').count();
+    let close_brackets = val.chars().filter(|&c| c == ']').count();
+    let open_braces = val.chars().filter(|&c| c == '{').count();
+    let close_braces = val.chars().filter(|&c| c == '}').count();
+    (open_brackets > close_brackets) || (open_braces > close_braces)
+}
+
+/// Check if a line is a continuation of a multi-line value in a scene file.
+fn is_scene_continuation_line(trimmed: &str) -> bool {
+    if trimmed.is_empty() || trimmed.starts_with('[') {
+        return false;
+    }
+    // New property lines match `identifier = value`
+    !looks_like_scene_property(trimmed)
+}
+
+/// Heuristic: does this line look like a scene node property?
+fn looks_like_scene_property(trimmed: &str) -> bool {
+    if let Some(eq_pos) = trimmed.find(" = ") {
+        let key = &trimmed[..eq_pos];
+        !key.is_empty()
+            && key
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '/')
+    } else {
+        false
+    }
 }

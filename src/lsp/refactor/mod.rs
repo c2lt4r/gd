@@ -9,6 +9,7 @@ mod inline_delegate;
 mod inline_method;
 mod introduce_parameter;
 mod introduce_variable;
+mod move_file;
 mod move_symbol;
 
 pub use bulk_delete::*;
@@ -22,6 +23,7 @@ pub use inline_delegate::*;
 pub use inline_method::*;
 pub use introduce_parameter::*;
 pub use introduce_variable::*;
+pub use move_file::*;
 pub use move_symbol::*;
 
 use serde::Serialize;
@@ -94,6 +96,27 @@ pub struct PreloadRef {
     pub file: String,
     pub line: u32,
     pub path: String,
+}
+
+#[derive(Serialize)]
+pub struct MoveFileOutput {
+    pub from: String,
+    pub to: String,
+    pub applied: bool,
+    pub updated_scripts: Vec<UpdatedReference>,
+    pub updated_resources: Vec<UpdatedReference>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_autoload: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
+}
+
+#[derive(Serialize)]
+pub struct UpdatedReference {
+    pub file: String,
+    pub line: u32,
+    pub old_path: String,
+    pub new_path: String,
 }
 
 // ── Shared helpers ──────────────────────────────────────────────────────────
