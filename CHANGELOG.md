@@ -14,9 +14,10 @@
 - **`gd scene set-property`: duplicate property on blank-line separator** — when a blank line separated the `[node]` header from existing properties, set-property inserted a duplicate instead of replacing. Fixed ordering so replacement always takes priority.
 - **`gd scene set-property`: multi-line value replacement** — same multi-line consumption fix as resource set-property.
 
-## [0.2.22] - 2026-02-21
+## [0.2.22] - 2026-02-22
 
 ### Fixed
+- **`gd mesh create` fails on second invocation** — `queue_free()` on the old `_GdMeshHelper` node deferred deletion until end of frame, causing a name collision when the replacement node was added immediately. Godot auto-renamed the new node, making subsequent push scripts unable to find it. Fixed by using `remove_child()` before `queue_free()` to immediately free the name slot. Same fix applied to `_GdMeshGrid` overlay recreation.
 - **`gd check`: detect `:=` with `in`/`not in` operator** — `var x := action in arr` now correctly flags as Variant inference error. Godot rejects this at parse time because `in`/`not in` return Variant in its static type system.
 - **`gd check`: detect `:=` on unresolvable property access** — `var keycode := event.physical_keycode` (where `event` is typed as a base class like `InputEvent`) now flags as Variant inference error. Only triggers when the receiver is typed as a ClassDB class; builtin types (`Vector2.x`), `self`, and method calls are excluded.
 - **`look-at-before-tree`: detect `global_*` property assignments** — setting `global_position`, `global_rotation`, `global_rotation_degrees`, `global_transform`, or `global_basis` on a node before `add_child()` now triggers a warning. Previously the rule only caught method calls.

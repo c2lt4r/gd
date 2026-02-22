@@ -21,7 +21,9 @@ pub fn generate_create(name: &str, primitive: &str) -> String {
          func run():\n\
          \tvar root = get_tree().get_root()\n\
          \tvar old = root.get_node_or_null(\"_GdMeshHelper\")\n\
-         \tif old: old.queue_free()\n\
+         \tif old:\n\
+         \t\troot.remove_child(old)\n\
+         \t\told.queue_free()\n\
          \tvar helper = Node3D.new()\n\
          \thelper.name = \"_GdMeshHelper\"\n\
          \troot.add_child(helper)\n\
@@ -1329,7 +1331,9 @@ pub fn generate_grid(plane: &str, size: f64) -> String {
          \tvar helper = root.get_node_or_null(\"_GdMeshHelper\")\n\
          \tif helper == null: return \"ERROR: no mesh session\"\n\
          \tvar old = helper.get_node_or_null(\"_GdMeshGrid\")\n\
-         \tif old: old.queue_free()\n\
+         \tif old:\n\
+         \t\thelper.remove_child(old)\n\
+         \t\told.queue_free()\n\
          \tvar grid = MeshInstance3D.new()\n\
          \tgrid.name = \"_GdMeshGrid\"\n\
          \tvar st = SurfaceTool.new()\n\
