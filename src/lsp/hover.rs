@@ -17,10 +17,9 @@ pub fn hover_at(
     let point = tree_sitter::Point::new(position.line as usize, position.character as usize);
     let node = root.descendant_for_point_range(point, point)?;
 
-    // Handle $NodePath / get_node() — show scene node info
-    if (node.kind() == "get_node" || node.kind() == "node_path")
-        && let Some(hover) = hover_node_path(&node, source, workspace)
-    {
+    // Handle $NodePath / get_node() — walk up to find the get_node/node_path node,
+    // since the cursor may land on the `$` token or the name inside it.
+    if let Some(hover) = try_node_path_hover(&node, source, workspace) {
         return Some(hover);
     }
 
@@ -34,7 +33,13 @@ pub fn hover_at(
                 if is_declaration_name(&current, &node)
                     || is_on_declaration_keyword(&current, point)
                 {
-                    return hover_function(&current, source);
+                    let mut hover = hover_function(&current, source)?;
+                    // Append signal connection info for handler functions
+                    if let Some(name_node) = current.child_by_field_name("name") {
+                        let func_name = node_text(&name_node, source);
+                        enrich_with_signal_info(&mut hover, func_name, workspace);
+                    }
+                    return Some(hover);
                 }
                 return None;
             }
@@ -80,7 +85,14 @@ pub fn hover_at(
                 return None;
             }
             "identifier" | "name" => {
-                return resolve_hover_for_identifier(&current, &root, source, position, workspace);
+                let mut hover =
+                    resolve_hover_for_identifier(&current, &root, source, position, workspace);
+                // Enrich function hovers with signal connection info
+                if let Some(ref mut h) = hover {
+                    let ident_name = node_text(&current, source);
+                    enrich_with_signal_info(h, ident_name, workspace);
+                }
+                return hover;
             }
             _ => {}
         }
@@ -181,10 +193,6 @@ fn resolve_hover_for_identifier(
             range: Some(node_range(current)),
         });
     }
-    // 7b. Signal handler function → show connected signal from scene
-    if let Some(hover) = try_signal_handler_hover(current, name, workspace) {
-        return Some(hover);
-    }
     // 8. Check if this is an enum member (HOUSE inside enum { HOUSE, MART })
     if let Some(parent) = current.parent()
         && parent.kind() == "enumerator"
@@ -280,6 +288,57 @@ fn try_receiver_hover(
     None
 }
 
+/// Walk up from the deepest node to find a `get_node`/`node_path` parent and hover it.
+fn try_node_path_hover(
+    node: &tree_sitter::Node,
+    source: &str,
+    workspace: Option<&WorkspaceIndex>,
+) -> Option<Hover> {
+    let mut walk = *node;
+    let mut get_node_node = None;
+    loop {
+        if walk.kind() == "get_node" || walk.kind() == "node_path" {
+            if let Some(hover) = hover_node_path(&walk, source, workspace) {
+                return Some(hover);
+            }
+            get_node_node = Some(walk);
+        }
+        match walk.parent() {
+            Some(p) if p.kind() == "get_node" || p.kind() == "node_path" => {
+                walk = p;
+            }
+            _ => break,
+        }
+    }
+    // Fallback: show the node path even without scene resolution (e.g. instanced scenes)
+    let gn = get_node_node?;
+    let text = gn.utf8_text(source.as_bytes()).ok()?;
+    let node_path = text.trim_start_matches('$').trim_matches('"');
+    if node_path.is_empty() {
+        return None;
+    }
+    // Try to get the type from the parent variable declaration's type annotation
+    let type_hint = find_parent_type_annotation(&gn, source);
+    let type_str = type_hint.as_deref().unwrap_or("Node");
+    let code = format!("{type_str} ${node_path}");
+    Some(make_hover(&code, &gn, None))
+}
+
+/// Walk up from a node to find a type annotation on the enclosing variable declaration.
+fn find_parent_type_annotation(node: &tree_sitter::Node, source: &str) -> Option<String> {
+    let mut current = node.parent()?;
+    for _ in 0..10 {
+        if current.kind() == "variable_statement" || current.kind() == "typed_parameter" {
+            if let Some(type_node) = current.child_by_field_name("type") {
+                return Some(node_text(&type_node, source).to_string());
+            }
+            return None;
+        }
+        current = current.parent()?;
+    }
+    None
+}
+
 /// Hover for `$NodePath` or `get_node("path")` — show node type from scene tree.
 fn hover_node_path(
     node: &tree_sitter::Node,
@@ -331,30 +390,20 @@ fn hover_node_path(
     None
 }
 
-/// Try to show signal connection info for a function that looks like a signal handler.
-///
-/// If the function name appears as a `method` in a scene connection,
-/// show which signal it's connected to and from which node.
-fn try_signal_handler_hover(
-    ident_node: &tree_sitter::Node,
-    name: &str,
-    workspace: Option<&WorkspaceIndex>,
-) -> Option<Hover> {
+/// Append signal connection info to a hover if the name matches a scene connection handler.
+fn enrich_with_signal_info(hover: &mut Hover, name: &str, workspace: Option<&WorkspaceIndex>) {
+    if let Some(conn_info) = format_signal_handler_info(name, workspace)
+        && let HoverContents::Markup(ref mut m) = hover.contents
+    {
+        m.value.push_str("\n\n---\n\n");
+        m.value.push_str(&conn_info);
+    }
+}
+
+/// Format signal connection info for a function name (shared by declaration hover and identifier hover).
+fn format_signal_handler_info(name: &str, workspace: Option<&WorkspaceIndex>) -> Option<String> {
     let ws = workspace?;
 
-    // Only trigger for function declaration names or identifiers that look like handler names
-    let parent = ident_node.parent()?;
-    let is_func_decl = parent.kind() == "function_definition"
-        && parent.child_by_field_name("name").is_some_and(|n| n.id() == ident_node.id());
-    if !is_func_decl {
-        return None;
-    }
-
-    // Find the file URI from the node's position — we need the script path
-    // This is called from resolve_hover_for_identifier which has the root node
-    // but not the file path. We can't determine the file here without extra context.
-    // Instead, we'll check all scripts that have a handler with this name.
-    // For now, search all scene connections for this handler name.
     let mut connections = Vec::new();
     for entry in ws.iter_scene_connections() {
         for conn in entry.value() {
@@ -381,14 +430,7 @@ fn try_signal_handler_hover(
         ));
     }
 
-    let value = lines.join("\n\n---\n\n");
-    Some(Hover {
-        contents: HoverContents::Markup(MarkupContent {
-            kind: MarkupKind::Markdown,
-            value,
-        }),
-        range: Some(node_range(ident_node)),
-    })
+    Some(lines.join("\n\n---\n\n"))
 }
 
 /// Try to resolve a member access pattern (foo.bar or self.bar).

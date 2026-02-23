@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.31] - 2026-02-23
+
+### Fixed
+- **`$NodePath` hover at `$` position** — hovering on the `$` character in `$NodePath` now correctly shows node info. Previously only worked when the cursor was inside the name portion.
+- **Signal handler hover** — hovering on a function declaration like `func _on_body_entered()` now shows the connected signal, source node, and scene file. Previously only showed the function signature.
+- **Deep `$NodePath` fallback** — node paths that traverse instanced sub-scenes (e.g. `$View/Model/Skeleton3D/Mesh`) now show the type from the variable's type annotation when scene resolution can't follow the instance chain.
+
 ## [0.2.30] - 2026-02-23
 
 ### Added
