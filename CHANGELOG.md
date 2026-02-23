@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.2.28] - 2026-02-23
+
+### Improved
+- **LSP hover: full untruncated docs** — method and property hover now shows complete Godot documentation including code examples and usage patterns. Previously truncated to 300 characters.
+- **LSP hover: enum value docs** — hovering on engine enum constants (e.g. `CONNECT_DEFERRED`) shows the integer value and description. Hovering on an enum type name (e.g. `Viewport.MSAA`) lists all values with descriptions. Bare global constants like `OK`, `KEY_ESCAPE` also show docs.
+
+### Fixed
+- **LSP hover: bare member class resolution** — bare identifiers like `velocity` now resolve using the file's `extends` class and inheritance chain. Previously always matched the first entry (e.g. `CharacterBody2D.velocity` even in a `CharacterBody3D` script).
+
 ## [0.2.27] - 2026-02-23
 
 ### Improved

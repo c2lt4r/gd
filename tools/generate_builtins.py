@@ -45,12 +45,11 @@ def escape_rust_str(s):
     return s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
 
 
-def format_doc(raw_text, max_chars=300):
-    """Convert BBCode to markdown, truncate, and escape for Rust."""
+def format_doc(raw_text):
+    """Convert BBCode to markdown and escape for Rust."""
     if not raw_text:
         return ""
     md = bbcode_to_markdown(raw_text)
-    md = truncate_doc(md, max_chars)
     return escape_rust_str(md)
 
 
@@ -73,8 +72,8 @@ def main():
             continue
 
         # Collect class-level docs
-        brief = format_doc(cls.get("brief_description", ""), 200)
-        desc = format_doc(cls.get("description", ""), 300)
+        brief = format_doc(cls.get("brief_description", ""))
+        desc = format_doc(cls.get("description", ""))
         if brief or desc:
             type_docs.append((class_name, brief, desc))
 

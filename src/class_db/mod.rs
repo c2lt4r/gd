@@ -1,7 +1,7 @@
 //! Static Godot 4.x class database for validation and suggestions.
 
 #[allow(dead_code)]
-mod generated;
+pub(crate) mod generated;
 
 /// Check if a class exists in the Godot class hierarchy.
 pub fn class_exists(name: &str) -> bool {
@@ -306,6 +306,43 @@ pub fn property_doc(class: &str, property: &str) -> Option<&'static str> {
             let doc = generated::PROPERTY_DOCS[i].1;
             if !doc.is_empty() {
                 return Some(doc);
+            }
+        }
+        match parent_class(current) {
+            Some(parent) => current = parent,
+            None => return None,
+        }
+    }
+}
+
+/// Look up all values of an enum on a class (walks inheritance).
+/// Returns values from the first class in the hierarchy that defines the enum.
+pub fn enum_values(class: &str, enum_name: &str) -> &'static [generated::EnumValue] {
+    let mut current = class;
+    loop {
+        // Find the range of values for this class+enum in the sorted table
+        let start = generated::ENUM_VALUES
+            .partition_point(|v| (v.class, v.enum_name) < (current, enum_name));
+        let end = generated::ENUM_VALUES[start..]
+            .partition_point(|v| (v.class, v.enum_name) == (current, enum_name));
+        if end > 0 {
+            return &generated::ENUM_VALUES[start..start + end];
+        }
+        match parent_class(current) {
+            Some(parent) => current = parent,
+            None => return &[],
+        }
+    }
+}
+
+/// Look up the doc for a specific enum value (e.g. class="Object", value="CONNECT_DEFERRED").
+/// Walks the inheritance chain.
+pub fn enum_value_doc(class: &str, value_name: &str) -> Option<&'static generated::EnumValue> {
+    let mut current = class;
+    loop {
+        for v in generated::ENUM_VALUES {
+            if v.class == current && v.name == value_name {
+                return Some(v);
             }
         }
         match parent_class(current) {

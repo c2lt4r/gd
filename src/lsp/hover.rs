@@ -1,5 +1,6 @@
 use tower_lsp::lsp_types::{Hover, HoverContents, MarkupContent, MarkupKind, Position};
 
+use super::builtins::BuiltinMember;
 use super::util::{matches_name, node_range, node_text};
 use super::workspace::WorkspaceIndex;
 
@@ -147,7 +148,11 @@ fn resolve_hover_for_identifier(
     }
     // 6. Try builtin member as standalone identifier (GDScript allows
     //    inherited members without self prefix: velocity, move_and_slide, etc.)
-    if let Some(doc) = super::builtins::lookup_member(name) {
+    //    Resolve using the file's extends class when possible to pick the right
+    //    variant (e.g. CharacterBody3D.velocity vs CharacterBody2D.velocity).
+    if let Some(doc) = resolve_builtin_member_for_file(root, source, name)
+        .or_else(|| super::builtins::lookup_member(name))
+    {
         return Some(Hover {
             contents: HoverContents::Markup(MarkupContent {
                 kind: MarkupKind::Markdown,
@@ -166,7 +171,15 @@ fn resolve_hover_for_identifier(
     if let Some(hover) = resolve_enum_member(root, name, source) {
         return Some(hover);
     }
-    // 9. Engine class/singleton used as bare identifier (Input, OS, Engine, etc.)
+    // 9. Global enum constant used as bare identifier (OK, KEY_ESCAPE, etc.)
+    if let Some(ev) = crate::class_db::enum_value_doc("@GlobalScope", name) {
+        return Some(make_hover(
+            &format_enum_value(ev),
+            current,
+            if ev.doc.is_empty() { None } else { Some(ev.doc) },
+        ));
+    }
+    // 10. Engine class/singleton used as bare identifier (Input, OS, Engine, etc.)
     if crate::class_db::class_exists(name) {
         let code = format!("class {name}");
         let doc = crate::class_db::class_doc(name);
@@ -418,6 +431,25 @@ fn hover_member_on_type(
         match crate::class_db::parent_class(cur) {
             Some(parent) => cur = parent,
             None => break,
+        }
+    }
+
+    // 5. ClassDB enum constant (e.g. Object.CONNECT_DEFERRED)
+    if let Some(ev) = crate::class_db::enum_value_doc(db_class, member) {
+        return Some(make_hover(
+            &format_enum_value(ev),
+            ident_node,
+            if ev.doc.is_empty() { None } else { Some(ev.doc) },
+        ));
+    }
+
+    // 6. ClassDB enum type (e.g. Viewport.MSAA) — show all values
+    if crate::class_db::enum_type_exists(db_class, member) {
+        let values = crate::class_db::enum_values(db_class, member);
+        if !values.is_empty() {
+            let code = format!("enum {db_class}.{member}");
+            let listing = format_enum_listing(values);
+            return Some(make_hover(&code, ident_node, Some(&listing)));
         }
     }
 
@@ -675,6 +707,46 @@ fn extract_doc_comment_from_root(root: &tree_sitter::Node, source: &str) -> Opti
     } else {
         Some(lines.join("\n"))
     }
+}
+
+/// Try to resolve a builtin member using the file's extends class, walking the
+/// ClassDB inheritance chain. Returns the class-specific member doc if found.
+fn resolve_builtin_member_for_file<'a>(
+    root: &tree_sitter::Node,
+    source: &str,
+    name: &str,
+) -> Option<&'a BuiltinMember> {
+    let extends = super::completion::find_extends_class(*root, source)?;
+    let mut current: &str = &extends;
+    loop {
+        if let Some(doc) = super::builtins::lookup_member_for(current, name) {
+            return Some(doc);
+        }
+        match crate::class_db::parent_class(current) {
+            Some(parent) => current = parent,
+            None => return None,
+        }
+    }
+}
+
+/// Format a single enum value for hover display.
+fn format_enum_value(ev: &crate::class_db::generated::EnumValue) -> String {
+    format!("{}.{} = {}", ev.enum_name, ev.name, ev.value)
+}
+
+/// Format a listing of all enum values for hover display.
+fn format_enum_listing(values: &[crate::class_db::generated::EnumValue]) -> String {
+    let mut lines = Vec::new();
+    for v in values {
+        if v.doc.is_empty() {
+            lines.push(format!("- `{}` = {}", v.name, v.value));
+        } else {
+            // Take first sentence of doc for the listing
+            let brief = v.doc.split('\n').next().unwrap_or(v.doc);
+            lines.push(format!("- `{}` = {} — {brief}", v.name, v.value));
+        }
+    }
+    lines.join("\n")
 }
 
 fn make_hover(code: &str, node: &tree_sitter::Node, doc: Option<&str>) -> Hover {

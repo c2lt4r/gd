@@ -16,12 +16,26 @@ def escape_rust_str(s):
     return s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
 
 
-def format_doc(raw_text, max_chars=300):
-    """Convert BBCode to markdown, truncate, and escape for Rust."""
+def format_i64(n):
+    """Format an integer with Rust-style underscore separators for clippy."""
+    s = str(abs(n))
+    if len(s) <= 4:
+        return str(n)
+    # Insert underscores every 3 digits from the right
+    parts = []
+    while len(s) > 3:
+        parts.append(s[-3:])
+        s = s[:-3]
+    parts.append(s)
+    formatted = "_".join(reversed(parts))
+    return f"-{formatted}" if n < 0 else formatted
+
+
+def format_doc(raw_text):
+    """Convert BBCode to markdown and escape for Rust."""
     if not raw_text:
         return ""
     md = bbcode_to_markdown(raw_text)
-    md = truncate_doc(md, max_chars)
     return escape_rust_str(md)
 
 
@@ -43,19 +57,23 @@ def main():
     method_docs = []
     property_docs = []
     signal_docs = []
+    enum_values = []  # (class, enum_name, value_name, int_value, is_bitfield, doc)
 
     for cls in api.get("classes", []):
         name = cls["name"]
         parent = cls.get("inherits", "")
         is_virtual = cls.get("is_virtual", False)
-        brief = format_doc(cls.get("brief_description", ""), 200)
+        brief = format_doc(cls.get("brief_description", ""))
         classes.append((name, parent, is_virtual, brief))
 
         for enum in cls.get("enums", []):
             enum_name = enum["name"]
+            is_bitfield = enum.get("is_bitfield", False)
             for val in enum.get("values", []):
                 member_name = val["name"]
                 enum_members.append((f"{name}.{member_name}", enum_name))
+                doc = format_doc(val.get("description", ""))
+                enum_values.append((name, enum_name, member_name, val["value"], is_bitfield, doc))
 
         for const in cls.get("constants", []):
             const_name = const["name"]
@@ -96,10 +114,13 @@ def main():
     # Also extract global enums/constants
     for enum in api.get("global_enums", []):
         enum_name = enum["name"]
+        is_bitfield = enum.get("is_bitfield", False)
         for val in enum.get("values", []):
             member_name = val["name"]
             enum_members.append((f"@GlobalScope.{member_name}", enum_name))
             constants.append((f"@GlobalScope.{member_name}", "int"))
+            doc = format_doc(val.get("description", ""))
+            enum_values.append(("@GlobalScope", enum_name, member_name, val["value"], is_bitfield, doc))
 
     for const in api.get("global_constants", []):
         const_name = const["name"]
@@ -138,6 +159,7 @@ def main():
     method_docs.sort(key=lambda x: x[0])
     property_docs.sort(key=lambda x: x[0])
     signal_docs.sort(key=lambda x: x[0])
+    enum_values.sort(key=lambda x: (x[0], x[1], x[3]))  # class, enum, int_value
 
     print('//! Auto-generated Godot class database.')
     print('//! Regenerate: python tools/generate_class_db.py extension_api.json > src/class_db/generated.rs')
@@ -232,6 +254,23 @@ def main():
     print(f'pub static UTILITY_FUNCTIONS: &[UtilityFunction] = &[')
     for name, ret, sig, doc in utility_functions:
         print(f'    UtilityFunction {{ name: "{name}", return_type: "{ret}", signature: "{sig}", doc: "{doc}" }},')
+    print('];')
+    print()
+
+    # Enum values with descriptions
+    print('pub struct EnumValue {')
+    print('    pub class: &\'static str,')
+    print('    pub enum_name: &\'static str,')
+    print('    pub name: &\'static str,')
+    print('    pub value: i64,')
+    print('    pub is_bitfield: bool,')
+    print('    pub doc: &\'static str,')
+    print('}')
+    print()
+    print(f'pub static ENUM_VALUES: &[EnumValue] = &[')
+    for cls, enum_name, val_name, int_val, is_bitfield, doc in enum_values:
+        bf = "true" if is_bitfield else "false"
+        print(f'    EnumValue {{ class: "{cls}", enum_name: "{enum_name}", name: "{val_name}", value: {format_i64(int_val)}, is_bitfield: {bf}, doc: "{doc}" }},')
     print('];')
 
 

@@ -1067,6 +1067,15 @@ fn member_doc(class: &str, name: &str) -> Option<Documentation> {
             value: doc.to_string(),
         }));
     }
+    // 4. ClassDB enum constant doc
+    if let Some(ev) = crate::class_db::enum_value_doc(class, name)
+        && !ev.doc.is_empty()
+    {
+        return Some(Documentation::MarkupContent(MarkupContent {
+            kind: MarkupKind::Markdown,
+            value: format!("{}.{} = {}\n\n{}", ev.enum_name, ev.name, ev.value, ev.doc),
+        }));
+    }
     None
 }
 
