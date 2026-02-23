@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.2.35-dev] - 2026-02-23
+## [0.2.35] - 2026-02-23
 
 ### Fixed
 - **Refactor tools: doc comment bridging** — `declaration_full_range` now bridges up to 2 blank lines when `##` doc comments exist above a declaration. Previously, the blank line between `## Doc` and `var`/`func` caused doc comments to be left behind as orphans during move-symbol, delete-symbol, extract-class, and other refactor operations.
