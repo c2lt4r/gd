@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.2.32] - 2026-02-23
+
+### Added
+- **`gd overview`** — new command that outputs a compact project architecture summary: scripts with extends/class_name, scene bindings, signal/export declarations, function signatures, signal flow grouped by scene, and autoloads. Supports `--format json` and path scoping (`gd overview src/entities/`).
+
 ## [0.2.31] - 2026-02-23
 
 ### Fixed

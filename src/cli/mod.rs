@@ -19,6 +19,7 @@ pub mod lsp_cmd;
 pub mod man_cmd;
 pub mod mesh_cmd;
 pub mod new_cmd;
+pub mod overview_cmd;
 pub mod resource_cmd;
 pub mod run_cmd;
 pub mod scene_cmd;
@@ -82,6 +83,8 @@ pub enum Command {
     Resource(resource_cmd::ResourceArgs),
     /// Manage .tscn scene files
     Scene(scene_cmd::SceneArgs),
+    /// Show project architecture overview
+    Overview(overview_cmd::OverviewArgs),
     /// Show project statistics
     Stats(stats_cmd::StatsArgs),
     /// Generate CI/CD pipeline configuration
@@ -127,6 +130,7 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Debug(ref args) => debug_cmd::exec(args),
         Command::Resource(ref args) => resource_cmd::exec(args),
         Command::Scene(ref args) => scene_cmd::exec(args),
+        Command::Overview(ref args) => overview_cmd::exec(args),
         Command::Stats(ref args) => stats_cmd::exec(args),
         Command::Ci(args) => ci_cmd::exec(args),
         Command::Log(ref args) => log_cmd::exec(args),

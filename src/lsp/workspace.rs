@@ -529,6 +529,19 @@ impl WorkspaceIndex {
         }
     }
 
+    /// Iterate autoload entries (name, script path).
+    pub fn iter_autoloads(&self) -> Vec<(String, PathBuf)> {
+        self.autoloads
+            .iter()
+            .map(|r| (r.key().clone(), r.value().path.clone()))
+            .collect()
+    }
+
+    /// Count of indexed scenes.
+    pub fn scene_count(&self) -> usize {
+        self.scenes.len()
+    }
+
     /// Find all classes that directly extend the given class.
     pub fn subtypes(&self, class: &str) -> Vec<String> {
         let mut result = Vec::new();

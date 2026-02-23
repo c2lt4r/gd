@@ -785,7 +785,7 @@ dependencies = [
 
 [[package]]
 name = "gd"
-version = "0.2.30"
+version = "0.2.31"
 dependencies = [
  "bincode",
  "clap",

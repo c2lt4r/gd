@@ -71,6 +71,7 @@ gd run
 | `gd doc` | Generate documentation from doc comments (`--format json`, `--check`) |
 | `gd watch` | Watch files and run fmt/lint on changes |
 | `gd addons` | Manage project addons (install, remove, search, update, lock) |
+| `gd overview` | Show project architecture overview (scripts, scenes, signal flow, autoloads) (`--format json`) |
 | `gd stats` | Show project statistics (`--diff <branch>`, `--by-dir`, `--top N`) |
 | `gd ci` | Generate CI/CD pipeline configuration |
 | `gd daemon` | Manage the background daemon (status, stop, restart) |

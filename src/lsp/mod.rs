@@ -20,7 +20,7 @@ pub(crate) mod semantic_tokens;
 pub(crate) mod signature_help;
 mod symbols;
 mod util;
-mod workspace;
+pub(crate) mod workspace;
 pub(crate) mod workspace_symbol;
 
 use dashmap::DashMap;
