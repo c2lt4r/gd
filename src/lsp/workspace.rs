@@ -2,8 +2,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use dashmap::DashMap;
+use serde::Serialize;
 use tower_lsp::lsp_types::InitializeParams;
 
+use crate::core::scene::SceneData;
 use crate::core::symbol_table::{self, SymbolTable};
 
 /// Autoload singleton metadata resolved during workspace scan.
@@ -12,6 +14,36 @@ pub struct AutoloadInfo {
     pub class_name: Option<String>,
     /// Absolute filesystem path to the autoload script.
     pub path: PathBuf,
+}
+
+/// A node in a scene that has a script attached.
+#[derive(Debug, Clone, Serialize)]
+pub struct ScenePathNode {
+    /// Absolute path to the .tscn file.
+    pub scene_path: PathBuf,
+    /// Node name in the scene.
+    pub node_name: String,
+    /// Node type (e.g., `CharacterBody3D`).
+    pub node_type: Option<String>,
+    /// Node parent path (e.g., `.` for root children).
+    pub node_parent: Option<String>,
+    /// Line number (0-based) of the `script = ExtResource(...)` in the .tscn.
+    pub script_line: Option<usize>,
+}
+
+/// A signal connection found in a .tscn file.
+#[derive(Debug, Clone, Serialize)]
+pub struct SceneConnection {
+    /// Signal name (e.g., `body_entered`).
+    pub signal: String,
+    /// Node path the signal comes from.
+    pub from_node: String,
+    /// Node path the signal connects to.
+    pub to_node: String,
+    /// Handler function name (e.g., `_on_body_entered`).
+    pub method: String,
+    /// Absolute path to the .tscn file.
+    pub scene_path: PathBuf,
 }
 
 /// Index of all GDScript files in the workspace for cross-file operations.
@@ -29,6 +61,12 @@ pub struct WorkspaceIndex {
     declarations: DashMap<String, Vec<PathBuf>>,
     /// File → extends class name.
     extends_map: DashMap<PathBuf, Option<String>>,
+    /// .tscn path → parsed scene data.
+    scenes: DashMap<PathBuf, Arc<SceneData>>,
+    /// `res://` script path → list of .tscn files that attach it to a node.
+    script_to_scenes: DashMap<String, Vec<ScenePathNode>>,
+    /// .tscn path → list of signal connections.
+    scene_connections: DashMap<PathBuf, Vec<SceneConnection>>,
 }
 
 impl WorkspaceIndex {
@@ -42,6 +80,9 @@ impl WorkspaceIndex {
             symbols: DashMap::new(),
             declarations: DashMap::new(),
             extends_map: DashMap::new(),
+            scenes: DashMap::new(),
+            script_to_scenes: DashMap::new(),
+            scene_connections: DashMap::new(),
         };
         index.scan();
         index
@@ -82,6 +123,17 @@ impl WorkspaceIndex {
                         path: abs_path,
                     },
                 );
+            }
+        }
+
+        // Scan .tscn files for scene data
+        if let Ok(scene_files) = crate::core::fs::collect_resource_files(&self.project_root) {
+            for path in scene_files {
+                if path.extension().is_some_and(|e| e == "tscn")
+                    && let Ok(content) = std::fs::read_to_string(&path)
+                {
+                    self.index_scene(&path, &content);
+                }
             }
         }
     }
@@ -255,6 +307,211 @@ impl WorkspaceIndex {
         chain
     }
 
+    // ── Scene indexing ─────────────────────────────────────────────────────
+
+    /// Parse a .tscn file and populate scene-related DashMaps.
+    fn index_scene(&self, path: &Path, content: &str) {
+        let Ok(scene_data) = crate::core::scene::parse_scene(content) else {
+            return;
+        };
+
+        // Build ext_resource id → res:// path lookup
+        let ext_map: std::collections::HashMap<&str, &str> = scene_data
+            .ext_resources
+            .iter()
+            .map(|ext| (ext.id.as_str(), ext.path.as_str()))
+            .collect();
+
+        // Index nodes with scripts → script_to_scenes reverse map
+        for node in &scene_data.nodes {
+            if let Some(ref script_val) = node.script {
+                // Extract ExtResource id: `ExtResource("1_abc")` → `1_abc`
+                if let Some(ext_id) = extract_ext_resource_id(script_val)
+                    && let Some(&res_path) = ext_map.get(ext_id)
+                {
+                    // Find line number of the script property in the source
+                    let script_line = find_script_line(content, &node.name);
+                    let entry = ScenePathNode {
+                        scene_path: path.to_path_buf(),
+                        node_name: node.name.clone(),
+                        node_type: node.type_name.clone(),
+                        node_parent: node.parent.clone(),
+                        script_line,
+                    };
+                    self.script_to_scenes
+                        .entry(res_path.to_string())
+                        .or_default()
+                        .push(entry);
+                }
+            }
+        }
+
+        // Index signal connections
+        let connections: Vec<SceneConnection> = scene_data
+            .connections
+            .iter()
+            .map(|conn| SceneConnection {
+                signal: conn.signal.clone(),
+                from_node: conn.from.clone(),
+                to_node: conn.to.clone(),
+                method: conn.method.clone(),
+                scene_path: path.to_path_buf(),
+            })
+            .collect();
+        if !connections.is_empty() {
+            self.scene_connections
+                .insert(path.to_path_buf(), connections);
+        }
+
+        self.scenes
+            .insert(path.to_path_buf(), Arc::new(scene_data));
+    }
+
+    /// Re-index a .tscn file from new content (for did_change/did_save).
+    pub fn update_scene(&self, path: &Path, content: &str) {
+        // Remove old entries for this scene
+        self.remove_scene_entries(path);
+        // Re-index
+        self.index_scene(path, content);
+    }
+
+    /// Remove all reverse-map entries for a scene file.
+    fn remove_scene_entries(&self, path: &Path) {
+        self.scenes.remove(path);
+        self.scene_connections.remove(path);
+
+        // Remove script_to_scenes entries that reference this scene
+        self.script_to_scenes.retain(|_, entries| {
+            entries.retain(|e| e.scene_path != path);
+            !entries.is_empty()
+        });
+    }
+
+    // ── Scene query API ─────────────────────────────────────────────────────
+
+    /// Find all scenes that use a given script (by `res://` path or absolute path).
+    pub fn scenes_for_script(&self, script_path: &Path) -> Vec<ScenePathNode> {
+        // Try as res:// path
+        let res_path = self.to_res_path(script_path);
+        if let Some(entries) = res_path.as_ref().and_then(|rp| self.script_to_scenes.get(rp)) {
+            return entries.clone();
+        }
+        Vec::new()
+    }
+
+    /// Get parsed scene data for a .tscn file.
+    pub fn get_scene(&self, scene_path: &Path) -> Option<Arc<SceneData>> {
+        self.scenes.get(scene_path).map(|r| Arc::clone(r.value()))
+    }
+
+    /// Find signal connections where `method == handler_name` across scenes
+    /// that use the given script.
+    pub fn signal_connections_for_handler(
+        &self,
+        script_path: &Path,
+        handler_name: &str,
+    ) -> Vec<SceneConnection> {
+        let mut results = Vec::new();
+        let scene_nodes = self.scenes_for_script(script_path);
+        for spn in &scene_nodes {
+            if let Some(connections) = self.scene_connections.get(&spn.scene_path) {
+                for conn in connections.iter() {
+                    if conn.method == handler_name {
+                        results.push(conn.clone());
+                    }
+                }
+            }
+        }
+        results
+    }
+
+    /// Find signal connections where `signal == signal_name` across scenes
+    /// that use the given script.
+    pub fn signal_connections_for_signal(
+        &self,
+        script_path: &Path,
+        signal_name: &str,
+    ) -> Vec<SceneConnection> {
+        let mut results = Vec::new();
+        let scene_nodes = self.scenes_for_script(script_path);
+        for spn in &scene_nodes {
+            if let Some(connections) = self.scene_connections.get(&spn.scene_path) {
+                for conn in connections.iter() {
+                    if conn.signal == signal_name {
+                        results.push(conn.clone());
+                    }
+                }
+            }
+        }
+        results
+    }
+
+    /// Resolve a node path in a scene to its (name, type).
+    #[allow(dead_code)]
+    pub fn resolve_node_path(
+        &self,
+        scene_path: &Path,
+        node_path: &str,
+    ) -> Option<(String, Option<String>)> {
+        let scene = self.get_scene(scene_path)?;
+        resolve_node_in_scene(&scene, node_path)
+    }
+
+    /// Get all nodes in a scene: (name, type, full_path).
+    pub fn scene_nodes(&self, scene_path: &Path) -> Vec<(String, Option<String>, String)> {
+        let Some(scene) = self.get_scene(scene_path) else {
+            return Vec::new();
+        };
+        scene
+            .nodes
+            .iter()
+            .map(|n| {
+                let full_path = build_node_full_path(&n.name, n.parent.as_deref());
+                (n.name.clone(), n.type_name.clone(), full_path)
+            })
+            .collect()
+    }
+
+    /// Find the primary scene for a script (heuristic: single scene, or same base name).
+    pub fn primary_scene_for_script(&self, script_path: &Path) -> Option<PathBuf> {
+        let scenes = self.scenes_for_script(script_path);
+        if scenes.is_empty() {
+            return None;
+        }
+        if scenes.len() == 1 {
+            return Some(scenes[0].scene_path.clone());
+        }
+        // Prefer scene with same base name (player.gd → player.tscn)
+        let script_stem = script_path.file_stem()?.to_str()?;
+        for spn in &scenes {
+            if let Some(stem) = spn.scene_path.file_stem()
+                && stem.to_str() == Some(script_stem)
+            {
+                return Some(spn.scene_path.clone());
+            }
+        }
+        // Fallback: first scene
+        Some(scenes[0].scene_path.clone())
+    }
+
+    /// Iterate over all scene connections (used by hover to find signal handlers).
+    pub fn iter_scene_connections(
+        &self,
+    ) -> dashmap::iter::Iter<'_, PathBuf, Vec<SceneConnection>> {
+        self.scene_connections.iter()
+    }
+
+    /// Iterate over all indexed scenes (used by hover for node path lookup).
+    pub fn iter_scenes(&self) -> dashmap::iter::Iter<'_, PathBuf, Arc<SceneData>> {
+        self.scenes.iter()
+    }
+
+    /// Convert an absolute path to a `res://` path relative to the project root.
+    fn to_res_path(&self, path: &Path) -> Option<String> {
+        let rel = path.strip_prefix(&self.project_root).ok()?;
+        Some(format!("res://{}", rel.to_string_lossy().replace('\\', "/")))
+    }
+
     /// Create an empty workspace index for testing (no scanning).
     #[cfg(test)]
     pub fn new_empty() -> Self {
@@ -266,6 +523,9 @@ impl WorkspaceIndex {
             symbols: DashMap::new(),
             declarations: DashMap::new(),
             extends_map: DashMap::new(),
+            scenes: DashMap::new(),
+            script_to_scenes: DashMap::new(),
+            scene_connections: DashMap::new(),
         }
     }
 
@@ -326,4 +586,60 @@ fn extract_class_name(root: tree_sitter::Node, source: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// Extract the id from `ExtResource("id")`.
+fn extract_ext_resource_id(value: &str) -> Option<&str> {
+    let inner = value
+        .strip_prefix("ExtResource(\"")
+        .or_else(|| value.strip_prefix("ExtResource( \""))?;
+    let end = inner.find('"')?;
+    Some(&inner[..end])
+}
+
+/// Find the 0-based line number of the `script = ExtResource(...)` property
+/// in a .tscn source, searching after the `[node name="name"` header.
+fn find_script_line(source: &str, node_name: &str) -> Option<usize> {
+    let node_header = format!("[node name=\"{node_name}\"");
+    let mut in_target_node = false;
+    for (line_num, line) in source.lines().enumerate() {
+        if line.contains(&node_header) {
+            in_target_node = true;
+            continue;
+        }
+        if in_target_node {
+            if line.starts_with('[') {
+                // Next section started — no script property found
+                return None;
+            }
+            if line.starts_with("script = ") {
+                return Some(line_num);
+            }
+        }
+    }
+    None
+}
+
+/// Resolve a node path like `"Player/Sprite2D"` in a parsed scene.
+pub(super) fn resolve_node_in_scene(
+    scene: &SceneData,
+    node_path: &str,
+) -> Option<(String, Option<String>)> {
+    // Build full paths for each node
+    for node in &scene.nodes {
+        let full = build_node_full_path(&node.name, node.parent.as_deref());
+        if full == node_path || node.name == node_path {
+            return Some((node.name.clone(), node.type_name.clone()));
+        }
+    }
+    None
+}
+
+/// Build the full scene-tree path for a node given its name and parent.
+fn build_node_full_path(name: &str, parent: Option<&str>) -> String {
+    match parent {
+        // Root node or direct child of root
+        None | Some(".") => name.to_string(),
+        Some(p) => format!("{p}/{name}"),      // Deeper nesting
+    }
 }

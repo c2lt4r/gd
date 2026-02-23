@@ -13,7 +13,8 @@ pub use edit::{
 };
 pub use navigation::{
     query_completions, query_definition, query_hover, query_references, query_references_by_name,
-    query_rename, query_rename_by_name,
+    query_rename, query_rename_by_name, query_scene_refs, query_signal_connections,
+    SceneRefOutput, SignalConnectionOutput,
 };
 pub use refactor::{
     query_bulk_delete_symbol, query_bulk_rename, query_change_signature, query_delete_symbol,

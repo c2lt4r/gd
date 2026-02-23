@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use miette::Result;
+use serde::Serialize;
 use tower_lsp::lsp_types::{
     CompletionItem, CompletionItemKind, GotoDefinitionResponse, HoverContents, Location,
     MarkedString, Position, Range, TextEdit, Url, WorkspaceEdit,
@@ -11,6 +12,27 @@ use super::{
     CompletionOutput, DefinitionOutput, HoverOutput, ReferenceOutput, ReferencesOutput,
     RenameOutput, convert_workspace_edit, find_root, make_uri, resolve_file, url_to_relative,
 };
+
+// ── Scene query output structs ───────────────────────────────────────────────
+
+#[derive(Serialize)]
+pub struct SceneRefOutput {
+    pub scene: String,
+    pub node: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub node_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct SignalConnectionOutput {
+    pub signal: String,
+    pub from_node: String,
+    pub to_node: String,
+    pub method: String,
+    pub scene: String,
+}
 
 // ── Private helpers ──────────────────────────────────────────────────────────
 
@@ -489,7 +511,12 @@ pub fn query_completions(
     }
 
     // Fallback: global completions (workspace already built above)
-    let items = crate::lsp::completion::provide_completions(&source, position, workspace.as_ref());
+    let items = crate::lsp::completion::provide_completions(
+        &source,
+        position,
+        workspace.as_ref(),
+        Some(&path),
+    );
 
     Ok(items
         .into_iter()
@@ -499,4 +526,50 @@ pub fn query_completions(
             detail: item.detail,
         })
         .collect())
+}
+
+// ── Scene-aware queries ──────────────────────────────────────────────────────
+
+pub fn query_scene_refs(file: &str) -> Result<Vec<SceneRefOutput>> {
+    let path = resolve_file(file)?;
+    let root = find_root(&path)?;
+    let workspace = crate::lsp::workspace::WorkspaceIndex::new(root.clone());
+
+    let entries = workspace.scenes_for_script(&path);
+    Ok(entries
+        .into_iter()
+        .map(|spn| SceneRefOutput {
+            scene: crate::core::fs::relative_slash(&spn.scene_path, &root),
+            node: spn.node_name,
+            node_type: spn.node_type,
+            parent: spn.node_parent,
+        })
+        .collect())
+}
+
+pub fn query_signal_connections(file: &str) -> Result<Vec<SignalConnectionOutput>> {
+    let path = resolve_file(file)?;
+    let root = find_root(&path)?;
+    let workspace = crate::lsp::workspace::WorkspaceIndex::new(root.clone());
+
+    // Collect all signal connections from scenes that use this script
+    let mut results = Vec::new();
+    let scene_nodes = workspace.scenes_for_script(&path);
+    for spn in &scene_nodes {
+        for entry in workspace.iter_scene_connections() {
+            if *entry.key() != spn.scene_path {
+                continue;
+            }
+            for conn in entry.value() {
+                results.push(SignalConnectionOutput {
+                    signal: conn.signal.clone(),
+                    from_node: conn.from_node.clone(),
+                    to_node: conn.to_node.clone(),
+                    method: conn.method.clone(),
+                    scene: crate::core::fs::relative_slash(&conn.scene_path, &root),
+                });
+            }
+        }
+    }
+    Ok(results)
 }

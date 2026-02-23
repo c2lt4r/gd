@@ -17,6 +17,13 @@ pub fn hover_at(
     let point = tree_sitter::Point::new(position.line as usize, position.character as usize);
     let node = root.descendant_for_point_range(point, point)?;
 
+    // Handle $NodePath / get_node() — show scene node info
+    if (node.kind() == "get_node" || node.kind() == "node_path")
+        && let Some(hover) = hover_node_path(&node, source, workspace)
+    {
+        return Some(hover);
+    }
+
     // Walk up the tree to find a meaningful declaration node
     let mut current = node;
     loop {
@@ -174,6 +181,10 @@ fn resolve_hover_for_identifier(
             range: Some(node_range(current)),
         });
     }
+    // 7b. Signal handler function → show connected signal from scene
+    if let Some(hover) = try_signal_handler_hover(current, name, workspace) {
+        return Some(hover);
+    }
     // 8. Check if this is an enum member (HOUSE inside enum { HOUSE, MART })
     if let Some(parent) = current.parent()
         && parent.kind() == "enumerator"
@@ -267,6 +278,117 @@ fn try_receiver_hover(
     }
 
     None
+}
+
+/// Hover for `$NodePath` or `get_node("path")` — show node type from scene tree.
+fn hover_node_path(
+    node: &tree_sitter::Node,
+    source: &str,
+    workspace: Option<&WorkspaceIndex>,
+) -> Option<Hover> {
+    let ws = workspace?;
+
+    // Extract the node path text from the AST node
+    let text = node.utf8_text(source.as_bytes()).ok()?;
+    let node_path = text.trim_start_matches('$').trim_matches('"');
+    if node_path.is_empty() {
+        return None;
+    }
+
+    // Determine which scene to look in — we need the current file's path.
+    // Since hover_at doesn't pass the URI, try to find a scene that has a node matching.
+    // This is a best-effort lookup across all indexed scenes.
+    for entry in ws.iter_scenes() {
+        let scene = entry.value();
+        if let Some((name, type_name)) =
+            super::workspace::resolve_node_in_scene(scene, node_path)
+        {
+            let type_str = type_name.as_deref().unwrap_or("Node");
+            let code = format!("{type_str} ${node_path}");
+
+            let scene_name = entry
+                .key()
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown");
+
+            let mut doc_lines = Vec::new();
+            doc_lines.push(format!("Node: **{name}**"));
+            doc_lines.push(format!("Scene: *{scene_name}*"));
+
+            // Check for groups
+            for scene_node in &scene.nodes {
+                if scene_node.name == name && !scene_node.groups.is_empty() {
+                    doc_lines.push(format!("Groups: {}", scene_node.groups.join(", ")));
+                    break;
+                }
+            }
+
+            return Some(make_hover(&code, node, Some(&doc_lines.join("\\\n"))));
+        }
+    }
+
+    None
+}
+
+/// Try to show signal connection info for a function that looks like a signal handler.
+///
+/// If the function name appears as a `method` in a scene connection,
+/// show which signal it's connected to and from which node.
+fn try_signal_handler_hover(
+    ident_node: &tree_sitter::Node,
+    name: &str,
+    workspace: Option<&WorkspaceIndex>,
+) -> Option<Hover> {
+    let ws = workspace?;
+
+    // Only trigger for function declaration names or identifiers that look like handler names
+    let parent = ident_node.parent()?;
+    let is_func_decl = parent.kind() == "function_definition"
+        && parent.child_by_field_name("name").is_some_and(|n| n.id() == ident_node.id());
+    if !is_func_decl {
+        return None;
+    }
+
+    // Find the file URI from the node's position — we need the script path
+    // This is called from resolve_hover_for_identifier which has the root node
+    // but not the file path. We can't determine the file here without extra context.
+    // Instead, we'll check all scripts that have a handler with this name.
+    // For now, search all scene connections for this handler name.
+    let mut connections = Vec::new();
+    for entry in ws.iter_scene_connections() {
+        for conn in entry.value() {
+            if conn.method == name {
+                connections.push(conn.clone());
+            }
+        }
+    }
+
+    if connections.is_empty() {
+        return None;
+    }
+
+    let mut lines = Vec::new();
+    for conn in &connections {
+        let scene_name = conn
+            .scene_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown");
+        lines.push(format!(
+            "Connected via signal: **{}**\\\nSource node: {} \\\nScene: *{}*",
+            conn.signal, conn.from_node, scene_name
+        ));
+    }
+
+    let value = lines.join("\n\n---\n\n");
+    Some(Hover {
+        contents: HoverContents::Markup(MarkupContent {
+            kind: MarkupKind::Markdown,
+            value,
+        }),
+        range: Some(node_range(ident_node)),
+    })
 }
 
 /// Try to resolve a member access pattern (foo.bar or self.bar).

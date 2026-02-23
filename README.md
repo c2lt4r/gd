@@ -12,7 +12,7 @@ Built with [tree-sitter-gdscript](https://github.com/PrestonKnopp/tree-sitter-gd
 - **Watch** for file changes and auto-lint/format on save
 - **Manage addons** from Git or the Godot Asset Library (with lockfile and update support)
 - **Generate CI/CD** configurations for GitHub Actions and GitLab CI
-- **LSP server** with formatting, diagnostics, hover, go-to-definition, references, rename, completion, inlay hints, signature help, call hierarchy, find implementations, semantic tokens, workspace symbol search, and 16 refactoring commands
+- **LSP server** with formatting, diagnostics, hover, go-to-definition, references, rename, completion, inlay hints, signature help, call hierarchy, find implementations, semantic tokens, workspace symbol search, scene-aware cross-referencing, and 16 refactoring commands
 - **Scene management** &mdash; create scenes, add/remove/duplicate nodes, instance scenes, add sub-resources, batch-add nodes, set properties, wire connections, attach/detach scripts &mdash; plus validate `.tscn`/`.tres` files and visualize scene hierarchies
 - **Debug** a running Godot game via Godot's binary debug protocol &mdash; breakpoints, stepping, variable inspection, expression evaluation, live scene tree, node inspection, game speed control, and hot-reload
 - **Godot LSP proxy** &mdash; forward hover, completion, and go-to-definition to Godot's built-in LSP when the editor is running
@@ -910,6 +910,12 @@ gd lsp view --file player.gd --format json  # structured output for AI tools
 # Scene info (nodes, resources, connections from a .tscn file)
 gd lsp scene-info --file main.tscn
 gd lsp scene-info --file main.tscn --nodes-only
+
+# List all scenes that reference a script
+gd lsp scene-refs --file player.gd
+
+# List signal connections targeting a script's handler functions
+gd lsp signal-connections --file player.gd
 
 # Create a new GDScript file with scaffolding
 gd lsp create-file --file enemies/boss.gd --extends CharacterBody2D --class-name Boss

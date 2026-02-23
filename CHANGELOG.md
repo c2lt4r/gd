@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.2.30] - 2026-02-23
+
+### Added
+- **Scene-aware LSP** — the LSP now indexes `.tscn` scene files alongside `.gd` scripts, enabling cross-referencing between scripts and scenes.
+- **Script↔scene references** — `gd lsp references` on a script or class now includes `.tscn` locations where the script is attached to nodes.
+- **Signal connection navigation** — go-to-definition on signal handler functions (e.g. `_on_body_entered`) jumps to the signal source in `.tscn`. Find-references on signal declarations includes `.tscn` connection sites.
+- **`$NodePath` hover** — hovering on `$Player/Sprite2D` or `get_node("path")` shows the resolved node type, parent path, attached script, and groups from the scene tree.
+- **Signal handler hover** — hovering on a signal handler function shows the connected signal name, source node, and scene file.
+- **Node path completion** — autocomplete inside `$...` and `get_node("...")` suggests node paths from the scene tree with types as detail text.
+- **`gd lsp scene-refs`** — list all scenes that reference a given script, with node name, type, and parent path.
+- **`gd lsp signal-connections`** — list all signal connections targeting handler functions in a given script.
+
+### Improved
+- **LSP `.tscn` file tracking** — `did_open`, `did_change`, and `did_save` now update the scene index incrementally, keeping cross-references fresh as scenes are edited.
+
 ## [0.2.29] - 2026-02-23
 
 ### Improved

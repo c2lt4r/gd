@@ -520,6 +520,24 @@ pub enum LspCommand {
         #[arg(long)]
         format: Option<String>,
     },
+    /// List all scenes that reference a GDScript file
+    SceneRefs {
+        /// Path to the .gd file
+        #[arg(long)]
+        file: String,
+        /// Output format: json or human (default: human)
+        #[arg(long)]
+        format: Option<String>,
+    },
+    /// List all signal connections targeting handler functions in a script
+    SignalConnections {
+        /// Path to the .gd file
+        #[arg(long)]
+        file: String,
+        /// Output format: json or human (default: human)
+        #[arg(long)]
+        format: Option<String>,
+    },
     /// Move/rename a file and update all references (preload, load, ext_resource, autoload)
     MoveFile {
         /// Source file path (relative to project root)
@@ -1151,6 +1169,51 @@ fn print_scene_info_human(r: &crate::lsp::query::SceneInfoOutput) {
                 format!(".{}", c.method).dimmed()
             );
         }
+    }
+}
+
+fn print_scene_refs_human(refs: &[crate::lsp::query::SceneRefOutput]) {
+    use owo_colors::OwoColorize;
+    if refs.is_empty() {
+        cprintln!("  (no scenes reference this script)");
+        return;
+    }
+    cprintln!("{} scene{}:", refs.len(), if refs.len() == 1 { "" } else { "s" });
+    for r in refs {
+        let type_part = r
+            .node_type
+            .as_deref()
+            .map_or_else(String::new, |t| format!(" ({})", t.dimmed()));
+        cprintln!(
+            "  {}  node: {}{}",
+            r.scene.cyan(),
+            r.node.bold(),
+            type_part,
+        );
+    }
+}
+
+fn print_signal_connections_human(conns: &[crate::lsp::query::SignalConnectionOutput]) {
+    use owo_colors::OwoColorize;
+    if conns.is_empty() {
+        cprintln!("  (no signal connections)");
+        return;
+    }
+    cprintln!(
+        "{} connection{}:",
+        conns.len(),
+        if conns.len() == 1 { "" } else { "s" }
+    );
+    for c in conns {
+        cprintln!(
+            "  {} {} {} {} {}  [{}]",
+            c.from_node.cyan(),
+            format!(".{}", c.signal).dimmed(),
+            "→".dimmed(),
+            c.to_node.cyan(),
+            format!(".{}", c.method).dimmed(),
+            c.scene.dimmed(),
+        );
     }
 }
 
@@ -2035,6 +2098,28 @@ pub fn exec(args: LspArgs) -> Result<()> {
                 cprintln!("{json}");
             } else {
                 print_scene_info_human(&result);
+            }
+            Ok(())
+        }
+        LspCommand::SceneRefs { file, format } => {
+            let result = crate::lsp::query::query_scene_refs(&file)?;
+            if is_json(format.as_ref()) {
+                let json =
+                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+                cprintln!("{json}");
+            } else {
+                print_scene_refs_human(&result);
+            }
+            Ok(())
+        }
+        LspCommand::SignalConnections { file, format } => {
+            let result = crate::lsp::query::query_signal_connections(&file)?;
+            if is_json(format.as_ref()) {
+                let json =
+                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+                cprintln!("{json}");
+            } else {
+                print_signal_connections_human(&result);
             }
             Ok(())
         }

@@ -191,23 +191,43 @@ impl LanguageServer for Backend {
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
         let uri = params.text_document.uri.clone();
+        let is_scene = std::path::Path::new(uri.path()).extension().is_some_and(|e| e == "tscn");
+
+        // Update workspace index for scene files
+        if is_scene
+            && let Some(ws) = self.workspace.get()
+            && let Ok(path) = uri.to_file_path()
+        {
+            ws.update_scene(&path, &params.text_document.text);
+        }
+
         self.documents.insert(
             params.text_document.uri,
             DocumentState {
                 content: params.text_document.text,
             },
         );
-        self.publish_diagnostics(uri).await;
+
+        // Only publish diagnostics for .gd files
+        if !is_scene {
+            self.publish_diagnostics(uri).await;
+        }
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         let uri = params.text_document.uri.clone();
+        let is_scene = std::path::Path::new(uri.path()).extension().is_some_and(|e| e == "tscn");
+
         if let Some(change) = params.content_changes.into_iter().last() {
             // Update workspace symbols from unsaved content
             if let Some(ws) = self.workspace.get()
                 && let Ok(path) = uri.to_file_path()
             {
-                ws.update_in_memory(&path, &change.text);
+                if is_scene {
+                    ws.update_scene(&path, &change.text);
+                } else {
+                    ws.update_in_memory(&path, &change.text);
+                }
             }
             self.documents.insert(
                 params.text_document.uri,
@@ -216,17 +236,34 @@ impl LanguageServer for Backend {
                 },
             );
         }
-        self.publish_diagnostics(uri).await;
+
+        // Only publish diagnostics for .gd files
+        if !is_scene {
+            self.publish_diagnostics(uri).await;
+        }
     }
 
     async fn did_save(&self, params: DidSaveTextDocumentParams) {
         let uri = params.text_document.uri;
+        let is_scene = std::path::Path::new(uri.path()).extension().is_some_and(|e| e == "tscn");
+
         if let Some(ws) = self.workspace.get()
             && let Ok(path) = uri.to_file_path()
         {
-            ws.refresh_file(&path);
+            if is_scene {
+                // Re-index scene from disk
+                if let Ok(content) = std::fs::read_to_string(&path) {
+                    ws.update_scene(&path, &content);
+                }
+            } else {
+                ws.refresh_file(&path);
+            }
         }
-        self.publish_diagnostics(uri).await;
+
+        // Only publish diagnostics for .gd files
+        if !is_scene {
+            self.publish_diagnostics(uri).await;
+        }
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
@@ -554,7 +591,13 @@ impl LanguageServer for Backend {
         }
 
         // Fallback: static tree-sitter analysis (global completions)
-        let items = completion::provide_completions(&source, position, self.workspace.get());
+        let file_path = uri.to_file_path().ok();
+        let items = completion::provide_completions(
+            &source,
+            position,
+            self.workspace.get(),
+            file_path.as_deref(),
+        );
 
         if items.is_empty() {
             Ok(None)

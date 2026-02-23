@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::sync::Arc;
 
 use tower_lsp::lsp_types::{
@@ -1092,12 +1093,100 @@ pub fn try_dot_completions(
     if items.is_empty() { None } else { Some(items) }
 }
 
+/// Detect `$NodePath` or `get_node("...")` context and return scene node completions.
+fn try_node_path_completions(
+    source: &str,
+    position: Position,
+    workspace: &WorkspaceIndex,
+    file_path: &Path,
+) -> Option<Vec<CompletionItem>> {
+    let line_idx = position.line as usize;
+    let col_idx = position.character as usize;
+    let line_text = source.lines().nth(line_idx)?;
+    let prefix_text = &line_text[..col_idx.min(line_text.len())];
+
+    // Detect $NodePath context: cursor is after `$` with optional partial path
+    // e.g. `$`, `$Spr`, `$Player/Spr`
+    let node_prefix = if let Some(dollar_pos) = prefix_text.rfind('$') {
+        // Make sure $ is not inside a string or comment
+        let before_dollar = &prefix_text[..dollar_pos];
+        if before_dollar.contains('"') || before_dollar.trim_start().starts_with('#') {
+            None
+        } else {
+            Some(&prefix_text[dollar_pos + 1..])
+        }
+    } else {
+        None
+    };
+
+    // Detect get_node("...") context: cursor inside string arg of get_node
+    let node_prefix = node_prefix.or_else(|| {
+        let get_node_pat = "get_node(\"";
+        if let Some(start) = prefix_text.rfind(get_node_pat) {
+            let after = &prefix_text[start + get_node_pat.len()..];
+            // Make sure string isn't closed
+            if !after.contains('"') {
+                return Some(after);
+            }
+        }
+        let get_node_or_null_pat = "get_node_or_null(\"";
+        if let Some(start) = prefix_text.rfind(get_node_or_null_pat) {
+            let after = &prefix_text[start + get_node_or_null_pat.len()..];
+            if !after.contains('"') {
+                return Some(after);
+            }
+        }
+        None
+    });
+
+    let prefix = node_prefix?;
+
+    // Find the primary scene for this script
+    let scene_path = workspace.primary_scene_for_script(file_path)?;
+    let nodes = workspace.scene_nodes(&scene_path);
+    if nodes.is_empty() {
+        return None;
+    }
+
+    let mut items = Vec::new();
+    for (name, type_name, full_path) in &nodes {
+        // Skip root node (it's the script's own node)
+        if full_path == name && nodes.iter().any(|n| n.2 != *full_path) {
+            // This is the root node — include it but also include children
+        }
+
+        // Filter by prefix
+        if !prefix.is_empty() && !full_path.starts_with(prefix) && !name.starts_with(prefix) {
+            continue;
+        }
+
+        let type_str = type_name.as_deref().unwrap_or("Node");
+        items.push(CompletionItem {
+            label: full_path.clone(),
+            kind: Some(CompletionItemKind::REFERENCE),
+            detail: Some(type_str.to_string()),
+            ..Default::default()
+        });
+    }
+
+    if items.is_empty() { None } else { Some(items) }
+}
+
 /// Provide completion items at the given position.
 pub fn provide_completions(
     source: &str,
     position: Position,
     workspace: Option<&WorkspaceIndex>,
+    file_path: Option<&Path>,
 ) -> Vec<CompletionItem> {
+    // Node path completion: inside $... or get_node("...")
+    if let Some(ws) = workspace
+        && let Some(fp) = file_path
+        && let Some(items) = try_node_path_completions(source, position, ws, fp)
+    {
+        return items;
+    }
+
     // Dot-completion: return only members of the receiver type
     if let Some(dot_ctx) = detect_dot_context(source, position) {
         return provide_dot_completions(source, position, &dot_ctx, workspace);
@@ -1544,7 +1633,7 @@ mod tests {
 
     #[test]
     fn keywords_and_builtins_present() {
-        let items = provide_completions("", Position::new(0, 0), None);
+        let items = provide_completions("", Position::new(0, 0), None, None);
         let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         assert!(labels.contains(&"func"));
         assert!(labels.contains(&"var"));
@@ -1555,7 +1644,7 @@ mod tests {
 
     #[test]
     fn lifecycle_methods_are_snippets() {
-        let items = provide_completions("", Position::new(0, 0), None);
+        let items = provide_completions("", Position::new(0, 0), None, None);
         let ready = items.iter().find(|i| i.label == "_ready").unwrap();
         assert_eq!(ready.insert_text_format, Some(InsertTextFormat::SNIPPET));
         assert!(ready.insert_text.as_ref().unwrap().contains("pass"));
@@ -1563,7 +1652,7 @@ mod tests {
 
     #[test]
     fn builtin_functions_are_snippets() {
-        let items = provide_completions("", Position::new(0, 0), None);
+        let items = provide_completions("", Position::new(0, 0), None, None);
         let print_item = items.iter().find(|i| i.label == "print").unwrap();
         assert_eq!(
             print_item.insert_text_format,
@@ -1586,7 +1675,7 @@ func _ready():
 func attack(target):
     pass
 ";
-        let items = provide_completions(source, Position::new(0, 0), None);
+        let items = provide_completions(source, Position::new(0, 0), None, None);
         let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         assert!(labels.contains(&"health"));
         assert!(labels.contains(&"MAX_SPEED"));
@@ -1598,7 +1687,7 @@ func attack(target):
     #[test]
     fn function_detail_includes_params() {
         let source = "func move(speed: float, dir: Vector2) -> bool:\n\tpass\n";
-        let items = provide_completions(source, Position::new(0, 0), None);
+        let items = provide_completions(source, Position::new(0, 0), None, None);
         let move_item = items
             .iter()
             .find(|i| i.label == "move" && i.kind == Some(CompletionItemKind::FUNCTION))
@@ -1611,7 +1700,7 @@ func attack(target):
     #[test]
     fn extends_adds_class_db_methods() {
         let source = "extends Node2D\n\nfunc _ready():\n\tpass\n";
-        let items = provide_completions(source, Position::new(0, 0), None);
+        let items = provide_completions(source, Position::new(0, 0), None, None);
         let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         // Node2D own method
         assert!(labels.contains(&"apply_scale"));
@@ -1622,7 +1711,7 @@ func attack(target):
     #[test]
     fn extends_method_detail_shows_class() {
         let source = "extends Node2D\n";
-        let items = provide_completions(source, Position::new(0, 0), None);
+        let items = provide_completions(source, Position::new(0, 0), None, None);
         let add_child = items
             .iter()
             .find(|i| i.label == "add_child" && i.kind == Some(CompletionItemKind::METHOD))
@@ -1634,7 +1723,7 @@ func attack(target):
     #[test]
     fn no_class_db_methods_without_extends() {
         let source = "func _ready():\n\tpass\n";
-        let items = provide_completions(source, Position::new(0, 0), None);
+        let items = provide_completions(source, Position::new(0, 0), None, None);
         // add_child should not appear (only lifecycle snippets and file symbols)
         let engine_methods: Vec<&CompletionItem> = items
             .iter()
@@ -1649,7 +1738,7 @@ func attack(target):
     #[test]
     fn completion_includes_doc_comment() {
         let source = "## Move the player forward.\nfunc move():\n\tpass\n";
-        let items = provide_completions(source, Position::new(0, 0), None);
+        let items = provide_completions(source, Position::new(0, 0), None, None);
         let move_item = items
             .iter()
             .find(|i| i.label == "move" && i.kind == Some(CompletionItemKind::FUNCTION))
@@ -1665,7 +1754,7 @@ func attack(target):
     #[test]
     fn completion_no_doc_comment() {
         let source = "func idle():\n\tpass\n";
-        let items = provide_completions(source, Position::new(0, 0), None);
+        let items = provide_completions(source, Position::new(0, 0), None, None);
         let idle_item = items
             .iter()
             .find(|i| i.label == "idle" && i.kind == Some(CompletionItemKind::FUNCTION))
@@ -1676,7 +1765,7 @@ func attack(target):
     #[test]
     fn completion_var_doc_comment() {
         let source = "## The player's health.\nvar health: int = 100\n";
-        let items = provide_completions(source, Position::new(0, 0), None);
+        let items = provide_completions(source, Position::new(0, 0), None, None);
         let health_item = items
             .iter()
             .find(|i| i.label == "health" && i.kind == Some(CompletionItemKind::PROPERTY))
@@ -1687,7 +1776,7 @@ func attack(target):
     #[test]
     fn top_level_var_is_property_kind() {
         let source = "var health: int = 100\n";
-        let items = provide_completions(source, Position::new(0, 0), None);
+        let items = provide_completions(source, Position::new(0, 0), None, None);
         let health = items.iter().find(|i| i.label == "health").unwrap();
         assert_eq!(health.kind, Some(CompletionItemKind::PROPERTY));
     }
@@ -1695,7 +1784,7 @@ func attack(target):
     #[test]
     fn variable_detail_shows_declaration() {
         let source = "var speed: float = 5.0\n";
-        let items = provide_completions(source, Position::new(0, 0), None);
+        let items = provide_completions(source, Position::new(0, 0), None, None);
         let speed = items.iter().find(|i| i.label == "speed").unwrap();
         assert_eq!(speed.detail.as_deref(), Some("var speed: float = 5.0"));
     }
@@ -1703,7 +1792,7 @@ func attack(target):
     #[test]
     fn const_detail_shows_declaration() {
         let source = "const MAX_HP: int = 100\n";
-        let items = provide_completions(source, Position::new(0, 0), None);
+        let items = provide_completions(source, Position::new(0, 0), None, None);
         let item = items.iter().find(|i| i.label == "MAX_HP").unwrap();
         assert_eq!(item.detail.as_deref(), Some("const MAX_HP: int = 100"));
     }
@@ -1711,7 +1800,7 @@ func attack(target):
     #[test]
     fn signal_detail_shows_params() {
         let source = "signal health_changed(old: int, new_val: int)\n";
-        let items = provide_completions(source, Position::new(0, 0), None);
+        let items = provide_completions(source, Position::new(0, 0), None, None);
         let item = items.iter().find(|i| i.label == "health_changed").unwrap();
         let detail = item.detail.as_deref().unwrap();
         assert!(detail.contains("health_changed"));
@@ -1721,7 +1810,7 @@ func attack(target):
     #[test]
     fn enum_members_are_enum_member_kind() {
         let source = "enum Color { RED, GREEN, BLUE }\n";
-        let items = provide_completions(source, Position::new(0, 0), None);
+        let items = provide_completions(source, Position::new(0, 0), None, None);
         let red = items.iter().find(|i| i.label == "RED").unwrap();
         assert_eq!(red.kind, Some(CompletionItemKind::ENUM_MEMBER));
         assert_eq!(red.detail.as_deref(), Some("Color.RED = 0"));
@@ -1730,7 +1819,7 @@ func attack(target):
     #[test]
     fn enum_member_with_explicit_value() {
         let source = "enum Flags { A = 10, B, C }\n";
-        let items = provide_completions(source, Position::new(0, 0), None);
+        let items = provide_completions(source, Position::new(0, 0), None, None);
         let a = items.iter().find(|i| i.label == "A").unwrap();
         assert_eq!(a.detail.as_deref(), Some("Flags.A = 10"));
         let b = items.iter().find(|i| i.label == "B").unwrap();
@@ -1777,7 +1866,7 @@ func attack(target):
         let source =
             "extends CharacterBody2D\nvar health: int = 100\nfunc run():\n\tself.\n\tpass\n";
         // Cursor at end of `self.` on line 3
-        let items = provide_completions(source, Position::new(3, 6), None);
+        let items = provide_completions(source, Position::new(3, 6), None, None);
         let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         // File symbols should be present
         assert!(
@@ -1810,7 +1899,7 @@ func attack(target):
     fn self_dot_prefix_filters() {
         let source =
             "extends CharacterBody2D\nvar position_offset := 0\nfunc run():\n\tself.pos\n\tpass\n";
-        let items = provide_completions(source, Position::new(3, 9), None);
+        let items = provide_completions(source, Position::new(3, 9), None, None);
         let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         // position_offset matches prefix "pos"
         assert!(labels.contains(&"position_offset"));
@@ -1821,7 +1910,7 @@ func attack(target):
     #[test]
     fn typed_var_dot_completions() {
         let source = "extends Node\nvar s: Sprite2D\nfunc run():\n\ts.\n\tpass\n";
-        let items = provide_completions(source, Position::new(3, 3), None);
+        let items = provide_completions(source, Position::new(3, 3), None, None);
         let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         // Sprite2D properties from ClassDB
         assert!(
@@ -1837,7 +1926,7 @@ func attack(target):
     #[test]
     fn local_typed_var_in_function() {
         let source = "extends Node\nfunc run():\n\tvar s: Sprite2D\n\ts.\n\tpass\n";
-        let items = provide_completions(source, Position::new(3, 3), None);
+        let items = provide_completions(source, Position::new(3, 3), None, None);
         let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         assert!(
             labels.contains(&"texture"),
@@ -1848,7 +1937,7 @@ func attack(target):
     #[test]
     fn typed_param_in_function() {
         let source = "extends Node\nfunc run(s: Sprite2D):\n\ts.\n\tpass\n";
-        let items = provide_completions(source, Position::new(2, 3), None);
+        let items = provide_completions(source, Position::new(2, 3), None, None);
         let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         assert!(
             labels.contains(&"texture"),
@@ -1859,7 +1948,7 @@ func attack(target):
     #[test]
     fn engine_class_dot_completions() {
         let source = "extends Node\nfunc run():\n\tVector2.\n\tpass\n";
-        let items = provide_completions(source, Position::new(2, 9), None);
+        let items = provide_completions(source, Position::new(2, 9), None, None);
         let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         // Vector2 methods from builtins
         assert!(
@@ -1871,7 +1960,7 @@ func attack(target):
     #[test]
     fn color_dot_completions() {
         let source = "extends Node\nfunc run():\n\tColor.\n\tpass\n";
-        let items = provide_completions(source, Position::new(2, 7), None);
+        let items = provide_completions(source, Position::new(2, 7), None, None);
         let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         assert!(
             labels.contains(&"lightened"),
@@ -1886,7 +1975,7 @@ func attack(target):
     #[test]
     fn string_dot_completions_generated() {
         let source = "extends Node\nfunc run():\n\tString.\n\tpass\n";
-        let items = provide_completions(source, Position::new(2, 8), None);
+        let items = provide_completions(source, Position::new(2, 8), None, None);
         let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         // Generated methods that weren't in the manual list
         assert!(
@@ -1902,7 +1991,7 @@ func attack(target):
     #[test]
     fn non_dot_context_unchanged() {
         let source = "extends Node2D\nfunc run():\n\tvar x = 1\n";
-        let items = provide_completions(source, Position::new(2, 10), None);
+        let items = provide_completions(source, Position::new(2, 10), None, None);
         let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         // Should have keywords and builtins
         assert!(labels.contains(&"func"));
@@ -1913,7 +2002,7 @@ func attack(target):
     #[test]
     fn unknown_receiver_returns_empty() {
         let source = "extends Node\nfunc run():\n\tunknown_thing.\n";
-        let items = provide_completions(source, Position::new(2, 15), None);
+        let items = provide_completions(source, Position::new(2, 15), None, None);
         assert!(
             items.is_empty(),
             "unknown receiver should return empty list"
@@ -1923,7 +2012,7 @@ func attack(target):
     #[test]
     fn self_dot_includes_class_db_properties() {
         let source = "extends CharacterBody2D\nfunc run():\n\tself.\n\tpass\n";
-        let items = provide_completions(source, Position::new(2, 6), None);
+        let items = provide_completions(source, Position::new(2, 6), None, None);
         let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         // CharacterBody2D own property
         assert!(labels.contains(&"velocity"), "should contain 'velocity'");
@@ -1973,7 +2062,7 @@ func attack(target):
     fn chain_self_velocity_dot() {
         // self.velocity. should resolve to Vector2 members
         let source = "extends CharacterBody2D\nfunc run():\n\tself.velocity.\n\tpass\n";
-        let items = provide_completions(source, Position::new(2, 15), None);
+        let items = provide_completions(source, Position::new(2, 15), None, None);
         let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         // Vector2 methods via builtins
         assert!(
@@ -1987,7 +2076,7 @@ func attack(target):
     #[test]
     fn chain_self_velocity_prefix() {
         let source = "extends CharacterBody2D\nfunc run():\n\tself.velocity.nor\n\tpass\n";
-        let items = provide_completions(source, Position::new(2, 18), None);
+        let items = provide_completions(source, Position::new(2, 18), None, None);
         let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         assert!(labels.contains(&"normalized"));
         assert!(!labels.contains(&"length"));
@@ -2000,7 +2089,7 @@ func attack(target):
         // var rng := RandomNumberGenerator.new() → rng. should show RNG members
         let source =
             "extends Node\nfunc run():\n\tvar rng := RandomNumberGenerator.new()\n\trng.\n\tpass\n";
-        let items = provide_completions(source, Position::new(3, 5), None);
+        let items = provide_completions(source, Position::new(3, 5), None, None);
         let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         assert!(
             labels.contains(&"seed"),
@@ -2012,7 +2101,7 @@ func attack(target):
     fn local_var_inferred_from_builtin_constructor() {
         // var v := Vector2(1, 2) → v. should show Vector2 members
         let source = "extends Node\nfunc run():\n\tvar v := Vector2(1, 2)\n\tv.\n\tpass\n";
-        let items = provide_completions(source, Position::new(3, 3), None);
+        let items = provide_completions(source, Position::new(3, 3), None, None);
         let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         assert!(
             labels.contains(&"normalized"),
@@ -2025,7 +2114,7 @@ func attack(target):
         // Top-level var with := should also infer type
         let source =
             "extends Node\nvar rng := RandomNumberGenerator.new()\nfunc run():\n\trng.\n\tpass\n";
-        let items = provide_completions(source, Position::new(3, 5), None);
+        let items = provide_completions(source, Position::new(3, 5), None, None);
         let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         assert!(
             labels.contains(&"seed"),
@@ -2039,7 +2128,7 @@ func attack(target):
     fn local_var_inferred_from_function_return_type() {
         // var input_dir := _get_input_direction() where func returns -> Vector2
         let source = "extends Node\nfunc run():\n\tvar input_dir := _get_input_direction()\n\tinput_dir.\n\tpass\n\nfunc _get_input_direction() -> Vector2:\n\treturn Vector2.ZERO\n";
-        let items = provide_completions(source, Position::new(3, 11), None);
+        let items = provide_completions(source, Position::new(3, 11), None, None);
         let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         assert!(
             labels.contains(&"normalized"),
@@ -2051,7 +2140,7 @@ func attack(target):
     fn local_var_inferred_from_class_constant() {
         // var dir := Vector2.ZERO → dir. should show Vector2 members
         let source = "extends Node\nfunc run():\n\tvar dir := Vector2.ZERO\n\tdir.\n\tpass\n";
-        let items = provide_completions(source, Position::new(3, 5), None);
+        let items = provide_completions(source, Position::new(3, 5), None, None);
         let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         assert!(
             labels.contains(&"normalized"),
@@ -2067,7 +2156,7 @@ func attack(target):
         let source =
             "extends Node\nfunc run():\n\tfor npc: Node2D in get_children():\n\t\tnpc.\n\t\tpass\n";
         // \t\tnpc. → col 6 is after the dot
-        let items = provide_completions(source, Position::new(3, 6), None);
+        let items = provide_completions(source, Position::new(3, 6), None, None);
         let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         assert!(
             labels.contains(&"position"),
@@ -2083,7 +2172,7 @@ func attack(target):
         let source =
             "extends Node\nsignal my_signal(value: int)\nfunc run():\n\tself.my_signal.\n\tpass\n";
         // \tself.my_signal. → col 16 is after the second dot
-        let items = provide_completions(source, Position::new(3, 16), None);
+        let items = provide_completions(source, Position::new(3, 16), None, None);
         let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         assert!(
             labels.contains(&"emit"),

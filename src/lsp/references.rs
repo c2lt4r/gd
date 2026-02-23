@@ -1,6 +1,7 @@
 use std::collections::HashSet;
+use std::path::Path;
 
-use tower_lsp::lsp_types::{Location, Position, Url};
+use tower_lsp::lsp_types::{Location, Position, Range, Url};
 
 use super::util::{FUNCTION_KINDS, node_range};
 
@@ -208,6 +209,12 @@ pub fn find_references_cross_file(
                 &mut locations,
             );
         }
+    }
+
+    // Scene cross-references: find signal connections in .tscn files that
+    // reference a handler function in the current script
+    if let Some(ref path) = current_path {
+        collect_scene_references(workspace, path, target_name, &mut locations);
     }
 
     if locations.is_empty() {
@@ -545,6 +552,67 @@ fn collect_scoped_refs_in_node(
             locations,
         );
     }
+}
+
+// ── Scene-aware reference search ─────────────────────────────────────────
+
+/// Collect references from .tscn files for a symbol in a script.
+///
+/// Adds locations for:
+/// - Signal connections where `method == target_name` (handler functions)
+/// - Signal connections where `signal == target_name` (signal declarations)
+fn collect_scene_references(
+    workspace: &super::workspace::WorkspaceIndex,
+    script_path: &Path,
+    target_name: &str,
+    locations: &mut Vec<Location>,
+) {
+    // Signal handler references: handler function name appears in [connection] sections
+    let handler_conns = workspace.signal_connections_for_handler(script_path, target_name);
+    for conn in &handler_conns {
+        if let Some(line) = find_scene_pattern(&conn.scene_path, &format!("method=\"{target_name}\""), &format!("method = \"{target_name}\""))
+            && let Ok(uri) = Url::from_file_path(&conn.scene_path)
+        {
+            locations.push(Location {
+                uri,
+                range: Range::new(
+                    Position::new(line as u32, 0),
+                    Position::new(line as u32, 0),
+                ),
+            });
+        }
+    }
+
+    // Signal declaration references: signal name appears in [connection] sections
+    let signal_conns = workspace.signal_connections_for_signal(script_path, target_name);
+    for conn in &signal_conns {
+        if let Some(line) = find_scene_pattern(&conn.scene_path, &format!("signal=\"{target_name}\""), &format!("signal = \"{target_name}\""))
+            && let Ok(uri) = Url::from_file_path(&conn.scene_path)
+        {
+            // Avoid duplicates if both handler and signal match the same line
+            let pos = Position::new(line as u32, 0);
+            let already_added = locations.iter().any(|loc| {
+                loc.uri == uri && loc.range.start == pos
+            });
+            if !already_added {
+                locations.push(Location {
+                    uri,
+                    range: Range::new(pos, pos),
+                });
+            }
+        }
+    }
+}
+
+/// Find the 0-based line number of a pattern in a .tscn file.
+fn find_scene_pattern(scene_path: &Path, pattern: &str, alt_pattern: &str) -> Option<usize> {
+    let content = std::fs::read_to_string(scene_path).ok()?;
+    for (line_num, line) in content.lines().enumerate() {
+        if line.contains(pattern) || line.contains(alt_pattern) {
+            return Some(line_num);
+        }
+    }
+    None
 }
 
 // ── Name-based reference search ──────────────────────────────────────────
