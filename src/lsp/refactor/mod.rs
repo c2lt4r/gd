@@ -204,23 +204,68 @@ pub(super) fn line_starts(source: &str) -> Vec<usize> {
     starts
 }
 
+/// Returns `true` if `line` is a section divider like `# ===...`, `# ---...`, `# ~~~...`, or `# ***...`.
+fn is_section_divider(line: &str) -> bool {
+    let rest = line.strip_prefix("# ").unwrap_or("");
+    if rest.len() < 3 {
+        return false;
+    }
+    let ch = rest.as_bytes()[0];
+    matches!(ch, b'=' | b'-' | b'~' | b'*') && rest.bytes().all(|b| b == ch)
+}
+
 /// Expand a declaration node's byte range to include immediately preceding
 /// doc comments and annotations (contiguous `#`/`@` lines with no blank-line gap).
+/// Bridges up to 2 blank lines when `##` doc comments exist above the gap.
+/// Stops at `# ===`-style section dividers so they don't travel with the symbol.
 /// Returns (start_byte, end_byte) covering annotations + comments + declaration + trailing newline.
 pub(super) fn declaration_full_range(node: Node, source: &str) -> (usize, usize) {
     let starts = line_starts(source);
+    let lines: Vec<&str> = starts
+        .iter()
+        .enumerate()
+        .map(|(i, &s)| {
+            let e = starts.get(i + 1).copied().unwrap_or(source.len());
+            source[s..e].trim()
+        })
+        .collect();
     let decl_line = node.start_position().row;
 
     let mut first_line = decl_line;
     let mut check = decl_line;
     while check > 0 {
         check -= 1;
-        let line_start = starts[check];
-        let line_end = starts.get(check + 1).copied().unwrap_or(source.len());
-        let line_text = &source[line_start..line_end];
-        let trimmed = line_text.trim();
+        let trimmed = lines[check];
         if trimmed.starts_with('#') || trimmed.starts_with('@') {
+            if trimmed.starts_with('#') && !trimmed.starts_with("##") && is_section_divider(trimmed)
+            {
+                break;
+            }
             first_line = check;
+        } else if trimmed.is_empty() {
+            // Peek above blank lines: bridge if ## doc comments exist
+            let mut peek = check;
+            let mut blanks = 1;
+            // Count consecutive blank lines
+            while peek > 0 && blanks < 3 {
+                peek -= 1;
+                if lines[peek].is_empty() {
+                    blanks += 1;
+                } else {
+                    break;
+                }
+            }
+            // Too many blanks or hit top of file — stop
+            if blanks >= 3 || (peek == 0 && lines[0].is_empty()) {
+                break;
+            }
+            // Check if we landed on a ## doc comment
+            if lines[peek].starts_with("##") {
+                first_line = peek;
+                check = peek; // continue scanning upward from doc comment
+            } else {
+                break;
+            }
         } else {
             break;
         }
@@ -522,6 +567,98 @@ mod tests {
         let node = find_declaration_by_name(tree.root_node(), src, "timer").unwrap();
         let (start, end) = declaration_full_range(node, src);
         assert_eq!(&src[start..end], "@export\n@onready\nvar timer = null\n");
+    }
+
+    #[test]
+    fn full_range_bridges_blank_for_doc_comment() {
+        let src = "## Doc line\n\nfunc foo():\n\tpass\n";
+        let tree = crate::core::parser::parse(src).unwrap();
+        let node = find_declaration_by_name(tree.root_node(), src, "foo").unwrap();
+        let (start, end) = declaration_full_range(node, src);
+        assert_eq!(&src[start..end], "## Doc line\n\nfunc foo():\n\tpass\n");
+    }
+
+    #[test]
+    fn full_range_bridges_two_blanks_for_doc_comment() {
+        let src = "## Doc line\n\n\nfunc foo():\n\tpass\n";
+        let tree = crate::core::parser::parse(src).unwrap();
+        let node = find_declaration_by_name(tree.root_node(), src, "foo").unwrap();
+        let (start, end) = declaration_full_range(node, src);
+        assert_eq!(&src[start..end], "## Doc line\n\n\nfunc foo():\n\tpass\n");
+    }
+
+    #[test]
+    fn full_range_no_bridge_three_blanks() {
+        let src = "## Doc line\n\n\n\nfunc foo():\n\tpass\n";
+        let tree = crate::core::parser::parse(src).unwrap();
+        let node = find_declaration_by_name(tree.root_node(), src, "foo").unwrap();
+        let (start, end) = declaration_full_range(node, src);
+        assert_eq!(&src[start..end], "func foo():\n\tpass\n");
+    }
+
+    #[test]
+    fn full_range_bridges_multiline_doc_over_blank() {
+        let src = "## First paragraph\n## more\n\n## Second paragraph\nfunc foo():\n\tpass\n";
+        let tree = crate::core::parser::parse(src).unwrap();
+        let node = find_declaration_by_name(tree.root_node(), src, "foo").unwrap();
+        let (start, end) = declaration_full_range(node, src);
+        assert_eq!(
+            &src[start..end],
+            "## First paragraph\n## more\n\n## Second paragraph\nfunc foo():\n\tpass\n"
+        );
+    }
+
+    #[test]
+    fn full_range_stops_at_section_divider() {
+        let src =
+            "# ===\n# SECTION\n# ===\n## Doc\n\nfunc foo():\n\tpass\n";
+        let tree = crate::core::parser::parse(src).unwrap();
+        let node = find_declaration_by_name(tree.root_node(), src, "foo").unwrap();
+        let (start, end) = declaration_full_range(node, src);
+        assert_eq!(&src[start..end], "## Doc\n\nfunc foo():\n\tpass\n");
+    }
+
+    #[test]
+    fn full_range_bridges_doc_but_stops_at_divider() {
+        let src = "# ===\n# SECTION\n# ===\n## Doc\n\nvar x = 1\n";
+        let tree = crate::core::parser::parse(src).unwrap();
+        let node = find_declaration_by_name(tree.root_node(), src, "x").unwrap();
+        let (start, end) = declaration_full_range(node, src);
+        assert_eq!(&src[start..end], "## Doc\n\nvar x = 1\n");
+    }
+
+    #[test]
+    fn full_range_no_bridge_regular_comment_over_blank() {
+        let src = "# Regular comment\n\nfunc foo():\n\tpass\n";
+        let tree = crate::core::parser::parse(src).unwrap();
+        let node = find_declaration_by_name(tree.root_node(), src, "foo").unwrap();
+        let (start, end) = declaration_full_range(node, src);
+        assert_eq!(&src[start..end], "func foo():\n\tpass\n");
+    }
+
+    #[test]
+    fn full_range_doc_comment_one_blank_before_var() {
+        let src = "## Doc.\n\nvar x = 1\n";
+        let tree = crate::core::parser::parse(src).unwrap();
+        let node = find_declaration_by_name(tree.root_node(), src, "x").unwrap();
+        let (start, end) = declaration_full_range(node, src);
+        assert_eq!(&src[start..end], "## Doc.\n\nvar x = 1\n");
+    }
+
+    // ── is_section_divider ──────────────────────────────────────────────
+
+    #[test]
+    fn section_divider_detection() {
+        assert!(is_section_divider("# ==="));
+        assert!(is_section_divider("# ============================================================================="));
+        assert!(is_section_divider("# ---"));
+        assert!(is_section_divider("# ~~~"));
+        assert!(is_section_divider("# ***"));
+        assert!(!is_section_divider("# =="));
+        assert!(!is_section_divider("# SECTION NAME"));
+        assert!(!is_section_divider("## Doc comment"));
+        assert!(!is_section_divider("# Regular comment"));
+        assert!(!is_section_divider("#"));
     }
 
     // ── normalize_blank_lines ────────────────────────────────────────────

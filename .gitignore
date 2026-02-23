@@ -6,6 +6,7 @@
 .env
 docs/issues/
 docs/mesh/
+docs/multi-language-support.md
 docs/research/eval-improvements.md
 docs/research/godot-debug-protocol.md
 docs/research/godot-source/
