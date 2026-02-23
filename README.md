@@ -7,7 +7,7 @@ Built with [tree-sitter-gdscript](https://github.com/PrestonKnopp/tree-sitter-gd
 ## Features
 
 - **Format** GDScript files with an AST-based formatter aligned to the [GDScript style guide](https://docs.godotengine.org/en/stable/tutorials/scripting/gdscript/gdscript_styleguide.html)
-- **Lint** with 84 built-in rules (17 auto-fixable), SARIF output for CI
+- **Lint** with 85 built-in rules (17 auto-fixable), SARIF output for CI
 - **Run**, **build**, **test**, and **clean** your Godot project from the terminal
 - **Watch** for file changes and auto-lint/format on save
 - **Manage addons** from Git or the Godot Asset Library (with lockfile and update support)
@@ -595,20 +595,20 @@ The template system automatically finds `project.godot` within the repository to
 
 ## Lint Rules
 
-78 built-in rules organized into 8 categories (48 default-enabled, 30 opt-in):
+85 built-in rules organized into 8 categories (50 default-enabled, 35 opt-in):
 
 ### Categories
 
 | Category | Description | Rules |
 |----------|-------------|-------|
-| **correctness** | Definite bugs | 14 |
-| **suspicious** | Likely bugs, may be intentional | 10 |
+| **correctness** | Definite bugs | 15 |
+| **suspicious** | Likely bugs, may be intentional | 11 |
 | **style** | Naming and code style | 14 |
 | **complexity** | Code size and complexity metrics | 8 |
 | **performance** | Godot runtime performance | 4 |
-| **godot** | Godot engine best practices | 12 |
-| **type_safety** | Type system strictness | 8 |
-| **maintenance** | Unused code and debug artifacts | 9 |
+| **godot** | Godot engine best practices | 11 |
+| **type_safety** | Type system strictness | 9 |
+| **maintenance** | Unused code and debug artifacts | 13 |
 
 Categories can be bulk-controlled in `gd.toml`:
 
@@ -637,10 +637,12 @@ severity = "warning"       # re-enable despite maintenance = "off"
 | `comparison-with-itself` | correctness | Detect `x == x` self-comparisons | warning | |
 | `cyclomatic-complexity` | complexity | Warn on high cyclomatic complexity | warning | |
 | `deeply-nested-code` | complexity | Warn on deeply nested code blocks | warning | |
+| `duplicate-code` | maintenance | Detect structurally similar functions in the same file | warning | |
 | `duplicate-delegate` | maintenance | Detect pure pass-through delegate functions | info | |
 | `duplicate-function` | correctness | Detect duplicate function definitions | error | |
 | `duplicate-key` | correctness | Detect duplicate dictionary keys | warning | |
 | `duplicate-signal` | correctness | Detect duplicate signal declarations | error | |
+| `duplicate-variable` | correctness | Detect duplicate variable declarations | error | |
 | `duplicated-load` | performance | Detect duplicate load/preload calls | warning | |
 | `empty-function` | style | Detect functions with only `pass` in body | warning | |
 | `enum-name-collision` | correctness | Detect inner enum names that collide with a global `class_name` | error | |
@@ -670,6 +672,7 @@ severity = "warning"       # re-enable despite maintenance = "off"
 | `native-method-override` | suspicious | Detect overriding native engine methods | error | |
 | `node-ready-order` | godot | Detect node access before tree is ready | warning | |
 | `null-after-await` | suspicious | Warn on member access after `await` without null guard | warning | |
+| `nullable-current-scene` | suspicious | Detect `get_tree().current_scene` access without null check | warning | |
 | `onready-with-export` | correctness | Detect `@onready` combined with `@export` | error | |
 | `parameter-naming` | style | Enforce snake_case parameters | warning | yes |
 | `parameter-shadows-field` | style | Warn when parameter name shadows a class field | warning | |
@@ -696,11 +699,15 @@ severity = "warning"       # re-enable despite maintenance = "off"
 | `unreachable-code` | correctness | Detect code after return/break/continue | warning | yes |
 | `unsafe-void-return` | suspicious | Detect returning or assigning void call results | warning | yes |
 | `untyped-array` | type_safety | Suggest typed array annotations | warning | |
+| `untyped-array-argument` | type_safety | Warn on passing untyped `Array` to parameter expecting `Array[T]` | warning | |
 | `untyped-array-literal` | type_safety | Warn on `var x := [...]` without typed Array annotation | warning | yes |
 | `unnamed-node` | godot | Detect `add_child()` with dynamically created nodes that have no `.name` set | warning | |
+| `unused-class-signal` | maintenance | Detect signals with no cross-file connections or emissions | warning | |
+| `unused-class-variable` | maintenance | Detect class variables with no cross-file references | warning | |
 | `unused-parameter` | maintenance | Detect unused function parameters | warning | |
 | `unused-preload` | maintenance | Detect unused preload variables | warning | |
 | `unused-private-class-variable` | maintenance | Detect unused `_`-prefixed class variables | warning | |
+| `unused-private-function` | maintenance | Detect `_`-prefixed functions with no cross-file callers | warning | |
 | `unused-signal` | maintenance | Detect signals that are never emitted | warning | |
 | `unused-variable` | maintenance | Detect unused local variables | warning | yes |
 | `use-before-assign` | correctness | Detect method calls accessing uninitialized members | warning | |

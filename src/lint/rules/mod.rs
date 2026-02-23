@@ -47,6 +47,7 @@ pub mod class_definitions_order;
 
 pub mod cyclomatic_complexity;
 pub mod deeply_nested_code;
+pub mod duplicate_code;
 pub mod duplicate_delegate;
 pub mod enum_name_collision;
 pub mod enum_naming;
@@ -364,6 +365,7 @@ pub fn all_rules(
         Box::new(unused_private_function::UnusedPrivateFunction),
         Box::new(unused_class_signal::UnusedClassSignal),
         Box::new(unused_class_variable::UnusedClassVariable),
+        Box::new(duplicate_code::DuplicateCode),
     ];
     all.into_iter()
         .filter(|r| {

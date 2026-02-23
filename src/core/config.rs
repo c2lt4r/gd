@@ -178,6 +178,10 @@ pub struct RuleConfig {
     pub allowed_contexts: Vec<String>,
     /// magic-number: only flag numbers whose absolute value >= this threshold.
     pub min_value: Option<f64>,
+    /// duplicate-code: minimum number of statements for a function to be considered.
+    pub min_statements: Option<usize>,
+    /// duplicate-code: similarity percentage threshold (0-100) to flag as duplicate.
+    pub similarity_threshold: Option<usize>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -279,6 +283,8 @@ fn warn_unknown_keys(raw: &toml::Value) {
         "allowed",
         "allowed_contexts",
         "min_value",
+        "min_statements",
+        "similarity_threshold",
     ];
     let known_build = &["presets", "output_dir"];
     let known_run = &["godot_path", "extra_args"];

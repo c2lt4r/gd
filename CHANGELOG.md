@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.2.36] - 2026-02-23
+
+### Added
+- **Lint rule: `duplicate-code`** — detect structurally similar functions within the same file. Compares function bodies as normalized AST fingerprints (node kinds only, identifiers and literals stripped) using Levenshtein edit distance. Groups of 3+ similar functions reported as a single diagnostic. Opt-in rule with configurable `min_statements` (default 5) and `similarity_threshold` (default 80%).
+
 ## [0.2.35] - 2026-02-23
 
 ### Fixed
