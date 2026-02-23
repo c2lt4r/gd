@@ -266,7 +266,7 @@ gd lsp insert --file <f> --after <sym>             # Insert after symbol (reads 
 gd lsp insert --file <f> --before <sym>            # Insert before symbol (reads from stdin)
 gd lsp edit-range --file <f> --range 5-20          # Replace lines 5-20 (reads from stdin)
 gd lsp edit-range --file <f> --start-line <L> --end-line <L>  # Alternative range syntax
-gd lsp create-file --file <f>                      # Create with boilerplate
+gd lsp create-file <f>                             # Create with boilerplate
 gd lsp safe-delete-file --file <f>                 # Check for cross-file refs first
 gd lsp find-implementations --name <method>        # Find all classes implementing a method
 

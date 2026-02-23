@@ -2365,7 +2365,6 @@ fn test_lsp_create_file_stdin() {
         &[
             "lsp",
             "create-file",
-            "--file",
             "player.gd",
             "--format",
             "json",

@@ -5,6 +5,8 @@
 ### Fixed
 - **Refactor tools: doc comment bridging** — `declaration_full_range` now bridges up to 2 blank lines when `##` doc comments exist above a declaration. Previously, the blank line between `## Doc` and `var`/`func` caused doc comments to be left behind as orphans during move-symbol, delete-symbol, extract-class, and other refactor operations.
 - **Refactor tools: section divider exclusion** — `# ===`/`# ---`/`# ~~~`/`# ***` section dividers are no longer included in symbol ranges. Previously, divider blocks adjacent to doc comments would travel with the symbol during refactoring.
+- **`replace-body` signature guard** — now errors if the input's first non-empty line starts with `func ` or `static func `, which indicates the caller accidentally included the function signature. Previously this silently created a duplicate declaration.
+- **`create-file` accepts positional path** — `gd lsp create-file path.gd` now works. Previously required `--file path.gd`.
 
 ## [0.2.34] - 2026-02-23
 

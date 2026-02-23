@@ -385,7 +385,6 @@ pub enum LspCommand {
     /// Create a new GDScript file with boilerplate (or custom content from stdin/--input-file)
     CreateFile {
         /// Path for the new file
-        #[arg(long)]
         file: String,
         /// Base class to extend (default: "Node"; ignored when --input-file or stdin is used)
         #[arg(long, default_value = "Node")]

@@ -99,6 +99,23 @@ pub fn replace_body(
         ));
     }
 
+    // Guard: reject input that looks like it contains a function signature.
+    // The body of a function cannot legitimately start with `func ` or `static func `.
+    let first_content_line = new_body
+        .lines()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or("")
+        .trim();
+    if first_content_line.starts_with("func ")
+        || first_content_line.starts_with("static func ")
+    {
+        return Err(miette::miette!(
+            "input appears to contain a function signature (`{}`); \
+             replace-body expects only the body (indented statements), not the signature",
+            first_content_line.chars().take(60).collect::<String>()
+        ));
+    }
+
     // Get the body node
     let body = decl
         .child_by_field_name("body")
@@ -625,6 +642,51 @@ mod tests {
         let content = fs::read_to_string(&file).unwrap();
         assert!(content.contains("\tprint(\"hello\")"));
         assert!(content.contains("\tprint(\"world\")"));
+    }
+
+    #[test]
+    fn replace_body_rejects_signature_in_input() {
+        let temp = setup(&[("player.gd", "extends Node\n\n\nfunc _ready():\n\tpass\n")]);
+        let file = temp.path().join("player.gd");
+        let result = replace_body(
+            &file,
+            "_ready",
+            None,
+            "func _ready():\n\tprint(\"hello\")\n",
+            true,
+            false,
+            temp.path(),
+        );
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("function signature"),
+            "expected signature error, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn replace_body_rejects_static_func_signature() {
+        let temp = setup(&[(
+            "player.gd",
+            "extends Node\n\n\nstatic func helper():\n\tpass\n",
+        )]);
+        let file = temp.path().join("player.gd");
+        let result = replace_body(
+            &file,
+            "helper",
+            None,
+            "static func helper():\n\tprint(1)\n",
+            true,
+            false,
+            temp.path(),
+        );
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("function signature"),
+            "expected signature error, got: {msg}"
+        );
     }
 
     // ── insert ──────────────────────────────────────────────────────────
