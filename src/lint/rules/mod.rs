@@ -3,6 +3,7 @@
 pub mod assert_always_false;
 pub mod assert_always_true;
 pub mod await_in_ready;
+pub mod collapsible_if;
 pub mod breakpoint_statement;
 pub mod comparison_with_boolean;
 pub mod comparison_with_itself;
@@ -51,6 +52,7 @@ pub mod duplicate_code;
 pub mod duplicate_delegate;
 pub mod enum_name_collision;
 pub mod enum_naming;
+pub mod enum_variant_names;
 pub mod enum_variable_without_default;
 pub mod enum_without_class_name;
 pub mod get_node_default_without_onready;
@@ -60,11 +62,13 @@ pub mod incompatible_ternary;
 pub mod infer_unknown_member;
 pub mod look_at_before_tree;
 pub mod loop_variable_name;
+pub mod manual_range_contains;
 pub mod max_file_lines;
 pub mod max_line_length;
 pub mod max_public_methods;
 pub mod narrowing_conversion;
 pub mod native_method_override;
+pub mod needless_bool;
 pub mod onready_with_export;
 pub mod parameter_naming;
 pub mod parameter_shadows_field;
@@ -366,6 +370,10 @@ pub fn all_rules(
         Box::new(unused_class_signal::UnusedClassSignal),
         Box::new(unused_class_variable::UnusedClassVariable),
         Box::new(duplicate_code::DuplicateCode),
+        Box::new(collapsible_if::CollapsibleIf),
+        Box::new(enum_variant_names::EnumVariantNames),
+        Box::new(manual_range_contains::ManualRangeContains),
+        Box::new(needless_bool::NeedlessBool),
     ];
     all.into_iter()
         .filter(|r| {

@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.41] - 2026-02-23
+
+### Added
+- **Lint rule: `collapsible-if`** — detect nested `if` statements that can be collapsed into a single `if a and b:`. Default-enabled, fixable.
+- **Lint rule: `needless-bool`** — detect if/else returning or assigning boolean literals, and ternary expressions like `true if x else false`. Suggests simplification to `return condition` or `x = condition`. Default-enabled, fixable.
+- **Lint rule: `enum-variant-names`** — detect enum variants that all share a common prefix or suffix matching the enum name (e.g. `enum Color { COLOR_RED, COLOR_GREEN }`). Opt-in.
+- **Lint rule: `manual-range-contains`** — detect manual range checks like `x >= 0 and x < 10` that can be written as `x in range(0, 10)`. Also detects the negated `or` form. Opt-in, fixable.
+
 ## [0.2.40] - 2026-02-23
 
 ### Fixed

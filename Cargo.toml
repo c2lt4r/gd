@@ -1,6 +1,6 @@
 [package]
 name = "gd"
-version = "0.2.40"
+version = "0.2.41"
 edition = "2024"
 description = "A comprehensive Godot toolchain - format, lint, build, run, and manage Godot projects"
 license = "MIT"
@@ -107,6 +107,9 @@ module_name_repetitions = "allow"
 
 # Struct booleans — clap Args structs legitimately have many bool flags
 struct_excessive_bools  = "allow"
+
+# Vec macro — the all_rules() vec with 89+ Box<dyn LintRule> triggers this in test builds
+large_stack_arrays      = "allow"
 
 [profile.release]
 opt-level = 3

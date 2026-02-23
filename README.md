@@ -7,7 +7,7 @@ Built with [tree-sitter-gdscript](https://github.com/PrestonKnopp/tree-sitter-gd
 ## Features
 
 - **Format** GDScript files with an AST-based formatter aligned to the [GDScript style guide](https://docs.godotengine.org/en/stable/tutorials/scripting/gdscript/gdscript_styleguide.html)
-- **Lint** with 85 built-in rules (17 auto-fixable), SARIF output for CI
+- **Lint** with 89 built-in rules (20 auto-fixable), SARIF output for CI
 - **Run**, **build**, **test**, and **clean** your Godot project from the terminal
 - **Watch** for file changes and auto-lint/format on save
 - **Manage addons** from Git or the Godot Asset Library (with lockfile and update support)
@@ -595,7 +595,7 @@ The template system automatically finds `project.godot` within the repository to
 
 ## Lint Rules
 
-85 built-in rules organized into 8 categories (50 default-enabled, 35 opt-in):
+89 built-in rules organized into 8 categories (52 default-enabled, 37 opt-in):
 
 ### Categories
 
@@ -633,6 +633,7 @@ severity = "warning"       # re-enable despite maintenance = "off"
 | `breakpoint-statement` | maintenance | Detect leftover `breakpoint` statements | info | |
 | `callable-null-check` | godot | Warn on `.call()` without `.is_valid()` guard | warning | |
 | `class-definitions-order` | style | Enforce canonical member ordering | warning | |
+| `collapsible-if` | style | Detect nested `if` that can be collapsed with `and` | warning | yes |
 | `comparison-with-boolean` | style | Flag explicit `== true`/`false` comparisons | warning | yes |
 | `comparison-with-itself` | correctness | Detect `x == x` self-comparisons | warning | |
 | `cyclomatic-complexity` | complexity | Warn on high cyclomatic complexity | warning | |
@@ -647,6 +648,7 @@ severity = "warning"       # re-enable despite maintenance = "off"
 | `empty-function` | style | Detect functions with only `pass` in body | warning | |
 | `enum-name-collision` | correctness | Detect inner enum names that collide with a global `class_name` | error | |
 | `enum-naming` | style | Enforce PascalCase/UPPER_SNAKE_CASE enums | warning | yes |
+| `enum-variant-names` | style | Detect enum variants sharing prefix/suffix with enum name | warning | |
 | `enum-variable-without-default` | godot | Warn on enum-typed variables without a default value | warning | |
 | `enum-without-class-name` | godot | Warn on enum type annotations in scripts without `class_name` | warning | |
 | `float-comparison` | suspicious | Warn on float equality comparisons | warning | yes |
@@ -660,6 +662,7 @@ severity = "warning"       # re-enable despite maintenance = "off"
 | `look-at-before-tree` | godot | Detect tree-dependent calls and `global_*` assignments before `add_child()` | warning | |
 | `loop-variable-name` | style | Enforce snake_case loop variables | warning | yes |
 | `magic-number` | type_safety | Flag unexplained numeric literals | warning | |
+| `manual-range-contains` | suspicious | Detect manual range checks replaceable with `in range()` | info | yes |
 | `max-file-lines` | complexity | Enforce maximum file length | warning | |
 | `max-line-length` | complexity | Enforce maximum line length | warning | |
 | `max-public-methods` | complexity | Enforce maximum public methods per class | warning | |
@@ -670,6 +673,7 @@ severity = "warning"       # re-enable despite maintenance = "off"
 | `naming-convention` | style | Enforce snake_case/PascalCase naming | warning | yes |
 | `narrowing-conversion` | suspicious | Detect float-to-int narrowing conversions | warning | yes |
 | `native-method-override` | suspicious | Detect overriding native engine methods | error | |
+| `needless-bool` | style | Detect if/else or ternary returning boolean literals | warning | yes |
 | `node-ready-order` | godot | Detect node access before tree is ready | warning | |
 | `null-after-await` | suspicious | Warn on member access after `await` without null guard | warning | |
 | `nullable-current-scene` | suspicious | Detect `get_tree().current_scene` access without null check | warning | |
