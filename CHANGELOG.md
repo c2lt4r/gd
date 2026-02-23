@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.40] - 2026-02-23
+
+### Fixed
+- **Test failure messages now show assertion details** — GUT and gdUnit4 failure output now extracts the actual assertion message from JUnit XML CDATA bodies instead of just showing the generic `message` attribute (e.g. `"failed"`). Includes line numbers when available.
+- **gdUnit4 stdout fallback** — when gdUnit4 fails to generate JUnit XML (e.g. addon/Godot version mismatch), per-test results are parsed from stdout with ANSI stripping. Addon-internal errors are filtered from output.
+- **Compact failure display** — multi-line assertion messages (common in gdUnit4) are normalized to single-line output: `Expecting: '3' but was '2'` instead of spanning 4 lines.
+
 ## [0.2.39] - 2026-02-23
 
 ### Added
