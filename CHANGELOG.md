@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.38] - 2026-02-23
+
+### Added
+- **Unified `TestRunner` trait** — all three test runners (GUT, gdUnit4, script) now implement a common `TestRunner` trait with `RunContext`, replacing ad-hoc free functions.
+- **`--name`/`--class`/`--filter` for gdUnit4** — flags now map to per-file `-a` args and `-i` (ignore) exclusion flags via tree-sitter parsing. Previously these flags only worked with GUT.
+- **`--name`/`--class` for script runner** — filters at file level by parsing test content with tree-sitter; only files containing matching tests are executed.
+
 ## [0.2.37] - 2026-02-23
 
 ### Added

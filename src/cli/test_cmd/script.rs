@@ -8,8 +8,29 @@ use std::time::{Duration, Instant};
 
 use crate::core::project::GodotProject;
 
-use super::{RunArgs, TestResult, TestStatus, TestSummary, extract_errors, filter_noise, hprintln};
+use super::{
+    RunArgs, RunContext, TestResult, TestRunner, TestStatus, TestSummary, extract_errors,
+    filter_files_by_tests, filter_noise, hprintln,
+};
 use crate::{ceprintln, cprintln};
+
+pub struct ScriptRunner;
+
+impl TestRunner for ScriptRunner {
+    fn name(&self) -> &'static str {
+        "script"
+    }
+
+    fn run(&self, ctx: &RunContext) -> Result<(Vec<TestResult>, TestSummary)> {
+        run_script_tests(
+            ctx.godot,
+            ctx.project,
+            ctx.args,
+            ctx.test_files,
+            ctx.json_mode,
+        )
+    }
+}
 
 /// Run tests by executing each test script individually with Godot.
 #[allow(clippy::too_many_lines, clippy::unnecessary_wraps)]
@@ -20,21 +41,31 @@ pub fn run_script_tests(
     test_files: &[std::path::PathBuf],
     json_mode: bool,
 ) -> Result<(Vec<TestResult>, TestSummary)> {
-    if args.name.is_some() || args.class.is_some() {
-        hprintln!(
-            json_mode,
-            "{} --name and --class filters are only supported with GUT",
-            "!".yellow().bold()
-        );
-    }
+    // Apply --name / --class content filtering at file level
+    let filtered_files: Vec<std::path::PathBuf>;
+    let effective_files = if args.name.is_some() || args.class.is_some() {
+        if args.name.is_some() {
+            hprintln!(
+                json_mode,
+                "{} script runner executes entire files; --name filter applied at file level",
+                "ℹ".blue()
+            );
+        }
+        let infos = filter_files_by_tests(test_files, args.name.as_deref(), args.class.as_deref());
+        filtered_files = infos.into_iter().map(|i| i.path).collect();
+        filtered_files.as_slice()
+    } else {
+        test_files
+    };
+
     let mut passed = 0usize;
     let mut failed = 0usize;
     let mut error_count = 0usize;
     let mut results = Vec::new();
 
-    for (i, test_file) in test_files.iter().enumerate() {
+    for (i, test_file) in effective_files.iter().enumerate() {
         let rel = crate::core::fs::relative_slash(test_file, &project.root);
-        let label = format!("[{}/{}] {rel}", i + 1, test_files.len());
+        let label = format!("[{}/{}] {rel}", i + 1, effective_files.len());
 
         let spinner = if !json_mode && !args.quiet {
             let sp = indicatif::ProgressBar::new_spinner();
@@ -76,18 +107,20 @@ pub fn run_script_tests(
             failed += 1;
             let test_duration_ms = test_start.elapsed().as_millis() as u64;
 
-            if !json_mode && !args.quiet {
-                cprintln!("{} {rel} (timed out after {}s)", "✗".red(), args.timeout);
-            }
-
-            results.push(TestResult {
+            let timeout_result = TestResult {
                 file: Some(rel.clone()),
                 status: TestStatus::Timeout,
                 duration_ms: test_duration_ms,
                 errors: vec![],
                 stderr: None,
                 stdout: None,
-            });
+            };
+
+            if !json_mode {
+                super::print_results(std::slice::from_ref(&timeout_result), args);
+            }
+
+            results.push(timeout_result);
             continue;
         };
 
@@ -116,26 +149,15 @@ pub fn run_script_tests(
 
         // Human output
         if !json_mode {
-            let show_result = !args.quiet || status != TestStatus::Pass;
-            if show_result {
-                match status {
-                    TestStatus::Pass => cprintln!("{} {rel}", "✓".green()),
-                    TestStatus::Fail | TestStatus::Error => {
-                        cprintln!("{} {rel}", "✗".red());
-                        // Show parsed error locations inline
-                        for err in &errors {
-                            if let Some(line_num) = err.line {
-                                cprintln!("  {}:{line_num} {}", err.file, err.message);
-                            } else if !err.file.is_empty() {
-                                cprintln!("  {} {}", err.file, err.message);
-                            } else {
-                                cprintln!("  {}", err.message);
-                            }
-                        }
-                    }
-                    TestStatus::Timeout => {} // already handled above
-                }
-            }
+            let one_result = TestResult {
+                file: Some(rel.clone()),
+                status,
+                duration_ms: test_duration_ms,
+                errors: errors.clone(),
+                stderr: None,
+                stdout: None,
+            };
+            super::print_results(std::slice::from_ref(&one_result), args);
 
             if args.verbose || (status != TestStatus::Pass && errors.is_empty()) {
                 let display_stdout = if args.clean {

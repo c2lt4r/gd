@@ -9,9 +9,29 @@ use crate::core::project::GodotProject;
 
 use crate::{ceprintln, cprintln};
 
+use super::gdunit::parse_gdunit4_xml;
 use super::{
-    RunArgs, TestResult, TestStatus, TestSummary, extract_errors, filter_noise, run_with_timeout,
+    RunArgs, RunContext, TestResult, TestRunner, TestStatus, TestSummary, extract_errors,
+    filter_noise, run_with_timeout,
 };
+
+pub struct GutRunner;
+
+impl TestRunner for GutRunner {
+    fn name(&self) -> &'static str {
+        "GUT"
+    }
+
+    fn run(&self, ctx: &RunContext) -> Result<(Vec<TestResult>, TestSummary)> {
+        run_gut_tests(
+            ctx.godot,
+            ctx.project,
+            ctx.args,
+            ctx.test_files,
+            ctx.json_mode,
+        )
+    }
+}
 
 /// Run tests using GUT addon.
 #[allow(clippy::too_many_lines)]
@@ -74,9 +94,10 @@ pub fn run_gut_tests(
     if let Some(ref class) = args.class {
         cmd.arg(format!("-ginner_class={class}"));
     }
-    if let Some(ref junit_path) = args.junit {
-        cmd.arg(format!("-gjunit_xml_file={}", junit_path.display()));
-    }
+
+    // Always generate JUnit XML to a temp file for per-test granularity
+    let temp_junit = project.root.join(".gd-gut-junit.xml");
+    cmd.arg(format!("-gjunit_xml_file={}", temp_junit.display()));
 
     // Extra args from CLI (after --)
     for arg in &args.extra {
@@ -122,14 +143,13 @@ pub fn run_gut_tests(
         }
     }
 
-    // Parse GUT output for pass/fail counts
+    // Parse GUT output for pass/fail counts (used as fallback)
     let (gut_passed, gut_failed) = parse_gut_counts(&stdout);
     let parsed_ok = gut_passed > 0 || gut_failed > 0;
 
     if !output.status.success() && !parsed_ok {
         // GUT didn't produce parseable output; treat as full failure
         if !json_mode && !args.verbose {
-            // Show output since we didn't already
             if !stdout.is_empty() {
                 cprintln!("{stdout}");
             }
@@ -137,45 +157,68 @@ pub fn run_gut_tests(
                 ceprintln!("{stderr}");
             }
         }
+        let _ = std::fs::remove_file(&temp_junit);
         return Err(miette!("GUT exited with non-zero status"));
     }
 
-    let errors = extract_errors(&stderr);
-    let error_count = errors.len();
+    // Try to parse JUnit XML for per-test granularity
+    let xml_content = std::fs::read_to_string(&temp_junit).unwrap_or_default();
 
-    let status = if gut_failed > 0 || error_count > 0 {
-        TestStatus::Fail
+    // If user requested --junit, copy the XML to their path
+    if let Some(ref user_junit) = args.junit
+        && !xml_content.is_empty()
+    {
+        let _ = std::fs::copy(&temp_junit, user_junit);
+    }
+
+    // Clean up temp XML
+    let _ = std::fs::remove_file(&temp_junit);
+
+    let (results, summary) = if xml_content.is_empty() {
+        // No XML file — fall back to aggregate counts
+        build_aggregate_result(
+            gut_passed,
+            gut_failed,
+            &stderr,
+            &stdout,
+            test_duration_ms,
+            json_mode,
+        )
     } else {
-        TestStatus::Pass
-    };
+        // Parse JUnit XML for per-test results
+        let (mut xml_results, xml_summary) = parse_gdunit4_xml(&xml_content);
 
-    let result = TestResult {
-        file: None,
-        status,
-        duration_ms: test_duration_ms,
-        errors,
-        stderr: if json_mode && !stderr.is_empty() {
-            Some(stderr.into_owned())
+        if xml_summary.total > 0 {
+            // Print per-test results in human mode
+            if !json_mode {
+                super::print_results(&xml_results, args);
+            }
+
+            // Attach stderr/stdout to first result for JSON mode
+            if json_mode && !xml_results.is_empty() {
+                if !stderr.is_empty() {
+                    xml_results[0].stderr = Some(stderr.into_owned());
+                }
+                if !stdout.is_empty() {
+                    xml_results[0].stdout = Some(stdout.into_owned());
+                }
+            }
+
+            (xml_results, xml_summary)
         } else {
-            None
-        },
-        stdout: if json_mode && !stdout.is_empty() {
-            Some(stdout.into_owned())
-        } else {
-            None
-        },
+            // XML was empty/unparseable — fall back to aggregate
+            build_aggregate_result(
+                gut_passed,
+                gut_failed,
+                &stderr,
+                &stdout,
+                test_duration_ms,
+                json_mode,
+            )
+        }
     };
 
-    let total = gut_passed + gut_failed;
-    let summary = TestSummary {
-        passed: gut_passed,
-        failed: gut_failed,
-        errors: error_count,
-        skipped: 0,
-        total,
-    };
-
-    Ok((vec![result], summary))
+    Ok((results, summary))
 }
 
 /// Parse GUT command-line output for pass/fail counts.
@@ -230,4 +273,51 @@ pub fn parse_gut_counts(output: &str) -> (usize, usize) {
     }
 
     if found { (passed, failed) } else { (0, 0) }
+}
+
+/// Build an aggregate (single-entry) result when JUnit XML is unavailable.
+fn build_aggregate_result(
+    gut_passed: usize,
+    gut_failed: usize,
+    stderr: &str,
+    stdout: &str,
+    duration_ms: u64,
+    json_mode: bool,
+) -> (Vec<TestResult>, TestSummary) {
+    let errors = extract_errors(stderr);
+    let error_count = errors.len();
+
+    let status = if gut_failed > 0 || error_count > 0 {
+        TestStatus::Fail
+    } else {
+        TestStatus::Pass
+    };
+
+    let result = TestResult {
+        file: None,
+        status,
+        duration_ms,
+        errors,
+        stderr: if json_mode && !stderr.is_empty() {
+            Some(stderr.to_string())
+        } else {
+            None
+        },
+        stdout: if json_mode && !stdout.is_empty() {
+            Some(stdout.to_string())
+        } else {
+            None
+        },
+    };
+
+    let total = gut_passed + gut_failed;
+    let summary = TestSummary {
+        passed: gut_passed,
+        failed: gut_failed,
+        errors: error_count,
+        skipped: 0,
+        total,
+    };
+
+    (vec![result], summary)
 }

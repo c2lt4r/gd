@@ -1,11 +1,14 @@
-use std::path::Path;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 
-use crate::cli::test_cmd::gdunit::{decode_xml_entities, extract_xml_attr, parse_gdunit4_xml};
+use crate::cli::test_cmd::gdunit::{
+    build_gdunit4_filter_args, decode_xml_entities, extract_xml_attr, parse_gdunit4_xml,
+};
 use crate::cli::test_cmd::gut::parse_gut_counts;
 use crate::cli::test_cmd::{
     TestError, TestListClass, TestListEntry, TestReport, TestResult, TestStatus, TestSummary,
-    extract_errors, filter_noise, is_engine_noise, is_test_file, parse_res_location,
-    strip_res_prefix,
+    extract_errors, filter_files_by_tests, filter_noise, group_results_by_file, is_engine_noise,
+    is_test_file, parse_res_location, strip_res_prefix,
 };
 use crate::core::symbol_table;
 
@@ -556,4 +559,270 @@ fn test_list_entry_json_no_classes_omitted() {
     };
     let json = serde_json::to_string(&entry).unwrap();
     assert!(!json.contains("classes"));
+}
+
+// --- group_results_by_file tests ---
+
+#[test]
+fn test_group_results_by_file_mixed() {
+    let results = vec![
+        TestResult {
+            file: Some("test/test_a.gd::test_one".to_string()),
+            status: TestStatus::Pass,
+            duration_ms: 100,
+            errors: vec![],
+            stderr: None,
+            stdout: None,
+        },
+        TestResult {
+            file: Some("test/test_a.gd::test_two".to_string()),
+            status: TestStatus::Fail,
+            duration_ms: 200,
+            errors: vec![],
+            stderr: None,
+            stdout: None,
+        },
+        TestResult {
+            file: Some("test/test_b.gd::test_three".to_string()),
+            status: TestStatus::Pass,
+            duration_ms: 50,
+            errors: vec![],
+            stderr: None,
+            stdout: None,
+        },
+    ];
+    let groups = group_results_by_file(&results);
+    assert_eq!(groups.len(), 2);
+    assert_eq!(groups[0], ("test/test_a.gd".to_string(), 1, 1));
+    assert_eq!(groups[1], ("test/test_b.gd".to_string(), 1, 0));
+}
+
+#[test]
+fn test_group_results_by_file_none_entries() {
+    let results = vec![
+        TestResult {
+            file: None,
+            status: TestStatus::Pass,
+            duration_ms: 100,
+            errors: vec![],
+            stderr: None,
+            stdout: None,
+        },
+        TestResult {
+            file: Some("test/test_a.gd".to_string()),
+            status: TestStatus::Fail,
+            duration_ms: 200,
+            errors: vec![],
+            stderr: None,
+            stdout: None,
+        },
+    ];
+    let groups = group_results_by_file(&results);
+    assert_eq!(groups.len(), 2);
+    assert_eq!(groups[0], ("unknown".to_string(), 1, 0));
+    assert_eq!(groups[1], ("test/test_a.gd".to_string(), 0, 1));
+}
+
+#[test]
+fn test_group_results_by_file_single_file() {
+    let results = vec![TestResult {
+        file: Some("test/test_only.gd::test_x".to_string()),
+        status: TestStatus::Pass,
+        duration_ms: 50,
+        errors: vec![],
+        stderr: None,
+        stdout: None,
+    }];
+    let groups = group_results_by_file(&results);
+    assert_eq!(groups.len(), 1);
+    assert_eq!(groups[0], ("test/test_only.gd".to_string(), 1, 0));
+}
+
+#[test]
+fn test_group_results_by_file_empty() {
+    let groups = group_results_by_file(&[]);
+    assert!(groups.is_empty());
+}
+
+#[test]
+fn test_group_results_preserves_order() {
+    let results = vec![
+        TestResult {
+            file: Some("test/test_c.gd::test_1".to_string()),
+            status: TestStatus::Pass,
+            duration_ms: 10,
+            errors: vec![],
+            stderr: None,
+            stdout: None,
+        },
+        TestResult {
+            file: Some("test/test_a.gd::test_1".to_string()),
+            status: TestStatus::Pass,
+            duration_ms: 10,
+            errors: vec![],
+            stderr: None,
+            stdout: None,
+        },
+        TestResult {
+            file: Some("test/test_b.gd::test_1".to_string()),
+            status: TestStatus::Fail,
+            duration_ms: 10,
+            errors: vec![],
+            stderr: None,
+            stdout: None,
+        },
+    ];
+    let groups = group_results_by_file(&results);
+    assert_eq!(groups[0].0, "test/test_c.gd");
+    assert_eq!(groups[1].0, "test/test_a.gd");
+    assert_eq!(groups[2].0, "test/test_b.gd");
+}
+
+// --- filter_files_by_tests tests ---
+
+/// Helper to create a temp GDScript file and return its path.
+fn write_temp_gd(dir: &Path, name: &str, content: &str) -> PathBuf {
+    let path = dir.join(name);
+    let mut f = std::fs::File::create(&path).unwrap();
+    f.write_all(content.as_bytes()).unwrap();
+    path
+}
+
+#[test]
+fn test_filter_files_no_filters_returns_all() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = write_temp_gd(
+        dir.path(),
+        "test_a.gd",
+        "extends Node\nfunc test_one():\n\tpass\n",
+    );
+    let b = write_temp_gd(
+        dir.path(),
+        "test_b.gd",
+        "extends Node\nfunc test_two():\n\tpass\n",
+    );
+    let files = vec![a.clone(), b.clone()];
+    let result = filter_files_by_tests(&files, None, None);
+    assert_eq!(result.len(), 2);
+}
+
+#[test]
+fn test_filter_files_by_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = write_temp_gd(
+        dir.path(),
+        "test_player.gd",
+        "extends Node\nfunc test_health():\n\tpass\nfunc test_damage():\n\tpass\n",
+    );
+    let b = write_temp_gd(
+        dir.path(),
+        "test_enemy.gd",
+        "extends Node\nfunc test_spawn():\n\tpass\n",
+    );
+    let files = vec![a.clone(), b.clone()];
+
+    // Filter by "health" — only test_player.gd has test_health
+    let result = filter_files_by_tests(&files, Some("health"), None);
+    assert_eq!(result.len(), 1);
+    assert_eq!(result[0].path, a);
+    // tests field contains ALL test functions in the file (for exclusion lists)
+    assert_eq!(result[0].tests, vec!["test_health", "test_damage"]);
+}
+
+#[test]
+fn test_filter_files_by_name_no_match() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = write_temp_gd(
+        dir.path(),
+        "test_player.gd",
+        "extends Node\nfunc test_health():\n\tpass\n",
+    );
+    let files = vec![a];
+
+    let result = filter_files_by_tests(&files, Some("nonexistent"), None);
+    assert!(result.is_empty());
+}
+
+#[test]
+fn test_filter_files_by_class() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = write_temp_gd(
+        dir.path(),
+        "test_movement.gd",
+        "extends Node\n\nfunc test_top():\n\tpass\n\nclass TestWalking:\n\textends Node\n\tfunc test_walk():\n\t\tpass\n",
+    );
+    let b = write_temp_gd(
+        dir.path(),
+        "test_combat.gd",
+        "extends Node\nfunc test_attack():\n\tpass\n",
+    );
+    let files = vec![a.clone(), b];
+
+    // Filter by class "Walking" — only test_movement.gd has inner class TestWalking
+    let result = filter_files_by_tests(&files, None, Some("Walking"));
+    assert_eq!(result.len(), 1);
+    assert_eq!(result[0].path, a);
+    assert_eq!(result[0].classes, vec!["TestWalking"]);
+}
+
+// --- build_gdunit4_filter_args tests ---
+
+#[test]
+fn test_gdunit4_filter_args_no_filters() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("test")).unwrap();
+    let args = default_run_args();
+    let (add, ignore) = build_gdunit4_filter_args(&[], dir.path(), &args, false);
+    assert_eq!(add, vec!["res://test"]);
+    assert!(ignore.is_empty());
+}
+
+#[test]
+fn test_gdunit4_filter_args_with_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let test_dir = dir.path().join("test");
+    std::fs::create_dir(&test_dir).unwrap();
+    let file = write_temp_gd(
+        &test_dir,
+        "test_player.gd",
+        "extends Node\nfunc test_health():\n\tpass\nfunc test_damage():\n\tpass\nfunc test_speed():\n\tpass\n",
+    );
+    let files = vec![file];
+
+    let mut args = default_run_args();
+    args.name = Some("health".to_string());
+
+    let (add, ignore) = build_gdunit4_filter_args(&files, dir.path(), &args, true);
+
+    // Should add the specific file
+    assert_eq!(add.len(), 1);
+    assert!(add[0].starts_with("res://"));
+    assert!(add[0].ends_with("test_player.gd"));
+
+    // Should ignore non-matching tests
+    assert_eq!(ignore.len(), 2);
+    assert!(ignore.iter().any(|i| i.ends_with(":test_damage")));
+    assert!(ignore.iter().any(|i| i.ends_with(":test_speed")));
+    // test_health should NOT be in ignore list
+    assert!(!ignore.iter().any(|i| i.ends_with(":test_health")));
+}
+
+/// Build a minimal `RunArgs` for testing.
+fn default_run_args() -> super::super::test_cmd::RunArgs {
+    super::super::test_cmd::RunArgs {
+        name: None,
+        path: vec![],
+        filter: None,
+        class: None,
+        list: false,
+        junit: None,
+        verbose: false,
+        headless: true,
+        timeout: 60,
+        format: "text".to_string(),
+        quiet: false,
+        clean: false,
+        runner: None,
+        extra: vec![],
+    }
 }

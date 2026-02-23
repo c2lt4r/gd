@@ -17,9 +17,27 @@ use std::time::Instant;
 use crate::core::config::Config;
 use crate::core::project::GodotProject;
 use crate::core::symbol_table;
+use crate::cprintln;
 
 // Re-export run_with_timeout for use by gut.rs and gdunit.rs
 pub use script::run_with_timeout;
+
+// --- TestRunner trait ---
+
+/// Shared context passed to all runners.
+pub struct RunContext<'a> {
+    pub godot: &'a Path,
+    pub project: &'a GodotProject,
+    pub args: &'a RunArgs,
+    pub test_files: &'a [PathBuf],
+    pub json_mode: bool,
+}
+
+/// Unified interface for test runners.
+pub trait TestRunner {
+    fn name(&self) -> &'static str;
+    fn run(&self, ctx: &RunContext) -> Result<(Vec<TestResult>, TestSummary)>;
+}
 
 // --- Data Model ---
 
@@ -45,7 +63,7 @@ pub struct TestResult {
     pub stdout: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct TestError {
     pub file: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -285,6 +303,166 @@ pub fn strip_res_prefix(s: &str) -> &str {
     s.strip_prefix("res://").unwrap_or(s)
 }
 
+// --- Shared Display Helpers ---
+
+/// Print per-test results in human mode. Used by all runners.
+pub fn print_results(results: &[TestResult], args: &RunArgs) {
+    for result in results {
+        let label = result.file.as_deref().unwrap_or("unknown");
+        let show = !args.quiet || result.status != TestStatus::Pass;
+        if show {
+            match result.status {
+                TestStatus::Pass => cprintln!("{} {label}", "✓".green()),
+                TestStatus::Fail | TestStatus::Error => {
+                    cprintln!("{} {label}", "✗".red());
+                    for err in &result.errors {
+                        if let Some(ln) = err.line {
+                            cprintln!("  {}:{ln} {}", err.file, err.message);
+                        } else if !err.file.is_empty() {
+                            cprintln!("  {} {}", err.file, err.message);
+                        } else {
+                            cprintln!("  {}", err.message);
+                        }
+                    }
+                }
+                TestStatus::Timeout => cprintln!("{} {label} (timed out)", "✗".red()),
+            }
+        }
+    }
+}
+
+/// Group test results by file, returning `(file, passed, failed)` tuples.
+/// Preserves insertion order (first seen). Results with `file: None` are grouped as "unknown".
+pub fn group_results_by_file(results: &[TestResult]) -> Vec<(String, usize, usize)> {
+    let mut groups: Vec<(String, usize, usize)> = Vec::new();
+
+    for result in results {
+        // Extract file portion: for "path/test.gd::test_method", use "path/test.gd"
+        let raw = result.file.as_deref().unwrap_or("unknown");
+        let file_key = raw.split("::").next().unwrap_or(raw).to_string();
+
+        let is_pass = result.status == TestStatus::Pass;
+
+        if let Some(entry) = groups.iter_mut().find(|(f, _, _)| *f == file_key) {
+            if is_pass {
+                entry.1 += 1;
+            } else {
+                entry.2 += 1;
+            }
+        } else {
+            groups.push((file_key, usize::from(is_pass), usize::from(!is_pass)));
+        }
+    }
+
+    groups
+}
+
+// --- Shared test content filtering ---
+
+/// Info about test functions and classes found in a single file.
+#[derive(Debug)]
+pub struct FileTestInfo {
+    pub path: PathBuf,
+    /// All top-level `test_*` function names in this file.
+    pub tests: Vec<String>,
+    /// Inner class names that contain matching test functions.
+    #[allow(dead_code)] // used by tests; future: gdUnit4 class-level exclusion
+    pub classes: Vec<String>,
+}
+
+/// Filter test files to those containing matching test functions or classes.
+///
+/// When `name` is set, only files containing a `test_*` function whose name contains
+/// the filter string are included. When `class` is set, only files containing an
+/// inner class whose name contains the filter string are included.
+///
+/// Returns info about each matching file, including which test functions matched.
+pub fn filter_files_by_tests(
+    test_files: &[PathBuf],
+    name: Option<&str>,
+    class: Option<&str>,
+) -> Vec<FileTestInfo> {
+    if name.is_none() && class.is_none() {
+        return test_files
+            .iter()
+            .map(|p| FileTestInfo {
+                path: p.clone(),
+                tests: Vec::new(),
+                classes: Vec::new(),
+            })
+            .collect();
+    }
+
+    let mut parser = tree_sitter::Parser::new();
+    if parser
+        .set_language(&tree_sitter_gdscript::LANGUAGE.into())
+        .is_err()
+    {
+        return Vec::new();
+    }
+
+    let mut result = Vec::new();
+
+    for path in test_files {
+        let Ok(source) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        let Some(tree) = parser.parse(&source, None) else {
+            continue;
+        };
+        let symbols = symbol_table::build(&tree, &source);
+
+        // Collect matching top-level test functions
+        let matching_tests: Vec<String> = symbols
+            .functions
+            .iter()
+            .filter(|f| f.name.starts_with("test_"))
+            .filter(|f| name.is_none_or(|n| f.name.contains(n)))
+            .map(|f| f.name.clone())
+            .collect();
+
+        // Collect matching inner classes
+        let matching_classes: Vec<String> = symbols
+            .inner_classes
+            .iter()
+            .filter(|(cls_name, syms)| {
+                let class_matches = class.is_none_or(|c| cls_name.contains(c));
+                let has_tests = syms.functions.iter().any(|f| {
+                    f.name.starts_with("test_") && name.is_none_or(|n| f.name.contains(n))
+                });
+                class_matches && has_tests
+            })
+            .map(|(cls_name, _)| cls_name.clone())
+            .collect();
+
+        // Include file if it has any matching tests or classes
+        let has_match = if class.is_some() {
+            // When filtering by class, only class matches count
+            !matching_classes.is_empty()
+        } else {
+            !matching_tests.is_empty() || !matching_classes.is_empty()
+        };
+
+        if has_match {
+            // Collect ALL test names in the file (for runners that need exclusion lists)
+            let all_tests: Vec<String> = symbols
+                .functions
+                .iter()
+                .filter(|f| f.name.starts_with("test_"))
+                .map(|f| f.name.clone())
+                .collect();
+
+            result.push(FileTestInfo {
+                path: path.clone(),
+                tests: all_tests,
+                classes: matching_classes,
+            });
+        }
+    }
+
+    result
+}
+
 // --- Main Entry Point ---
 
 #[allow(clippy::too_many_lines)]
@@ -380,7 +558,11 @@ fn exec_run(args: &RunArgs) -> Result<()> {
         None => test_files,
     };
 
-    if test_files.is_empty() && runner != Runner::GdUnit4 {
+    let gdunit4_no_filters = runner == Runner::GdUnit4
+        && args.filter.is_none()
+        && args.name.is_none()
+        && args.class.is_none();
+    if test_files.is_empty() && !gdunit4_no_filters {
         if json_mode {
             let mode = runner_label(runner);
             let report = TestReport {
@@ -432,25 +614,27 @@ fn exec_run(args: &RunArgs) -> Result<()> {
 
     let start = Instant::now();
 
-    let mode = runner_label(runner);
-    let result = match runner {
-        Runner::Gut => {
-            hprintln!(json_mode, "{} Running tests with GUT", "▶".green());
-            gut::run_gut_tests(&godot, &project, args, &test_files, json_mode)
-        }
-        Runner::GdUnit4 => {
-            hprintln!(json_mode, "{} Running tests with gdUnit4", "▶".green());
-            gdunit::run_gdunit4_tests(&godot, &project, args, json_mode)
-        }
-        Runner::Script => {
-            hprintln!(
-                json_mode,
-                "{} Running tests with script runner",
-                "▶".green()
-            );
-            script::run_script_tests(&godot, &project, args, &test_files, json_mode)
-        }
+    let ctx = RunContext {
+        godot: &godot,
+        project: &project,
+        args,
+        test_files: &test_files,
+        json_mode,
     };
+    let runner_impl: Box<dyn TestRunner> = match runner {
+        Runner::Gut => Box::new(gut::GutRunner),
+        Runner::GdUnit4 => Box::new(gdunit::GdUnit4Runner),
+        Runner::Script => Box::new(script::ScriptRunner),
+    };
+
+    let mode = runner_label(runner);
+    hprintln!(
+        json_mode,
+        "{} Running tests with {}",
+        "▶".green(),
+        runner_impl.name()
+    );
+    let result = runner_impl.run(&ctx);
 
     let elapsed = start.elapsed();
     let duration_ms = elapsed.as_millis() as u64;
@@ -468,8 +652,22 @@ fn exec_run(args: &RunArgs) -> Result<()> {
                 };
                 println!("{}", serde_json::to_string_pretty(&report).unwrap());
             } else {
+                // Per-file breakdown (when multiple files have results)
+                let file_groups = group_results_by_file(&results);
+                if file_groups.len() > 1 {
+                    println!();
+                    for (file, p, f) in &file_groups {
+                        let icon = if *f > 0 {
+                            "✗".red().to_string()
+                        } else {
+                            "✓".green().to_string()
+                        };
+                        println!("  {icon} {file}: {p} passed, {f} failed");
+                    }
+                }
+
                 let secs = elapsed.as_secs_f64();
-                hprintln!(json_mode);
+                println!();
                 let failed_display = if summary.failed > 0 {
                     summary.failed.to_string().red().to_string()
                 } else {

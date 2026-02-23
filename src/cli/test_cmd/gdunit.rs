@@ -1,7 +1,6 @@
 #![allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 
 use miette::{Result, miette};
-use owo_colors::OwoColorize;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -11,9 +10,27 @@ use crate::core::project::GodotProject;
 use crate::{ceprintln, cprintln};
 
 use super::{
-    RunArgs, TestError, TestResult, TestStatus, TestSummary, extract_errors, filter_noise,
-    hprintln, run_with_timeout, strip_res_prefix,
+    RunArgs, RunContext, TestError, TestResult, TestRunner, TestStatus, TestSummary,
+    extract_errors, filter_files_by_tests, filter_noise, run_with_timeout, strip_res_prefix,
 };
+
+pub struct GdUnit4Runner;
+
+impl TestRunner for GdUnit4Runner {
+    fn name(&self) -> &'static str {
+        "gdUnit4"
+    }
+
+    fn run(&self, ctx: &RunContext) -> Result<(Vec<TestResult>, TestSummary)> {
+        run_gdunit4_tests(
+            ctx.godot,
+            ctx.project,
+            ctx.args,
+            ctx.test_files,
+            ctx.json_mode,
+        )
+    }
+}
 
 /// Run tests using gdUnit4 framework.
 #[allow(clippy::too_many_lines)]
@@ -21,23 +38,9 @@ pub fn run_gdunit4_tests(
     godot: &Path,
     project: &GodotProject,
     args: &RunArgs,
+    test_files: &[PathBuf],
     json_mode: bool,
 ) -> Result<(Vec<TestResult>, TestSummary)> {
-    if args.filter.is_some() {
-        hprintln!(
-            json_mode,
-            "{} --filter is not supported with gdUnit4; use -- -i SuiteName to exclude tests",
-            "!".yellow().bold()
-        );
-    }
-    if args.name.is_some() || args.class.is_some() {
-        hprintln!(
-            json_mode,
-            "{} --name and --class filters are only supported with GUT",
-            "!".yellow().bold()
-        );
-    }
-
     let spinner = if json_mode {
         None
     } else {
@@ -52,34 +55,15 @@ pub fn run_gdunit4_tests(
         Some(sp)
     };
 
-    // Determine test directories for -a flags
-    let test_dirs: Vec<String> = if args.path.is_empty() {
-        ["test", "tests"]
-            .iter()
-            .filter(|d| project.root.join(d).is_dir())
-            .map(|d| format!("res://{d}"))
-            .collect()
-    } else {
-        let mut dirs = Vec::new();
-        for p in &args.path {
-            let abs = if p.is_absolute() {
-                p.clone()
-            } else {
-                project.root.join(p)
-            };
-            let dir = if abs.is_file() {
-                abs.parent().unwrap_or(&abs).to_path_buf()
-            } else {
-                abs
-            };
-            let rel = crate::core::fs::relative_slash(&dir, &project.root);
-            let entry = format!("res://{rel}");
-            if !dirs.contains(&entry) {
-                dirs.push(entry);
-            }
-        }
-        dirs
-    };
+    let has_content_filters = args.name.is_some() || args.class.is_some();
+
+    // Build -a (add) and -i (ignore) flags based on filters
+    let (add_args, ignore_args) = build_gdunit4_filter_args(
+        test_files,
+        &project.root,
+        args,
+        has_content_filters || args.filter.is_some(),
+    );
 
     let mut cmd = Command::new(godot);
     if args.headless {
@@ -96,8 +80,11 @@ pub fn run_gdunit4_tests(
         cmd.arg("--ignoreHeadlessMode");
     }
 
-    for dir in &test_dirs {
-        cmd.arg("-a").arg(dir);
+    for a in &add_args {
+        cmd.arg("-a").arg(a);
+    }
+    for i in &ignore_args {
+        cmd.arg("-i").arg(i);
     }
 
     // Report output directory (temp location, cleaned up after parsing)
@@ -188,6 +175,13 @@ pub fn run_gdunit4_tests(
         )
     };
 
+    // If user requested --junit, copy the XML to their path before cleanup
+    if let Some(ref user_junit) = args.junit
+        && let Some(ref src) = xml_path
+    {
+        let _ = std::fs::copy(src, user_junit);
+    }
+
     // Clean up temp report directory
     if report_dir.is_dir() {
         let _ = std::fs::remove_dir_all(&report_dir);
@@ -209,28 +203,7 @@ pub fn run_gdunit4_tests(
 
     // Print per-test results in human mode
     if !json_mode {
-        for result in &results {
-            let label = result.file.as_deref().unwrap_or("unknown");
-            let show = !args.quiet || result.status != TestStatus::Pass;
-            if show {
-                match result.status {
-                    TestStatus::Pass => cprintln!("{} {label}", "✓".green()),
-                    TestStatus::Fail | TestStatus::Error => {
-                        cprintln!("{} {label}", "✗".red());
-                        for err in &result.errors {
-                            if let Some(ln) = err.line {
-                                cprintln!("  {}:{ln} {}", err.file, err.message);
-                            } else if !err.file.is_empty() {
-                                cprintln!("  {} {}", err.file, err.message);
-                            } else {
-                                cprintln!("  {}", err.message);
-                            }
-                        }
-                    }
-                    TestStatus::Timeout => {}
-                }
-            }
-        }
+        super::print_results(&results, args);
     }
 
     Ok((results, summary))
@@ -379,4 +352,72 @@ pub fn decode_xml_entities(s: &str) -> String {
         .replace("&gt;", ">")
         .replace("&quot;", "\"")
         .replace("&apos;", "'")
+}
+
+/// Build `-a` (add) and `-i` (ignore) flag values for gdUnit4 CLI.
+///
+/// When content filters (`--name`, `--class`, `--filter`) are active, uses per-file
+/// `-a res://path/to/test.gd` args instead of directory-level args. For `--name`,
+/// also builds `-i` args to exclude non-matching test functions within included files.
+pub fn build_gdunit4_filter_args(
+    test_files: &[PathBuf],
+    project_root: &Path,
+    args: &RunArgs,
+    has_filters: bool,
+) -> (Vec<String>, Vec<String>) {
+    if !has_filters || test_files.is_empty() {
+        // No content filters — use directory-based args (original behavior)
+        let dirs: Vec<String> = if args.path.is_empty() {
+            ["test", "tests"]
+                .iter()
+                .filter(|d| project_root.join(d).is_dir())
+                .map(|d| format!("res://{d}"))
+                .collect()
+        } else {
+            let mut dirs = Vec::new();
+            for p in &args.path {
+                let abs = if p.is_absolute() {
+                    p.clone()
+                } else {
+                    project_root.join(p)
+                };
+                let dir = if abs.is_file() {
+                    abs.parent().unwrap_or(&abs).to_path_buf()
+                } else {
+                    abs
+                };
+                let rel = crate::core::fs::relative_slash(&dir, project_root);
+                let entry = format!("res://{rel}");
+                if !dirs.contains(&entry) {
+                    dirs.push(entry);
+                }
+            }
+            dirs
+        };
+        return (dirs, Vec::new());
+    }
+
+    // Content filters active — filter at file level
+    let file_infos = filter_files_by_tests(test_files, args.name.as_deref(), args.class.as_deref());
+
+    let mut add_args = Vec::new();
+    let mut ignore_args = Vec::new();
+
+    for info in &file_infos {
+        let rel = crate::core::fs::relative_slash(&info.path, project_root);
+        let res_path = format!("res://{rel}");
+        add_args.push(res_path.clone());
+
+        // If filtering by --name, exclude non-matching tests in this file
+        if let Some(ref name_filter) = args.name {
+            for test_name in &info.tests {
+                if !test_name.contains(name_filter.as_str()) {
+                    // gdUnit4 ignore format: "res://path/file.gd:test_name"
+                    ignore_args.push(format!("{res_path}:{test_name}"));
+                }
+            }
+        }
+    }
+
+    (add_args, ignore_args)
 }
