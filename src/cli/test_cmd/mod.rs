@@ -17,7 +17,7 @@ use std::time::Instant;
 use crate::core::config::Config;
 use crate::core::project::GodotProject;
 use crate::core::symbol_table;
-use crate::cprintln;
+use crate::{ceprintln, cprintln};
 
 // Re-export run_with_timeout for use by gut.rs and gdunit.rs
 pub use script::run_with_timeout;
@@ -184,12 +184,13 @@ fn parse_runner(s: &str) -> std::result::Result<Runner, String> {
 // --- Utilities ---
 
 /// Print to stdout in human mode, stderr in JSON mode (so stdout stays pure JSON).
+/// Respects `--no-color` by routing through `cprintln!`/`ceprintln!`.
 macro_rules! hprintln {
     ($json:expr) => {
         if $json { eprintln!(); } else { println!(); }
     };
     ($json:expr, $($arg:tt)*) => {
-        if $json { eprintln!($($arg)*); } else { println!($($arg)*); }
+        if $json { $crate::ceprintln!($($arg)*); } else { $crate::cprintln!($($arg)*); }
     };
 }
 
@@ -579,7 +580,7 @@ fn exec_run(args: &RunArgs) -> Result<()> {
             };
             println!("{}", serde_json::to_string_pretty(&report).unwrap());
         } else {
-            println!(
+            cprintln!(
                 "{} No test files found{}",
                 "!".yellow().bold(),
                 args.filter
@@ -607,7 +608,7 @@ fn exec_run(args: &RunArgs) -> Result<()> {
         if args.verbose && !json_mode {
             for f in &test_files {
                 let rel = f.strip_prefix(&project.root).unwrap_or(f);
-                println!("  {}", rel.display().to_string().dimmed());
+                cprintln!("  {}", rel.display().to_string().dimmed());
             }
         }
     }
@@ -652,28 +653,30 @@ fn exec_run(args: &RunArgs) -> Result<()> {
                 };
                 println!("{}", serde_json::to_string_pretty(&report).unwrap());
             } else {
-                // Per-file breakdown (when multiple files have results)
-                let file_groups = group_results_by_file(&results);
-                if file_groups.len() > 1 {
-                    println!();
-                    for (file, p, f) in &file_groups {
-                        let icon = if *f > 0 {
-                            "✗".red().to_string()
-                        } else {
-                            "✓".green().to_string()
-                        };
-                        println!("  {icon} {file}: {p} passed, {f} failed");
+                // Per-file breakdown in --quiet mode (per-test output was suppressed)
+                if args.quiet {
+                    let file_groups = group_results_by_file(&results);
+                    if file_groups.len() > 1 {
+                        cprintln!();
+                        for (file, p, f) in &file_groups {
+                            let icon = if *f > 0 {
+                                "✗".red().to_string()
+                            } else {
+                                "✓".green().to_string()
+                            };
+                            cprintln!("  {icon} {file}: {p} passed, {f} failed");
+                        }
                     }
                 }
 
                 let secs = elapsed.as_secs_f64();
-                println!();
+                cprintln!();
                 let failed_display = if summary.failed > 0 {
                     summary.failed.to_string().red().to_string()
                 } else {
                     summary.failed.to_string().green().to_string()
                 };
-                println!(
+                cprintln!(
                     "{} {} passed, {} failed  ({:.2}s)",
                     "✓".green().bold(),
                     summary.passed.to_string().green(),
@@ -705,8 +708,8 @@ fn exec_run(args: &RunArgs) -> Result<()> {
                 std::process::exit(1);
             } else {
                 let secs = elapsed.as_secs_f64();
-                println!();
-                eprintln!("{} Tests failed ({:.2}s)", "✗".red().bold(), secs);
+                cprintln!();
+                ceprintln!("{} Tests failed ({:.2}s)", "✗".red().bold(), secs);
                 Err(e)
             }
         }
@@ -822,18 +825,18 @@ fn list_tests(
         println!("{}", serde_json::to_string_pretty(&entries).unwrap());
     } else {
         for entry in &entries {
-            println!("{}", entry.file.bold());
+            cprintln!("{}", entry.file.bold());
             for t in &entry.tests {
-                println!("  {t}");
+                cprintln!("  {t}");
             }
             for cls in &entry.classes {
-                println!("  {}", cls.name.dimmed());
+                cprintln!("  {}", cls.name.dimmed());
                 for t in &cls.tests {
-                    println!("    {t}");
+                    cprintln!("    {t}");
                 }
             }
         }
-        println!(
+        cprintln!(
             "\n{} file{}, {} test{}",
             entries.len(),
             if entries.len() == 1 { "" } else { "s" },
