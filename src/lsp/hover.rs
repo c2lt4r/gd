@@ -130,7 +130,7 @@ fn resolve_hover_for_identifier(
         return Some(Hover {
             contents: HoverContents::Markup(MarkupContent {
                 kind: MarkupKind::Markdown,
-                value: super::builtins::format_type_hover(doc),
+                value: super::builtins::format_type_hover(&doc),
             }),
             range: Some(node_range(current)),
         });
@@ -140,7 +140,7 @@ fn resolve_hover_for_identifier(
         return Some(Hover {
             contents: HoverContents::Markup(MarkupContent {
                 kind: MarkupKind::Markdown,
-                value: super::builtins::format_function_hover(doc),
+                value: super::builtins::format_function_hover(&doc),
             }),
             range: Some(node_range(current)),
         });
@@ -169,7 +169,8 @@ fn resolve_hover_for_identifier(
     // 9. Engine class/singleton used as bare identifier (Input, OS, Engine, etc.)
     if crate::class_db::class_exists(name) {
         let code = format!("class {name}");
-        return Some(make_hover(&code, current, None));
+        let doc = crate::class_db::class_doc(name);
+        return Some(make_hover(&code, current, doc));
     }
     // 10. Workspace class_name (user-defined class referenced as bare identifier,
     //     e.g. `extends KartEffect` or `VehicleData.get_vehicle()`)
@@ -389,7 +390,8 @@ fn hover_member_on_type(
     for (name, prop_type, owner_class) in crate::class_db::class_properties(db_class) {
         if name == member {
             let code = format!("{prop_type} {owner_class}.{name}");
-            return Some(make_hover(&code, ident_node, None));
+            let doc = crate::class_db::property_doc(db_class, name);
+            return Some(make_hover(&code, ident_node, doc));
         }
     }
 
@@ -397,7 +399,8 @@ fn hover_member_on_type(
     if let Some(ret) = crate::class_db::method_return_type(db_class, member) {
         let owner = find_method_owner(db_class, member).unwrap_or(db_class);
         let code = format!("{owner}.{member}() -> {ret}");
-        return Some(make_hover(&code, ident_node, None));
+        let doc = crate::class_db::method_doc(db_class, member);
+        return Some(make_hover(&code, ident_node, doc));
     }
 
     // 4. Builtin members (Vector2, String, Array, etc.) — walk inheritance

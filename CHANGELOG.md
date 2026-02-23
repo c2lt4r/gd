@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.2.27] - 2026-02-23
+
+### Improved
+- **LSP hover/completion: embedded Godot API docs** — hover and completion now show rich documentation for the entire Godot API (992 classes, 8753 methods, 3876 properties, 488 signals, 114 utility functions). Extracted from Godot's `extension_api.json` with BBCode-to-Markdown conversion. Hand-written docs for common members are kept as priority overrides.
+
+### Added
+- **`tools/bbcode.py`** — shared BBCode-to-Markdown converter for Godot doc strings, used by both code generators.
+- **ClassDB doc lookup API** — `class_doc()`, `method_doc()`, `property_doc()`, and `utility_function()` with inheritance chain walking.
+
 ## [0.2.26] - 2026-02-23
 
 ### Added

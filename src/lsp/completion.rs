@@ -1044,14 +1044,30 @@ fn collect_builtin_dot_items(
     }
 }
 
-/// Build documentation from builtin member lookup.
+/// Build documentation from builtin member lookup or ClassDB.
 fn member_doc(class: &str, name: &str) -> Option<Documentation> {
-    super::builtins::lookup_member_for(class, name).map(|doc| {
-        Documentation::MarkupContent(MarkupContent {
+    // 1. Hand-written builtin member doc (priority)
+    if let Some(doc) = super::builtins::lookup_member_for(class, name) {
+        return Some(Documentation::MarkupContent(MarkupContent {
             kind: MarkupKind::Markdown,
             value: doc.description.to_string(),
-        })
-    })
+        }));
+    }
+    // 2. ClassDB method doc
+    if let Some(doc) = crate::class_db::method_doc(class, name) {
+        return Some(Documentation::MarkupContent(MarkupContent {
+            kind: MarkupKind::Markdown,
+            value: doc.to_string(),
+        }));
+    }
+    // 3. ClassDB property doc
+    if let Some(doc) = crate::class_db::property_doc(class, name) {
+        return Some(Documentation::MarkupContent(MarkupContent {
+            kind: MarkupKind::Markdown,
+            value: doc.to_string(),
+        }));
+    }
+    None
 }
 
 /// Try dot-completions only. Returns `Some(items)` if in a dot context with a
@@ -1199,10 +1215,12 @@ pub(super) fn find_extends_class(root: tree_sitter::Node, source: &str) -> Optio
 /// Add engine methods from the class_db for the given class and its ancestors.
 fn collect_class_db_methods(class: &str, items: &mut Vec<CompletionItem>) {
     for (method_name, ret_type, owner_class) in crate::class_db::class_methods(class) {
+        let documentation = member_doc(owner_class, method_name);
         items.push(CompletionItem {
             label: method_name.to_string(),
             kind: Some(CompletionItemKind::METHOD),
             detail: Some(format!("{owner_class}.{method_name}() -> {ret_type}")),
+            documentation,
             ..Default::default()
         });
     }

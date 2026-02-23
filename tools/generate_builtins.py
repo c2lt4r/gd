@@ -5,11 +5,13 @@ Extracts methods, properties, and constants from builtin_classes (Vector2, Color
 String, Array, Dictionary, etc.) into BuiltinMember entries for LSP completions.
 
 Usage:
-    godot --headless --dump-extension-api
+    godot --headless --dump-extension-api-with-docs
     python tools/generate_builtins.py extension_api.json > src/lsp/builtin_generated.rs
 """
 import json
 import sys
+
+from bbcode import bbcode_to_markdown, truncate_doc
 
 
 def format_signature(method):
@@ -40,7 +42,16 @@ def format_signature(method):
 
 def escape_rust_str(s):
     """Escape a string for use in a Rust string literal."""
-    return s.replace("\\", "\\\\").replace('"', '\\"')
+    return s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+
+
+def format_doc(raw_text, max_chars=300):
+    """Convert BBCode to markdown, truncate, and escape for Rust."""
+    if not raw_text:
+        return ""
+    md = bbcode_to_markdown(raw_text)
+    md = truncate_doc(md, max_chars)
+    return escape_rust_str(md)
 
 
 def main():
@@ -51,7 +62,8 @@ def main():
     with open(sys.argv[1]) as f:
         api = json.load(f)
 
-    entries = []  # (class, name, brief, kind)
+    entries = []  # (class, name, brief, description, kind)
+    type_docs = []  # (name, brief, description)
 
     for cls in api.get("builtin_classes", []):
         class_name = cls["name"]
@@ -60,26 +72,35 @@ def main():
         if class_name in ("int", "float", "bool", "Nil"):
             continue
 
+        # Collect class-level docs
+        brief = format_doc(cls.get("brief_description", ""), 200)
+        desc = format_doc(cls.get("description", ""), 300)
+        if brief or desc:
+            type_docs.append((class_name, brief, desc))
+
         # Properties (members)
         for member in cls.get("members", []):
             member_name = member["name"]
             member_type = member["type"]
-            brief = f"{member_name}: {member_type}"
-            entries.append((class_name, member_name, brief, "Property"))
+            brief_str = f"{member_name}: {member_type}"
+            doc = format_doc(member.get("description", ""))
+            entries.append((class_name, member_name, brief_str, doc, "Property"))
 
         # Methods
         for method in cls.get("methods", []):
             method_name = method["name"]
-            brief = format_signature(method)
-            entries.append((class_name, method_name, brief, "Method"))
+            brief_str = format_signature(method)
+            doc = format_doc(method.get("description", ""))
+            entries.append((class_name, method_name, brief_str, doc, "Method"))
 
     # Sort by (class, kind, name) for clean output
-    entries.sort(key=lambda e: (e[0], e[3], e[1]))
+    entries.sort(key=lambda e: (e[0], e[4], e[1]))
+    type_docs.sort(key=lambda e: e[0])
 
     # Count stats
     classes = sorted(set(e[0] for e in entries))
-    n_methods = sum(1 for e in entries if e[3] == "Method")
-    n_props = sum(1 for e in entries if e[3] == "Property")
+    n_methods = sum(1 for e in entries if e[4] == "Method")
+    n_props = sum(1 for e in entries if e[4] == "Property")
 
     print("//! Auto-generated builtin type members from extension_api.json.")
     print(f"//! {len(classes)} types, {n_methods} methods, {n_props} properties.")
@@ -90,7 +111,7 @@ def main():
     print(f"pub static GENERATED_MEMBERS: &[BuiltinMember] = &[")
 
     current_class = None
-    for class_name, name, brief, kind in entries:
+    for class_name, name, brief, desc, kind in entries:
         if class_name != current_class:
             if current_class is not None:
                 print()
@@ -98,10 +119,25 @@ def main():
             current_class = class_name
 
         brief_escaped = escape_rust_str(brief)
+        # Use real description if available, fall back to signature
+        desc_str = desc if desc else brief_escaped
         print(f'    BuiltinMember {{ class: "{class_name}", name: "{name}", '
-              f'brief: "{brief_escaped}", description: "{brief_escaped}", '
+              f'brief: "{brief_escaped}", description: "{desc_str}", '
               f'kind: MemberKind::{kind} }},')
 
+    print("];")
+    print()
+
+    # Builtin type docs
+    print("pub struct BuiltinTypeDoc {")
+    print("    pub name: &'static str,")
+    print("    pub brief: &'static str,")
+    print("    pub description: &'static str,")
+    print("}")
+    print()
+    print(f"pub static BUILTIN_TYPE_DOCS: &[BuiltinTypeDoc] = &[")
+    for name, brief, desc in type_docs:
+        print(f'    BuiltinTypeDoc {{ name: "{name}", brief: "{brief}", description: "{desc}" }},')
     print("];")
 
 

@@ -266,6 +266,63 @@ pub fn method_signature(class: &str, method: &str) -> Option<MethodSignature> {
     }
 }
 
+/// Look up the documentation string for a class.
+pub fn class_doc(name: &str) -> Option<&'static str> {
+    generated::CLASSES
+        .binary_search_by_key(&name, |c| c.name)
+        .ok()
+        .map(|i| generated::CLASSES[i].doc)
+        .filter(|d| !d.is_empty())
+}
+
+/// Look up the documentation string for a method, walking the inheritance chain.
+pub fn method_doc(class: &str, method: &str) -> Option<&'static str> {
+    let mut current = class;
+    loop {
+        let key = format!("{current}.{method}");
+        if let Ok(i) =
+            generated::METHOD_DOCS.binary_search_by_key(&key.as_str(), |&(k, _)| k)
+        {
+            let doc = generated::METHOD_DOCS[i].1;
+            if !doc.is_empty() {
+                return Some(doc);
+            }
+        }
+        match parent_class(current) {
+            Some(parent) => current = parent,
+            None => return None,
+        }
+    }
+}
+
+/// Look up the documentation string for a property, walking the inheritance chain.
+pub fn property_doc(class: &str, property: &str) -> Option<&'static str> {
+    let mut current = class;
+    loop {
+        let key = format!("{current}.{property}");
+        if let Ok(i) =
+            generated::PROPERTY_DOCS.binary_search_by_key(&key.as_str(), |&(k, _)| k)
+        {
+            let doc = generated::PROPERTY_DOCS[i].1;
+            if !doc.is_empty() {
+                return Some(doc);
+            }
+        }
+        match parent_class(current) {
+            Some(parent) => current = parent,
+            None => return None,
+        }
+    }
+}
+
+/// Look up a utility function by name (print, lerp, sin, etc.).
+pub fn utility_function(name: &str) -> Option<&'static generated::UtilityFunction> {
+    generated::UTILITY_FUNCTIONS
+        .binary_search_by_key(&name, |f| f.name)
+        .ok()
+        .map(|i| &generated::UTILITY_FUNCTIONS[i])
+}
+
 /// Curated list of methods that require the node to be in the scene tree.
 pub fn is_tree_dependent_method(method: &str) -> bool {
     matches!(

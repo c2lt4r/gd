@@ -1,14 +1,14 @@
 //! Built-in Godot type and function documentation for LSP hover/completion.
 
-pub struct BuiltinDoc {
-    pub name: &'static str,
-    pub brief: &'static str,
-    pub description: &'static str,
+pub struct BuiltinDoc<'a> {
+    pub name: &'a str,
+    pub brief: &'a str,
+    pub description: &'a str,
 }
 
-// ── Built-in types ──────────────────────────────────────────────────
+// ── Built-in types (primitives not in the API dump) ─────────────────
 
-const BUILTIN_TYPE_DOCS: &[BuiltinDoc] = &[
+const PRIMITIVE_TYPE_DOCS: &[BuiltinDoc<'static>] = &[
     BuiltinDoc {
         name: "int",
         brief: "Integer type",
@@ -24,497 +24,13 @@ const BUILTIN_TYPE_DOCS: &[BuiltinDoc] = &[
         brief: "Boolean type",
         description: "Boolean value: `true` or `false`.",
     },
-    BuiltinDoc {
-        name: "String",
-        brief: "String type",
-        description: "Built-in string type using Unicode.",
-    },
-    BuiltinDoc {
-        name: "Vector2",
-        brief: "2D vector (float)",
-        description: "2-element structure for 2D coordinates and 2D math using floating-point.",
-    },
-    BuiltinDoc {
-        name: "Vector2i",
-        brief: "2D vector (int)",
-        description: "2-element structure for 2D coordinates using integers.",
-    },
-    BuiltinDoc {
-        name: "Vector3",
-        brief: "3D vector (float)",
-        description: "3-element structure for 3D coordinates and 3D math using floating-point.",
-    },
-    BuiltinDoc {
-        name: "Vector3i",
-        brief: "3D vector (int)",
-        description: "3-element structure for 3D coordinates using integers.",
-    },
-    BuiltinDoc {
-        name: "Vector4",
-        brief: "4D vector (float)",
-        description: "4-element structure for 4D math using floating-point.",
-    },
-    BuiltinDoc {
-        name: "Vector4i",
-        brief: "4D vector (int)",
-        description: "4-element structure for 4D math using integers.",
-    },
-    BuiltinDoc {
-        name: "Array",
-        brief: "Generic array",
-        description: "Generic sequence of arbitrary object types, including other arrays.",
-    },
-    BuiltinDoc {
-        name: "Dictionary",
-        brief: "Key-value store",
-        description: "Associative container mapping unique keys to values.",
-    },
-    BuiltinDoc {
-        name: "NodePath",
-        brief: "Node path",
-        description: "Pre-parsed path to a node or node property for efficient access.",
-    },
-    BuiltinDoc {
-        name: "StringName",
-        brief: "Interned string",
-        description: "Optimized immutable string type for fast comparison. Used for identifiers.",
-    },
-    BuiltinDoc {
-        name: "Color",
-        brief: "RGBA color",
-        description: "Color represented in RGBA format with floats on the range of 0 to 1.",
-    },
-    BuiltinDoc {
-        name: "Rect2",
-        brief: "2D rectangle",
-        description: "2D axis-aligned bounding box using floating-point coordinates.",
-    },
-    BuiltinDoc {
-        name: "Transform2D",
-        brief: "2D transform",
-        description: "2x3 matrix representing a 2D transformation (translation, rotation, scale).",
-    },
-    BuiltinDoc {
-        name: "Transform3D",
-        brief: "3D transform",
-        description: "3x4 matrix representing a 3D transformation (translation, rotation, scale).",
-    },
-    BuiltinDoc {
-        name: "Basis",
-        brief: "3x3 rotation matrix",
-        description: "3x3 matrix for representing 3D rotation and scale.",
-    },
-    BuiltinDoc {
-        name: "AABB",
-        brief: "3D bounding box",
-        description: "3D axis-aligned bounding box.",
-    },
-    BuiltinDoc {
-        name: "Plane",
-        brief: "3D plane",
-        description: "Infinite plane in 3D space, defined by a normal and distance from origin.",
-    },
-    BuiltinDoc {
-        name: "Quaternion",
-        brief: "Quaternion rotation",
-        description: "Rotation representation using a quaternion. Useful for smooth interpolation.",
-    },
-    BuiltinDoc {
-        name: "PackedByteArray",
-        brief: "Packed byte array",
-        description: "Packed array of bytes. Memory-efficient for binary data.",
-    },
-    BuiltinDoc {
-        name: "PackedInt32Array",
-        brief: "Packed int32 array",
-        description: "Packed array of 32-bit integers.",
-    },
-    BuiltinDoc {
-        name: "PackedInt64Array",
-        brief: "Packed int64 array",
-        description: "Packed array of 64-bit integers.",
-    },
-    BuiltinDoc {
-        name: "PackedFloat32Array",
-        brief: "Packed float32 array",
-        description: "Packed array of 32-bit floats.",
-    },
-    BuiltinDoc {
-        name: "PackedFloat64Array",
-        brief: "Packed float64 array",
-        description: "Packed array of 64-bit floats.",
-    },
-    BuiltinDoc {
-        name: "PackedStringArray",
-        brief: "Packed string array",
-        description: "Packed array of strings.",
-    },
-    BuiltinDoc {
-        name: "PackedVector2Array",
-        brief: "Packed Vector2 array",
-        description: "Packed array of Vector2 values.",
-    },
-    BuiltinDoc {
-        name: "PackedVector3Array",
-        brief: "Packed Vector3 array",
-        description: "Packed array of Vector3 values.",
-    },
-    // Common node classes
-    BuiltinDoc {
-        name: "Node",
-        brief: "class Node",
-        description: "Base class for all scene tree nodes. Provides lifecycle callbacks and tree management.",
-    },
-    BuiltinDoc {
-        name: "Node2D",
-        brief: "class Node2D extends CanvasItem",
-        description: "Base class for 2D game objects. Provides 2D transform, z-index, and visibility.",
-    },
-    BuiltinDoc {
-        name: "Node3D",
-        brief: "class Node3D extends Node",
-        description: "Base class for 3D game objects. Provides transform, visibility, and scene tree functionality.",
-    },
-    BuiltinDoc {
-        name: "Control",
-        brief: "class Control extends CanvasItem",
-        description: "Base class for all UI-related nodes. Provides anchors, margins, and input handling.",
-    },
-    BuiltinDoc {
-        name: "Sprite2D",
-        brief: "class Sprite2D extends Node2D",
-        description: "Displays a 2D texture. Can be used for characters, items, and other visual elements.",
-    },
-    BuiltinDoc {
-        name: "Sprite3D",
-        brief: "class Sprite3D extends SpriteBase3D",
-        description: "Displays a 2D texture in 3D space as a billboard or flat sprite.",
-    },
-    BuiltinDoc {
-        name: "CharacterBody2D",
-        brief: "class CharacterBody2D extends PhysicsBody2D",
-        description: "Kinematic body for 2D character movement with built-in collision response.",
-    },
-    BuiltinDoc {
-        name: "CharacterBody3D",
-        brief: "class CharacterBody3D extends PhysicsBody3D",
-        description: "Kinematic body for 3D character movement with built-in collision response.",
-    },
-    BuiltinDoc {
-        name: "RigidBody2D",
-        brief: "class RigidBody2D extends PhysicsBody2D",
-        description: "Physics body driven by the 2D physics simulation.",
-    },
-    BuiltinDoc {
-        name: "RigidBody3D",
-        brief: "class RigidBody3D extends PhysicsBody3D",
-        description: "Physics body driven by the 3D physics simulation.",
-    },
-    BuiltinDoc {
-        name: "Area2D",
-        brief: "class Area2D extends CollisionObject2D",
-        description: "2D area for detection and physics influence (gravity, damping).",
-    },
-    BuiltinDoc {
-        name: "Area3D",
-        brief: "class Area3D extends CollisionObject3D",
-        description: "3D area for detection and physics influence (gravity, damping).",
-    },
-    BuiltinDoc {
-        name: "Camera2D",
-        brief: "class Camera2D extends Node2D",
-        description: "Camera node for 2D scenes. Controls viewport scrolling.",
-    },
-    BuiltinDoc {
-        name: "Camera3D",
-        brief: "class Camera3D extends Node3D",
-        description: "Camera node for 3D scenes. Defines the viewpoint for rendering.",
-    },
-    BuiltinDoc {
-        name: "AnimationPlayer",
-        brief: "class AnimationPlayer extends AnimationMixer",
-        description: "Plays animations from an AnimationLibrary. Can animate any property.",
-    },
-    BuiltinDoc {
-        name: "Timer",
-        brief: "class Timer extends Node",
-        description: "Countdown timer node. Emits `timeout` signal when time runs out.",
-    },
-    BuiltinDoc {
-        name: "TileMap",
-        brief: "class TileMap extends Node2D",
-        description: "Node for 2D tile-based maps. Uses TileSet resources for tile data.",
-    },
-    BuiltinDoc {
-        name: "Label",
-        brief: "class Label extends Control",
-        description: "Displays plain text. Supports alignment and text wrapping.",
-    },
-    BuiltinDoc {
-        name: "Button",
-        brief: "class Button extends BaseButton",
-        description: "Standard themed button that can contain text and an icon.",
-    },
-    BuiltinDoc {
-        name: "TextureRect",
-        brief: "class TextureRect extends Control",
-        description: "Displays a texture inside a Control. Supports various stretch modes.",
-    },
-    BuiltinDoc {
-        name: "ColorRect",
-        brief: "class ColorRect extends Control",
-        description: "Displays a solid color rectangle. Useful for backgrounds and UI elements.",
-    },
-    BuiltinDoc {
-        name: "RichTextLabel",
-        brief: "class RichTextLabel extends Control",
-        description: "Label that displays rich text using BBCode markup.",
-    },
-    BuiltinDoc {
-        name: "LineEdit",
-        brief: "class LineEdit extends Control",
-        description: "Single-line text input field.",
-    },
-    BuiltinDoc {
-        name: "TextEdit",
-        brief: "class TextEdit extends Control",
-        description: "Multi-line text editing control.",
-    },
-    BuiltinDoc {
-        name: "AudioStreamPlayer",
-        brief: "class AudioStreamPlayer extends Node",
-        description: "Plays audio non-positionally. For background music and UI sounds.",
-    },
-    BuiltinDoc {
-        name: "Resource",
-        brief: "class Resource extends RefCounted",
-        description: "Base class for serializable data containers.",
-    },
-    BuiltinDoc {
-        name: "PackedScene",
-        brief: "class PackedScene extends Resource",
-        description: "Serialized scene that can be instantiated at runtime.",
-    },
-    BuiltinDoc {
-        name: "SceneTree",
-        brief: "class SceneTree extends MainLoop",
-        description: "Manages the game loop, scene hierarchy, and groups.",
-    },
-    BuiltinDoc {
-        name: "Tween",
-        brief: "class Tween extends RefCounted",
-        description: "Lightweight animation tool for interpolating properties over time.",
-    },
-    BuiltinDoc {
-        name: "InputEvent",
-        brief: "class InputEvent extends Resource",
-        description: "Base class for all input events (key, mouse, touch, etc.).",
-    },
-    BuiltinDoc {
-        name: "CollisionShape2D",
-        brief: "class CollisionShape2D extends Node2D",
-        description: "Defines a collision shape for a CollisionObject2D parent.",
-    },
-    BuiltinDoc {
-        name: "CollisionShape3D",
-        brief: "class CollisionShape3D extends Node3D",
-        description: "Defines a collision shape for a CollisionObject3D parent.",
-    },
-    BuiltinDoc {
-        name: "RayCast2D",
-        brief: "class RayCast2D extends Node2D",
-        description: "Casts a ray to detect 2D collision objects along its path.",
-    },
-    BuiltinDoc {
-        name: "RayCast3D",
-        brief: "class RayCast3D extends Node3D",
-        description: "Casts a ray to detect 3D collision objects along its path.",
-    },
-    BuiltinDoc {
-        name: "NavigationAgent2D",
-        brief: "class NavigationAgent2D extends Node",
-        description: "Agent for 2D pathfinding navigation.",
-    },
-    BuiltinDoc {
-        name: "NavigationAgent3D",
-        brief: "class NavigationAgent3D extends Node",
-        description: "Agent for 3D pathfinding navigation.",
-    },
 ];
 
-// ── Built-in functions ──────────────────────────────────────────────
-
-const BUILTIN_FUNCTION_DOCS: &[BuiltinDoc] = &[
-    BuiltinDoc {
-        name: "print",
-        brief: "print(...) -> void",
-        description: "Prints values to the console.",
-    },
-    BuiltinDoc {
-        name: "prints",
-        brief: "prints(...) -> void",
-        description: "Prints values to the console separated by spaces.",
-    },
-    BuiltinDoc {
-        name: "printt",
-        brief: "printt(...) -> void",
-        description: "Prints values to the console separated by tabs.",
-    },
-    BuiltinDoc {
-        name: "printerr",
-        brief: "printerr(...) -> void",
-        description: "Prints values to stderr.",
-    },
-    BuiltinDoc {
-        name: "push_error",
-        brief: "push_error(...) -> void",
-        description: "Pushes an error message to the Godot error log.",
-    },
-    BuiltinDoc {
-        name: "push_warning",
-        brief: "push_warning(...) -> void",
-        description: "Pushes a warning message to the Godot error log.",
-    },
-    BuiltinDoc {
-        name: "str",
-        brief: "str(value) -> String",
-        description: "Converts a value to its string representation.",
-    },
-    BuiltinDoc {
-        name: "len",
-        brief: "len(value) -> int",
-        description: "Returns the length of a string, array, or dictionary.",
-    },
-    BuiltinDoc {
-        name: "range",
-        brief: "range(...) -> Array[int]",
-        description: "Returns an integer sequence. Accepts (end), (start, end), or (start, end, step).",
-    },
-    BuiltinDoc {
-        name: "typeof",
-        brief: "typeof(value) -> int",
-        description: "Returns the internal type index of a value.",
-    },
-    BuiltinDoc {
-        name: "is_instance_of",
-        brief: "is_instance_of(value, type) -> bool",
-        description: "Returns true if value is an instance of the given type.",
-    },
-    BuiltinDoc {
-        name: "abs",
-        brief: "abs(x) -> Variant",
-        description: "Returns the absolute value of a number.",
-    },
-    BuiltinDoc {
-        name: "sign",
-        brief: "sign(x) -> Variant",
-        description: "Returns -1, 0, or 1 depending on the sign of x.",
-    },
-    BuiltinDoc {
-        name: "min",
-        brief: "min(...) -> Variant",
-        description: "Returns the smallest of the given values.",
-    },
-    BuiltinDoc {
-        name: "max",
-        brief: "max(...) -> Variant",
-        description: "Returns the largest of the given values.",
-    },
-    BuiltinDoc {
-        name: "clamp",
-        brief: "clamp(value, min, max) -> Variant",
-        description: "Clamps a value between a minimum and maximum.",
-    },
-    BuiltinDoc {
-        name: "lerp",
-        brief: "lerp(from, to, weight) -> Variant",
-        description: "Linearly interpolates between two values by a weight (0.0 to 1.0).",
-    },
-    BuiltinDoc {
-        name: "smoothstep",
-        brief: "smoothstep(from, to, x) -> float",
-        description: "Returns a smooth Hermite interpolation between 0 and 1.",
-    },
-    BuiltinDoc {
-        name: "sqrt",
-        brief: "sqrt(x) -> float",
-        description: "Returns the square root of x.",
-    },
-    BuiltinDoc {
-        name: "pow",
-        brief: "pow(base, exp) -> float",
-        description: "Returns base raised to the power of exp.",
-    },
-    BuiltinDoc {
-        name: "sin",
-        brief: "sin(angle) -> float",
-        description: "Returns the sine of an angle in radians.",
-    },
-    BuiltinDoc {
-        name: "cos",
-        brief: "cos(angle) -> float",
-        description: "Returns the cosine of an angle in radians.",
-    },
-    BuiltinDoc {
-        name: "tan",
-        brief: "tan(angle) -> float",
-        description: "Returns the tangent of an angle in radians.",
-    },
-    BuiltinDoc {
-        name: "floor",
-        brief: "floor(x) -> Variant",
-        description: "Rounds x downward to the nearest integer.",
-    },
-    BuiltinDoc {
-        name: "ceil",
-        brief: "ceil(x) -> Variant",
-        description: "Rounds x upward to the nearest integer.",
-    },
-    BuiltinDoc {
-        name: "round",
-        brief: "round(x) -> Variant",
-        description: "Rounds x to the nearest integer.",
-    },
-    BuiltinDoc {
-        name: "randi",
-        brief: "randi() -> int",
-        description: "Returns a random 32-bit unsigned integer.",
-    },
-    BuiltinDoc {
-        name: "randf",
-        brief: "randf() -> float",
-        description: "Returns a random float between 0.0 and 1.0.",
-    },
-    BuiltinDoc {
-        name: "randomize",
-        brief: "randomize() -> void",
-        description: "Randomizes the seed of the random number generator.",
-    },
-    BuiltinDoc {
-        name: "seed",
-        brief: "seed(value: int) -> void",
-        description: "Sets the seed for the random number generator.",
-    },
-    BuiltinDoc {
-        name: "hash",
-        brief: "hash(value) -> int",
-        description: "Returns the integer hash of a variable.",
-    },
-    BuiltinDoc {
-        name: "is_equal_approx",
-        brief: "is_equal_approx(a, b) -> bool",
-        description: "Returns true if a and b are approximately equal (within float tolerance).",
-    },
-    BuiltinDoc {
-        name: "is_zero_approx",
-        brief: "is_zero_approx(x) -> bool",
-        description: "Returns true if x is approximately zero.",
-    },
-];
+// Built-in functions are now sourced from class_db::utility_function().
 
 // ── Lifecycle methods ───────────────────────────────────────────────
 
-const LIFECYCLE_METHOD_DOCS: &[BuiltinDoc] = &[
+const LIFECYCLE_METHOD_DOCS: &[BuiltinDoc<'static>] = &[
     BuiltinDoc {
         name: "_ready",
         brief: "func _ready() -> void",
@@ -572,17 +88,64 @@ const LIFECYCLE_METHOD_DOCS: &[BuiltinDoc] = &[
     },
 ];
 
-/// Look up a built-in type by name.
-pub fn lookup_type(name: &str) -> Option<&'static BuiltinDoc> {
-    BUILTIN_TYPE_DOCS.iter().find(|d| d.name == name)
+/// Look up a type by name.
+///
+/// Checks: primitives → generated builtin type docs → ClassDB class docs.
+pub fn lookup_type(name: &str) -> Option<BuiltinDoc<'_>> {
+    // 1. Primitives (int, float, bool — not in API dumps)
+    if let Some(doc) = PRIMITIVE_TYPE_DOCS.iter().find(|d| d.name == name) {
+        return Some(BuiltinDoc {
+            name: doc.name,
+            brief: doc.brief,
+            description: doc.description,
+        });
+    }
+
+    // 2. Generated builtin type docs (Vector2, Color, String, etc.)
+    for td in super::builtin_generated::BUILTIN_TYPE_DOCS {
+        if td.name == name {
+            let desc = if td.description.is_empty() {
+                td.brief
+            } else {
+                td.description
+            };
+            return Some(BuiltinDoc {
+                name: td.name,
+                brief: td.brief,
+                description: desc,
+            });
+        }
+    }
+
+    None
 }
 
-/// Look up a built-in function by name.
-pub fn lookup_function(name: &str) -> Option<&'static BuiltinDoc> {
-    BUILTIN_FUNCTION_DOCS
+/// Look up a built-in/utility function by name.
+///
+/// Checks: ClassDB utility functions → lifecycle methods.
+pub fn lookup_function(name: &str) -> Option<BuiltinDoc<'_>> {
+    // 1. ClassDB utility functions (print, lerp, sin, etc.)
+    if let Some(uf) = crate::class_db::utility_function(name) {
+        return Some(BuiltinDoc {
+            name: uf.name,
+            brief: uf.signature,
+            description: if uf.doc.is_empty() {
+                uf.signature
+            } else {
+                uf.doc
+            },
+        });
+    }
+
+    // 2. Lifecycle methods (_ready, _process, etc.)
+    LIFECYCLE_METHOD_DOCS
         .iter()
-        .chain(LIFECYCLE_METHOD_DOCS.iter())
         .find(|d| d.name == name)
+        .map(|d| BuiltinDoc {
+            name: d.name,
+            brief: d.brief,
+            description: d.description,
+        })
 }
 
 /// Generate a link to the Godot documentation for a class.
@@ -594,7 +157,7 @@ pub fn godot_docs_url(class_name: &str) -> String {
 }
 
 /// Format a hover string for a built-in type.
-pub fn format_type_hover(doc: &BuiltinDoc) -> String {
+pub fn format_type_hover(doc: &BuiltinDoc<'_>) -> String {
     use std::fmt::Write;
     let mut result = format!("```gdscript\n{}\n```\n{}", doc.brief, doc.description);
     // Add docs link for classes (types that start with uppercase, not primitives)
@@ -606,7 +169,7 @@ pub fn format_type_hover(doc: &BuiltinDoc) -> String {
 }
 
 /// Format a hover string for a built-in function.
-pub fn format_function_hover(doc: &BuiltinDoc) -> String {
+pub fn format_function_hover(doc: &BuiltinDoc<'_>) -> String {
     format!("```gdscript\n{}\n```\n{}", doc.brief, doc.description)
 }
 
@@ -2087,9 +1650,12 @@ mod tests {
     }
 
     #[test]
-    fn lookup_known_class() {
-        let doc = lookup_type("Node3D").unwrap();
-        assert_eq!(doc.name, "Node3D");
+    fn lookup_known_class_via_class_db() {
+        // Engine classes (Node3D) are not returned by lookup_type;
+        // they are handled directly via class_db in hover.rs step 9.
+        assert!(lookup_type("Node3D").is_none());
+        // But class_doc should work
+        assert!(crate::class_db::class_doc("Node3D").is_some());
     }
 
     #[test]
@@ -2124,23 +1690,23 @@ mod tests {
 
     #[test]
     fn type_hover_includes_docs_link() {
-        let doc = lookup_type("Node3D").unwrap();
-        let hover = format_type_hover(doc);
+        let doc = lookup_type("Vector2").unwrap();
+        let hover = format_type_hover(&doc);
         assert!(hover.contains("Godot docs"));
-        assert!(hover.contains("class_node3d.html"));
+        assert!(hover.contains("class_vector2.html"));
     }
 
     #[test]
     fn primitive_hover_no_docs_link() {
         let doc = lookup_type("int").unwrap();
-        let hover = format_type_hover(doc);
+        let hover = format_type_hover(&doc);
         assert!(!hover.contains("Godot docs"));
     }
 
     #[test]
     fn function_hover_format() {
         let doc = lookup_function("lerp").unwrap();
-        let hover = format_function_hover(doc);
+        let hover = format_function_hover(&doc);
         assert!(hover.contains("lerp"));
         assert!(hover.contains("interpolates"));
     }
