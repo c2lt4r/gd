@@ -386,10 +386,10 @@ pub enum LspCommand {
     CreateFile {
         /// Path for the new file
         file: String,
-        /// Base class to extend (default: "Node"; ignored when --input-file or stdin is used)
+        /// Base class to extend (default: "Node"; prepended to --input-file content when non-default)
         #[arg(long, default_value = "Node")]
         extends: String,
-        /// Optional class_name declaration (ignored when --input-file or stdin is used)
+        /// Optional class_name declaration (prepended to --input-file content when set)
         #[arg(long)]
         class_name: Option<String>,
         /// Read initial content from a file instead of generating boilerplate

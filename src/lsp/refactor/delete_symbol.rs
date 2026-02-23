@@ -72,10 +72,22 @@ pub fn delete_symbol(
         .position(|&s| s >= end_byte)
         .unwrap_or(starts.len());
 
-    // Check for references across the workspace
+    // Check for references across the workspace.
+    // Scope the search: if the file declares a class_name, only look for references
+    // in files that reference that class (avoids false positives from same-name methods
+    // on unrelated classes).
     let workspace = crate::lsp::workspace::WorkspaceIndex::new(project_root.to_path_buf());
-    let all_refs =
-        crate::lsp::references::find_references_by_name(&symbol_name, &workspace, None, None);
+    let symbols = crate::core::symbol_table::build(&tree, &source);
+    let all_refs = crate::lsp::references::find_references_by_name(
+        &symbol_name,
+        &workspace,
+        if symbols.class_name.is_none() {
+            Some(file)
+        } else {
+            None
+        },
+        symbols.class_name.as_deref(),
+    );
 
     // Filter out references within the declaration's own range
     let file_uri = tower_lsp::lsp_types::Url::from_file_path(file).ok();
@@ -219,10 +231,19 @@ fn delete_enum_member(
         .unwrap_or(starts.len());
     let end_line_1 = start_line_1; // Single member is usually one line
 
-    // Check references
+    // Check references — scope to this class if class_name is declared
     let workspace = crate::lsp::workspace::WorkspaceIndex::new(project_root.to_path_buf());
-    let all_refs =
-        crate::lsp::references::find_references_by_name(member_name, &workspace, None, None);
+    let symbols = crate::core::symbol_table::build(&tree, &source);
+    let all_refs = crate::lsp::references::find_references_by_name(
+        member_name,
+        &workspace,
+        if symbols.class_name.is_none() {
+            Some(file)
+        } else {
+            None
+        },
+        symbols.class_name.as_deref(),
+    );
 
     let file_uri = tower_lsp::lsp_types::Url::from_file_path(file).ok();
     let enum_start = enum_node.start_position().row as u32;

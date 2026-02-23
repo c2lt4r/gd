@@ -1,11 +1,18 @@
 # Changelog
 
-## [0.2.38] - 2026-02-23
+## [0.2.39] - 2026-02-23
 
 ### Added
 - **Unified `TestRunner` trait** — all three test runners (GUT, gdUnit4, script) now implement a common `TestRunner` trait with `RunContext`, replacing ad-hoc free functions.
 - **`--name`/`--class`/`--filter` for gdUnit4** — flags now map to per-file `-a` args and `-i` (ignore) exclusion flags via tree-sitter parsing. Previously these flags only worked with GUT.
 - **`--name`/`--class` for script runner** — filters at file level by parsing test content with tree-sitter; only files containing matching tests are executed.
+
+### Fixed
+- **`--no-color` now works for `gd test`** — `hprintln!` macro and all summary output in `exec_run()` now route through color-aware `cprintln!`/`ceprintln!` macros that respect `--no-color` and `NO_COLOR` env.
+- **Deduplicated test output** — per-file group summary (✓/✗ per file) now only shows in `--quiet` mode where per-test results are suppressed. Previously it appeared alongside per-test results, creating two visually similar output blocks.
+- **Temp test XML files moved to `.godot/`** — GUT JUnit XML and gdUnit4 report directories now write to `.godot/` (already gitignored) instead of cluttering the project root.
+- **`gd lsp create-file --input-file` with `--class-name`/`--extends`** — now prepends the class header to custom content. Previously `class_name` and `extends` were silently dropped when `--input-file` or stdin was used.
+- **`gd lsp delete-symbol` scoped reference search** — dangling reference check now scopes to the declaring class (via `class_name`) or source file, instead of grep-matching the symbol name globally. Previously deleting `get_current_tick` from one class reported false positives from every unrelated class with a same-name method.
 
 ## [0.2.37] - 2026-02-23
 

@@ -163,14 +163,28 @@ pub fn query_create_file(
     }
 
     let content = if let Some(custom) = custom_content {
-        custom.to_string()
+        use std::fmt::Write;
+        let mut buf = String::new();
+        // Prepend class_name/extends header when flags are provided
+        if class_name.is_some() || extends != "Node" {
+            if let Some(cn) = class_name {
+                let _ = writeln!(buf, "class_name {cn}");
+            }
+            let _ = writeln!(buf, "extends {extends}");
+            buf.push('\n');
+        }
+        buf.push_str(custom);
+        if !buf.ends_with('\n') {
+            buf.push('\n');
+        }
+        buf
     } else {
         use std::fmt::Write;
         let mut buf = String::new();
-        let _ = writeln!(buf, "extends {extends}");
         if let Some(cn) = class_name {
             let _ = writeln!(buf, "class_name {cn}");
         }
+        let _ = writeln!(buf, "extends {extends}");
         buf.push_str("\n\n");
         buf.push_str("func _ready() -> void:\n\tpass\n\n\n");
         buf.push_str("func _process(delta: float) -> void:\n\tpass\n");

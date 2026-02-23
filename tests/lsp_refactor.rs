@@ -2389,3 +2389,53 @@ fn test_lsp_create_file_stdin() {
         "should not contain boilerplate"
     );
 }
+
+#[test]
+fn test_lsp_create_file_stdin_with_class_name() {
+    let temp = setup_gd_project(&[]);
+
+    let body = "## Deserializes input packets.\n\n\nfunc parse(buf: PackedByteArray) -> Dictionary:\n\treturn {}\n";
+
+    let output = run_lsp_edit(
+        temp.path(),
+        &[
+            "lsp",
+            "create-file",
+            "input_deserializer.gd",
+            "--class-name",
+            "InputDeserializer",
+            "--extends",
+            "RefCounted",
+            "--format",
+            "json",
+        ],
+        body,
+    );
+
+    assert!(
+        output.status.success(),
+        "create-file with stdin + --class-name should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let content = fs::read_to_string(temp.path().join("input_deserializer.gd")).unwrap();
+    assert!(
+        content.contains("class_name InputDeserializer"),
+        "should have class_name header: {content}"
+    );
+    assert!(
+        content.contains("extends RefCounted"),
+        "should have extends header: {content}"
+    );
+    assert!(
+        content.contains("## Deserializes input packets."),
+        "should contain body content: {content}"
+    );
+    // class_name should come before extends
+    let cn_pos = content.find("class_name").unwrap();
+    let ext_pos = content.find("extends").unwrap();
+    assert!(
+        cn_pos < ext_pos,
+        "class_name should appear before extends: {content}"
+    );
+}
