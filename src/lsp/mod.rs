@@ -362,10 +362,12 @@ impl LanguageServer for Backend {
         }
 
         // Fallback: static tree-sitter analysis
+        let file_path = uri.to_file_path().ok();
         Ok(hover::hover_at(
             &source,
             params.text_document_position_params.position,
             self.workspace.get(),
+            file_path.as_deref(),
         ))
     }
 

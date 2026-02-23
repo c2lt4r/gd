@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use tower_lsp::lsp_types::{Hover, HoverContents, MarkupContent, MarkupKind, Position};
 
 use super::builtins::BuiltinMember;
@@ -5,10 +7,14 @@ use super::util::{matches_name, node_range, node_text};
 use super::workspace::WorkspaceIndex;
 
 /// Provide hover information at the given position.
+///
+/// `file_path` is the absolute path of the file being hovered — used to find
+/// the primary scene and resolve `$NodePath` through instanced sub-scenes.
 pub fn hover_at(
     source: &str,
     position: Position,
     workspace: Option<&WorkspaceIndex>,
+    file_path: Option<&Path>,
 ) -> Option<Hover> {
     let tree = crate::core::parser::parse(source).ok()?;
     let root = tree.root_node();
@@ -19,7 +25,7 @@ pub fn hover_at(
 
     // Handle $NodePath / get_node() — walk up to find the get_node/node_path node,
     // since the cursor may land on the `$` token or the name inside it.
-    if let Some(hover) = try_node_path_hover(&node, source, workspace) {
+    if let Some(hover) = try_node_path_hover(&node, source, workspace, file_path) {
         return Some(hover);
     }
 
@@ -293,12 +299,13 @@ fn try_node_path_hover(
     node: &tree_sitter::Node,
     source: &str,
     workspace: Option<&WorkspaceIndex>,
+    file_path: Option<&Path>,
 ) -> Option<Hover> {
     let mut walk = *node;
     let mut get_node_node = None;
     loop {
         if walk.kind() == "get_node" || walk.kind() == "node_path" {
-            if let Some(hover) = hover_node_path(&walk, source, workspace) {
+            if let Some(hover) = hover_node_path(&walk, source, workspace, file_path) {
                 return Some(hover);
             }
             get_node_node = Some(walk);
@@ -344,6 +351,7 @@ fn hover_node_path(
     node: &tree_sitter::Node,
     source: &str,
     workspace: Option<&WorkspaceIndex>,
+    file_path: Option<&Path>,
 ) -> Option<Hover> {
     let ws = workspace?;
 
@@ -354,9 +362,48 @@ fn hover_node_path(
         return None;
     }
 
-    // Determine which scene to look in — we need the current file's path.
-    // Since hover_at doesn't pass the URI, try to find a scene that has a node matching.
-    // This is a best-effort lookup across all indexed scenes.
+    // If we know the file path, use the primary scene + deep resolution
+    if let Some(fp) = file_path
+        && let Some(scene_path) = ws.primary_scene_for_script(fp)
+        && let Some((name, type_name, resolved_scene)) =
+            ws.resolve_node_path_deep(&scene_path, node_path)
+    {
+        let type_str = type_name.as_deref().unwrap_or("Node");
+        let code = format!("{type_str} ${node_path}");
+
+        let scene_name = scene_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown");
+
+        let mut doc_lines = Vec::new();
+        doc_lines.push(format!("Node: **{name}**"));
+
+        // Show cross-scene info if resolved into a different scene
+        if resolved_scene == scene_path {
+            doc_lines.push(format!("Scene: *{scene_name}*"));
+        } else {
+            let resolved_name = resolved_scene
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown");
+            doc_lines.push(format!("Scene: *{scene_name}* → *{resolved_name}*"));
+        }
+
+        // Check for groups in the resolved scene
+        if let Some(resolved_data) = ws.get_scene(&resolved_scene) {
+            for scene_node in &resolved_data.nodes {
+                if scene_node.name == name && !scene_node.groups.is_empty() {
+                    doc_lines.push(format!("Groups: {}", scene_node.groups.join(", ")));
+                    break;
+                }
+            }
+        }
+
+        return Some(make_hover(&code, node, Some(&doc_lines.join("\\\n"))));
+    }
+
+    // Fallback: brute-force lookup across all indexed scenes (unit tests, no file_path)
     for entry in ws.iter_scenes() {
         let scene = entry.value();
         if let Some((name, type_name)) =
@@ -988,7 +1035,7 @@ mod tests {
     use super::*;
 
     fn hover_value(source: &str, line: u32, character: u32) -> Option<String> {
-        hover_at(source, Position::new(line, character), None).map(|h| match h.contents {
+        hover_at(source, Position::new(line, character), None, None).map(|h| match h.contents {
             HoverContents::Markup(m) => m.value,
             _ => String::new(),
         })

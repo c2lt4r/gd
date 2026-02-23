@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.2.34] - 2026-02-23
+
+### Improved
+- **`$NodePath` deep resolution** — hover and completion now follow `instance = ExtResource(...)` chains across scene boundaries. `$View/Model/Skeleton3D/Mesh` resolves through instanced sub-scenes instead of falling back to the type annotation. Hover shows the cross-scene origin (e.g. `Scene: player.tscn → soldier_model.tscn`). Depth limit of 8 prevents infinite recursion.
+
 ## [0.2.33] - 2026-02-23
 
 ### Added

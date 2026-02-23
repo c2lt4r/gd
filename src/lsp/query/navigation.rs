@@ -440,7 +440,7 @@ pub fn query_hover(
         .map(crate::lsp::workspace::WorkspaceIndex::new);
 
     // Fallback: static analysis
-    let content = crate::lsp::hover::hover_at(&source, position, workspace.as_ref())
+    let content = crate::lsp::hover::hover_at(&source, position, workspace.as_ref(), Some(&path))
         .map(|h| match h.contents {
             HoverContents::Markup(markup) => markup.value,
             HoverContents::Scalar(MarkedString::String(s)) => s,

@@ -1143,7 +1143,7 @@ fn try_node_path_completions(
 
     // Find the primary scene for this script
     let scene_path = workspace.primary_scene_for_script(file_path)?;
-    let nodes = workspace.scene_nodes(&scene_path);
+    let nodes = workspace.scene_nodes_deep(&scene_path);
     if nodes.is_empty() {
         return None;
     }

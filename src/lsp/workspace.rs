@@ -458,6 +458,7 @@ impl WorkspaceIndex {
     }
 
     /// Get all nodes in a scene: (name, type, full_path).
+    #[allow(dead_code)]
     pub fn scene_nodes(&self, scene_path: &Path) -> Vec<(String, Option<String>, String)> {
         let Some(scene) = self.get_scene(scene_path) else {
             return Vec::new();
@@ -470,6 +471,136 @@ impl WorkspaceIndex {
                 (n.name.clone(), n.type_name.clone(), full_path)
             })
             .collect()
+    }
+
+    /// Resolve a node path through instanced sub-scenes.
+    ///
+    /// Returns `(node_name, node_type, scene_file)` where `scene_file` is the
+    /// `.tscn` that actually contains the resolved node (may differ from
+    /// `scene_path` when the path crosses an instance boundary).
+    pub fn resolve_node_path_deep(
+        &self,
+        scene_path: &Path,
+        node_path: &str,
+    ) -> Option<(String, Option<String>, PathBuf)> {
+        self.resolve_node_path_deep_inner(scene_path, node_path, 0)
+    }
+
+    fn resolve_node_path_deep_inner(
+        &self,
+        scene_path: &Path,
+        node_path: &str,
+        depth: u8,
+    ) -> Option<(String, Option<String>, PathBuf)> {
+        if depth >= 8 {
+            return None;
+        }
+
+        let scene = self.get_scene(scene_path)?;
+
+        // Try direct resolution first
+        if let Some((name, type_name)) = resolve_node_in_scene(&scene, node_path) {
+            return Some((name, type_name, scene_path.to_path_buf()));
+        }
+
+        // Build ext_resource id → res:// path map
+        let ext_map: std::collections::HashMap<&str, &str> = scene
+            .ext_resources
+            .iter()
+            .map(|ext| (ext.id.as_str(), ext.path.as_str()))
+            .collect();
+
+        // Build full paths for all nodes; check prefixes from longest to shortest
+        let mut instance_nodes: Vec<(String, &str)> = Vec::new();
+        for node in &scene.nodes {
+            if let Some(ref inst_val) = node.instance {
+                let full = build_node_full_path(&node.name, node.parent.as_deref());
+                instance_nodes.push((full, inst_val));
+            }
+        }
+        // Sort longest-first so deeper matches take priority
+        instance_nodes.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+
+        for (inst_full_path, inst_val) in &instance_nodes {
+            // Check if node_path starts with this instance node's path
+            let suffix = if node_path == *inst_full_path {
+                // The path points at the instance root itself — already handled
+                // by resolve_node_in_scene above (type comes from the instance node)
+                continue;
+            } else if let Some(rest) = node_path.strip_prefix(inst_full_path.as_str()) {
+                rest.strip_prefix('/')?
+            } else {
+                continue;
+            };
+
+            // Resolve the instanced scene
+            let ext_id = extract_ext_resource_id(inst_val)?;
+            let res_path = ext_map.get(ext_id)?;
+            let sub_scene_path = self.resolve_res_path(res_path)?;
+
+            // Recurse into the instanced sub-scene
+            return self.resolve_node_path_deep_inner(&sub_scene_path, suffix, depth + 1);
+        }
+
+        None
+    }
+
+    /// Get all nodes in a scene, recursing into instanced sub-scenes.
+    ///
+    /// Returns `(name, type, full_path)` — same shape as [`scene_nodes`] so it
+    /// can be used as a drop-in replacement for completions.
+    pub fn scene_nodes_deep(&self, scene_path: &Path) -> Vec<(String, Option<String>, String)> {
+        let mut result = Vec::new();
+        self.collect_scene_nodes_deep(scene_path, "", &mut result, 0);
+        result
+    }
+
+    fn collect_scene_nodes_deep(
+        &self,
+        scene_path: &Path,
+        prefix: &str,
+        result: &mut Vec<(String, Option<String>, String)>,
+        depth: u8,
+    ) {
+        if depth >= 8 {
+            return;
+        }
+
+        let Some(scene) = self.get_scene(scene_path) else {
+            return;
+        };
+
+        // Build ext_resource id → res:// path map
+        let ext_map: std::collections::HashMap<&str, &str> = scene
+            .ext_resources
+            .iter()
+            .map(|ext| (ext.id.as_str(), ext.path.as_str()))
+            .collect();
+
+        for node in &scene.nodes {
+            let local_path = build_node_full_path(&node.name, node.parent.as_deref());
+            let full_path = if prefix.is_empty() {
+                local_path.clone()
+            } else {
+                format!("{prefix}/{local_path}")
+            };
+
+            // Skip the root node of sub-scenes (represented by the instance node)
+            if depth > 0 && node.parent.is_none() {
+                // Don't emit the sub-scene root — it's already the instance node
+            } else {
+                result.push((node.name.clone(), node.type_name.clone(), full_path.clone()));
+            }
+
+            // Recurse into instanced sub-scenes
+            if let Some(ref inst_val) = node.instance
+                && let Some(ext_id) = extract_ext_resource_id(inst_val)
+                && let Some(&res_path) = ext_map.get(ext_id)
+                && let Some(sub_scene_path) = self.resolve_res_path(res_path)
+            {
+                self.collect_scene_nodes_deep(&sub_scene_path, &full_path, result, depth + 1);
+            }
+        }
     }
 
     /// Find the primary scene for a script (heuristic: single scene, or same base name).
