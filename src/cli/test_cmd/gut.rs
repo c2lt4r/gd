@@ -96,7 +96,7 @@ pub fn run_gut_tests(
     }
 
     // Always generate JUnit XML to a temp file for per-test granularity
-    let temp_junit = project.root.join(".gd-gut-junit.xml");
+    let temp_junit = project.root.join(".godot/gd-gut-junit.xml");
     cmd.arg(format!("-gjunit_xml_file={}", temp_junit.display()));
 
     // Extra args from CLI (after --)

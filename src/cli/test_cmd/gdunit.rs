@@ -88,8 +88,8 @@ pub fn run_gdunit4_tests(
     }
 
     // Report output directory (temp location, cleaned up after parsing)
-    let report_dir = project.root.join(".gd-test-reports");
-    cmd.arg("-rd").arg("res://.gd-test-reports/");
+    let report_dir = project.root.join(".godot/gd-test-reports");
+    cmd.arg("-rd").arg("res://.godot/gd-test-reports/");
 
     for arg in &args.extra {
         cmd.arg(arg);
