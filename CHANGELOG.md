@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.33] - 2026-02-23
+
+### Added
+- **`gd overview`: code-based signal flow** — `.connect()` calls in GDScript are now detected and shown in the Signal Flow section alongside scene-wired connections. Handles `signal.connect(handler)`, `$Node.signal.connect(handler)`, and `Autoload.signal.connect(handler)` patterns.
+
+### Fixed
+- **`gd overview`: respect `ignore_patterns`** — files matching `ignore_patterns` from `[lint]` in gd.toml (e.g. `addons/**`) are now excluded from overview output, matching the behavior of `fmt`, `lint`, and `check`.
+
 ## [0.2.32] - 2026-02-23
 
 ### Added

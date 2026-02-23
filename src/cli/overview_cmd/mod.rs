@@ -4,9 +4,12 @@ use path_slash::PathExt;
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use tree_sitter::Node;
 
 use crate::cprintln;
+use crate::core::config::{Config, find_project_root};
 use crate::core::project::GodotProject;
+use crate::lint::matches_ignore_pattern;
 use crate::lsp::workspace::WorkspaceIndex;
 
 #[derive(Args)]
@@ -66,6 +69,13 @@ struct AutoloadEntry {
     script: String,
 }
 
+/// A signal connection found in GDScript code via `.connect()`.
+struct CodeConnection {
+    signal: String,
+    handler: String,
+    receiver: String,
+}
+
 fn rel_slash(path: &Path, root: &Path) -> String {
     path.strip_prefix(root).map_or_else(
         |_| path.to_string_lossy().to_string(),
@@ -78,10 +88,18 @@ pub fn exec(args: &OverviewArgs) -> Result<()> {
         std::env::current_dir().map_err(|e| miette!("Failed to get current directory: {e}"))?;
     let project = GodotProject::discover(&cwd)?;
     let root = &project.root;
+    let config = Config::load(&cwd)?;
+    let ignore_base = find_project_root(&cwd).unwrap_or_else(|| cwd.clone());
 
     let workspace = WorkspaceIndex::new(root.clone());
 
-    let files = collect_files(&workspace, root, &args.paths);
+    let files = collect_files(
+        &workspace,
+        root,
+        &args.paths,
+        &ignore_base,
+        &config.lint.ignore_patterns,
+    );
     let entries = build_entries(&workspace, &files, root);
     let signal_flow = build_signal_flow(&workspace, &files, root, &args.paths);
     let autoloads = build_autoloads(&workspace, root);
@@ -113,9 +131,14 @@ fn collect_files(
     workspace: &WorkspaceIndex,
     root: &Path,
     scope: &[String],
+    ignore_base: &Path,
+    ignore_patterns: &[String],
 ) -> Vec<(String, PathBuf)> {
     let mut files: Vec<(String, PathBuf)> = Vec::new();
     for (path, _content) in workspace.all_files() {
+        if matches_ignore_pattern(&path, ignore_base, ignore_patterns) {
+            continue;
+        }
         if let Ok(rel) = path.strip_prefix(root) {
             files.push((rel.to_slash_lossy().to_string(), path));
         }
@@ -201,6 +224,26 @@ fn build_signal_flow(
     scope: &[String],
 ) -> Vec<SceneFlowGroup> {
     let mut flow_map: BTreeMap<String, Vec<FlowConnection>> = BTreeMap::new();
+
+    // Scene-based connections (.tscn)
+    collect_scene_connections(workspace, files, root, scope, &mut flow_map);
+
+    // Code-based connections (.connect() calls in GDScript)
+    collect_code_connections(workspace, files, root, &mut flow_map);
+
+    flow_map
+        .into_iter()
+        .map(|(scene, connections)| SceneFlowGroup { scene, connections })
+        .collect()
+}
+
+fn collect_scene_connections(
+    workspace: &WorkspaceIndex,
+    files: &[(String, PathBuf)],
+    root: &Path,
+    scope: &[String],
+    flow_map: &mut BTreeMap<String, Vec<FlowConnection>>,
+) {
     for entry in workspace.iter_scene_connections() {
         let scene_path: &PathBuf = entry.key();
         let connections = entry.value();
@@ -237,10 +280,137 @@ fn build_signal_flow(
                 .extend(flow_connections);
         }
     }
-    flow_map
-        .into_iter()
-        .map(|(scene, connections)| SceneFlowGroup { scene, connections })
-        .collect()
+}
+
+fn collect_code_connections(
+    workspace: &WorkspaceIndex,
+    files: &[(String, PathBuf)],
+    root: &Path,
+    flow_map: &mut BTreeMap<String, Vec<FlowConnection>>,
+) {
+    for (rel, abs_path) in files {
+        let Some(content) = workspace.get_content(abs_path) else {
+            continue;
+        };
+        let Ok(tree) = crate::core::parser::parse(&content) else {
+            continue;
+        };
+
+        let connections = find_connect_calls(tree.root_node(), &content);
+        if connections.is_empty() {
+            continue;
+        }
+
+        // Determine the label — use the scene name if this script has one, else the file path
+        let label = workspace
+            .scenes_for_script(abs_path)
+            .first()
+            .map_or_else(
+                || rel.clone(),
+                |spn| rel_slash(&spn.scene_path, root),
+            );
+
+        let flow_connections: Vec<FlowConnection> = connections
+            .into_iter()
+            .map(|cc| FlowConnection {
+                from_node: cc.receiver,
+                signal: cc.signal,
+                to_node: String::new(),
+                method: cc.handler,
+            })
+            .collect();
+        flow_map
+            .entry(label)
+            .or_default()
+            .extend(flow_connections);
+    }
+}
+
+/// Walk the AST to find `signal.connect(handler)` calls.
+///
+/// Handles patterns:
+///   `my_signal.connect(handler)`
+///   `$Node.signal.connect(handler)`
+///   `EventBus.signal.connect(handler)`
+fn find_connect_calls(root: Node, source: &str) -> Vec<CodeConnection> {
+    let mut results = Vec::new();
+    walk_for_connects(root, source, &mut results);
+    results
+}
+
+fn walk_for_connects(node: Node, source: &str, out: &mut Vec<CodeConnection>) {
+    // Look for `attribute` nodes that contain an `attribute_call` with method "connect"
+    if node.kind() == "attribute"
+        && let Some(cc) = try_parse_connect(node, source)
+    {
+        out.push(cc);
+        return; // Don't recurse into children we already processed
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        walk_for_connects(child, source, out);
+    }
+}
+
+/// Try to extract a `CodeConnection` from an `attribute` node like `X.connect(Y)`.
+///
+/// tree-sitter flattens `A.B.connect(C)` into a single `attribute` node with children:
+///   `identifier("A")`, `identifier("B")`, `attribute_call` { `identifier("connect")`, `arguments` { `identifier("C")` } }
+///
+/// For `signal.connect(C)`: `identifier("signal")`, `attribute_call` { ... }
+fn try_parse_connect(node: Node, source: &str) -> Option<CodeConnection> {
+    let bytes = source.as_bytes();
+
+    // Collect identifiers and find the attribute_call for "connect"
+    let mut idents: Vec<String> = Vec::new();
+    let mut call_node = None;
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        match child.kind() {
+            "identifier" | "get_node" => {
+                if let Ok(text) = child.utf8_text(bytes) {
+                    idents.push(text.to_string());
+                }
+            }
+            "attribute_call"
+                if child
+                    .named_child(0)
+                    .and_then(|n| n.utf8_text(bytes).ok())
+                    == Some("connect") =>
+            {
+                call_node = Some(child);
+            }
+            _ => {}
+        }
+    }
+    let call = call_node?;
+
+    // Need at least one identifier before .connect() (the signal name)
+    if idents.is_empty() {
+        return None;
+    }
+
+    // Extract handler name from first argument
+    let args = call
+        .children(&mut call.walk())
+        .find(|c| c.kind() == "arguments")?;
+    let first_arg = args.named_child(0)?;
+    let handler = first_arg.utf8_text(bytes).ok()?.to_string();
+
+    // Last identifier is the signal name; preceding identifiers form the receiver
+    let signal = idents.pop()?;
+    let receiver = if idents.is_empty() {
+        "self".to_string()
+    } else {
+        idents.join(".")
+    };
+
+    Some(CodeConnection {
+        signal,
+        handler,
+        receiver,
+    })
 }
 
 fn build_autoloads(workspace: &WorkspaceIndex, root: &Path) -> Vec<AutoloadEntry> {
@@ -304,13 +474,27 @@ fn output_text(data: &OverviewData) {
         for group in &data.signal_flow {
             cprintln!("{}:", group.scene);
             for conn in &group.connections {
-                cprintln!(
-                    "  {}.{} \u{2192} {}.{}",
-                    conn.from_node,
-                    conn.signal,
-                    conn.to_node,
-                    conn.method
-                );
+                if conn.from_node.is_empty() && conn.to_node.is_empty() {
+                    // Code connection with no receiver context
+                    cprintln!("  {} \u{2192} {}", conn.signal, conn.method);
+                } else if conn.to_node.is_empty() {
+                    // Code connection: receiver.signal → handler
+                    cprintln!(
+                        "  {}.{} \u{2192} {}",
+                        conn.from_node,
+                        conn.signal,
+                        conn.method
+                    );
+                } else {
+                    // Scene connection: from.signal → to.method
+                    cprintln!(
+                        "  {}.{} \u{2192} {}.{}",
+                        conn.from_node,
+                        conn.signal,
+                        conn.to_node,
+                        conn.method
+                    );
+                }
             }
             cprintln!();
         }
@@ -339,3 +523,6 @@ fn parse_godot_version(project_file: &Path) -> Option<String> {
     }
     None
 }
+
+#[cfg(test)]
+mod tests;
