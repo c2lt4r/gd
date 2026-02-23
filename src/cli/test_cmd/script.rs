@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use crate::core::project::GodotProject;
 
-use super::{RunArgs, TestResult, TestStatus, TestSummary, extract_errors, filter_noise};
+use super::{RunArgs, TestResult, TestStatus, TestSummary, extract_errors, filter_noise, hprintln};
 use crate::{ceprintln, cprintln};
 
 /// Run tests by executing each test script individually with Godot.
@@ -20,6 +20,13 @@ pub fn run_script_tests(
     test_files: &[std::path::PathBuf],
     json_mode: bool,
 ) -> Result<(Vec<TestResult>, TestSummary)> {
+    if args.name.is_some() || args.class.is_some() {
+        hprintln!(
+            json_mode,
+            "{} --name and --class filters are only supported with GUT",
+            "!".yellow().bold()
+        );
+    }
     let mut passed = 0usize;
     let mut failed = 0usize;
     let mut error_count = 0usize;

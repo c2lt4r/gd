@@ -30,6 +30,13 @@ pub fn run_gdunit4_tests(
             "!".yellow().bold()
         );
     }
+    if args.name.is_some() || args.class.is_some() {
+        hprintln!(
+            json_mode,
+            "{} --name and --class filters are only supported with GUT",
+            "!".yellow().bold()
+        );
+    }
 
     let spinner = if json_mode {
         None
@@ -46,7 +53,7 @@ pub fn run_gdunit4_tests(
     };
 
     // Determine test directories for -a flags
-    let test_dirs: Vec<String> = if args.paths.is_empty() {
+    let test_dirs: Vec<String> = if args.path.is_empty() {
         ["test", "tests"]
             .iter()
             .filter(|d| project.root.join(d).is_dir())
@@ -54,7 +61,7 @@ pub fn run_gdunit4_tests(
             .collect()
     } else {
         let mut dirs = Vec::new();
-        for p in &args.paths {
+        for p in &args.path {
             let abs = if p.is_absolute() {
                 p.clone()
             } else {

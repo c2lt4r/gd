@@ -68,6 +68,15 @@ pub fn run_gut_tests(
     if let Some(ref filter) = args.filter {
         cmd.arg(format!("-gselect={filter}"));
     }
+    if let Some(ref name) = args.name {
+        cmd.arg(format!("-gunit_test_name={name}"));
+    }
+    if let Some(ref class) = args.class {
+        cmd.arg(format!("-ginner_class={class}"));
+    }
+    if let Some(ref junit_path) = args.junit {
+        cmd.arg(format!("-gjunit_xml_file={}", junit_path.display()));
+    }
 
     // Extra args from CLI (after --)
     for arg in &args.extra {

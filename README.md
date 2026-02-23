@@ -65,7 +65,7 @@ gd run
 | `gd check` | Check project for errors (parse, structural, semantic, `.tscn`/`.tres` validation) (`--format json`) |
 | `gd clean` | Clean build artifacts |
 | `gd eval` | Evaluate GDScript expressions or scripts — live against a running game or offline headless |
-| `gd test` | Run GDScript tests with GUT, gdUnit4, or raw scripts (`--runner`, `--format json`) |
+| `gd test` | Run GDScript tests with GUT, gdUnit4, or raw scripts (`--list`, `--name`, `--class`, `--junit`, `--filter`, `--runner`, `--format json`) |
 | `gd completions` | Generate shell completions (bash, zsh, fish, etc.) |
 | `gd tree` | Show project class hierarchy (`--scene` for scene node trees) |
 | `gd doc` | Generate documentation from doc comments (`--format json`, `--check`) |

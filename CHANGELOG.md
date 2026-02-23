@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.2.37] - 2026-02-23
+
+### Added
+- **`gd test run` cargo-like UX** — new positional `name` argument filters test functions by name (GUT `-gunit_test_name`), `--class` filters by inner class (`-ginner_class`), `--list` lists matching tests via tree-sitter parsing without running them, `--junit <file>` exports JUnit XML (`-gjunit_xml_file`). Paths moved to `-p/--path` flag. All new flags are GUT-specific; other runners warn gracefully. Supports `--format json` for `--list`.
+
 ## [0.2.36] - 2026-02-23
 
 ### Added

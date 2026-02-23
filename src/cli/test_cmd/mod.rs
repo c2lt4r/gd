@@ -16,6 +16,7 @@ use std::time::Instant;
 
 use crate::core::config::Config;
 use crate::core::project::GodotProject;
+use crate::core::symbol_table;
 
 // Re-export run_with_timeout for use by gut.rs and gdunit.rs
 pub use script::run_with_timeout;
@@ -101,11 +102,23 @@ pub enum TestCommand {
 #[derive(Args)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct RunArgs {
+    /// Run tests whose name contains this string
+    pub name: Option<String>,
     /// Paths to test files or directories
-    pub paths: Vec<PathBuf>,
-    /// Only run tests matching this pattern
+    #[arg(short = 'p', long)]
+    pub path: Vec<PathBuf>,
+    /// Only run test files matching this pattern
     #[arg(short, long)]
     pub filter: Option<String>,
+    /// Only run tests in this inner class
+    #[arg(short, long)]
+    pub class: Option<String>,
+    /// List matching tests without running them
+    #[arg(short, long)]
+    pub list: bool,
+    /// Export results to JUnit XML file
+    #[arg(long)]
+    pub junit: Option<PathBuf>,
     /// Show detailed test output
     #[arg(short, long)]
     pub verbose: bool,
@@ -344,7 +357,7 @@ fn exec_run(args: &RunArgs) -> Result<()> {
             }
         }
     };
-    let test_files = match discover_test_files(&project.root, &args.paths) {
+    let test_files = match discover_test_files(&project.root, &args.path) {
         Ok(f) => f,
         Err(e) => {
             if json_mode {
@@ -394,6 +407,10 @@ fn exec_run(args: &RunArgs) -> Result<()> {
             );
         }
         return Ok(());
+    }
+
+    if args.list {
+        return list_tests(&test_files, &project.root, args, json_mode);
     }
 
     if !test_files.is_empty() {
@@ -496,6 +513,138 @@ fn exec_run(args: &RunArgs) -> Result<()> {
             }
         }
     }
+}
+
+/// A test entry for JSON output of `--list`.
+#[derive(Debug, Serialize)]
+pub(crate) struct TestListEntry {
+    pub file: String,
+    pub tests: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub classes: Vec<TestListClass>,
+}
+
+/// An inner class with its test functions for `--list` JSON output.
+#[derive(Debug, Serialize)]
+pub(crate) struct TestListClass {
+    pub name: String,
+    pub tests: Vec<String>,
+}
+
+/// List test functions discovered via tree-sitter parsing.
+fn list_tests(
+    test_files: &[PathBuf],
+    project_root: &Path,
+    args: &RunArgs,
+    json_mode: bool,
+) -> Result<()> {
+    let mut parser = tree_sitter::Parser::new();
+    parser
+        .set_language(&tree_sitter_gdscript::LANGUAGE.into())
+        .map_err(|e| miette!("Failed to set parser language: {e}"))?;
+
+    let mut entries = Vec::new();
+    let mut total_tests = 0usize;
+
+    for path in test_files {
+        let source = std::fs::read_to_string(path)
+            .map_err(|e| miette!("Failed to read {}: {e}", path.display()))?;
+        let Some(tree) = parser.parse(&source, None) else {
+            continue;
+        };
+        let symbols = symbol_table::build(&tree, &source);
+
+        // Collect top-level test functions
+        let mut tests: Vec<String> = symbols
+            .functions
+            .iter()
+            .filter(|f| f.name.starts_with("test_"))
+            .map(|f| f.name.clone())
+            .collect();
+
+        // Collect inner class test functions
+        let mut classes: Vec<TestListClass> = Vec::new();
+        for (class_name, class_symbols) in &symbols.inner_classes {
+            if let Some(ref cls_filter) = args.class
+                && !class_name.contains(cls_filter.as_str())
+            {
+                continue;
+            }
+            let class_tests: Vec<String> = class_symbols
+                .functions
+                .iter()
+                .filter(|f| f.name.starts_with("test_"))
+                .map(|f| f.name.clone())
+                .collect();
+            if !class_tests.is_empty() {
+                classes.push(TestListClass {
+                    name: class_name.clone(),
+                    tests: class_tests,
+                });
+            }
+        }
+
+        // Apply name filter
+        if let Some(ref name_filter) = args.name {
+            tests.retain(|t| t.contains(name_filter.as_str()));
+            for cls in &mut classes {
+                cls.tests.retain(|t| t.contains(name_filter.as_str()));
+            }
+            classes.retain(|c| !c.tests.is_empty());
+        }
+
+        // Apply class filter to skip top-level tests when filtering by class
+        let show_top_level = args.class.is_none();
+
+        let file_test_count = if show_top_level { tests.len() } else { 0 }
+            + classes.iter().map(|c| c.tests.len()).sum::<usize>();
+
+        if file_test_count == 0 {
+            continue;
+        }
+        total_tests += file_test_count;
+
+        let rel = crate::core::fs::relative_slash(path, project_root);
+        if show_top_level {
+            entries.push(TestListEntry {
+                file: rel,
+                tests,
+                classes,
+            });
+        } else {
+            entries.push(TestListEntry {
+                file: rel,
+                tests: vec![],
+                classes,
+            });
+        }
+    }
+
+    if json_mode {
+        println!("{}", serde_json::to_string_pretty(&entries).unwrap());
+    } else {
+        for entry in &entries {
+            println!("{}", entry.file.bold());
+            for t in &entry.tests {
+                println!("  {t}");
+            }
+            for cls in &entry.classes {
+                println!("  {}", cls.name.dimmed());
+                for t in &cls.tests {
+                    println!("    {t}");
+                }
+            }
+        }
+        println!(
+            "\n{} file{}, {} test{}",
+            entries.len(),
+            if entries.len() == 1 { "" } else { "s" },
+            total_tests,
+            if total_tests == 1 { "" } else { "s" },
+        );
+    }
+
+    Ok(())
 }
 
 /// Emit a minimal JSON error report to stdout for infrastructure failures, then let caller exit.

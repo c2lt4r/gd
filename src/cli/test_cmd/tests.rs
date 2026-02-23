@@ -3,9 +3,11 @@ use std::path::Path;
 use crate::cli::test_cmd::gdunit::{decode_xml_entities, extract_xml_attr, parse_gdunit4_xml};
 use crate::cli::test_cmd::gut::parse_gut_counts;
 use crate::cli::test_cmd::{
-    TestError, TestReport, TestResult, TestStatus, TestSummary, extract_errors, filter_noise,
-    is_engine_noise, is_test_file, parse_res_location, strip_res_prefix,
+    TestError, TestListClass, TestListEntry, TestReport, TestResult, TestStatus, TestSummary,
+    extract_errors, filter_noise, is_engine_noise, is_test_file, parse_res_location,
+    strip_res_prefix,
 };
+use crate::core::symbol_table;
 
 #[test]
 fn test_is_test_file() {
@@ -406,4 +408,152 @@ fn test_skipped_in_json_when_nonzero() {
     };
     let json = serde_json::to_string(&summary).unwrap();
     assert!(json.contains("\"skipped\":1"));
+}
+
+// --- list_tests symbol table discovery tests ---
+
+/// Parse GDScript source and collect test functions + inner class tests (mirrors list_tests logic).
+fn collect_tests_from_source(source: &str) -> (Vec<String>, Vec<TestListClass>) {
+    let mut parser = tree_sitter::Parser::new();
+    parser
+        .set_language(&tree_sitter_gdscript::LANGUAGE.into())
+        .unwrap();
+    let tree = parser.parse(source, None).unwrap();
+    let symbols = symbol_table::build(&tree, source);
+
+    let tests: Vec<String> = symbols
+        .functions
+        .iter()
+        .filter(|f| f.name.starts_with("test_"))
+        .map(|f| f.name.clone())
+        .collect();
+
+    let classes: Vec<TestListClass> = symbols
+        .inner_classes
+        .iter()
+        .filter_map(|(name, syms)| {
+            let class_tests: Vec<String> = syms
+                .functions
+                .iter()
+                .filter(|f| f.name.starts_with("test_"))
+                .map(|f| f.name.clone())
+                .collect();
+            if class_tests.is_empty() {
+                None
+            } else {
+                Some(TestListClass {
+                    name: name.clone(),
+                    tests: class_tests,
+                })
+            }
+        })
+        .collect();
+
+    (tests, classes)
+}
+
+#[test]
+fn test_list_discovers_top_level_test_functions() {
+    let source = r"
+extends Node
+
+func test_health():
+    pass
+
+func test_damage():
+    pass
+
+func helper():
+    pass
+
+func _ready():
+    pass
+";
+    let (tests, classes) = collect_tests_from_source(source);
+    assert_eq!(tests, vec!["test_health", "test_damage"]);
+    assert!(classes.is_empty());
+}
+
+#[test]
+fn test_list_discovers_inner_class_tests() {
+    let source = r"
+extends Node
+
+func test_top():
+    pass
+
+class TestMovement:
+    extends Node
+
+    func test_walk_speed():
+        pass
+
+    func test_jump_height():
+        pass
+
+    func helper():
+        pass
+
+class TestCombat:
+    extends Node
+
+    func test_melee():
+        pass
+";
+    let (tests, classes) = collect_tests_from_source(source);
+    assert_eq!(tests, vec!["test_top"]);
+    assert_eq!(classes.len(), 2);
+    assert_eq!(classes[0].name, "TestMovement");
+    assert_eq!(
+        classes[0].tests,
+        vec!["test_walk_speed", "test_jump_height"]
+    );
+    assert_eq!(classes[1].name, "TestCombat");
+    assert_eq!(classes[1].tests, vec!["test_melee"]);
+}
+
+#[test]
+fn test_list_no_test_functions() {
+    let source = r"
+extends Node
+
+func _ready():
+    pass
+
+func helper():
+    pass
+";
+    let (tests, classes) = collect_tests_from_source(source);
+    assert!(tests.is_empty());
+    assert!(classes.is_empty());
+}
+
+#[test]
+fn test_list_entry_json_serialization() {
+    let entry = TestListEntry {
+        file: "tests/test_player.gd".to_string(),
+        tests: vec!["test_health".to_string(), "test_damage".to_string()],
+        classes: vec![TestListClass {
+            name: "TestMovement".to_string(),
+            tests: vec!["test_walk".to_string()],
+        }],
+    };
+    let json = serde_json::to_string_pretty(&entry).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(parsed["file"], "tests/test_player.gd");
+    assert_eq!(parsed["tests"].as_array().unwrap().len(), 2);
+    assert_eq!(parsed["classes"][0]["name"], "TestMovement");
+    assert_eq!(parsed["classes"][0]["tests"][0], "test_walk");
+}
+
+#[test]
+fn test_list_entry_json_no_classes_omitted() {
+    let entry = TestListEntry {
+        file: "tests/test_simple.gd".to_string(),
+        tests: vec!["test_one".to_string()],
+        classes: vec![],
+    };
+    let json = serde_json::to_string(&entry).unwrap();
+    assert!(!json.contains("classes"));
 }
