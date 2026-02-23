@@ -280,9 +280,7 @@ pub fn method_doc(class: &str, method: &str) -> Option<&'static str> {
     let mut current = class;
     loop {
         let key = format!("{current}.{method}");
-        if let Ok(i) =
-            generated::METHOD_DOCS.binary_search_by_key(&key.as_str(), |&(k, _)| k)
-        {
+        if let Ok(i) = generated::METHOD_DOCS.binary_search_by_key(&key.as_str(), |&(k, _)| k) {
             let doc = generated::METHOD_DOCS[i].1;
             if !doc.is_empty() {
                 return Some(doc);
@@ -300,9 +298,7 @@ pub fn property_doc(class: &str, property: &str) -> Option<&'static str> {
     let mut current = class;
     loop {
         let key = format!("{current}.{property}");
-        if let Ok(i) =
-            generated::PROPERTY_DOCS.binary_search_by_key(&key.as_str(), |&(k, _)| k)
-        {
+        if let Ok(i) = generated::PROPERTY_DOCS.binary_search_by_key(&key.as_str(), |&(k, _)| k) {
             let doc = generated::PROPERTY_DOCS[i].1;
             if !doc.is_empty() {
                 return Some(doc);

@@ -570,15 +570,15 @@ fn collect_scene_references(
     // Signal handler references: handler function name appears in [connection] sections
     let handler_conns = workspace.signal_connections_for_handler(script_path, target_name);
     for conn in &handler_conns {
-        if let Some(line) = find_scene_pattern(&conn.scene_path, &format!("method=\"{target_name}\""), &format!("method = \"{target_name}\""))
-            && let Ok(uri) = Url::from_file_path(&conn.scene_path)
+        if let Some(line) = find_scene_pattern(
+            &conn.scene_path,
+            &format!("method=\"{target_name}\""),
+            &format!("method = \"{target_name}\""),
+        ) && let Ok(uri) = Url::from_file_path(&conn.scene_path)
         {
             locations.push(Location {
                 uri,
-                range: Range::new(
-                    Position::new(line as u32, 0),
-                    Position::new(line as u32, 0),
-                ),
+                range: Range::new(Position::new(line as u32, 0), Position::new(line as u32, 0)),
             });
         }
     }
@@ -586,14 +586,17 @@ fn collect_scene_references(
     // Signal declaration references: signal name appears in [connection] sections
     let signal_conns = workspace.signal_connections_for_signal(script_path, target_name);
     for conn in &signal_conns {
-        if let Some(line) = find_scene_pattern(&conn.scene_path, &format!("signal=\"{target_name}\""), &format!("signal = \"{target_name}\""))
-            && let Ok(uri) = Url::from_file_path(&conn.scene_path)
+        if let Some(line) = find_scene_pattern(
+            &conn.scene_path,
+            &format!("signal=\"{target_name}\""),
+            &format!("signal = \"{target_name}\""),
+        ) && let Ok(uri) = Url::from_file_path(&conn.scene_path)
         {
             // Avoid duplicates if both handler and signal match the same line
             let pos = Position::new(line as u32, 0);
-            let already_added = locations.iter().any(|loc| {
-                loc.uri == uri && loc.range.start == pos
-            });
+            let already_added = locations
+                .iter()
+                .any(|loc| loc.uri == uri && loc.range.start == pos);
             if !already_added {
                 locations.push(Location {
                     uri,

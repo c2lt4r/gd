@@ -2362,13 +2362,7 @@ fn test_lsp_create_file_stdin() {
 
     let output = run_lsp_edit(
         temp.path(),
-        &[
-            "lsp",
-            "create-file",
-            "player.gd",
-            "--format",
-            "json",
-        ],
+        &["lsp", "create-file", "player.gd", "--format", "json"],
         custom_script,
     );
 

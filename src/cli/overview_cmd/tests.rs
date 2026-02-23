@@ -7,9 +7,7 @@ fn parse_and_find(source: &str) -> Vec<CodeConnection> {
 
 #[test]
 fn simple_self_signal() {
-    let conns = parse_and_find(
-        "extends Node\nfunc _ready():\n\tmy_signal.connect(_on_signal)\n",
-    );
+    let conns = parse_and_find("extends Node\nfunc _ready():\n\tmy_signal.connect(_on_signal)\n");
     assert_eq!(conns.len(), 1);
     assert_eq!(conns[0].receiver, "self");
     assert_eq!(conns[0].signal, "my_signal");
@@ -29,9 +27,8 @@ fn chained_receiver() {
 
 #[test]
 fn node_path_receiver() {
-    let conns = parse_and_find(
-        "extends Node\nfunc _ready():\n\t$Player.hit.connect(_on_player_hit)\n",
-    );
+    let conns =
+        parse_and_find("extends Node\nfunc _ready():\n\t$Player.hit.connect(_on_player_hit)\n");
     assert_eq!(conns.len(), 1);
     assert_eq!(conns[0].signal, "hit");
     assert_eq!(conns[0].handler, "_on_player_hit");
@@ -56,8 +53,7 @@ fn no_connects() {
 
 #[test]
 fn disconnect_not_matched() {
-    let conns = parse_and_find(
-        "extends Node\nfunc _ready():\n\tmy_signal.disconnect(_on_signal)\n",
-    );
+    let conns =
+        parse_and_find("extends Node\nfunc _ready():\n\tmy_signal.disconnect(_on_signal)\n");
     assert!(conns.is_empty());
 }

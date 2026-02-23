@@ -610,8 +610,7 @@ mod tests {
 
     #[test]
     fn full_range_stops_at_section_divider() {
-        let src =
-            "# ===\n# SECTION\n# ===\n## Doc\n\nfunc foo():\n\tpass\n";
+        let src = "# ===\n# SECTION\n# ===\n## Doc\n\nfunc foo():\n\tpass\n";
         let tree = crate::core::parser::parse(src).unwrap();
         let node = find_declaration_by_name(tree.root_node(), src, "foo").unwrap();
         let (start, end) = declaration_full_range(node, src);
@@ -650,7 +649,9 @@ mod tests {
     #[test]
     fn section_divider_detection() {
         assert!(is_section_divider("# ==="));
-        assert!(is_section_divider("# ============================================================================="));
+        assert!(is_section_divider(
+            "# ============================================================================="
+        ));
         assert!(is_section_divider("# ---"));
         assert!(is_section_divider("# ~~~"));
         assert!(is_section_divider("# ***"));

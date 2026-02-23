@@ -106,9 +106,7 @@ pub fn replace_body(
         .find(|l| !l.trim().is_empty())
         .unwrap_or("")
         .trim();
-    if first_content_line.starts_with("func ")
-        || first_content_line.starts_with("static func ")
-    {
+    if first_content_line.starts_with("func ") || first_content_line.starts_with("static func ") {
         return Err(miette::miette!(
             "input appears to contain a function signature (`{}`); \
              replace-body expects only the body (indented statements), not the signature",

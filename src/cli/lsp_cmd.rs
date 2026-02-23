@@ -1177,18 +1177,17 @@ fn print_scene_refs_human(refs: &[crate::lsp::query::SceneRefOutput]) {
         cprintln!("  (no scenes reference this script)");
         return;
     }
-    cprintln!("{} scene{}:", refs.len(), if refs.len() == 1 { "" } else { "s" });
+    cprintln!(
+        "{} scene{}:",
+        refs.len(),
+        if refs.len() == 1 { "" } else { "s" }
+    );
     for r in refs {
         let type_part = r
             .node_type
             .as_deref()
             .map_or_else(String::new, |t| format!(" ({})", t.dimmed()));
-        cprintln!(
-            "  {}  node: {}{}",
-            r.scene.cyan(),
-            r.node.bold(),
-            type_part,
-        );
+        cprintln!("  {}  node: {}{}", r.scene.cyan(), r.node.bold(), type_part,);
     }
 }
 

@@ -191,7 +191,9 @@ impl LanguageServer for Backend {
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
         let uri = params.text_document.uri.clone();
-        let is_scene = std::path::Path::new(uri.path()).extension().is_some_and(|e| e == "tscn");
+        let is_scene = std::path::Path::new(uri.path())
+            .extension()
+            .is_some_and(|e| e == "tscn");
 
         // Update workspace index for scene files
         if is_scene
@@ -216,7 +218,9 @@ impl LanguageServer for Backend {
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         let uri = params.text_document.uri.clone();
-        let is_scene = std::path::Path::new(uri.path()).extension().is_some_and(|e| e == "tscn");
+        let is_scene = std::path::Path::new(uri.path())
+            .extension()
+            .is_some_and(|e| e == "tscn");
 
         if let Some(change) = params.content_changes.into_iter().last() {
             // Update workspace symbols from unsaved content
@@ -245,7 +249,9 @@ impl LanguageServer for Backend {
 
     async fn did_save(&self, params: DidSaveTextDocumentParams) {
         let uri = params.text_document.uri;
-        let is_scene = std::path::Path::new(uri.path()).extension().is_some_and(|e| e == "tscn");
+        let is_scene = std::path::Path::new(uri.path())
+            .extension()
+            .is_some_and(|e| e == "tscn");
 
         if let Some(ws) = self.workspace.get()
             && let Ok(path) = uri.to_file_path()

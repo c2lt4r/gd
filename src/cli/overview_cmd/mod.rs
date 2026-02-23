@@ -6,8 +6,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use tree_sitter::Node;
 
-use crate::cprintln;
 use crate::core::project::GodotProject;
+use crate::cprintln;
 use crate::lsp::workspace::WorkspaceIndex;
 
 #[derive(Args)]
@@ -168,10 +168,9 @@ fn build_entries(
             .iter()
             .filter(|v| v.annotations.iter().any(|a| a == "export"))
             .map(|v| {
-                v.type_ann.as_ref().map_or_else(
-                    || v.name.clone(),
-                    |ty| format!("{}: {}", v.name, ty.name),
-                )
+                v.type_ann
+                    .as_ref()
+                    .map_or_else(|| v.name.clone(), |ty| format!("{}: {}", v.name, ty.name))
             })
             .collect();
 
@@ -290,10 +289,7 @@ fn collect_code_connections(
         let label = workspace
             .scenes_for_script(abs_path)
             .first()
-            .map_or_else(
-                || rel.clone(),
-                |spn| rel_slash(&spn.scene_path, root),
-            );
+            .map_or_else(|| rel.clone(), |spn| rel_slash(&spn.scene_path, root));
 
         let flow_connections: Vec<FlowConnection> = connections
             .into_iter()
@@ -304,10 +300,7 @@ fn collect_code_connections(
                 method: cc.handler,
             })
             .collect();
-        flow_map
-            .entry(label)
-            .or_default()
-            .extend(flow_connections);
+        flow_map.entry(label).or_default().extend(flow_connections);
     }
 }
 
@@ -359,9 +352,7 @@ fn try_parse_connect(node: Node, source: &str) -> Option<CodeConnection> {
                 }
             }
             "attribute_call"
-                if child
-                    .named_child(0)
-                    .and_then(|n| n.utf8_text(bytes).ok())
+                if child.named_child(0).and_then(|n| n.utf8_text(bytes).ok())
                     == Some("connect") =>
             {
                 call_node = Some(child);

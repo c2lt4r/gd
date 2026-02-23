@@ -214,7 +214,11 @@ fn resolve_hover_for_identifier(
         return Some(make_hover(
             &format_enum_value(ev),
             current,
-            if ev.doc.is_empty() { None } else { Some(ev.doc) },
+            if ev.doc.is_empty() {
+                None
+            } else {
+                Some(ev.doc)
+            },
         ));
     }
     // 10. Engine class/singleton used as bare identifier (Input, OS, Engine, etc.)
@@ -406,9 +410,7 @@ fn hover_node_path(
     // Fallback: brute-force lookup across all indexed scenes (unit tests, no file_path)
     for entry in ws.iter_scenes() {
         let scene = entry.value();
-        if let Some((name, type_name)) =
-            super::workspace::resolve_node_in_scene(scene, node_path)
-        {
+        if let Some((name, type_name)) = super::workspace::resolve_node_in_scene(scene, node_path) {
             let type_str = type_name.as_deref().unwrap_or("Node");
             let code = format!("{type_str} ${node_path}");
 
@@ -663,7 +665,11 @@ fn hover_member_on_type(
         return Some(make_hover(
             &format_enum_value(ev),
             ident_node,
-            if ev.doc.is_empty() { None } else { Some(ev.doc) },
+            if ev.doc.is_empty() {
+                None
+            } else {
+                Some(ev.doc)
+            },
         ));
     }
 

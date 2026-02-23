@@ -363,8 +363,7 @@ impl WorkspaceIndex {
                 .insert(path.to_path_buf(), connections);
         }
 
-        self.scenes
-            .insert(path.to_path_buf(), Arc::new(scene_data));
+        self.scenes.insert(path.to_path_buf(), Arc::new(scene_data));
     }
 
     /// Re-index a .tscn file from new content (for did_change/did_save).
@@ -393,7 +392,10 @@ impl WorkspaceIndex {
     pub fn scenes_for_script(&self, script_path: &Path) -> Vec<ScenePathNode> {
         // Try as res:// path
         let res_path = self.to_res_path(script_path);
-        if let Some(entries) = res_path.as_ref().and_then(|rp| self.script_to_scenes.get(rp)) {
+        if let Some(entries) = res_path
+            .as_ref()
+            .and_then(|rp| self.script_to_scenes.get(rp))
+        {
             return entries.clone();
         }
         Vec::new()
@@ -626,9 +628,7 @@ impl WorkspaceIndex {
     }
 
     /// Iterate over all scene connections (used by hover to find signal handlers).
-    pub fn iter_scene_connections(
-        &self,
-    ) -> dashmap::iter::Iter<'_, PathBuf, Vec<SceneConnection>> {
+    pub fn iter_scene_connections(&self) -> dashmap::iter::Iter<'_, PathBuf, Vec<SceneConnection>> {
         self.scene_connections.iter()
     }
 
@@ -640,7 +640,10 @@ impl WorkspaceIndex {
     /// Convert an absolute path to a `res://` path relative to the project root.
     fn to_res_path(&self, path: &Path) -> Option<String> {
         let rel = path.strip_prefix(&self.project_root).ok()?;
-        Some(format!("res://{}", rel.to_string_lossy().replace('\\', "/")))
+        Some(format!(
+            "res://{}",
+            rel.to_string_lossy().replace('\\', "/")
+        ))
     }
 
     /// Create an empty workspace index for testing (no scanning).
@@ -784,6 +787,6 @@ fn build_node_full_path(name: &str, parent: Option<&str>) -> String {
     match parent {
         // Root node or direct child of root
         None | Some(".") => name.to_string(),
-        Some(p) => format!("{p}/{name}"),      // Deeper nesting
+        Some(p) => format!("{p}/{name}"), // Deeper nesting
     }
 }

@@ -20,9 +20,7 @@ impl LintRule for DuplicateCode {
 
     fn check(&self, tree: &Tree, source: &str, config: &LintConfig) -> Vec<LintDiagnostic> {
         let rule_config = config.rules.get("duplicate-code");
-        let min_statements = rule_config
-            .and_then(|r| r.min_statements)
-            .unwrap_or(5);
+        let min_statements = rule_config.and_then(|r| r.min_statements).unwrap_or(5);
         let threshold = rule_config
             .and_then(|r| r.similarity_threshold)
             .unwrap_or(80);
@@ -51,7 +49,10 @@ fn collect_functions_recursive<'a>(
     source: &'a str,
     functions: &mut Vec<FunctionInfo<'a>>,
 ) {
-    if matches!(node.kind(), "function_definition" | "constructor_definition") {
+    if matches!(
+        node.kind(),
+        "function_definition" | "constructor_definition"
+    ) {
         let name = node
             .child_by_field_name("name")
             .map_or("<unknown>", |n| &source[n.byte_range()]);
@@ -102,8 +103,12 @@ fn normalize_body(node: Node, out: &mut Vec<&'static str>) {
                 out.push(child.kind());
                 normalize_children(child, out);
             }
-            "return_statement" | "variable_statement" | "expression_statement"
-            | "assignment" | "pass_statement" | "break_statement"
+            "return_statement"
+            | "variable_statement"
+            | "expression_statement"
+            | "assignment"
+            | "pass_statement"
+            | "break_statement"
             | "continue_statement" => out.push(child.kind()),
             "body" => normalize_body(child, out),
             _ => {}
@@ -159,9 +164,7 @@ fn edit_distance(a: &[&str], b: &[&str]) -> usize {
         curr[0] = i;
         for j in 1..=n {
             let cost = usize::from(a[i - 1] != b[j - 1]);
-            curr[j] = (prev[j] + 1)
-                .min(curr[j - 1] + 1)
-                .min(prev[j - 1] + cost);
+            curr[j] = (prev[j] + 1).min(curr[j - 1] + 1).min(prev[j - 1] + cost);
         }
         std::mem::swap(&mut prev, &mut curr);
     }
