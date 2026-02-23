@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.25] - 2026-02-23
+
+### Improved
+- **Type inference: property resolution** — `infer_expression_type` now resolves property access on typed receivers. Covers value-type builtins (Vector2.x, Color.r, Rect2.position, Transform3D.origin, etc.), ClassDB properties (Node2D.position, CharacterBody2D.velocity), and cross-file user-defined class variables via `ProjectIndex`.
+- **Type inference: `is`-check narrowing** — identifiers inside `if event is InputEventKey:` bodies or after `if not event is InputEventKey: return` early-exit guards are now narrowed to the specific type. Works in both the inference engine and `gd check`.
+- **Type inference: `:=` initializer resolution** — `gd check` now resolves types for `:=` variables initialized from `Type.new()` constructors, `as Type` casts, and same-file functions with return type annotations. Eliminates false positives like `var target := Node3D.new(); var d := target.position`.
+- **Type inference: preload/load resolution** — `preload("res://scene.tscn")` now infers `PackedScene`, `.gd` files resolve to `GDScript` (or their `class_name` with project index), images to `Texture2D`, audio to `AudioStream`, shaders to `Shader`.
+- **`variant-inference` lint rule** — upgraded from per-file to project-wide inference, benefiting from cross-file property resolution and preload/load type resolution. Fewer false positives when used with typed codebases.
+
+### Added
+- **`class_db::property_type()`** — look up property types on ClassDB classes with inheritance chain walking, mirroring the existing `property_exists()`.
+
 ## [0.2.24] - 2026-02-22
 
 ### Added

@@ -9,7 +9,7 @@ use tree_sitter::Node;
 
 use crate::core::{
     config::Config, config::find_project_root, fs::collect_gdscript_files,
-    fs::collect_resource_files, parser, resource_parser, scene,
+    fs::collect_resource_files, parser, resource_parser, scene, type_inference,
 };
 use crate::lint::matches_ignore_pattern;
 use crate::{ceprintln, cprintln};
@@ -425,7 +425,8 @@ fn check_variant_node(node: Node, source: &str, errors: &mut Vec<StructuralError
 
 /// Check if a value expression is a property access on a variable typed as a Godot
 /// Object-derived class — e.g. `event.physical_keycode` where `event: InputEvent`.
-/// Property access on base classes resolves to Variant in Godot's type system.
+/// Property access on base classes resolves to Variant in Godot's type system
+/// unless the property is declared on the specific class.
 fn is_unresolvable_property_access(value: &Node, source: &str) -> bool {
     // Only check `attribute` nodes (property access), not method calls
     if value.kind() != "attribute" {
@@ -460,7 +461,24 @@ fn is_unresolvable_property_access(value: &Node, source: &str) -> bool {
     let Some(receiver_type) = find_receiver_type(value, obj_name, source) else {
         return false;
     };
-    crate::class_db::class_exists(&receiver_type)
+    if !crate::class_db::class_exists(&receiver_type) {
+        return false;
+    }
+
+    // Get the property name
+    let Some(prop_node) = value.named_child(1) else {
+        return false;
+    };
+    let Ok(prop_name) = prop_node.utf8_text(source.as_bytes()) else {
+        return false;
+    };
+
+    // If the property exists on the receiver's class, it's resolvable — not Variant
+    if crate::class_db::property_exists(&receiver_type, prop_name) {
+        return false;
+    }
+
+    true
 }
 
 /// Walk up the AST from `node` to find the enclosing function, then look up
@@ -495,6 +513,10 @@ fn find_receiver_type(node: &Node, name: &str, source: &str) -> Option<String> {
                 && type_node.kind() != "inferred_type"
                 && let Ok(type_text) = type_node.utf8_text(bytes)
             {
+                // Prefer narrowed type from `is` guard over declared type
+                if let Some(narrowed) = type_inference::find_narrowed_type(node, name, source) {
+                    return Some(narrowed);
+                }
                 return Some(type_text.to_string());
             }
         }
@@ -512,16 +534,108 @@ fn find_receiver_type(node: &Node, name: &str, source: &str) -> Option<String> {
                 && let Some(var_name) = child.child_by_field_name("name")
                 && let Ok(vname) = var_name.utf8_text(bytes)
                 && vname == name
-                && let Some(type_node) = child.child_by_field_name("type")
-                && type_node.kind() != "inferred_type"
-                && let Ok(type_text) = type_node.utf8_text(bytes)
             {
-                return Some(type_text.to_string());
+                // Explicit type annotation (not inferred)
+                if let Some(type_node) = child.child_by_field_name("type")
+                    && type_node.kind() != "inferred_type"
+                    && let Ok(type_text) = type_node.utf8_text(bytes)
+                {
+                    if let Some(narrowed) = type_inference::find_narrowed_type(node, name, source) {
+                        return Some(narrowed);
+                    }
+                    return Some(type_text.to_string());
+                }
+
+                // Inferred type (:=) — try to resolve from initializer
+                if let Some(value) = child.child_by_field_name("value")
+                    && let Some(typ) = infer_type_from_initializer(&value, bytes, &func)
+                {
+                    return Some(typ);
+                }
             }
         }
     }
 
+    // Fallback: check for type narrowing on params/locals without explicit type
+    if let Some(narrowed) = type_inference::find_narrowed_type(node, name, source) {
+        return Some(narrowed);
+    }
+
     None
+}
+
+/// Lightweight type inference from a variable initializer expression.
+/// Handles constructors (`Node3D.new()`), cast (`as Type`), and same-file function return types.
+fn infer_type_from_initializer(
+    value: &Node,
+    source: &[u8],
+    enclosing_func: &Node,
+) -> Option<String> {
+    match value.kind() {
+        // Cast: `expr as Type`
+        "as_pattern" | "cast" => {
+            let type_node = value.child_by_field_name("type").or_else(|| {
+                let count = value.named_child_count();
+                if count >= 2 {
+                    value.named_child(count - 1)
+                } else {
+                    None
+                }
+            })?;
+            Some(type_node.utf8_text(source).ok()?.to_string())
+        }
+        // Method call: `Type.new()` — attribute with attribute_call
+        "attribute" => {
+            let mut has_call = false;
+            let mut method = None;
+            let mut cursor = value.walk();
+            for child in value.children(&mut cursor) {
+                if child.kind() == "attribute_call" {
+                    has_call = true;
+                    if let Some(name_node) = child.named_child(0) {
+                        method = name_node.utf8_text(source).ok();
+                    }
+                }
+            }
+            if has_call && method == Some("new") {
+                let receiver = value.named_child(0)?;
+                let type_name = receiver.utf8_text(source).ok()?;
+                if type_name.chars().next()?.is_ascii_uppercase() {
+                    return Some(type_name.to_string());
+                }
+            }
+            None
+        }
+        // Function call: constructor or same-file function
+        "call" => {
+            let func_node = value
+                .child_by_field_name("function")
+                .or_else(|| value.named_child(0))?;
+            let func_name = func_node.utf8_text(source).ok()?;
+
+            // Constructor call (PascalCase)
+            if func_name.chars().next()?.is_ascii_uppercase() {
+                return Some(func_name.to_string());
+            }
+
+            // Same-file function — walk siblings of the enclosing function to find it
+            let parent = enclosing_func.parent()?;
+            let mut cursor = parent.walk();
+            for sibling in parent.children(&mut cursor) {
+                if sibling.kind() == "function_definition"
+                    && let Some(sib_name) = sibling.child_by_field_name("name")
+                    && sib_name.utf8_text(source).ok() == Some(func_name)
+                    && let Some(ret_type) = sibling.child_by_field_name("return_type")
+                    && let Ok(ret_text) = ret_type.utf8_text(source)
+                    && ret_text != "void"
+                {
+                    return Some(ret_text.to_string());
+                }
+            }
+            None
+        }
+        _ => None,
+    }
 }
 
 /// Extract the first `identifier` child's text from a node.
@@ -1163,6 +1277,96 @@ func f(node: Node):
         let source = "\
 func f(node):
 \tvar meta := node.get_meta(\"key\")
+";
+        assert!(structural_errors(source).is_empty());
+    }
+
+    // -- Type narrowing after `is` checks --
+
+    #[test]
+    fn no_variant_after_direct_is_guard() {
+        let source = "\
+func f(event: InputEvent):
+\tif event is InputEventKey:
+\t\tvar k := event.keycode
+";
+        assert!(structural_errors(source).is_empty());
+    }
+
+    #[test]
+    fn no_variant_after_early_exit_is_guard() {
+        let source = "\
+func f(event: InputEvent):
+\tif not event is InputEventKey:
+\t\treturn
+\tvar k := event.keycode
+";
+        assert!(structural_errors(source).is_empty());
+    }
+
+    #[test]
+    fn no_variant_after_early_exit_continue() {
+        let source = "\
+func f(events: Array):
+\tfor event in events:
+\t\tif not event is InputEventKey:
+\t\t\tcontinue
+\t\tvar k := event.keycode
+";
+        assert!(structural_errors(source).is_empty());
+    }
+
+    #[test]
+    fn variant_still_flagged_without_is_guard() {
+        let source = "\
+func f(event: InputEvent):
+\tvar k := event.keycode
+";
+        let errs = structural_errors(source);
+        assert_eq!(errs.len(), 1);
+        assert!(errs[0].message.contains("Variant"));
+    }
+
+    // -- := initializer type inference --
+
+    #[test]
+    fn infer_constructor_new() {
+        let source = "\
+func f():
+\tvar target := Node3D.new()
+\tvar d := target.position
+";
+        assert!(structural_errors(source).is_empty());
+    }
+
+    #[test]
+    fn infer_constructor_call() {
+        let source = "\
+func f():
+\tvar v := Vector2(1, 2)
+\tvar x := v.x
+";
+        assert!(structural_errors(source).is_empty());
+    }
+
+    #[test]
+    fn infer_same_file_function_return() {
+        let source = "\
+func _find_node() -> Node3D:
+\treturn null
+func f():
+\tvar target := _find_node()
+\tvar d := target.position
+";
+        assert!(structural_errors(source).is_empty());
+    }
+
+    #[test]
+    fn infer_cast_as_type() {
+        let source = "\
+func f(obj):
+\tvar node := obj as Node3D
+\tvar d := node.position
 ";
         assert!(structural_errors(source).is_empty());
     }

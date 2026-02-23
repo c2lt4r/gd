@@ -3,7 +3,8 @@ use tree_sitter::{Node, Tree};
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
 use crate::core::symbol_table::SymbolTable;
-use crate::core::type_inference::{InferredType, infer_expression_type};
+use crate::core::type_inference::{InferredType, infer_expression_type_with_project};
+use crate::core::workspace_index::ProjectIndex;
 
 pub struct VariantInference;
 
@@ -24,28 +25,35 @@ impl LintRule for VariantInference {
         Vec::new()
     }
 
-    fn check_with_symbols(
+    fn check_with_project(
         &self,
         tree: &Tree,
         source: &str,
         _config: &LintConfig,
         symbols: &SymbolTable,
+        project: &ProjectIndex,
     ) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        check_node(tree.root_node(), source, symbols, &mut diags);
+        check_node(tree.root_node(), source, symbols, project, &mut diags);
         diags
     }
 }
 
-fn check_node(node: Node, source: &str, symbols: &SymbolTable, diags: &mut Vec<LintDiagnostic>) {
+fn check_node(
+    node: Node,
+    source: &str,
+    symbols: &SymbolTable,
+    project: &ProjectIndex,
+    diags: &mut Vec<LintDiagnostic>,
+) {
     if node.kind() == "variable_statement" {
-        check_variable(node, source, symbols, diags);
+        check_variable(node, source, symbols, project, diags);
     }
 
     let mut cursor = node.walk();
     if cursor.goto_first_child() {
         loop {
-            check_node(cursor.node(), source, symbols, diags);
+            check_node(cursor.node(), source, symbols, project, diags);
             if !cursor.goto_next_sibling() {
                 break;
             }
@@ -57,6 +65,7 @@ fn check_variable(
     node: Node,
     source: &str,
     symbols: &SymbolTable,
+    project: &ProjectIndex,
     diags: &mut Vec<LintDiagnostic>,
 ) {
     // Check if this uses := (inferred type via inferred_type node)
@@ -93,10 +102,8 @@ fn check_variable(
         return;
     }
 
-    // Use the centralized inference engine. If the result is Variant or None
-    // (meaning the expression produces a dynamic/unknown type), warn that
-    // `:=` will infer `Variant`.
-    let inferred = infer_expression_type(&value, source, symbols);
+    // Use the project-aware inference engine for cross-file resolution.
+    let inferred = infer_expression_type_with_project(&value, source, symbols, project);
     let is_variant = matches!(inferred, Some(InferredType::Variant) | None);
     if !is_variant {
         return;
@@ -153,13 +160,30 @@ fn is_in_operator(node: &Node, source: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::{parser, symbol_table};
+    use crate::core::{parser, symbol_table, workspace_index};
+    use std::path::PathBuf;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();
         let symbols = symbol_table::build(&tree, source);
         let config = LintConfig::default();
-        VariantInference.check_with_symbols(&tree, source, &config, &symbols)
+        let root = PathBuf::from("/test_project");
+        let project = workspace_index::build_from_sources(&root, &[], &[]);
+        VariantInference.check_with_project(&tree, source, &config, &symbols, &project)
+    }
+
+    fn check_with_files(source: &str, project_files: &[(&str, &str)]) -> Vec<LintDiagnostic> {
+        let root = PathBuf::from("/test_project");
+        let file_entries: Vec<(PathBuf, &str)> = project_files
+            .iter()
+            .map(|(name, src)| (root.join(name), *src))
+            .collect();
+        let project = workspace_index::build_from_sources(&root, &file_entries, &[]);
+
+        let tree = parser::parse(source).unwrap();
+        let symbols = symbol_table::build(&tree, source);
+        let config = LintConfig::default();
+        VariantInference.check_with_project(&tree, source, &config, &symbols, &project)
     }
 
     #[test]
@@ -223,5 +247,40 @@ mod tests {
     #[test]
     fn opt_in_rule() {
         assert!(!VariantInference.default_enabled());
+    }
+
+    #[test]
+    fn no_warning_preload_tscn() {
+        let source = "func f():\n\tvar scene := preload(\"res://scene.tscn\")\n";
+        let diags = check(source);
+        assert!(diags.is_empty());
+    }
+
+    #[test]
+    fn no_warning_cross_file_method() {
+        let source = "\
+extends BaseEnemy
+func f():
+\tvar h := get_health()
+";
+        let diags = check_with_files(
+            source,
+            &[(
+                "base.gd",
+                "class_name BaseEnemy\nextends Node\nfunc get_health() -> int:\n\treturn 100\n",
+            )],
+        );
+        assert!(diags.is_empty());
+    }
+
+    #[test]
+    fn no_warning_property_access_on_typed_var() {
+        let source = "\
+var node: Node2D
+func f():
+\tvar x := node.position
+";
+        let diags = check(source);
+        assert!(diags.is_empty());
     }
 }

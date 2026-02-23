@@ -123,6 +123,22 @@ pub fn property_exists(class: &str, property: &str) -> bool {
     }
 }
 
+/// Look up the type of a property on a class, walking the inheritance chain.
+/// Returns the raw type string (e.g. `"Vector2"`, `"int"`, `"Color"`).
+pub fn property_type(class: &str, property: &str) -> Option<&'static str> {
+    let mut current = class;
+    loop {
+        let key = format!("{current}.{property}");
+        if let Ok(i) = generated::PROPERTIES.binary_search_by_key(&key.as_str(), |&(k, _)| k) {
+            return Some(generated::PROPERTIES[i].1);
+        }
+        match parent_class(current) {
+            Some(parent) => current = parent,
+            None => return None,
+        }
+    }
+}
+
 /// Check if a method exists on a class (including inherited methods).
 #[allow(dead_code)]
 pub fn method_exists(class: &str, method: &str) -> bool {
@@ -498,5 +514,26 @@ mod tests {
     fn test_class_properties_unknown_class() {
         let props = class_properties("NonExistentClass");
         assert!(props.is_empty());
+    }
+
+    #[test]
+    fn test_property_type_direct() {
+        assert_eq!(property_type("Node2D", "position"), Some("Vector2"));
+        assert_eq!(property_type("Node2D", "rotation"), Some("float"));
+    }
+
+    #[test]
+    fn test_property_type_inherited() {
+        // CharacterBody2D inherits position from Node2D
+        assert_eq!(
+            property_type("CharacterBody2D", "position"),
+            Some("Vector2")
+        );
+    }
+
+    #[test]
+    fn test_property_type_unknown() {
+        assert_eq!(property_type("Node", "nonexistent_prop"), None);
+        assert_eq!(property_type("FakeClass", "prop"), None);
     }
 }

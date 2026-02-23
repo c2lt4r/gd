@@ -136,12 +136,20 @@ fn infer_call_with_project(
         return Some(typ);
     }
 
-    // 2. GDScript builtin functions
+    // 2. preload/load — resolve with project index for class_name lookup
+    if matches!(func_name, "preload" | "load") {
+        if let Some(path) = extract_string_arg(node, source) {
+            return resolve_load_type_with_project(&path, project);
+        }
+        return Some(InferredType::Class("Resource".to_string()));
+    }
+
+    // 3. GDScript builtin functions
     if let Some(typ) = builtin_function_return_type(func_name) {
         return Some(typ);
     }
 
-    // 3. Self method calls — symbol table first
+    // 4. Self method calls — symbol table first
     for func in &symbols.functions {
         if func.name == func_name {
             return func.return_type.as_ref().map_or_else(
@@ -157,14 +165,14 @@ fn infer_call_with_project(
         }
     }
 
-    // 4. Project index: check user-defined base classes via extends chain
+    // 5. Project index: check user-defined base classes via extends chain
     if let Some(extends) = &symbols.extends
         && let Some(ret) = project.method_return_type(extends, func_name)
     {
         return Some(classify_type_str(&ret));
     }
 
-    // 5. ClassDB lookup via extends chain
+    // 6. ClassDB lookup via extends chain
     if let Some(extends) = &symbols.extends
         && let Some(ret_type) = class_db::method_return_type(extends, func_name)
     {
@@ -193,11 +201,6 @@ fn infer_attribute_with_project(
         }
     }
 
-    if !has_call {
-        return None;
-    }
-
-    let method = method_name?;
     let receiver = node.named_child(0)?;
     let receiver_type = infer_expression_type_with_project(&receiver, source, symbols, project)?;
 
@@ -206,6 +209,25 @@ fn infer_attribute_with_project(
         InferredType::Class(c) => c.as_str(),
         _ => return None,
     };
+
+    if !has_call {
+        // Property access — resolve via builtin members, project index, then ClassDB
+        let prop = node.named_child(1)?;
+        let prop_name = prop.utf8_text(source.as_bytes()).ok()?;
+
+        if let Some(t) = builtin_member_type(class_name, prop_name) {
+            return Some(t);
+        }
+        if let Some(t) = project.variable_type(class_name, prop_name) {
+            return Some(classify_type_str(&t));
+        }
+        if let Some(t) = class_db::property_type(class_name, prop_name) {
+            return Some(parse_class_db_type(t));
+        }
+        return None;
+    }
+
+    let method = method_name?;
 
     // Try project index first (user-defined types)
     if let Some(ret) = project.method_return_type(class_name, method) {
@@ -409,6 +431,10 @@ fn infer_identifier(node: &Node, source: &str, symbols: &SymbolTable) -> Option<
                 && !type_ann.is_inferred
                 && !type_ann.name.is_empty()
             {
+                // Check if there's a narrowed type from an `is` guard
+                if let Some(narrowed) = find_narrowed_type(node, name, source) {
+                    return Some(classify_type_name(&narrowed));
+                }
                 return Some(classify_type_name(&type_ann.name));
             }
             return None;
@@ -420,6 +446,11 @@ fn infer_identifier(node: &Node, source: &str, symbols: &SymbolTable) -> Option<
         if e.name == name {
             return Some(InferredType::Enum(name.to_string()));
         }
+    }
+
+    // Fallback: check for type narrowing (covers function params, for-loop iterators, etc.)
+    if let Some(narrowed) = find_narrowed_type(node, name, source) {
+        return Some(classify_type_name(&narrowed));
     }
 
     None
@@ -438,12 +469,20 @@ fn infer_call(node: &Node, source: &str, symbols: &SymbolTable) -> Option<Inferr
         return Some(typ);
     }
 
-    // 2. GDScript builtin functions
+    // 2. preload/load — resolve by file extension
+    if matches!(func_name, "preload" | "load") {
+        if let Some(path) = extract_string_arg(node, source) {
+            return resolve_load_type_by_extension(&path);
+        }
+        return Some(InferredType::Class("Resource".to_string()));
+    }
+
+    // 3. GDScript builtin functions
     if let Some(typ) = builtin_function_return_type(func_name) {
         return Some(typ);
     }
 
-    // 3. Self method calls — look up in symbol table, then ClassDB via extends chain
+    // 4. Self method calls — look up in symbol table, then ClassDB via extends chain
     for func in &symbols.functions {
         if func.name == func_name {
             return func.return_type.as_ref().map_or_else(
@@ -459,7 +498,7 @@ fn infer_call(node: &Node, source: &str, symbols: &SymbolTable) -> Option<Inferr
         }
     }
 
-    // 4. ClassDB lookup via extends chain
+    // 5. ClassDB lookup via extends chain
     if let Some(extends) = &symbols.extends
         && let Some(ret_type) = class_db::method_return_type(extends, func_name)
     {
@@ -486,23 +525,31 @@ fn infer_attribute(node: &Node, source: &str, symbols: &SymbolTable) -> Option<I
         }
     }
 
-    if !has_call {
-        // Property access — we don't resolve properties yet (Layer 3)
-        return None;
-    }
-
-    let method = method_name?;
-
     // Infer the receiver type
     let receiver = node.named_child(0)?;
     let receiver_type = infer_expression_type(&receiver, source, symbols)?;
 
-    // Resolve the class name for ClassDB lookup
     let class_name = match &receiver_type {
         InferredType::Builtin(b) => *b,
         InferredType::Class(c) => c.as_str(),
         _ => return None,
     };
+
+    if !has_call {
+        // Property access — resolve via builtin members, then ClassDB
+        let prop = node.named_child(1)?;
+        let prop_name = prop.utf8_text(source.as_bytes()).ok()?;
+
+        if let Some(t) = builtin_member_type(class_name, prop_name) {
+            return Some(t);
+        }
+        if let Some(t) = class_db::property_type(class_name, prop_name) {
+            return Some(parse_class_db_type(t));
+        }
+        return None;
+    }
+
+    let method = method_name?;
 
     // Look up the method in ClassDB
     if let Some(ret_type) = class_db::method_return_type(class_name, method) {
@@ -669,11 +716,202 @@ pub fn builtin_function_return_type(name: &str) -> Option<InferredType> {
         // Polymorphic builtins — accept Variant, return Variant
         // (typed variants like maxi/maxf/mini/minf/clampi/clampf are above)
         "max" | "min" | "clamp" | "snapped" | "wrap" => Some(InferredType::Variant),
-        // Resource-returning
-        "preload" | "load" => Some(InferredType::Class("Resource".to_string())),
         // Collection-returning
         "range" => Some(InferredType::Builtin("Array")),
         _ => None,
+    }
+}
+
+/// Try to find a narrowed type for `var_name` at the given AST node position.
+///
+/// Detects two patterns:
+/// - **Direct guard**: `if event is InputEventKey:` → within body, `event` is `InputEventKey`
+/// - **Early exit**: `if not event is InputEventKey: return/continue/break` → after that if,
+///   `event` is `InputEventKey`
+pub fn find_narrowed_type(node: &Node, var_name: &str, source: &str) -> Option<String> {
+    let bytes = source.as_bytes();
+    let mut current = *node;
+
+    while let Some(parent) = current.parent() {
+        if parent.kind() == "body" {
+            // Pattern A: Direct guard — body's parent is `if_statement` with `var is Type`
+            if let Some(if_stmt) = parent.parent()
+                && if_stmt.kind() == "if_statement"
+                && let Some(cond) = if_stmt.named_child(0)
+                && cond.kind() != "body"
+                && let Some(ty) = extract_is_check(&cond, var_name, bytes)
+            {
+                return Some(ty);
+            }
+
+            // Pattern B: Early exit — preceding sibling `if not var is Type: return/continue/break`
+            let target_row = node.start_position().row;
+            let mut cursor = parent.walk();
+            for sibling in parent.children(&mut cursor) {
+                if sibling.start_position().row >= target_row {
+                    break;
+                }
+                if sibling.kind() == "if_statement"
+                    && let Some(ty) = extract_negated_is_early_exit(&sibling, var_name, bytes)
+                {
+                    return Some(ty);
+                }
+            }
+        }
+        current = parent;
+    }
+    None
+}
+
+/// Extract `Type` from a condition like `var_name is Type`.
+fn extract_is_check(cond: &Node, var_name: &str, source: &[u8]) -> Option<String> {
+    if cond.kind() != "binary_operator" {
+        return None;
+    }
+    // Look for unnamed child "is"
+    let mut has_is = false;
+    let mut cursor = cond.walk();
+    for child in cond.children(&mut cursor) {
+        if !child.is_named() && child.utf8_text(source).ok() == Some("is") {
+            has_is = true;
+        }
+    }
+    if !has_is {
+        return None;
+    }
+    // Left operand = identifier matching var_name
+    let left = cond.named_child(0)?;
+    if left.utf8_text(source).ok()? != var_name {
+        return None;
+    }
+    // Right operand = the type name
+    let right = cond.named_child(1)?;
+    Some(right.utf8_text(source).ok()?.to_string())
+}
+
+/// Extract `Type` from `if not var_name is Type: return/continue/break` (early exit pattern).
+fn extract_negated_is_early_exit(if_stmt: &Node, var_name: &str, source: &[u8]) -> Option<String> {
+    let cond = if_stmt.named_child(0)?;
+    if cond.kind() == "body" {
+        return None;
+    }
+
+    // Condition should be `not (var is Type)` — unary_operator wrapping binary_operator
+    let inner = if cond.kind() == "unary_operator" {
+        // Check it's a `not` operator
+        let mut is_not = false;
+        let mut binary = None;
+        let mut cursor = cond.walk();
+        for child in cond.children(&mut cursor) {
+            if !child.is_named() && child.utf8_text(source).ok() == Some("not") {
+                is_not = true;
+            }
+            if child.kind() == "binary_operator" {
+                binary = Some(child);
+            }
+        }
+        if !is_not {
+            return None;
+        }
+        binary?
+    } else {
+        return None;
+    };
+
+    // Check inner is `var_name is Type`
+    let type_name = extract_is_check(&inner, var_name, source)?;
+
+    // Check the body contains only early-exit statements
+    let mut cursor2 = if_stmt.walk();
+    for child in if_stmt.children(&mut cursor2) {
+        if child.kind() == "body" {
+            let mut body_cursor = child.walk();
+            for stmt in child.named_children(&mut body_cursor) {
+                if !matches!(
+                    stmt.kind(),
+                    "return_statement" | "continue_statement" | "break_statement"
+                ) {
+                    return None;
+                }
+            }
+            return Some(type_name);
+        }
+    }
+    None
+}
+
+/// Resolve property types for value-type builtins not covered by ClassDB.
+/// ClassDB tracks engine Object-derived classes; value types like Vector2, Color,
+/// etc. have members that only exist in the GDScript binding layer.
+fn builtin_member_type(class: &str, member: &str) -> Option<InferredType> {
+    match (class, member) {
+        // Scalar float members
+        ("Vector2" | "Vector2i", "x" | "y")
+        | ("Vector3" | "Vector3i", "x" | "y" | "z")
+        | ("Vector4" | "Vector4i" | "Quaternion", "x" | "y" | "z" | "w")
+        | ("Color", "r" | "g" | "b" | "a" | "r8" | "g8" | "b8" | "a8" | "h" | "s" | "v")
+        | ("Plane", "d" | "x" | "y" | "z") => Some(InferredType::Builtin("float")),
+        // → Vector2
+        ("Rect2" | "Transform2D", "position" | "end" | "size" | "origin" | "x" | "y") => {
+            Some(InferredType::Builtin("Vector2"))
+        }
+        // → Vector2i
+        ("Rect2i", "position" | "end" | "size") => Some(InferredType::Builtin("Vector2i")),
+        // → Vector3
+        ("Transform3D" | "AABB", "origin" | "position" | "end" | "size")
+        | ("Basis", "x" | "y" | "z")
+        | ("Plane", "normal") => Some(InferredType::Builtin("Vector3")),
+        // → Basis
+        ("Transform3D", "basis") => Some(InferredType::Builtin("Basis")),
+        // → Vector4
+        ("Projection", "x" | "y" | "z" | "w") => Some(InferredType::Builtin("Vector4")),
+        _ => None,
+    }
+}
+
+/// Resolve the type of a `preload()`/`load()` call based on the file extension.
+/// Without project index, only extension-based resolution is possible.
+fn resolve_load_type_by_extension(path: &str) -> Option<InferredType> {
+    let ext = path.rsplit('.').next()?;
+    match ext {
+        "tscn" | "scn" => Some(InferredType::Class("PackedScene".to_string())),
+        "gd" => Some(InferredType::Class("GDScript".to_string())),
+        "png" | "jpg" | "jpeg" | "webp" | "svg" | "bmp" | "tga" | "hdr" | "exr" => {
+            Some(InferredType::Class("Texture2D".to_string()))
+        }
+        "ogg" | "wav" | "mp3" => Some(InferredType::Class("AudioStream".to_string())),
+        "shader" | "gdshader" => Some(InferredType::Class("Shader".to_string())),
+        // .tres, .res, and everything else → Resource
+        _ => Some(InferredType::Class("Resource".to_string())),
+    }
+}
+
+/// Resolve the type of a `preload()`/`load()` call with project index access.
+/// Can resolve `.gd` files to their `class_name` if available.
+fn resolve_load_type_with_project(path: &str, project: &ProjectIndex) -> Option<InferredType> {
+    let ext = path.rsplit('.').next()?;
+    if ext == "gd" {
+        // Try to resolve to the script's class_name
+        if let Some(fs) = project.resolve_preload(path)
+            && let Some(ref class_name) = fs.class_name
+        {
+            return Some(InferredType::Class(class_name.clone()));
+        }
+        return Some(InferredType::Class("GDScript".to_string()));
+    }
+    resolve_load_type_by_extension(path)
+}
+
+/// Extract a string literal from the first argument of a call node.
+fn extract_string_arg(node: &Node, source: &str) -> Option<String> {
+    let args = node.child_by_field_name("arguments")?;
+    let first_arg = args.named_child(0)?;
+    if first_arg.kind() == "string" {
+        let text = first_arg.utf8_text(source.as_bytes()).ok()?;
+        // Strip quotes
+        Some(text.trim_matches('"').to_string())
+    } else {
+        None
     }
 }
 
@@ -973,7 +1211,7 @@ mod tests {
     fn builtin_preload() {
         assert_eq!(
             infer_var_value("func f():\n\tvar x = preload(\"res://scene.tscn\")\n"),
-            Some(InferredType::Class("Resource".to_string()))
+            Some(InferredType::Class("PackedScene".to_string()))
         );
     }
 
@@ -1263,6 +1501,163 @@ func f():
         assert!(!InferredType::Builtin("String").is_numeric());
     }
 
+    // ── Property access (builtin members) ─────────────────────────
+
+    #[test]
+    fn property_vector2_x() {
+        let source = "\
+var pos: Vector2
+func f():
+\tvar x = pos.x
+";
+        assert_eq!(
+            infer_var_value(source),
+            Some(InferredType::Builtin("float"))
+        );
+    }
+
+    #[test]
+    fn property_color_r() {
+        let source = "\
+var c: Color
+func f():
+\tvar x = c.r
+";
+        assert_eq!(
+            infer_var_value(source),
+            Some(InferredType::Builtin("float"))
+        );
+    }
+
+    #[test]
+    fn property_rect2_position() {
+        let source = "\
+var r: Rect2
+func f():
+\tvar x = r.position
+";
+        assert_eq!(
+            infer_var_value(source),
+            Some(InferredType::Builtin("Vector2"))
+        );
+    }
+
+    #[test]
+    fn property_transform3d_origin() {
+        let source = "\
+var t: Transform3D
+func f():
+\tvar x = t.origin
+";
+        assert_eq!(
+            infer_var_value(source),
+            Some(InferredType::Builtin("Vector3"))
+        );
+    }
+
+    #[test]
+    fn property_unknown_returns_none() {
+        let source = "\
+var v: Vector2
+func f():
+\tvar x = v.nonexistent
+";
+        assert_eq!(infer_var_value(source), None);
+    }
+
+    #[test]
+    fn property_node2d_position_classdb() {
+        let source = "\
+var node: Node2D
+func f():
+\tvar x = node.position
+";
+        assert_eq!(
+            infer_var_value(source),
+            Some(InferredType::Builtin("Vector2"))
+        );
+    }
+
+    // ── Type narrowing after `is` checks ──────────────────────────
+
+    #[test]
+    fn narrowing_direct_is_guard() {
+        let source = "\
+var event: InputEvent
+func f():
+\tif event is InputEventKey:
+\t\tvar x = event
+";
+        // Inside `is` guard, event should be narrowed to InputEventKey
+        assert_eq!(
+            infer_var_value(source),
+            Some(InferredType::Class("InputEventKey".to_string()))
+        );
+    }
+
+    #[test]
+    fn no_narrowing_without_guard() {
+        let source = "\
+var event: InputEvent
+func f():
+\tvar x = event
+";
+        assert_eq!(
+            infer_var_value(source),
+            Some(InferredType::Class("InputEvent".to_string()))
+        );
+    }
+
+    // ── Preload/load type resolution ──────────────────────────────
+
+    #[test]
+    fn preload_tscn_returns_packed_scene() {
+        assert_eq!(
+            infer_var_value("func f():\n\tvar x = preload(\"res://scene.tscn\")\n"),
+            Some(InferredType::Class("PackedScene".to_string()))
+        );
+    }
+
+    #[test]
+    fn load_tscn_returns_packed_scene() {
+        assert_eq!(
+            infer_var_value("func f():\n\tvar x = load(\"res://scene.tscn\")\n"),
+            Some(InferredType::Class("PackedScene".to_string()))
+        );
+    }
+
+    #[test]
+    fn preload_png_returns_texture() {
+        assert_eq!(
+            infer_var_value("func f():\n\tvar x = preload(\"res://icon.png\")\n"),
+            Some(InferredType::Class("Texture2D".to_string()))
+        );
+    }
+
+    #[test]
+    fn preload_gd_returns_gdscript() {
+        assert_eq!(
+            infer_var_value("func f():\n\tvar x = preload(\"res://script.gd\")\n"),
+            Some(InferredType::Class("GDScript".to_string()))
+        );
+    }
+
+    #[test]
+    fn preload_shader_returns_shader() {
+        assert_eq!(
+            infer_var_value("func f():\n\tvar x = preload(\"res://effect.gdshader\")\n"),
+            Some(InferredType::Class("Shader".to_string()))
+        );
+    }
+
+    #[test]
+    fn load_non_string_returns_resource() {
+        assert_eq!(
+            infer_var_value("func f():\n\tvar x = load(some_var)\n"),
+            Some(InferredType::Class("Resource".to_string()))
+        );
+    }
+
     // ── Project-aware inference ────────────────────────────────────
 
     mod project_tests {
@@ -1372,6 +1767,43 @@ func f():
                 )],
             );
             assert_eq!(result, Some(InferredType::Variant));
+        }
+
+        #[test]
+        fn preload_gd_without_class_name_is_gdscript() {
+            let source = "\
+extends Node
+func f():
+\tvar x = preload(\"res://enemy.gd\")
+";
+            // resolve_preload requires the file to exist on disk, so in-memory
+            // tests fall back to extension-based resolution → GDScript
+            let result = infer_var_value_with_project(
+                source,
+                &[(
+                    "enemy.gd",
+                    "class_name BaseEnemy\nextends CharacterBody2D\n",
+                )],
+            );
+            assert_eq!(result, Some(InferredType::Class("GDScript".to_string())));
+        }
+
+        #[test]
+        fn cross_file_property_access() {
+            let source = "\
+extends Node
+var enemy: BaseEnemy
+func f():
+\tvar x = enemy.health
+";
+            let result = infer_var_value_with_project(
+                source,
+                &[(
+                    "base.gd",
+                    "class_name BaseEnemy\nextends CharacterBody2D\nvar health: int\n",
+                )],
+            );
+            assert_eq!(result, Some(InferredType::Builtin("int")));
         }
     }
 }
