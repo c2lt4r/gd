@@ -7,13 +7,13 @@ Built with [tree-sitter-gdscript](https://github.com/PrestonKnopp/tree-sitter-gd
 ## Features
 
 - **Format** GDScript files with an AST-based formatter aligned to the [GDScript style guide](https://docs.godotengine.org/en/stable/tutorials/scripting/gdscript/gdscript_styleguide.html)
-- **Lint** with 78 built-in rules (17 auto-fixable), SARIF output for CI
+- **Lint** with 84 built-in rules (17 auto-fixable), SARIF output for CI
 - **Run**, **build**, **test**, and **clean** your Godot project from the terminal
 - **Watch** for file changes and auto-lint/format on save
 - **Manage addons** from Git or the Godot Asset Library (with lockfile and update support)
 - **Generate CI/CD** configurations for GitHub Actions and GitLab CI
 - **LSP server** with formatting, diagnostics, hover, go-to-definition, references, rename, completion, inlay hints, signature help, call hierarchy, find implementations, semantic tokens, workspace symbol search, and 16 refactoring commands
-- **Scene management** &mdash; create scenes, add/remove nodes, set properties, wire connections, attach/detach scripts &mdash; plus validate `.tscn`/`.tres` files and visualize scene hierarchies
+- **Scene management** &mdash; create scenes, add/remove/duplicate nodes, instance scenes, add sub-resources, batch-add nodes, set properties, wire connections, attach/detach scripts &mdash; plus validate `.tscn`/`.tres` files and visualize scene hierarchies
 - **Debug** a running Godot game via Godot's binary debug protocol &mdash; breakpoints, stepping, variable inspection, expression evaluation, live scene tree, node inspection, game speed control, and hot-reload
 - **Godot LSP proxy** &mdash; forward hover, completion, and go-to-definition to Godot's built-in LSP when the editor is running
 - **3D mesh editing** *(experimental)* &mdash; procedural mesh construction from Rust-native primitives, 2D profiles, and transforms with watertight boolean operations, quad-dominant topology, multi-part assembly, materials, and batch execution

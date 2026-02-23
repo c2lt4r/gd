@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.26] - 2026-02-23
+
+### Added
+- **`gd scene add-instance`** — instance a `.tscn` scene as a child node, with auto ext_resource management and PascalCase name inference from filename.
+- **`gd scene add-sub-resource`** — create `[sub_resource]` sections with `--prop key=value` pairs and optional `--node`/`--key` for automatic property assignment.
+- **`gd scene batch-add`** — add multiple nodes in one command using `--node Name:Type[:Parent]` format. Handles parent-then-child ordering.
+- **`gd scene duplicate-node`** — copy a node section with all properties, with optional reparenting via `--parent`.
+
+### Fixed
+- **`gd scene`: nested parent path resolution** — `--parent MarginContainer/VBoxContainer` now works correctly. `find_node()` resolves by computed path first, then bare name with ambiguity detection. All scene subcommands (`add-node`, `remove-node`, `set-property`, `attach-script`, `detach-script`) now accept full node paths.
+- **`gd scene set-property`: unambiguous node matching** — when multiple nodes share the same name, the resolved node's parent attribute is now used to match the correct `[node]` section header.
+
 ## [0.2.25] - 2026-02-23
 
 ### Improved

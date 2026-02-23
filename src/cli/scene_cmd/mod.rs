@@ -1,8 +1,12 @@
 mod add_connection;
+mod add_instance;
 mod add_node;
+mod add_sub_resource;
 mod attach_script;
+mod batch_add;
 mod create;
 mod detach_script;
+mod duplicate_node;
 mod remove_connection;
 mod remove_node;
 mod set_property;
@@ -29,8 +33,16 @@ pub enum SceneCommand {
     Create(CreateArgs),
     /// Add a node to a scene
     AddNode(AddNodeArgs),
+    /// Instance a .tscn scene as a child node
+    AddInstance(AddInstanceArgs),
+    /// Add a sub_resource section to a scene
+    AddSubResource(AddSubResourceArgs),
+    /// Add multiple nodes to a scene in one command
+    BatchAdd(BatchAddArgs),
     /// Remove a node (and its descendants) from a scene
     RemoveNode(RemoveNodeArgs),
+    /// Duplicate an existing node in a scene
+    DuplicateNode(DuplicateNodeArgs),
     /// Detach a script from a node in a scene
     DetachScript(DetachScriptArgs),
     /// Set a property on a node in a scene
@@ -172,12 +184,117 @@ pub struct RemoveConnectionArgs {
     pub dry_run: bool,
 }
 
+#[derive(Args)]
+pub struct AddInstanceArgs {
+    /// Path to the .tscn scene file to modify
+    pub scene: String,
+    /// Path to the .tscn scene to instance (res:// or relative)
+    pub instance: String,
+    /// Node name (defaults to PascalCase of the instance filename)
+    #[arg(long)]
+    pub name: Option<String>,
+    /// Parent node name or path (defaults to root)
+    #[arg(long)]
+    pub parent: Option<String>,
+    /// Preview changes without writing
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+#[derive(Args)]
+pub struct AddSubResourceArgs {
+    /// Path to the .tscn scene file
+    pub scene: String,
+    /// Resource type (e.g. BoxShape3D, StyleBoxFlat)
+    #[arg(long = "type")]
+    pub resource_type: String,
+    /// Properties as key=value pairs
+    #[arg(long = "prop", value_parser = parse_key_value)]
+    pub properties: Vec<(String, String)>,
+    /// Assign to this node's property
+    #[arg(long)]
+    pub node: Option<String>,
+    /// Property key for assignment (requires --node)
+    #[arg(long)]
+    pub key: Option<String>,
+    /// Preview changes without writing
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+#[derive(Args)]
+pub struct BatchAddArgs {
+    /// Path to the .tscn scene file
+    pub scene: String,
+    /// Nodes to add, as Name:Type or Name:Type:Parent
+    #[arg(long = "node", value_parser = parse_node_spec)]
+    pub nodes: Vec<NodeSpec>,
+    /// Preview changes without writing
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct NodeSpec {
+    pub name: String,
+    pub node_type: String,
+    pub parent: Option<String>,
+}
+
+#[derive(Args)]
+pub struct DuplicateNodeArgs {
+    /// Path to the .tscn scene file
+    pub scene: String,
+    /// Source node name or path to duplicate
+    #[arg(long)]
+    pub source_node: String,
+    /// Name for the duplicated node
+    #[arg(long)]
+    pub name: String,
+    /// Parent node for the duplicate (defaults to same parent as source)
+    #[arg(long)]
+    pub parent: Option<String>,
+    /// Preview changes without writing
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+fn parse_key_value(s: &str) -> std::result::Result<(String, String), String> {
+    let pos = s
+        .find('=')
+        .ok_or_else(|| format!("invalid key=value pair: no '=' found in '{s}'"))?;
+    Ok((s[..pos].to_string(), s[pos + 1..].to_string()))
+}
+
+fn parse_node_spec(s: &str) -> std::result::Result<NodeSpec, String> {
+    let parts: Vec<&str> = s.splitn(3, ':').collect();
+    match parts.len() {
+        2 => Ok(NodeSpec {
+            name: parts[0].to_string(),
+            node_type: parts[1].to_string(),
+            parent: None,
+        }),
+        3 => Ok(NodeSpec {
+            name: parts[0].to_string(),
+            node_type: parts[1].to_string(),
+            parent: Some(parts[2].to_string()),
+        }),
+        _ => Err(format!(
+            "invalid node spec '{s}': expected Name:Type or Name:Type:Parent"
+        )),
+    }
+}
+
 pub fn exec(args: &SceneArgs) -> Result<()> {
     match &args.command {
         SceneCommand::AttachScript(a) => attach_script::exec_attach_script(a),
         SceneCommand::Create(a) => create::exec_create(a),
         SceneCommand::AddNode(a) => add_node::exec_add_node(a),
+        SceneCommand::AddInstance(a) => add_instance::exec_add_instance(a),
+        SceneCommand::AddSubResource(a) => add_sub_resource::exec_add_sub_resource(a),
+        SceneCommand::BatchAdd(a) => batch_add::exec_batch_add(a),
         SceneCommand::RemoveNode(a) => remove_node::exec_remove_node(a),
+        SceneCommand::DuplicateNode(a) => duplicate_node::exec_duplicate_node(a),
         SceneCommand::DetachScript(a) => detach_script::exec_detach_script(a),
         SceneCommand::SetProperty(a) => set_property::exec_set_property(a),
         SceneCommand::AddConnection(a) => add_connection::exec_add_connection(a),
@@ -198,6 +315,23 @@ pub(crate) fn next_ext_resource_id(ext_resources: &[scene::ExtResource]) -> Stri
         .max()
         .unwrap_or(0);
     (max_num + 1).to_string()
+}
+
+/// Generate the next sub_resource ID in `TypeName_N` format.
+pub(crate) fn next_sub_resource_id(
+    sub_resources: &[scene::SubResource],
+    type_name: &str,
+) -> String {
+    let mut max_n = 0u32;
+    let prefix = format!("{type_name}_");
+    for sr in sub_resources {
+        if let Some(suffix) = sr.id.strip_prefix(&prefix)
+            && let Ok(n) = suffix.parse::<u32>()
+        {
+            max_n = max_n.max(n);
+        }
+    }
+    format!("{type_name}_{}", max_n + 1)
 }
 
 /// Check if a line starts a non-ext_resource section.
@@ -285,35 +419,45 @@ pub(crate) fn compute_node_path(node: &scene::SceneNode, _data: &scene::SceneDat
 }
 
 /// Compute the `parent=` attribute value for a child of the given target node.
-pub(crate) fn parent_attr_for_node(target_name: &str, data: &scene::SceneData) -> Result<String> {
-    // Find the target node
-    let target = data
-        .nodes
-        .iter()
-        .find(|n| n.name == target_name)
-        .ok_or_else(|| miette!("Node '{}' not found in scene", target_name))?;
-
-    // If target is root (no parent), children use parent="."
-    if target.parent.is_none() {
-        return Ok(".".to_string());
-    }
-
-    let parent = target.parent.as_deref().unwrap();
-    if parent == "." {
-        return Ok(target_name.to_string());
-    }
-    Ok(format!("{parent}/{target_name}"))
+pub(crate) fn parent_attr_for_node(target_ref: &str, data: &scene::SceneData) -> Result<String> {
+    let target = find_node(data, target_ref)?;
+    Ok(compute_node_path(target, data))
 }
 
-/// Find a node by name in the scene data, returning an error if not found.
+/// Find a node by name or path in the scene data.
+///
+/// First tries matching by computed path (e.g. `MarginContainer/VBoxContainer`),
+/// then falls back to bare name. If bare name is ambiguous (2+ nodes), errors
+/// with a hint to use the full path.
 pub(crate) fn find_node<'a>(
     data: &'a scene::SceneData,
     name: &str,
 ) -> Result<&'a scene::SceneNode> {
-    data.nodes
+    // Try matching by computed path first
+    if let Some(node) = data
+        .nodes
         .iter()
-        .find(|n| n.name == name)
-        .ok_or_else(|| miette!("Node '{}' not found in scene", name))
+        .find(|n| compute_node_path(n, data) == name)
+    {
+        return Ok(node);
+    }
+
+    // Fall back to bare name match
+    let matches: Vec<&scene::SceneNode> = data.nodes.iter().filter(|n| n.name == name).collect();
+
+    match matches.len() {
+        0 => Err(miette!("Node '{}' not found in scene", name)),
+        1 => Ok(matches[0]),
+        _ => {
+            let paths: Vec<String> = matches.iter().map(|n| compute_node_path(n, data)).collect();
+            Err(miette!(
+                "Ambiguous node name '{}' — found {} matches. Use a full path: {}",
+                name,
+                matches.len(),
+                paths.join(", ")
+            ))
+        }
+    }
 }
 
 /// Extract the ext_resource ID from a value like `ExtResource("1_abc")`.

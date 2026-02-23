@@ -375,7 +375,8 @@ fn set_property_new() {
 
 [node name="Player" type="CharacterBody2D" parent="."]
 "#;
-    let result = set_property::apply_set_property(source, "Player", "visible", "false").unwrap();
+    let result =
+        set_property::apply_set_property(source, "Player", Some("."), "visible", "false").unwrap();
     let lines: Vec<&str> = result.lines().collect();
     let node_idx = lines
         .iter()
@@ -393,7 +394,8 @@ fn set_property_update_existing() {
 [node name="Player" type="CharacterBody2D" parent="."]
 visible = true
 "#;
-    let result = set_property::apply_set_property(source, "Player", "visible", "false").unwrap();
+    let result =
+        set_property::apply_set_property(source, "Player", Some("."), "visible", "false").unwrap();
     assert!(result.contains("visible = false"));
     // Should not have two visible lines
     assert_eq!(result.matches("visible").count(), 1);
@@ -405,7 +407,7 @@ fn set_property_node_not_found() {
 
 [node name="Root" type="Node2D"]
 "#;
-    let result = set_property::apply_set_property(source, "Nonexistent", "key", "val");
+    let result = set_property::apply_set_property(source, "Nonexistent", Some("."), "key", "val");
     assert!(result.is_err());
 }
 
@@ -418,7 +420,8 @@ fn set_property_with_blank_line_before_existing() {
                   \n\
                   visible = true\n\
                   position = Vector2(100, 200)\n";
-    let result = set_property::apply_set_property(source, "Player", "visible", "false").unwrap();
+    let result =
+        set_property::apply_set_property(source, "Player", Some("."), "visible", "false").unwrap();
     assert!(result.contains("visible = false"));
     // Must not have duplicates
     assert_eq!(
@@ -436,7 +439,8 @@ fn set_property_replaces_multiline_value() {
                   [node name=\"Player\" type=\"CharacterBody2D\" parent=\".\"]\n\
                   data = [\n  \"a\",\n  \"b\"\n]\n\
                   speed = 100\n";
-    let result = set_property::apply_set_property(source, "Player", "data", "[\"new\"]").unwrap();
+    let result =
+        set_property::apply_set_property(source, "Player", Some("."), "data", "[\"new\"]").unwrap();
     assert!(result.contains("data = [\"new\"]"));
     assert!(!result.contains("\"a\""));
     assert!(!result.contains("\"b\""));
@@ -673,5 +677,476 @@ fn remove_node_not_found_error() {
 [node name="Root" type="Node2D"]
 "#;
     let result = remove_node::apply_remove_node(source, "Nonexistent");
+    assert!(result.is_err());
+}
+
+// ── find_node path support ──────────────────────────────────────────────────
+
+fn make_nested_scene_data() -> SceneData {
+    SceneData {
+        ext_resources: Vec::new(),
+        sub_resources: Vec::new(),
+        nodes: vec![
+            SceneNode {
+                name: "Root".to_string(),
+                type_name: Some("Control".to_string()),
+                parent: None,
+                instance: None,
+                script: None,
+                groups: Vec::new(),
+                properties: Vec::new(),
+            },
+            SceneNode {
+                name: "MarginContainer".to_string(),
+                type_name: Some("MarginContainer".to_string()),
+                parent: Some(".".to_string()),
+                instance: None,
+                script: None,
+                groups: Vec::new(),
+                properties: Vec::new(),
+            },
+            SceneNode {
+                name: "VBoxContainer".to_string(),
+                type_name: Some("VBoxContainer".to_string()),
+                parent: Some("MarginContainer".to_string()),
+                instance: None,
+                script: None,
+                groups: Vec::new(),
+                properties: Vec::new(),
+            },
+        ],
+        connections: Vec::new(),
+    }
+}
+
+#[test]
+fn find_node_by_path() {
+    let data = make_nested_scene_data();
+    let node = find_node(&data, "MarginContainer/VBoxContainer").unwrap();
+    assert_eq!(node.name, "VBoxContainer");
+}
+
+#[test]
+fn find_node_by_simple_name() {
+    let data = make_nested_scene_data();
+    let node = find_node(&data, "MarginContainer").unwrap();
+    assert_eq!(node.name, "MarginContainer");
+}
+
+#[test]
+fn find_node_root_by_dot() {
+    let data = make_nested_scene_data();
+    let node = find_node(&data, ".").unwrap();
+    assert_eq!(node.name, "Root");
+}
+
+#[test]
+fn find_node_ambiguous_error() {
+    // Two nodes named "Btn" at different nesting levels (neither is a direct
+    // child of root, so bare-name "Btn" is genuinely ambiguous).
+    let data = SceneData {
+        ext_resources: Vec::new(),
+        sub_resources: Vec::new(),
+        nodes: vec![
+            SceneNode {
+                name: "Root".to_string(),
+                type_name: Some("Node2D".to_string()),
+                parent: None,
+                instance: None,
+                script: None,
+                groups: Vec::new(),
+                properties: Vec::new(),
+            },
+            SceneNode {
+                name: "PanelA".to_string(),
+                type_name: Some("Panel".to_string()),
+                parent: Some(".".to_string()),
+                instance: None,
+                script: None,
+                groups: Vec::new(),
+                properties: Vec::new(),
+            },
+            SceneNode {
+                name: "Btn".to_string(),
+                type_name: Some("Button".to_string()),
+                parent: Some("PanelA".to_string()),
+                instance: None,
+                script: None,
+                groups: Vec::new(),
+                properties: Vec::new(),
+            },
+            SceneNode {
+                name: "PanelB".to_string(),
+                type_name: Some("Panel".to_string()),
+                parent: Some(".".to_string()),
+                instance: None,
+                script: None,
+                groups: Vec::new(),
+                properties: Vec::new(),
+            },
+            SceneNode {
+                name: "Btn".to_string(),
+                type_name: Some("Button".to_string()),
+                parent: Some("PanelB".to_string()),
+                instance: None,
+                script: None,
+                groups: Vec::new(),
+                properties: Vec::new(),
+            },
+        ],
+        connections: Vec::new(),
+    };
+    let result = find_node(&data, "Btn");
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("Ambiguous"), "expected ambiguous error: {err}");
+    // But using full path resolves unambiguously
+    let node = find_node(&data, "PanelA/Btn").unwrap();
+    assert_eq!(node.parent.as_deref(), Some("PanelA"));
+}
+
+#[test]
+fn parent_attr_for_nested_path() {
+    let data = make_nested_scene_data();
+    assert_eq!(
+        parent_attr_for_node("MarginContainer/VBoxContainer", &data).unwrap(),
+        "MarginContainer/VBoxContainer"
+    );
+}
+
+#[test]
+fn add_node_to_nested_parent() {
+    let source = r#"[gd_scene format=3]
+
+[node name="Root" type="Control"]
+
+[node name="MarginContainer" type="MarginContainer" parent="."]
+
+[node name="VBoxContainer" type="VBoxContainer" parent="MarginContainer"]
+"#;
+    let data = scene::parse_scene(source).unwrap();
+    let parent_attr = parent_attr_for_node("MarginContainer/VBoxContainer", &data).unwrap();
+    let result = add_node::insert_node(source, &data, "Label", "Label", &parent_attr).unwrap();
+    assert!(
+        result
+            .contains(r#"[node name="Label" type="Label" parent="MarginContainer/VBoxContainer"]"#)
+    );
+}
+
+#[test]
+fn set_property_on_nested_node() {
+    let source = r#"[gd_scene format=3]
+
+[node name="Root" type="Control"]
+
+[node name="MarginContainer" type="MarginContainer" parent="."]
+
+[node name="VBoxContainer" type="VBoxContainer" parent="MarginContainer"]
+"#;
+    let result = set_property::apply_set_property(
+        source,
+        "VBoxContainer",
+        Some("MarginContainer"),
+        "visible",
+        "false",
+    )
+    .unwrap();
+    assert!(result.contains("visible = false"));
+    let lines: Vec<&str> = result.lines().collect();
+    let node_idx = lines
+        .iter()
+        .position(|l| l.contains("name=\"VBoxContainer\""))
+        .unwrap();
+    assert_eq!(lines[node_idx + 1], "visible = false");
+}
+
+// ── add_instance ────────────────────────────────────────────────────────────
+
+#[test]
+fn add_instance_basic() {
+    let source = r#"[gd_scene format=3]
+
+[node name="Root" type="Node2D"]
+"#;
+    let data = scene::parse_scene(source).unwrap();
+    let result =
+        add_instance::insert_instance(source, &data, "Weapon", ".", "res://weapon.tscn", "1", true)
+            .unwrap();
+    assert!(
+        result.contains(r#"[ext_resource type="PackedScene" path="res://weapon.tscn" id="1"]"#)
+    );
+    assert!(result.contains(r#"[node name="Weapon" parent="." instance=ExtResource("1")]"#));
+    // Instance node line should NOT have type= attribute
+    let weapon_line = result
+        .lines()
+        .find(|l| l.contains("name=\"Weapon\""))
+        .unwrap();
+    assert!(!weapon_line.contains("type="));
+}
+
+#[test]
+fn add_instance_with_existing_ext_resources() {
+    let source = r#"[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://root.gd" id="1_abc"]
+
+[node name="Root" type="Node2D"]
+script = ExtResource("1_abc")
+"#;
+    let data = scene::parse_scene(source).unwrap();
+    let result =
+        add_instance::insert_instance(source, &data, "Enemy", ".", "res://enemy.tscn", "2", true)
+            .unwrap();
+    assert!(result.contains(r#"path="res://root.gd""#));
+    assert!(result.contains(r#"path="res://enemy.tscn""#));
+    assert!(result.contains("load_steps=3"));
+}
+
+#[test]
+fn add_instance_reuses_existing_ext() {
+    let source = r#"[gd_scene load_steps=2 format=3]
+
+[ext_resource type="PackedScene" path="res://weapon.tscn" id="1"]
+
+[node name="Root" type="Node2D"]
+"#;
+    let data = scene::parse_scene(source).unwrap();
+    let result = add_instance::insert_instance(
+        source,
+        &data,
+        "Weapon",
+        ".",
+        "res://weapon.tscn",
+        "1",
+        false,
+    )
+    .unwrap();
+    // Should not add a second ext_resource
+    assert_eq!(result.matches("[ext_resource").count(), 1);
+    // load_steps should NOT be incremented
+    assert!(result.contains("load_steps=2"));
+}
+
+#[test]
+fn add_instance_duplicate_name_error() {
+    let source = r#"[gd_scene format=3]
+
+[node name="Root" type="Node2D"]
+
+[node name="Weapon" type="Sprite2D" parent="."]
+"#;
+    let data = scene::parse_scene(source).unwrap();
+    let result =
+        add_instance::insert_instance(source, &data, "Weapon", ".", "res://weapon.tscn", "1", true);
+    assert!(result.is_err());
+}
+
+#[test]
+fn add_instance_nested_parent() {
+    let source = r#"[gd_scene format=3]
+
+[node name="Root" type="Node2D"]
+
+[node name="UI" type="Control" parent="."]
+
+[node name="Panel" type="Panel" parent="UI"]
+"#;
+    let data = scene::parse_scene(source).unwrap();
+    let result = add_instance::insert_instance(
+        source,
+        &data,
+        "Dialog",
+        "UI/Panel",
+        "res://dialog.tscn",
+        "1",
+        true,
+    )
+    .unwrap();
+    assert!(result.contains(r#"parent="UI/Panel""#));
+}
+
+// ── add_sub_resource ────────────────────────────────────────────────────────
+
+#[test]
+fn add_sub_resource_basic() {
+    let source = r#"[gd_scene format=3]
+
+[node name="Root" type="Node2D"]
+"#;
+    let result = add_sub_resource::insert_sub_resource(
+        source,
+        "BoxShape3D",
+        "BoxShape3D_1",
+        &[("size".to_string(), "Vector3(1, 1, 1)".to_string())],
+    );
+    assert!(result.contains(r#"[sub_resource type="BoxShape3D" id="BoxShape3D_1"]"#));
+    assert!(result.contains("size = Vector3(1, 1, 1)"));
+    // Sub-resource should appear before nodes
+    let sub_idx = result.find("[sub_resource").unwrap();
+    let node_idx = result.find("[node").unwrap();
+    assert!(sub_idx < node_idx);
+}
+
+#[test]
+fn add_sub_resource_increments_load_steps() {
+    let source = r#"[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://test.gd" id="1"]
+
+[node name="Root" type="Node2D"]
+"#;
+    let result =
+        add_sub_resource::insert_sub_resource(source, "StyleBoxFlat", "StyleBoxFlat_1", &[]);
+    assert!(result.contains("load_steps=3"));
+}
+
+#[test]
+fn add_sub_resource_with_node_assignment() {
+    let source = r#"[gd_scene format=3]
+
+[node name="Root" type="Node3D"]
+
+[node name="Col" type="CollisionShape3D" parent="."]
+"#;
+    // First insert the sub-resource
+    let intermediate = add_sub_resource::insert_sub_resource(
+        source,
+        "BoxShape3D",
+        "BoxShape3D_1",
+        &[("size".to_string(), "Vector3(2, 2, 2)".to_string())],
+    );
+    // Then set the property on the node
+    let result = set_property::apply_set_property(
+        &intermediate,
+        "Col",
+        Some("."),
+        "shape",
+        r#"SubResource("BoxShape3D_1")"#,
+    )
+    .unwrap();
+    assert!(result.contains(r#"shape = SubResource("BoxShape3D_1")"#));
+}
+
+// ── next_sub_resource_id ────────────────────────────────────────────────────
+
+#[test]
+fn next_sub_resource_id_empty() {
+    assert_eq!(next_sub_resource_id(&[], "BoxShape3D"), "BoxShape3D_1");
+}
+
+#[test]
+fn next_sub_resource_id_increments() {
+    let subs = vec![
+        crate::core::scene::SubResource {
+            id: "BoxShape3D_1".to_string(),
+            type_name: "BoxShape3D".to_string(),
+            properties: Vec::new(),
+        },
+        crate::core::scene::SubResource {
+            id: "BoxShape3D_2".to_string(),
+            type_name: "BoxShape3D".to_string(),
+            properties: Vec::new(),
+        },
+    ];
+    assert_eq!(next_sub_resource_id(&subs, "BoxShape3D"), "BoxShape3D_3");
+}
+
+// ── batch_add ───────────────────────────────────────────────────────────────
+
+#[test]
+fn batch_add_multiple_nodes() {
+    let source = r#"[gd_scene format=3]
+
+[node name="Root" type="Node2D"]
+"#;
+    let data = scene::parse_scene(source).unwrap();
+    // First add Player
+    let source = add_node::insert_node(source, &data, "Player", "CharacterBody2D", ".").unwrap();
+    let data = scene::parse_scene(&source).unwrap();
+    // Then add Sprite as child of Player
+    let result = add_node::insert_node(&source, &data, "Sprite", "Sprite2D", "Player").unwrap();
+    assert!(result.contains(r#"name="Player""#));
+    assert!(result.contains(r#"[node name="Sprite" type="Sprite2D" parent="Player"]"#));
+}
+
+#[test]
+fn batch_add_parent_then_child() {
+    let source = r#"[gd_scene format=3]
+
+[node name="Root" type="Node2D"]
+"#;
+    let data = scene::parse_scene(source).unwrap();
+    let source = add_node::insert_node(source, &data, "UI", "Control", ".").unwrap();
+    let data = scene::parse_scene(&source).unwrap();
+    let result = add_node::insert_node(&source, &data, "Label", "Label", "UI").unwrap();
+    assert!(result.contains(r#"[node name="UI" type="Control" parent="."]"#));
+    assert!(result.contains(r#"[node name="Label" type="Label" parent="UI"]"#));
+}
+
+// ── duplicate_node ──────────────────────────────────────────────────────────
+
+#[test]
+fn duplicate_node_basic() {
+    let source = r#"[gd_scene format=3]
+
+[node name="Root" type="Node2D"]
+
+[node name="Player" type="CharacterBody2D" parent="."]
+speed = 100
+health = 3
+"#;
+    let data = scene::parse_scene(source).unwrap();
+    let result =
+        duplicate_node::apply_duplicate_node(source, &data, "Player", "Player2", None).unwrap();
+    assert!(result.contains(r#"[node name="Player2" type="CharacterBody2D" parent="."]"#));
+    // Duplicated node should have the same properties
+    let lines: Vec<&str> = result.lines().collect();
+    let dup_idx = lines
+        .iter()
+        .position(|l| l.contains("name=\"Player2\""))
+        .unwrap();
+    assert!(lines[dup_idx + 1].contains("speed = 100"));
+    assert!(lines[dup_idx + 2].contains("health = 3"));
+}
+
+#[test]
+fn duplicate_node_different_parent() {
+    let source = r#"[gd_scene format=3]
+
+[node name="Root" type="Node2D"]
+
+[node name="UI" type="Control" parent="."]
+
+[node name="Player" type="CharacterBody2D" parent="."]
+speed = 100
+"#;
+    let data = scene::parse_scene(source).unwrap();
+    let result =
+        duplicate_node::apply_duplicate_node(source, &data, "Player", "PlayerUI", Some("UI"))
+            .unwrap();
+    assert!(result.contains(r#"[node name="PlayerUI" type="CharacterBody2D" parent="UI"]"#));
+}
+
+#[test]
+fn duplicate_node_name_conflict_error() {
+    let source = r#"[gd_scene format=3]
+
+[node name="Root" type="Node2D"]
+
+[node name="Player" type="CharacterBody2D" parent="."]
+"#;
+    let data = scene::parse_scene(source).unwrap();
+    let result = duplicate_node::apply_duplicate_node(source, &data, "Player", "Player", None);
+    assert!(result.is_err());
+}
+
+#[test]
+fn duplicate_node_cannot_dup_root() {
+    let source = r#"[gd_scene format=3]
+
+[node name="Root" type="Node2D"]
+"#;
+    let data = scene::parse_scene(source).unwrap();
+    let result = duplicate_node::apply_duplicate_node(source, &data, "Root", "Root2", None);
     assert!(result.is_err());
 }

@@ -65,6 +65,14 @@ gd eval --format json "<expr>"         # Machine-readable output (stdout, stderr
 ## Scene
 gd scene create <path> --root-type <T>                  # Create new .tscn
 gd scene add-node <scene> --name <n> --type <T>         # Add child node (default parent: root)
+gd scene add-node <scene> --name <n> --type <T> --parent <path>  # Add to nested parent (e.g. UI/Panel)
+gd scene add-instance <scene> <instance.tscn>           # Instance scene (auto-names from filename)
+gd scene add-instance <scene> <instance.tscn> --name <n> --parent <path>
+gd scene add-sub-resource <scene> --type <T>            # Add sub_resource section
+gd scene add-sub-resource <scene> --type <T> --prop size=Vector3(1,1,1) --node <n> --key shape
+gd scene batch-add <scene> --node N1:Type1 --node N2:Type2:Parent  # Add multiple nodes
+gd scene duplicate-node <scene> --source-node <n> --name <new>     # Copy node with properties
+gd scene duplicate-node <scene> --source-node <n> --name <new> --parent <path>
 gd scene remove-node <scene> --name <n>                 # Remove node + descendants
 gd scene set-property <scene> --node <n> --key <k> --value <v>  # Set node property
 gd scene add-connection <scene> --signal <s> --from <n> --to <n> --method <m>
@@ -74,6 +82,7 @@ gd scene attach-script <scene> <script> --node <name>   # Attach to named node
 gd scene detach-script <scene>                          # Detach script from root
 gd scene detach-script <scene> --node <name>            # Detach from named node
 # All scene subcommands support --dry-run
+# Node args accept names (Player) or paths (UI/Panel/Label) for nested nodes
 
 ## Resource (.tres)
 gd resource create <path> --type <T>                    # Create new .tres

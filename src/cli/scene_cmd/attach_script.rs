@@ -10,7 +10,7 @@ use crate::core::scene;
 use crate::cprintln;
 
 use super::{
-    AttachScriptArgs, build_node_pattern, increment_load_steps, is_non_ext_section,
+    AttachScriptArgs, build_node_pattern, find_node, increment_load_steps, is_non_ext_section,
     next_ext_resource_id,
 };
 
@@ -49,10 +49,7 @@ pub(crate) fn exec_attach_script(args: &AttachScriptArgs) -> Result<()> {
 
     // Find target node
     let target_node = if let Some(ref name) = args.node {
-        data.nodes
-            .iter()
-            .find(|n| n.name == *name)
-            .ok_or_else(|| miette!("Node '{}' not found in scene", name))?
+        find_node(&data, name)?
     } else {
         data.nodes
             .first()

@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use miette::{Result, miette};
 use owo_colors::OwoColorize;
 
-use super::{SetPropertyArgs, read_and_parse_scene, write_or_dry_run};
+use super::{SetPropertyArgs, find_node, read_and_parse_scene, write_or_dry_run};
 use crate::cprintln;
 
 pub(crate) fn exec_set_property(args: &SetPropertyArgs) -> Result<()> {
@@ -12,8 +12,16 @@ pub(crate) fn exec_set_property(args: &SetPropertyArgs) -> Result<()> {
         return Err(miette!("Scene file not found: {}", args.scene));
     }
 
-    let (source, _data) = read_and_parse_scene(&path)?;
-    let result = apply_set_property(&source, &args.node, &args.key, &args.value)?;
+    let (source, data) = read_and_parse_scene(&path)?;
+    // Resolve the node first to get unambiguous matching info
+    let node = find_node(&data, &args.node)?;
+    let result = apply_set_property(
+        &source,
+        &node.name,
+        node.parent.as_deref(),
+        &args.key,
+        &args.value,
+    )?;
 
     write_or_dry_run(&path, &result, args.dry_run)?;
 
@@ -32,9 +40,13 @@ pub(crate) fn exec_set_property(args: &SetPropertyArgs) -> Result<()> {
 }
 
 /// Set or update a property on a node in the scene source text.
+///
+/// `node_parent` is used for unambiguous matching when multiple nodes share the
+/// same name. Pass `None` for root nodes (which have no `parent=` attribute).
 pub(crate) fn apply_set_property(
     source: &str,
     node_name: &str,
+    node_parent: Option<&str>,
     key: &str,
     value: &str,
 ) -> Result<String> {
@@ -53,7 +65,10 @@ pub(crate) fn apply_set_property(
         let trimmed = line.trim();
 
         // Detect entering the target node section
-        if trimmed.starts_with("[node ") && trimmed.contains(&node_pattern) {
+        if trimmed.starts_with("[node ")
+            && trimmed.contains(&node_pattern)
+            && matches_node_parent(trimmed, node_parent)
+        {
             in_target_node = true;
             node_found = true;
             result.push((*line).to_string());
@@ -139,5 +154,17 @@ fn looks_like_scene_property(trimmed: &str) -> bool {
                 .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '/')
     } else {
         false
+    }
+}
+
+/// Check if a `[node ...]` header line matches the expected parent attribute.
+/// Root nodes (parent=None) have no `parent=` attribute in the header.
+fn matches_node_parent(header_line: &str, expected_parent: Option<&str>) -> bool {
+    match expected_parent {
+        None => !header_line.contains("parent="),
+        Some(parent) => {
+            let pattern = format!("parent=\"{parent}\"");
+            header_line.contains(&pattern)
+        }
     }
 }

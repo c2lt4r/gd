@@ -9,7 +9,8 @@ use crate::cprintln;
 
 use super::{
     RemoveNodeArgs, clean_double_blanks, compute_node_path, decrement_load_steps,
-    extract_ext_resource_id, is_ext_resource_referenced, read_and_parse_scene, write_or_dry_run,
+    extract_ext_resource_id, find_node, is_ext_resource_referenced, read_and_parse_scene,
+    write_or_dry_run,
 };
 
 pub(crate) fn exec_remove_node(args: &RemoveNodeArgs) -> Result<()> {
@@ -20,16 +21,13 @@ pub(crate) fn exec_remove_node(args: &RemoveNodeArgs) -> Result<()> {
 
     let (source, data) = read_and_parse_scene(&path)?;
 
-    let target = data
-        .nodes
-        .iter()
-        .find(|n| n.name == args.name)
-        .ok_or_else(|| miette!("Node '{}' not found in scene", args.name))?;
+    let target = find_node(&data, &args.name)?;
     if target.parent.is_none() {
         return Err(miette!("Cannot remove root node '{}'", args.name));
     }
+    let target_name = target.name.clone();
 
-    let result = apply_remove_node(&source, &args.name)?;
+    let result = apply_remove_node(&source, &target_name)?;
 
     write_or_dry_run(&path, &result, args.dry_run)?;
 
