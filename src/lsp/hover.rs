@@ -146,13 +146,14 @@ fn resolve_hover_for_identifier(
             range: Some(node_range(current)),
         });
     }
-    // 6. Try builtin member as standalone identifier (GDScript allows
+    // 6. GDScript language keywords (preload, load — not in ClassDB utility functions)
+    if let Some(hover) = hover_gdscript_keyword(name, current) {
+        return Some(hover);
+    }
+    // 7. Try builtin/ClassDB member as standalone identifier (GDScript allows
     //    inherited members without self prefix: velocity, move_and_slide, etc.)
-    //    Resolve using the file's extends class when possible to pick the right
-    //    variant (e.g. CharacterBody3D.velocity vs CharacterBody2D.velocity).
-    if let Some(doc) = resolve_builtin_member_for_file(root, source, name)
-        .or_else(|| super::builtins::lookup_member(name))
-    {
+    //    Priority: class-specific builtin → ClassDB property/method → generic builtin.
+    if let Some(doc) = resolve_builtin_member_for_file(root, source, name) {
         return Some(Hover {
             contents: HoverContents::Markup(MarkupContent {
                 kind: MarkupKind::Markdown,
@@ -161,7 +162,19 @@ fn resolve_hover_for_identifier(
             range: Some(node_range(current)),
         });
     }
-    // 7. Check if this is an enum member (HOUSE inside enum { HOUSE, MART })
+    if let Some(hover) = resolve_classdb_member_for_file(root, source, name, current) {
+        return Some(hover);
+    }
+    if let Some(doc) = super::builtins::lookup_member(name) {
+        return Some(Hover {
+            contents: HoverContents::Markup(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: super::builtins::format_member_hover(doc),
+            }),
+            range: Some(node_range(current)),
+        });
+    }
+    // 8. Check if this is an enum member (HOUSE inside enum { HOUSE, MART })
     if let Some(parent) = current.parent()
         && parent.kind() == "enumerator"
     {
@@ -707,6 +720,49 @@ fn extract_doc_comment_from_root(root: &tree_sitter::Node, source: &str) -> Opti
     } else {
         Some(lines.join("\n"))
     }
+}
+
+/// Hover for GDScript language built-in keywords that aren't in ClassDB.
+fn hover_gdscript_keyword(name: &str, node: &tree_sitter::Node) -> Option<Hover> {
+    let (code, doc) = match name {
+        "preload" => (
+            "preload(path: String) -> Resource",
+            "Loads a resource from the filesystem at compile time. The path must be a constant string literal (not a variable). Returns a `Resource` subtype matching the file: `.tscn` → `PackedScene`, `.gd` → `GDScript`, `.png` → `CompressedTexture2D`, etc.\n\nUnlike `load()`, the resource is embedded into the compiled script, so there is no filesystem access at runtime.",
+        ),
+        "load" => (
+            "load(path: String) -> Resource",
+            "Loads a resource from the filesystem at runtime. Equivalent to `ResourceLoader.load()`. Returns `null` if the resource cannot be found.\n\nPrefer `preload()` when the path is known at compile time for better performance.",
+        ),
+        _ => return None,
+    };
+    Some(make_hover(code, node, Some(doc)))
+}
+
+/// Try to resolve a bare identifier as a ClassDB property or method using the
+/// file's extends class. Covers engine properties like `rotation` on Node3D.
+fn resolve_classdb_member_for_file(
+    root: &tree_sitter::Node,
+    source: &str,
+    name: &str,
+    ident_node: &tree_sitter::Node,
+) -> Option<Hover> {
+    let extends = super::completion::find_extends_class(*root, source)?;
+    // Try property
+    for (prop_name, prop_type, owner_class) in crate::class_db::class_properties(&extends) {
+        if prop_name == name {
+            let code = format!("{prop_type} {owner_class}.{prop_name}");
+            let doc = crate::class_db::property_doc(&extends, prop_name);
+            return Some(make_hover(&code, ident_node, doc));
+        }
+    }
+    // Try method
+    if let Some(ret) = crate::class_db::method_return_type(&extends, name) {
+        let owner = find_method_owner(&extends, name).unwrap_or(&extends);
+        let code = format!("{owner}.{name}() -> {ret}");
+        let doc = crate::class_db::method_doc(&extends, name);
+        return Some(make_hover(&code, ident_node, doc));
+    }
+    None
 }
 
 /// Try to resolve a builtin member using the file's extends class, walking the

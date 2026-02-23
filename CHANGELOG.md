@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.2.29] - 2026-02-23
+
+### Improved
+- **LSP hover: `preload`/`load` keywords** — hovering on `preload` or `load` now shows signature and description.
+- **LSP hover: bare member class priority** — bare identifiers like `rotation` now check ClassDB properties via the file's `extends` chain before falling back to the generic first-match. Fixes `rotation` showing `float Node2D.rotation` on a Node3D script (now correctly shows `Vector3 Node3D.rotation`).
+
 ## [0.2.28] - 2026-02-23
 
 ### Improved
