@@ -7,9 +7,7 @@ use std::path::{Path, PathBuf};
 use tree_sitter::Node;
 
 use crate::cprintln;
-use crate::core::config::{Config, find_project_root};
 use crate::core::project::GodotProject;
-use crate::lint::matches_ignore_pattern;
 use crate::lsp::workspace::WorkspaceIndex;
 
 #[derive(Args)]
@@ -88,18 +86,10 @@ pub fn exec(args: &OverviewArgs) -> Result<()> {
         std::env::current_dir().map_err(|e| miette!("Failed to get current directory: {e}"))?;
     let project = GodotProject::discover(&cwd)?;
     let root = &project.root;
-    let config = Config::load(&cwd)?;
-    let ignore_base = find_project_root(&cwd).unwrap_or_else(|| cwd.clone());
 
     let workspace = WorkspaceIndex::new(root.clone());
 
-    let files = collect_files(
-        &workspace,
-        root,
-        &args.paths,
-        &ignore_base,
-        &config.lint.ignore_patterns,
-    );
+    let files = collect_files(&workspace, root, &args.paths);
     let entries = build_entries(&workspace, &files, root);
     let signal_flow = build_signal_flow(&workspace, &files, root, &args.paths);
     let autoloads = build_autoloads(&workspace, root);
@@ -131,14 +121,9 @@ fn collect_files(
     workspace: &WorkspaceIndex,
     root: &Path,
     scope: &[String],
-    ignore_base: &Path,
-    ignore_patterns: &[String],
 ) -> Vec<(String, PathBuf)> {
     let mut files: Vec<(String, PathBuf)> = Vec::new();
     for (path, _content) in workspace.all_files() {
-        if matches_ignore_pattern(&path, ignore_base, ignore_patterns) {
-            continue;
-        }
         if let Ok(rel) = path.strip_prefix(root) {
             files.push((rel.to_slash_lossy().to_string(), path));
         }
