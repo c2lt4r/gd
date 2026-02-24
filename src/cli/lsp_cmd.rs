@@ -1701,7 +1701,27 @@ pub fn exec(args: LspArgs) -> Result<()> {
                 let project_root = crate::core::config::find_project_root(&anchor)
                     .ok_or_else(|| miette::miette!("no project.godot found"))?;
 
+                // Snapshot affected files for undo before applying
+                let mut snaps: std::collections::HashMap<std::path::PathBuf, Option<Vec<u8>>> =
+                    std::collections::HashMap::new();
+                for fe in &result.changes {
+                    let p = project_root.join(&fe.file);
+                    if let Ok(content) = std::fs::read(&p) {
+                        snaps.insert(p, Some(content));
+                    }
+                }
+
                 let count = crate::lsp::query::apply_rename(&result, &project_root)?;
+
+                // Record undo
+                let stack = crate::lsp::refactor::UndoStack::open(&project_root);
+                let _ = stack.record(
+                    "rename",
+                    &format!("rename {} → {}", result.symbol, result.new_name),
+                    &snaps,
+                    &project_root,
+                );
+
                 result.summary = Some(format!(
                     "Applied rename across {} file{}",
                     count,

@@ -1,5 +1,5 @@
-use std::collections::HashSet;
-use std::path::Path;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 
 use miette::Result;
 use serde::Serialize;
@@ -32,6 +32,7 @@ pub struct BulkRenameSkipped {
 
 /// Rename multiple symbols atomically. Applies renames sequentially,
 /// re-parsing between each to handle position shifts correctly.
+#[allow(clippy::too_many_lines)]
 pub fn bulk_rename(
     file: &Path,
     renames: &[(String, String)],
@@ -43,6 +44,7 @@ pub fn bulk_rename(
     let mut results = Vec::new();
     let mut skipped = Vec::new();
     let mut files_modified = HashSet::new();
+    let mut snaps: HashMap<PathBuf, Option<Vec<u8>>> = HashMap::new();
 
     for (old_name, new_name) in renames {
         // Re-read and re-parse to get current positions after previous renames
@@ -107,6 +109,13 @@ pub fn bulk_rename(
                     .sum();
 
                 if !dry_run {
+                    // Snapshot files before modification (only first time for each file)
+                    for fe in &rename_output.changes {
+                        let p = project_root.join(&fe.file);
+                        snaps
+                            .entry(p.clone())
+                            .or_insert_with(|| std::fs::read(&p).ok());
+                    }
                     crate::lsp::query::apply_rename(&rename_output, project_root)?;
                     for fe in &rename_output.changes {
                         files_modified.insert(fe.file.clone());
@@ -127,6 +136,21 @@ pub fn bulk_rename(
                 });
             }
         }
+    }
+
+    // Record undo if any renames were applied
+    if !dry_run && !snaps.is_empty() {
+        let rename_desc: Vec<String> = results
+            .iter()
+            .map(|r| format!("{}→{}", r.old_name, r.new_name))
+            .collect();
+        let stack = super::undo::UndoStack::open(project_root);
+        let _ = stack.record(
+            "bulk-rename",
+            &format!("bulk rename {}", rename_desc.join(", ")),
+            &snaps,
+            project_root,
+        );
     }
 
     Ok(BulkRenameOutput {

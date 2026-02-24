@@ -108,6 +108,14 @@ fn convert_to_code(
         .map_err(|e| miette::miette!("cannot read script: {e}"))?;
 
     let connect_call = build_connect_call(from, signal, method);
+
+    // Guard against duplicate .connect() calls (#26)
+    if script_source.contains(&connect_call) {
+        return Err(miette::miette!(
+            "duplicate: {connect_call} already exists in script"
+        ));
+    }
+
     let new_script = add_to_ready(&script_source, &connect_call)?;
 
     super::validate_no_new_errors(&script_source, &new_script)?;
@@ -706,6 +714,32 @@ mod tests {
         assert!(
             script.contains("$Button.pressed.connect(_on_button_pressed)"),
             "should have connect call, got:\n{script}"
+        );
+    }
+
+    #[test]
+    fn to_code_rejects_duplicate_connect() {
+        let temp = setup_project(&[
+            ("main.tscn", &basic_scene("main.gd")),
+            (
+                "main.gd",
+                "func _ready():\n\t$Button.pressed.connect(_on_button_pressed)\n\nfunc _on_button_pressed():\n\tprint(\"pressed\")\n",
+            ),
+        ]);
+        let result = convert_signal(
+            &temp.path().join("main.tscn"),
+            "pressed",
+            "Button",
+            "_on_button_pressed",
+            true,
+            false,
+            temp.path(),
+        );
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("duplicate"),
+            "expected duplicate error, got: {msg}"
         );
     }
 

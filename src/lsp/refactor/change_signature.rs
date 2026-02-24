@@ -196,6 +196,23 @@ pub fn change_signature(
     if dry_run {
         call_sites_updated = call_sites.len() as u32;
     } else {
+        // Snapshot all affected files for undo before any writes
+        let mut snaps: HashMap<std::path::PathBuf, Option<Vec<u8>>> = HashMap::new();
+        snaps.insert(file.to_path_buf(), Some(source.as_bytes().to_vec()));
+        // Pre-read call-site files for snapshot
+        {
+            let mut seen: std::collections::HashSet<std::path::PathBuf> =
+                std::collections::HashSet::new();
+            seen.insert(file.to_path_buf());
+            for (path, _, _) in &call_sites {
+                if seen.insert(path.clone())
+                    && let Ok(content) = std::fs::read(path)
+                {
+                    snaps.insert(path.clone(), Some(content));
+                }
+            }
+        }
+
         // 1. Update function definition (signature + body renames)
         let mut new_source = source.clone();
         if let Some(pn) = params_node {
@@ -280,6 +297,15 @@ pub fn change_signature(
                     .map_err(|e| miette::miette!("cannot write {}: {e}", call_file.display()))?;
             }
         }
+
+        // Record undo
+        let stack = super::undo::UndoStack::open(project_root);
+        let _ = stack.record(
+            "change-signature",
+            &format!("change signature of {name}"),
+            &snaps,
+            project_root,
+        );
     }
 
     // Check for non-call references (variable references to the function name)

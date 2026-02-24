@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.44] - 2026-02-24
+
+### Added
+- **Undo support for 10 additional commands** — `introduce-parameter`, `inline-delegate`, `bulk-delete-symbol`, `replace-body`, `insert`, `replace-symbol`, `edit-range`, `change-signature`, `bulk-rename`, and `rename` now all record undo entries. Every source-editing refactoring command is now undoable.
+
+### Fixed
+- **`gd lsp convert-signal --to-code`** — reject duplicate `.connect()` calls instead of silently creating them when the script already contains the matching connect call.
+
 ## [0.2.43] - 2026-02-24
 
 ### Added

@@ -1,4 +1,5 @@
-use std::path::Path;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 use miette::Result;
 use serde::Serialize;
@@ -150,6 +151,17 @@ pub fn replace_body(
     if !dry_run {
         std::fs::write(file, &final_source)
             .map_err(|e| miette::miette!("cannot write file: {e}"))?;
+
+        // Record undo
+        let mut snaps: HashMap<PathBuf, Option<Vec<u8>>> = HashMap::new();
+        snaps.insert(file.to_path_buf(), Some(source.as_bytes().to_vec()));
+        let stack = super::undo::UndoStack::open(project_root);
+        let _ = stack.record(
+            "replace-body",
+            &format!("replace body of {name}"),
+            &snaps,
+            project_root,
+        );
     }
 
     Ok(EditOutput {
@@ -231,6 +243,17 @@ pub fn insert(
     if !dry_run {
         std::fs::write(file, &final_source)
             .map_err(|e| miette::miette!("cannot write file: {e}"))?;
+
+        // Record undo
+        let mut snaps: HashMap<PathBuf, Option<Vec<u8>>> = HashMap::new();
+        snaps.insert(file.to_path_buf(), Some(source.as_bytes().to_vec()));
+        let stack = super::undo::UndoStack::open(project_root);
+        let _ = stack.record(
+            "insert",
+            &format!("insert near {anchor_name}"),
+            &snaps,
+            project_root,
+        );
     }
 
     Ok(EditOutput {
@@ -313,6 +336,17 @@ pub fn replace_symbol(
     if !dry_run {
         std::fs::write(file, &final_source)
             .map_err(|e| miette::miette!("cannot write file: {e}"))?;
+
+        // Record undo
+        let mut snaps: HashMap<PathBuf, Option<Vec<u8>>> = HashMap::new();
+        snaps.insert(file.to_path_buf(), Some(source.as_bytes().to_vec()));
+        let stack = super::undo::UndoStack::open(project_root);
+        let _ = stack.record(
+            "replace-symbol",
+            &format!("replace symbol {name}"),
+            &snaps,
+            project_root,
+        );
     }
 
     Ok(EditOutput {
@@ -371,6 +405,17 @@ pub fn edit_range(
         if !dry_run {
             std::fs::write(file, &final_source)
                 .map_err(|e| miette::miette!("cannot write file: {e}"))?;
+
+            // Record undo
+            let mut snaps: HashMap<PathBuf, Option<Vec<u8>>> = HashMap::new();
+            snaps.insert(file.to_path_buf(), Some(source.as_bytes().to_vec()));
+            let stack = super::undo::UndoStack::open(project_root);
+            let _ = stack.record(
+                "edit-range",
+                &format!("edit range {start_line}-{end_line}"),
+                &snaps,
+                project_root,
+            );
         }
 
         return Ok(EditOutput {
@@ -424,6 +469,17 @@ pub fn edit_range(
     if !dry_run {
         std::fs::write(file, &final_source)
             .map_err(|e| miette::miette!("cannot write file: {e}"))?;
+
+        // Record undo
+        let mut snaps: HashMap<PathBuf, Option<Vec<u8>>> = HashMap::new();
+        snaps.insert(file.to_path_buf(), Some(source.as_bytes().to_vec()));
+        let stack = super::undo::UndoStack::open(project_root);
+        let _ = stack.record(
+            "edit-range",
+            &format!("edit range {start_line}-{end_line}"),
+            &snaps,
+            project_root,
+        );
     }
 
     Ok(EditOutput {

@@ -1,4 +1,5 @@
-use std::path::Path;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 use miette::Result;
 use serde::Serialize;
@@ -128,6 +129,18 @@ pub fn bulk_delete_symbol(
         normalize_blank_lines(&mut new_source);
         super::validate_no_new_errors(&source, &new_source)?;
         std::fs::write(file, &new_source).map_err(|e| miette::miette!("cannot write file: {e}"))?;
+
+        // Record undo
+        let mut snaps: HashMap<PathBuf, Option<Vec<u8>>> = HashMap::new();
+        snaps.insert(file.to_path_buf(), Some(source.as_bytes().to_vec()));
+        let stack = super::undo::UndoStack::open(project_root);
+        let deleted_names: Vec<&str> = deletions.iter().map(|(n, _, _, _)| n.as_str()).collect();
+        let _ = stack.record(
+            "bulk-delete-symbol",
+            &format!("bulk delete {}", deleted_names.join(", ")),
+            &snaps,
+            project_root,
+        );
     }
 
     // Reverse to report in input order (they were sorted descending)
