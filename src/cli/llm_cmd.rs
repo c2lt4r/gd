@@ -250,6 +250,7 @@ gd lsp scene-info <f>                             # Scene structure from .tscn
 
 # Refactoring (human-readable default, --format json for structured output, --dry-run to preview)
 gd lsp delete-symbol <f> --name <sym>              # Also: --line <L>, --force
+gd lsp delete-symbol <f> --names "a,b,c"          # Bulk delete multiple symbols in one pass
 gd lsp move-symbol --name <sym> --from <f> --to <f> [--update-callers]
 gd lsp extract-method <f> --start-line <L> --end-line <L> --name <name>
 gd lsp inline-method <f> --name <sym>
@@ -265,8 +266,8 @@ gd lsp convert-signal <f.tscn> --signal <sig> --from <node> --method <m> --to-sc
 gd lsp extract-guards <f> --name <name>            # Flatten nested ifs to early return/continue guards
 gd lsp split-declaration <f> --line <L>            # Split var x = expr into declaration + assignment
 gd lsp join-declaration <f> --line <L>             # Join bare var declaration with following assignment
-gd lsp bulk-delete-symbol <f> --names "a,b,c"
 gd lsp bulk-rename <f> --renames "old1:new1,old2:new2"
+gd lsp bulk-rename <f> --renames "old:new" --scope file  # Restrict renames to target file only
 gd lsp inline-delegate <f> --name <sym>
 gd lsp extract-class <f> --symbols "a,b" --to <new_file>
 gd lsp replace-body <f> --name <sym>               # Reads new body from stdin

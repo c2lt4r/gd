@@ -1307,10 +1307,10 @@ fn test_lsp_introduce_parameter_dry_run() {
     assert!(!content.contains("msg"), "dry-run should not modify file");
 }
 
-// ── bulk-delete-symbol ──────────────────────────────────────────────────────
+// ── delete-symbol --names (bulk mode) ───────────────────────────────────────
 
 #[test]
-fn test_lsp_bulk_delete_symbol() {
+fn test_lsp_delete_symbol_names_bulk() {
     let temp = setup_gd_project(&[(
         "player.gd",
         "var a = 1\nvar b = 2\nvar c = 3\n\n\nfunc keep():\n\tpass\n",
@@ -1319,7 +1319,7 @@ fn test_lsp_bulk_delete_symbol() {
     let output = gd_bin()
         .args([
             "refactor",
-            "bulk-delete-symbol",
+            "delete-symbol",
             "player.gd",
             "--names",
             "a,b,c",
@@ -1328,7 +1328,7 @@ fn test_lsp_bulk_delete_symbol() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd refactor bulk-delete-symbol");
+        .expect("Failed to run gd refactor delete-symbol --names");
 
     assert!(
         output.status.success(),
@@ -1347,7 +1347,7 @@ fn test_lsp_bulk_delete_symbol() {
 }
 
 #[test]
-fn test_lsp_bulk_delete_symbol_skips_referenced() {
+fn test_lsp_delete_symbol_names_skips_referenced() {
     let temp = setup_gd_project(&[(
         "player.gd",
         "var speed = 10\nvar unused = 0\n\n\nfunc run():\n\tprint(speed)\n",
@@ -1356,7 +1356,7 @@ fn test_lsp_bulk_delete_symbol_skips_referenced() {
     let output = gd_bin()
         .args([
             "refactor",
-            "bulk-delete-symbol",
+            "delete-symbol",
             "player.gd",
             "--names",
             "speed,unused",
@@ -1365,7 +1365,7 @@ fn test_lsp_bulk_delete_symbol_skips_referenced() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd refactor bulk-delete-symbol");
+        .expect("Failed to run gd refactor delete-symbol --names");
 
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -1376,13 +1376,13 @@ fn test_lsp_bulk_delete_symbol_skips_referenced() {
 }
 
 #[test]
-fn test_lsp_bulk_delete_symbol_dry_run() {
+fn test_lsp_delete_symbol_names_dry_run() {
     let temp = setup_gd_project(&[("player.gd", "var a = 1\nvar b = 2\n")]);
 
     let output = gd_bin()
         .args([
             "refactor",
-            "bulk-delete-symbol",
+            "delete-symbol",
             "player.gd",
             "--names",
             "a,b",
@@ -1392,7 +1392,7 @@ fn test_lsp_bulk_delete_symbol_dry_run() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd refactor bulk-delete-symbol --dry-run");
+        .expect("Failed to run gd refactor delete-symbol --names --dry-run");
 
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -1495,6 +1495,66 @@ fn test_lsp_bulk_rename_some_not_found() {
     assert_eq!(json["renames"].as_array().unwrap().len(), 1);
     assert_eq!(json["skipped"].as_array().unwrap().len(), 1);
     assert_eq!(json["skipped"][0]["old_name"], "nonexistent");
+}
+
+#[test]
+fn test_lsp_bulk_rename_scope_file() {
+    let temp = setup_gd_project(&[
+        (
+            "player.gd",
+            "var speed = 10\n\n\nfunc _ready():\n\tprint(speed)\n",
+        ),
+        (
+            "enemy.gd",
+            "const Player = preload(\"res://player.gd\")\n\n\nfunc _ready():\n\tvar p = Player.new()\n\tprint(p.speed)\n",
+        ),
+    ]);
+
+    // Rename with --scope file should only modify player.gd, not enemy.gd
+    let output = gd_bin()
+        .args([
+            "refactor",
+            "bulk-rename",
+            "player.gd",
+            "--renames",
+            "speed:velocity",
+            "--scope",
+            "file",
+            "--format",
+            "json",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd refactor bulk-rename --scope file");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["applied"], true);
+    assert_eq!(json["renames"].as_array().unwrap().len(), 1);
+    // files_modified should be 1 (only the target file)
+    assert_eq!(json["files_modified"], 1);
+
+    // player.gd should have the rename
+    let player = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+    assert!(
+        player.contains("velocity"),
+        "player.gd should have the rename"
+    );
+    assert!(
+        !player.contains("var speed"),
+        "old name should be gone in player.gd"
+    );
+
+    // enemy.gd should NOT be modified
+    let enemy = fs::read_to_string(temp.path().join("enemy.gd")).unwrap();
+    assert!(
+        enemy.contains("p.speed"),
+        "enemy.gd should still reference the old name"
+    );
 }
 
 // ── inline-delegate ─────────────────────────────────────────────────────────

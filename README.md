@@ -945,7 +945,7 @@ gd refactor delete-symbol player.gd --name unused_func
 gd refactor delete-symbol player.gd --name unused_func --force
 
 # Delete multiple symbols at once
-gd refactor bulk-delete-symbol player.gd --names "a,b,c"
+gd refactor delete-symbol player.gd --names "a,b,c"
 
 # Move a symbol between files
 gd refactor move-symbol --name helper --from utils.gd --to helpers.gd
@@ -967,6 +967,9 @@ gd refactor inline-delegate player.gd --name attack
 
 # Rename multiple symbols atomically
 gd refactor bulk-rename player.gd --renames "speed:velocity,health:hp"
+
+# Rename symbols in a single file only (skip cross-file references)
+gd refactor bulk-rename player.gd --renames "speed:velocity" --scope file
 
 # Change function signature (add/remove/reorder/rename params)
 gd refactor change-signature player.gd --name move \

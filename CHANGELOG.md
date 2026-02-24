@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.4] - 2026-02-24
+
+### Changed
+- **`bulk-delete-symbol` merged into `delete-symbol --names`** — `delete-symbol` now accepts `--names "a,b,c"` for bulk deletion. The standalone `bulk-delete-symbol` command is removed. (closes #35)
+
+### Added
+- **`bulk-rename --scope file`** — new `--scope` flag (`file` or `project`, default `project`) restricts renames to the target file only, skipping cross-file references. (closes #35)
+
 ## [0.3.3] - 2026-02-24
 
 ### Fixed

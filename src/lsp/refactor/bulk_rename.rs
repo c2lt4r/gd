@@ -32,11 +32,13 @@ pub struct BulkRenameSkipped {
 
 /// Rename multiple symbols atomically. Applies renames sequentially,
 /// re-parsing between each to handle position shifts correctly.
+/// When `file_only` is true, restrict renames to only modify the target file.
 #[allow(clippy::too_many_lines)]
 pub fn bulk_rename(
     file: &Path,
     renames: &[(String, String)],
     dry_run: bool,
+    file_only: bool,
     project_root: &Path,
 ) -> Result<BulkRenameOutput> {
     let relative_file = crate::core::fs::relative_slash(file, project_root);
@@ -100,8 +102,17 @@ pub fn bulk_rename(
 
         match rename_edit {
             Some(edit) => {
-                let rename_output =
+                let mut rename_output =
                     crate::lsp::query::convert_rename_edit(&edit, project_root, old_name, new_name);
+
+                // When file_only, restrict edits to only the target file
+                if file_only {
+                    rename_output.changes.retain(|fe| {
+                        let fe_path = project_root.join(&fe.file);
+                        fe_path == file
+                    });
+                }
+
                 let occurrences: u32 = rename_output
                     .changes
                     .iter()
@@ -194,8 +205,14 @@ mod tests {
             ("speed".to_string(), "velocity".to_string()),
             ("health".to_string(), "hp".to_string()),
         ];
-        let result =
-            bulk_rename(&temp.path().join("player.gd"), &renames, false, temp.path()).unwrap();
+        let result = bulk_rename(
+            &temp.path().join("player.gd"),
+            &renames,
+            false,
+            false,
+            temp.path(),
+        )
+        .unwrap();
 
         assert!(result.applied);
         assert_eq!(result.renames.len(), 2);
@@ -213,8 +230,14 @@ mod tests {
             ("speed".to_string(), "velocity".to_string()),
             ("health".to_string(), "hp".to_string()),
         ];
-        let result =
-            bulk_rename(&temp.path().join("player.gd"), &renames, true, temp.path()).unwrap();
+        let result = bulk_rename(
+            &temp.path().join("player.gd"),
+            &renames,
+            true,
+            false,
+            temp.path(),
+        )
+        .unwrap();
 
         assert!(!result.applied);
         assert_eq!(result.renames.len(), 2);
@@ -230,8 +253,14 @@ mod tests {
             ("speed".to_string(), "velocity".to_string()),
             ("nonexistent".to_string(), "whatever".to_string()),
         ];
-        let result =
-            bulk_rename(&temp.path().join("player.gd"), &renames, false, temp.path()).unwrap();
+        let result = bulk_rename(
+            &temp.path().join("player.gd"),
+            &renames,
+            false,
+            false,
+            temp.path(),
+        )
+        .unwrap();
 
         assert_eq!(result.renames.len(), 1);
         assert_eq!(result.skipped.len(), 1);

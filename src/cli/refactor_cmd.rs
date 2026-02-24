@@ -42,6 +42,9 @@ pub enum RefactorCommand {
         /// Symbol name to delete (alternative to --line)
         #[arg(long)]
         name: Option<String>,
+        /// Comma-separated symbol names to delete in bulk (alternative to --name/--line)
+        #[arg(long)]
+        names: Option<String>,
         /// Line number of declaration to delete (1-based; alternative to --name)
         #[arg(long)]
         line: Option<usize>,
@@ -343,24 +346,6 @@ pub enum RefactorCommand {
         #[arg(long)]
         format: Option<String>,
     },
-    /// Delete multiple symbols in one pass without line-shifting issues
-    BulkDeleteSymbol {
-        /// Path to the GDScript file
-        #[arg()]
-        file: String,
-        /// Comma-separated symbol names to delete
-        #[arg(long)]
-        names: String,
-        /// Delete even if references exist
-        #[arg(long)]
-        force: bool,
-        /// Preview without writing changes
-        #[arg(long)]
-        dry_run: bool,
-        /// Output format: json or human (default: human)
-        #[arg(long)]
-        format: Option<String>,
-    },
     /// Rename multiple symbols atomically
     BulkRename {
         /// Path to the GDScript file
@@ -369,6 +354,9 @@ pub enum RefactorCommand {
         /// Comma-separated rename pairs (format: "old1:new1,old2:new2")
         #[arg(long)]
         renames: String,
+        /// Rename scope: "project" (default) renames across all files; "file" restricts to the target file only
+        #[arg(long)]
+        scope: Option<String>,
         /// Preview without writing changes
         #[arg(long)]
         dry_run: bool,
@@ -1039,14 +1027,37 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
         RefactorCommand::DeleteSymbol {
             file,
             name,
+            names,
             line,
             class,
             force,
             dry_run,
             format,
         } => {
+            // Bulk mode: --names "a,b,c"
+            if let Some(ref names_str) = names {
+                if name.is_some() || line.is_some() {
+                    return Err(miette::miette!(
+                        "--names cannot be combined with --name or --line"
+                    ));
+                }
+                let result =
+                    crate::lsp::query::query_bulk_delete_symbol(&file, names_str, force, dry_run)?;
+                if is_json(format.as_ref()) {
+                    let json = serde_json::to_string_pretty(&result)
+                        .map_err(|e| miette::miette!("{e}"))?;
+                    cprintln!("{json}");
+                } else {
+                    print_bulk_delete_human(&result);
+                }
+                return Ok(());
+            }
+
+            // Single mode: --name or --line
             if name.is_none() && line.is_none() {
-                return Err(miette::miette!("either --name or --line is required"));
+                return Err(miette::miette!(
+                    "either --name, --names, or --line is required"
+                ));
             }
             if name.is_some() && line.is_some() {
                 return Err(miette::miette!("--name and --line are mutually exclusive"));
@@ -1377,31 +1388,15 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
             }
             Ok(())
         }
-        RefactorCommand::BulkDeleteSymbol {
+        RefactorCommand::BulkRename {
             file,
-            names,
-            force,
+            renames,
+            scope,
             dry_run,
             format,
         } => {
             let result =
-                crate::lsp::query::query_bulk_delete_symbol(&file, &names, force, dry_run)?;
-            if is_json(format.as_ref()) {
-                let json =
-                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
-                cprintln!("{json}");
-            } else {
-                print_bulk_delete_human(&result);
-            }
-            Ok(())
-        }
-        RefactorCommand::BulkRename {
-            file,
-            renames,
-            dry_run,
-            format,
-        } => {
-            let result = crate::lsp::query::query_bulk_rename(&file, &renames, dry_run)?;
+                crate::lsp::query::query_bulk_rename(&file, &renames, scope.as_deref(), dry_run)?;
             if is_json(format.as_ref()) {
                 let json =
                     serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;

@@ -136,7 +136,7 @@ pub fn bulk_delete_symbol(
         let stack = super::undo::UndoStack::open(project_root);
         let deleted_names: Vec<&str> = deletions.iter().map(|(n, _, _, _)| n.as_str()).collect();
         let _ = stack.record(
-            "bulk-delete-symbol",
+            "delete-symbol",
             &format!("bulk delete {}", deleted_names.join(", ")),
             &snaps,
             project_root,

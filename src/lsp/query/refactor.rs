@@ -209,6 +209,7 @@ pub fn query_bulk_delete_symbol(
 pub fn query_bulk_rename(
     file: &str,
     renames_str: &str,
+    scope: Option<&str>,
     dry_run: bool,
 ) -> Result<crate::lsp::refactor::BulkRenameOutput> {
     let path = resolve_file(file)?;
@@ -224,7 +225,8 @@ pub fn query_bulk_rename(
         }
         renames.push((parts[0].trim().to_string(), parts[1].trim().to_string()));
     }
-    crate::lsp::refactor::bulk_rename(&path, &renames, dry_run, &project_root)
+    let file_only = matches!(scope, Some("file"));
+    crate::lsp::refactor::bulk_rename(&path, &renames, dry_run, file_only, &project_root)
 }
 
 pub fn query_inline_delegate(
