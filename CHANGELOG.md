@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.3.3] - 2026-02-24
+
+### Fixed
+- **Rename scoping with same-name methods** — `gd refactor rename` now correctly distinguishes between static and instance methods when both share the same name. Renaming at a specific position only affects the targeted variant and its call sites. (closes #34)
+- **`callable-null-check` false positive on `call_deferred`** — `node.call_deferred("method_name")` is `Object.call_deferred` (string-based), not a Callable method. No longer flagged. (closes #28)
+
+### Added
+- **`gd check` detects override signature mismatches** — new `override-signature-mismatch` lint rule catches when a child class overrides a parent method with a different number of parameters, which Godot rejects at compile time. Runs automatically as part of `gd check`. (closes #39)
+
 ## [0.3.2] - 2026-02-24
 
 ### Fixed

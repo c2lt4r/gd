@@ -949,7 +949,6 @@ fn test_lint_callable_null_check_without_guard() {
     let temp = TempDir::new().expect("temp dir");
     let file_path = temp.path().join("callable2.gd");
 
-    // Pattern: .call() without any guard — SHOULD warn
     fs::write(
         &file_path,
         "extends Node\n\n\nfunc invoke(cb: Callable) -> void:\n\tcb.call()\n",

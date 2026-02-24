@@ -70,6 +70,7 @@ pub mod narrowing_conversion;
 pub mod native_method_override;
 pub mod needless_bool;
 pub mod onready_with_export;
+pub mod override_signature_mismatch;
 pub mod parameter_naming;
 pub mod parameter_shadows_field;
 pub mod physics_in_process;
@@ -374,6 +375,7 @@ pub fn all_rules(
         Box::new(enum_variant_names::EnumVariantNames),
         Box::new(manual_range_contains::ManualRangeContains),
         Box::new(needless_bool::NeedlessBool),
+        Box::new(override_signature_mismatch::OverrideSignatureMismatch),
     ];
     all.into_iter()
         .filter(|r| {

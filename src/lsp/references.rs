@@ -5,6 +5,182 @@ use tower_lsp::lsp_types::{Location, Position, Range, Url};
 
 use super::util::{FUNCTION_KINDS, node_range};
 
+// ── Static/instance disambiguation ──────────────────────────────────────
+
+/// When the user targets a function that has a same-name counterpart (static vs
+/// instance), this enum records which variant was targeted so we can filter
+/// references accordingly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MethodKind {
+    Static,
+    Instance,
+}
+
+/// If the cursor is on the *name* of a function_definition and there is at
+/// least one other function_definition with the same name (but different
+/// staticness) in the same file, return the `MethodKind` of the targeted
+/// declaration and the 0-based line of the *other* declaration.
+fn detect_ambiguous_overload(
+    root: tree_sitter::Node,
+    source: &str,
+    target_name: &str,
+    cursor_line: usize,
+) -> Option<MethodKind> {
+    let mut decls: Vec<(usize, bool)> = Vec::new(); // (line, is_static)
+    let mut cur = root.walk();
+    for child in root.children(&mut cur) {
+        if child.kind() == "function_definition"
+            && let Some(name_node) = child.child_by_field_name("name")
+            && name_node.utf8_text(source.as_bytes()).unwrap_or("") == target_name
+        {
+            let is_static = has_static_keyword(&child);
+            decls.push((child.start_position().row, is_static));
+        }
+    }
+    if decls.len() < 2 {
+        return None; // No ambiguity — single or zero declarations
+    }
+    // Find the declaration the cursor is on (or closest to)
+    decls
+        .iter()
+        .find(|(line, _)| *line == cursor_line)
+        .map(|(_, is_static)| {
+            if *is_static {
+                MethodKind::Static
+            } else {
+                MethodKind::Instance
+            }
+        })
+}
+
+/// Check if a `function_definition` node has a `static_keyword` child.
+fn has_static_keyword(func_node: &tree_sitter::Node) -> bool {
+    let mut cursor = func_node.walk();
+    for child in func_node.children(&mut cursor) {
+        if child.kind() == "static_keyword" {
+            return true;
+        }
+    }
+    false
+}
+
+/// Determine the `MethodKind` of the enclosing function for a reference node.
+/// Returns `None` when the node is not inside any function body (top-level code).
+fn enclosing_method_kind(node: &tree_sitter::Node) -> Option<MethodKind> {
+    let mut cur = *node;
+    loop {
+        cur = cur.parent()?;
+        if FUNCTION_KINDS.contains(&cur.kind()) {
+            return Some(if has_static_keyword(&cur) {
+                MethodKind::Static
+            } else {
+                MethodKind::Instance
+            });
+        }
+    }
+}
+
+/// Check whether an identifier node is part of a `ClassName.method()` qualified
+/// call. Returns `true` when the tree-sitter AST looks like:
+///
+/// ```text
+/// attribute {
+///   identifier <ClassName>    ← first named child
+///   attribute_call {
+///     identifier <method>     ← this is `node`
+///   }
+/// }
+/// ```
+fn is_class_qualified_call(node: &tree_sitter::Node, source: &str, class_name: &str) -> bool {
+    // node → attribute_call → attribute
+    let Some(attr_call) = node.parent() else {
+        return false;
+    };
+    if attr_call.kind() != "attribute_call" {
+        return false;
+    }
+    let Some(attribute) = attr_call.parent() else {
+        return false;
+    };
+    if attribute.kind() != "attribute" {
+        return false;
+    }
+    // First named child of the attribute should be the class name
+    attribute
+        .named_child(0)
+        .is_some_and(|obj| obj.utf8_text(source.as_bytes()).unwrap_or("") == class_name)
+}
+
+/// Check whether an identifier node is part of a `self.method()` call.
+fn is_self_qualified_call(node: &tree_sitter::Node, source: &str) -> bool {
+    // node → attribute_call → attribute → first child == "self"
+    let Some(attr_call) = node.parent() else {
+        return false;
+    };
+    if attr_call.kind() != "attribute_call" {
+        return false;
+    }
+    let Some(attribute) = attr_call.parent() else {
+        return false;
+    };
+    if attribute.kind() != "attribute" {
+        return false;
+    }
+    attribute
+        .named_child(0)
+        .is_some_and(|obj| obj.utf8_text(source.as_bytes()).unwrap_or("") == "self")
+}
+
+/// Determine if a reference (non-declaration) matches the targeted `MethodKind`.
+///
+/// Returns `true` when we can confidently say the reference belongs to the
+/// given kind, or when we cannot determine either way (ambiguous → include).
+fn reference_matches_kind(
+    node: &tree_sitter::Node,
+    source: &str,
+    kind: MethodKind,
+    class_name: Option<&str>,
+) -> bool {
+    // Explicit `ClassName.method()` → always static
+    if let Some(cls) = class_name
+        && is_class_qualified_call(node, source, cls)
+    {
+        return kind == MethodKind::Static;
+    }
+
+    // Explicit `self.method()` → always instance
+    if is_self_qualified_call(node, source) {
+        return kind == MethodKind::Instance;
+    }
+
+    // Bare `method()` inside a function — infer from enclosing function staticness.
+    // A static function can only call the static overload; an instance function
+    // calls the instance overload.
+    if let Some(enc) = enclosing_method_kind(node) {
+        return enc == kind;
+    }
+
+    // Top-level code is instance context in GDScript
+    kind == MethodKind::Instance
+}
+
+/// Extract the `class_name` from a file's root node (if declared).
+fn extract_class_name(root: tree_sitter::Node, source: &str) -> Option<String> {
+    let mut cursor = root.walk();
+    for child in root.children(&mut cursor) {
+        if child.kind() == "class_name_statement" {
+            let name_node = child.child_by_field_name("name").or_else(|| child.child(1));
+            if let Some(n) = name_node
+                && let Ok(text) = n.utf8_text(source.as_bytes())
+                && !text.is_empty()
+            {
+                return Some(text.to_string());
+            }
+        }
+    }
+    None
+}
+
 /// Find all references to the symbol at the given position within the same file.
 pub fn find_references(
     source: &str,
@@ -46,13 +222,22 @@ pub fn find_references(
         };
     }
 
-    // Global: collect all matching identifiers in the file
-    collect_references(
+    // Check for ambiguous same-name function declarations (static vs instance)
+    let overload_kind =
+        detect_ambiguous_overload(root, source, target_name, position.line as usize);
+    let class_name = overload_kind.and_then(|_| extract_class_name(root, source));
+    let filter = overload_kind.map(|kind| OverloadFilter {
+        kind,
+        target_decl_line: position.line as usize,
+        class_name: class_name.as_deref(),
+    });
+    collect_maybe_filtered(
         root,
         source,
         target_name,
         uri,
         include_declaration,
+        filter.as_ref(),
         &mut locations,
     );
 
@@ -137,6 +322,94 @@ fn collect_references(
     }
 }
 
+/// Filter context for collecting references when static/instance disambiguation
+/// is needed.
+struct OverloadFilter<'a> {
+    kind: MethodKind,
+    /// 0-based line of the targeted declaration. `usize::MAX` when collecting in
+    /// a cross-file where no declaration is expected to match.
+    target_decl_line: usize,
+    /// `class_name` of the origin file (for detecting `ClassName.method()` calls).
+    class_name: Option<&'a str>,
+}
+
+/// Like `collect_references`, but filters by `MethodKind` when there are
+/// ambiguous same-name declarations (static vs instance).
+fn collect_references_filtered(
+    node: tree_sitter::Node,
+    source: &str,
+    target_name: &str,
+    uri: &Url,
+    include_declaration: bool,
+    filter: &OverloadFilter<'_>,
+    locations: &mut Vec<Location>,
+) {
+    if (node.kind() == "identifier" || node.kind() == "name")
+        && node.utf8_text(source.as_bytes()).unwrap_or("") == target_name
+    {
+        if is_declaration(&node, source, target_name) {
+            // Only include the declaration if it is the targeted one
+            if include_declaration && node.start_position().row == filter.target_decl_line {
+                locations.push(Location {
+                    uri: uri.clone(),
+                    range: node_range(&node),
+                });
+            }
+        } else if reference_matches_kind(&node, source, filter.kind, filter.class_name) {
+            locations.push(Location {
+                uri: uri.clone(),
+                range: node_range(&node),
+            });
+        }
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_references_filtered(
+            child,
+            source,
+            target_name,
+            uri,
+            include_declaration,
+            filter,
+            locations,
+        );
+    }
+}
+
+/// Dispatch to `collect_references_filtered` when a filter is present,
+/// otherwise fall back to the unfiltered `collect_references`.
+fn collect_maybe_filtered(
+    node: tree_sitter::Node,
+    source: &str,
+    target_name: &str,
+    uri: &Url,
+    include_declaration: bool,
+    filter: Option<&OverloadFilter<'_>>,
+    locations: &mut Vec<Location>,
+) {
+    if let Some(f) = filter {
+        collect_references_filtered(
+            node,
+            source,
+            target_name,
+            uri,
+            include_declaration,
+            f,
+            locations,
+        );
+    } else {
+        collect_references(
+            node,
+            source,
+            target_name,
+            uri,
+            include_declaration,
+            locations,
+        );
+    }
+}
+
 /// Find all references to the symbol at position across all workspace files.
 pub fn find_references_cross_file(
     source: &str,
@@ -177,35 +450,51 @@ pub fn find_references_cross_file(
         };
     }
 
-    // Global: current file
-    collect_references(
+    // Check for ambiguous same-name function declarations (static vs instance)
+    let overload_kind =
+        detect_ambiguous_overload(root, source, target_name, position.line as usize);
+    let origin_class_name = extract_class_name(root, source);
+
+    // Build overload filter if disambiguation is needed
+    let origin_filter = overload_kind.map(|kind| OverloadFilter {
+        kind,
+        target_decl_line: position.line as usize,
+        class_name: origin_class_name.as_deref(),
+    });
+
+    // Current file
+    collect_maybe_filtered(
         root,
         source,
         target_name,
         uri,
         include_declaration,
+        origin_filter.as_ref(),
         &mut locations,
     );
 
     // Cross-file: only parse files that contain the identifier text
     let current_path = uri.to_file_path().ok();
+    let cross_filter = overload_kind.map(|kind| OverloadFilter {
+        kind,
+        target_decl_line: usize::MAX, // no declaration match in other files
+        class_name: origin_class_name.as_deref(),
+    });
+
     for (path, content) in workspace.all_files() {
-        if current_path.as_ref() == Some(&path) {
+        if current_path.as_ref() == Some(&path) || !content.contains(target_name) {
             continue;
         }
-        if !content.contains(target_name) {
-            continue;
-        }
-        if let Ok(tree) = crate::core::parser::parse(&content) {
-            let Ok(file_uri) = Url::from_file_path(&path) else {
-                continue;
-            };
-            collect_references(
+        if let Ok(tree) = crate::core::parser::parse(&content)
+            && let Ok(file_uri) = Url::from_file_path(&path)
+        {
+            collect_maybe_filtered(
                 tree.root_node(),
                 &content,
                 target_name,
                 &file_uri,
                 true,
+                cross_filter.as_ref(),
                 &mut locations,
             );
         }
@@ -998,5 +1287,191 @@ func foo():
                 loc.range.start.line
             );
         }
+    }
+
+    // ── Static/instance disambiguation tests ─────────────────────────────
+
+    #[test]
+    fn static_instance_same_name_rename_instance() {
+        // Two declarations with the same name: one static, one instance.
+        // Renaming the instance one should only find the instance declaration
+        // and calls from instance context.
+        let source = "\
+class_name Foo
+
+static func do_thing() -> int:
+\treturn 0
+
+func do_thing() -> int:
+\treturn 1
+
+func caller():
+\tdo_thing()
+
+static func static_caller():
+\tdo_thing()
+";
+        let uri = test_uri();
+        // Cursor on the instance `do_thing` declaration at line 5, col 5
+        let result = find_references(source, &uri, Position::new(5, 5), true);
+        assert!(result.is_some());
+        let locs = result.unwrap();
+        // Should find: instance declaration (line 5) + instance call in caller() (line 9)
+        // Should NOT include: static decl (line 2) or static call (line 12)
+        let lines: Vec<u32> = locs.iter().map(|l| l.range.start.line).collect();
+        assert!(
+            lines.contains(&5),
+            "should include instance decl at line 5, got {lines:?}"
+        );
+        assert!(
+            lines.contains(&9),
+            "should include instance call at line 9, got {lines:?}"
+        );
+        assert!(
+            !lines.contains(&2),
+            "should NOT include static decl at line 2, got {lines:?}"
+        );
+        assert!(
+            !lines.contains(&12),
+            "should NOT include static call at line 12, got {lines:?}"
+        );
+        assert_eq!(locs.len(), 2, "expected exactly 2 refs, got {lines:?}");
+    }
+
+    #[test]
+    fn static_instance_same_name_rename_static() {
+        // Renaming the static one should only find the static declaration
+        // and calls from static context.
+        let source = "\
+class_name Foo
+
+static func do_thing() -> int:
+\treturn 0
+
+func do_thing() -> int:
+\treturn 1
+
+func caller():
+\tdo_thing()
+
+static func static_caller():
+\tdo_thing()
+";
+        let uri = test_uri();
+        // Cursor on the static `do_thing` declaration at line 2, col 12
+        let result = find_references(source, &uri, Position::new(2, 12), true);
+        assert!(result.is_some());
+        let locs = result.unwrap();
+        let lines: Vec<u32> = locs.iter().map(|l| l.range.start.line).collect();
+        // Should find: static declaration (line 2) + static call in static_caller() (line 12)
+        assert!(
+            lines.contains(&2),
+            "should include static decl at line 2, got {lines:?}"
+        );
+        assert!(
+            lines.contains(&12),
+            "should include static call at line 12, got {lines:?}"
+        );
+        assert!(
+            !lines.contains(&5),
+            "should NOT include instance decl at line 5, got {lines:?}"
+        );
+        assert!(
+            !lines.contains(&9),
+            "should NOT include instance call at line 9, got {lines:?}"
+        );
+        assert_eq!(locs.len(), 2, "expected exactly 2 refs, got {lines:?}");
+    }
+
+    #[test]
+    fn static_instance_same_name_self_call() {
+        // `self.do_thing()` should always resolve to the instance variant.
+        let source = "\
+class_name Foo
+
+static func do_thing() -> int:
+\treturn 0
+
+func do_thing() -> int:
+\treturn 1
+
+func caller():
+\tself.do_thing()
+";
+        let uri = test_uri();
+        // Cursor on instance declaration at line 5
+        let result = find_references(source, &uri, Position::new(5, 5), true);
+        assert!(result.is_some());
+        let locs = result.unwrap();
+        let lines: Vec<u32> = locs.iter().map(|l| l.range.start.line).collect();
+        assert!(
+            lines.contains(&5),
+            "should include instance decl, got {lines:?}"
+        );
+        assert!(
+            lines.contains(&9),
+            "should include self.do_thing() call, got {lines:?}"
+        );
+        assert!(
+            !lines.contains(&2),
+            "should NOT include static decl, got {lines:?}"
+        );
+    }
+
+    #[test]
+    fn static_instance_same_name_class_qualified_call() {
+        // `Foo.do_thing()` should always resolve to the static variant.
+        let source = "\
+class_name Foo
+
+static func do_thing() -> int:
+\treturn 0
+
+func do_thing() -> int:
+\treturn 1
+
+func caller():
+\tFoo.do_thing()
+";
+        let uri = test_uri();
+        // Cursor on static declaration at line 2
+        let result = find_references(source, &uri, Position::new(2, 12), true);
+        assert!(result.is_some());
+        let locs = result.unwrap();
+        let lines: Vec<u32> = locs.iter().map(|l| l.range.start.line).collect();
+        assert!(
+            lines.contains(&2),
+            "should include static decl, got {lines:?}"
+        );
+        assert!(
+            lines.contains(&9),
+            "should include Foo.do_thing() call, got {lines:?}"
+        );
+        assert!(
+            !lines.contains(&5),
+            "should NOT include instance decl, got {lines:?}"
+        );
+    }
+
+    #[test]
+    fn single_function_no_filtering() {
+        // When there's only one function with the name, no filtering should apply.
+        // This verifies backward compatibility.
+        let source = "\
+func do_thing() -> int:
+\treturn 1
+
+func caller():
+\tdo_thing()
+
+static func other_caller():
+\tdo_thing()
+";
+        let uri = test_uri();
+        let result = find_references(source, &uri, Position::new(0, 5), true);
+        assert!(result.is_some());
+        let locs = result.unwrap();
+        // All three: declaration + two calls
+        assert_eq!(locs.len(), 3, "single-function case should find all refs");
     }
 }

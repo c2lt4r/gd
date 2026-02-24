@@ -7,15 +7,17 @@ use owo_colors::OwoColorize;
 use serde::Serialize;
 use tree_sitter::Node;
 
+use crate::core::workspace_index::ProjectIndex;
 use crate::core::{
     config::Config, config::find_project_root, fs::collect_gdscript_files,
-    fs::collect_resource_files, parser, resource_parser, scene, type_inference,
+    fs::collect_resource_files, parser, resource_parser, scene, symbol_table, type_inference,
 };
 use crate::lint::matches_ignore_pattern;
 use crate::lint::rules::LintRule;
 use crate::lint::rules::duplicate_function::DuplicateFunction;
 use crate::lint::rules::duplicate_signal::DuplicateSignal;
 use crate::lint::rules::duplicate_variable::DuplicateVariable;
+use crate::lint::rules::override_signature_mismatch::OverrideSignatureMismatch;
 use crate::{ceprintln, cprintln};
 
 #[derive(Args)]
@@ -55,6 +57,9 @@ pub fn exec(args: &CheckArgs) -> Result<()> {
         args.paths.iter().map(std::path::PathBuf::from).collect()
     };
 
+    // Build project-wide index for cross-file override checking
+    let project_index = ProjectIndex::build(&ignore_base);
+
     let json_mode = args.format == "json";
     let mut error_count = 0u32;
     let mut checked = 0u32;
@@ -73,9 +78,12 @@ pub fn exec(args: &CheckArgs) -> Result<()> {
                     let has_parse_errors = root_node.has_error();
                     let structural = validate_structure(&root_node, &source);
                     let duplicates = check_duplicates(&tree, &source);
+                    let overrides = check_overrides(&tree, &source, &project_index);
 
-                    let has_errors =
-                        has_parse_errors || !structural.is_empty() || !duplicates.is_empty();
+                    let has_errors = has_parse_errors
+                        || !structural.is_empty()
+                        || !duplicates.is_empty()
+                        || !overrides.is_empty();
                     if has_errors {
                         error_count += 1;
                         if json_mode {
@@ -92,7 +100,7 @@ pub fn exec(args: &CheckArgs) -> Result<()> {
                                     message: err.message.clone(),
                                 });
                             }
-                            for diag in &duplicates {
+                            for diag in duplicates.iter().chain(overrides.iter()) {
                                 parse_errors.push(ParseError {
                                     file: rel.clone(),
                                     line: diag.line as u32 + 1,
@@ -107,6 +115,7 @@ pub fn exec(args: &CheckArgs) -> Result<()> {
                             }
                             report_structural(&structural, &source, file);
                             report_duplicates(&duplicates, &source, file);
+                            report_duplicates(&overrides, &source, file);
                         }
                     }
                 }
@@ -828,6 +837,20 @@ fn check_duplicates(
         diags.extend(rule.check(tree, source, &lint_config));
     }
     diags
+}
+
+// ---------------------------------------------------------------------------
+// Override signature mismatch checks (compile errors in Godot)
+// ---------------------------------------------------------------------------
+
+fn check_overrides(
+    tree: &tree_sitter::Tree,
+    source: &str,
+    project: &ProjectIndex,
+) -> Vec<crate::lint::rules::LintDiagnostic> {
+    let lint_config = crate::core::config::LintConfig::default();
+    let symbols = symbol_table::build(tree, source);
+    OverrideSignatureMismatch.check_with_project(tree, source, &lint_config, &symbols, project)
 }
 
 fn report_duplicates(diags: &[crate::lint::rules::LintDiagnostic], source: &str, file: &Path) {

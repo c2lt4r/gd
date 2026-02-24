@@ -4,8 +4,7 @@ mod navigation;
 mod refactor;
 
 pub use analysis::{
-    query_code_actions, query_find_implementations, query_safe_delete_file,
-    query_symbols,
+    query_code_actions, query_find_implementations, query_safe_delete_file, query_symbols,
 };
 pub use edit::{
     CreateFileOutput, SceneInfoOutput, query_create_file, query_edit_range, query_insert,

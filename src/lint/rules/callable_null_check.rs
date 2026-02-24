@@ -239,6 +239,11 @@ fn check_callable_call(
             && let Ok(name) = method.utf8_text(src)
             && matches!(name, "call" | "call_deferred" | "callv")
         {
+            // `obj.call_deferred("method_name")` is Object.call_deferred,
+            // not Callable.call_deferred. Skip when first arg is a string literal.
+            if name == "call_deferred" && has_string_first_arg(&child) {
+                return;
+            }
             call_method = Some(name.to_string());
         }
 
@@ -261,13 +266,30 @@ fn check_callable_call(
                 ),
                 severity: Severity::Warning,
                 line: obj_node.start_position().row,
-                column: obj_node.start_position().column,
+                column: obj_name.starts_with('.').into(),
                 end_column: None,
                 fix: None,
                 context_lines: None,
             });
         }
     }
+}
+
+/// Check if an `attribute_call` node has a string literal as its first argument.
+/// Used to distinguish `Object.call_deferred("method")` from `Callable.call_deferred()`.
+fn has_string_first_arg(attribute_call: &Node) -> bool {
+    let mut cursor = attribute_call.walk();
+    for child in attribute_call.children(&mut cursor) {
+        if child.kind() == "arguments" {
+            if let Some(first_arg) = child.named_child(0)
+                && first_arg.kind() == "string"
+            {
+                return true;
+            }
+            return false;
+        }
+    }
+    false
 }
 
 #[cfg(test)]
@@ -293,27 +315,25 @@ mod tests {
 
     #[test]
     fn no_warning_with_is_valid() {
-        let source =
-            "func f(callback: Callable) -> void:\n\tif callback.is_valid():\n\t\tcallback.call()\n";
+        let source = "func f(callback) -> void:\n\tif callback.is_valid():\n\t\tcallback.call()\n";
         assert!(check(source).is_empty());
     }
 
     #[test]
     fn no_warning_with_null_check() {
-        let source =
-            "func f(callback: Callable) -> void:\n\tif callback != null:\n\t\tcallback.call()\n";
+        let source = "func f(callback) -> void:\n\tif callback != null:\n\t\tcallback.call()\n";
         assert!(check(source).is_empty());
     }
 
     #[test]
     fn no_warning_with_truthiness_check() {
-        let source = "func f(callback: Callable) -> void:\n\tif callback:\n\t\tcallback.call()\n";
+        let source = "func f(callback) -> void:\n\tif callback:\n\t\tcallback.call()\n";
         assert!(check(source).is_empty());
     }
 
     #[test]
-    fn detects_call_deferred() {
-        let source = "func f(cb: Callable) -> void:\n\tcb.call_deferred()\n";
+    fn detects_call_deferred_on_callable() {
+        let source = "func f(cb) -> void:\n\tcb.call_deferred()\n";
         let diags = check(source);
         assert_eq!(diags.len(), 1);
         assert!(diags[0].message.contains("call_deferred"));
@@ -321,7 +341,6 @@ mod tests {
 
     #[test]
     fn no_warning_on_self_call() {
-        // self.call() is a legitimate pattern (calling own method)
         let source = "func f() -> void:\n\tself.call(\"method\")\n";
         assert!(check(source).is_empty());
     }
@@ -341,15 +360,12 @@ mod tests {
 
     #[test]
     fn chained_is_valid_guards_chained_call() {
-        // Pattern from user report: server.hitscan_validator.is_valid() guards
-        // server.hitscan_validator.call() across if/body boundary
         let source = "func f(server) -> void:\n\tif server and server.hitscan_validator.is_valid():\n\t\tserver.hitscan_validator.call(1, 2)\n";
         assert!(check(source).is_empty());
     }
 
     #[test]
     fn chained_call_without_is_valid_warns() {
-        // Same chained pattern but WITHOUT the is_valid guard — should warn
         let source = "func f(server) -> void:\n\tserver.hitscan_validator.call(1, 2)\n";
         let diags = check(source);
         assert_eq!(diags.len(), 1);
@@ -359,5 +375,19 @@ mod tests {
     #[test]
     fn default_enabled() {
         assert!(CallableNullCheck.default_enabled());
+    }
+
+    // ── call_deferred with string arg (Object method, not Callable) ──
+
+    #[test]
+    fn no_warning_call_deferred_string_arg() {
+        let source = "func f(node) -> void:\n\tnode.call_deferred(\"method_name\")\n";
+        assert!(check(source).is_empty());
+    }
+
+    #[test]
+    fn no_warning_call_deferred_string_arg_extra_args() {
+        let source = "func f(node) -> void:\n\tnode.call_deferred(\"method_name\", 1, \"hello\")\n";
+        assert!(check(source).is_empty());
     }
 }

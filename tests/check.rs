@@ -170,3 +170,63 @@ fn test_check_catches_duplicate_variable() {
         "should report duplicate variable: {errors:?}",
     );
 }
+
+#[test]
+fn test_check_catches_override_signature_mismatch() {
+    let temp = setup_gd_project(&[
+        (
+            "parent.gd",
+            "class_name Parent\nextends Node\n\n\nfunc process(delta: float, extra: int) -> void:\n\tpass\n",
+        ),
+        (
+            "child.gd",
+            "extends Parent\n\n\nfunc process(delta: float) -> void:\n\tpass\n",
+        ),
+    ]);
+
+    let output = gd_bin()
+        .args(["check", "--format", "json"])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd check");
+
+    assert!(
+        !output.status.success(),
+        "should exit non-zero on override signature mismatch"
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["ok"], false);
+    let errors = json["errors"].as_array().unwrap();
+    assert!(
+        errors.iter().any(|e| e["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("process") && m.contains("overrides"))),
+        "should report override signature mismatch: {errors:?}",
+    );
+}
+
+#[test]
+fn test_check_no_false_positive_matching_override() {
+    let temp = setup_gd_project(&[
+        (
+            "parent.gd",
+            "class_name Parent\nextends Node\n\n\nfunc process(delta: float) -> void:\n\tpass\n",
+        ),
+        (
+            "child.gd",
+            "extends Parent\n\n\nfunc process(delta: float) -> void:\n\tpass\n",
+        ),
+    ]);
+
+    let output = gd_bin()
+        .args(["check", "--format", "json"])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd check");
+
+    assert!(
+        output.status.success(),
+        "should pass when override signature matches, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}

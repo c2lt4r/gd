@@ -143,4 +143,82 @@ mod tests {
         let result = rename_symbol("", &uri, Position::new(0, 0), "foo");
         assert!(result.is_none());
     }
+
+    #[test]
+    fn rename_instance_method_with_static_same_name() {
+        // Static and instance methods share the name `do_thing`.
+        // Renaming the instance version should only rename that declaration
+        // and calls from instance context.
+        let source = "\
+class_name Foo
+
+static func do_thing() -> int:
+\treturn 0
+
+func do_thing() -> int:
+\treturn 1
+
+func caller():
+\tdo_thing()
+
+static func static_caller():
+\tdo_thing()
+";
+        let uri = test_uri();
+        // Rename the instance `do_thing` at line 5, col 5
+        let result = rename_symbol(source, &uri, Position::new(5, 5), "_do_thing");
+        assert!(result.is_some());
+        let edit = result.unwrap();
+        let changes = edit.changes.unwrap();
+        let edits = changes.get(&uri).unwrap();
+        // Should rename: instance decl (line 5) + call in instance caller (line 9)
+        assert_eq!(
+            edits.len(),
+            2,
+            "should only rename 2 locations (instance decl + instance call)"
+        );
+        let lines: Vec<u32> = edits.iter().map(|e| e.range.start.line).collect();
+        assert!(lines.contains(&5), "should rename instance decl at line 5");
+        assert!(lines.contains(&9), "should rename instance call at line 9");
+        // Verify the static decl and call are untouched
+        assert!(
+            !lines.contains(&2),
+            "should NOT rename static decl at line 2"
+        );
+        assert!(
+            !lines.contains(&12),
+            "should NOT rename static call at line 12"
+        );
+    }
+
+    #[test]
+    fn rename_static_method_with_instance_same_name() {
+        let source = "\
+class_name Foo
+
+static func do_thing() -> int:
+\treturn 0
+
+func do_thing() -> int:
+\treturn 1
+
+func caller():
+\tdo_thing()
+
+static func static_caller():
+\tdo_thing()
+";
+        let uri = test_uri();
+        // Rename the static `do_thing` at line 2, col 12
+        let result = rename_symbol(source, &uri, Position::new(2, 12), "_do_thing_static");
+        assert!(result.is_some());
+        let edit = result.unwrap();
+        let changes = edit.changes.unwrap();
+        let edits = changes.get(&uri).unwrap();
+        // Should rename: static decl (line 2) + call in static caller (line 12)
+        assert_eq!(edits.len(), 2);
+        let lines: Vec<u32> = edits.iter().map(|e| e.range.start.line).collect();
+        assert!(lines.contains(&2), "should rename static decl at line 2");
+        assert!(lines.contains(&12), "should rename static call at line 12");
+    }
 }
