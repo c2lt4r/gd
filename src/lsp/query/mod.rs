@@ -38,6 +38,8 @@ pub struct RenameOutput {
     pub changes: Vec<FileEdits>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -247,6 +249,7 @@ pub fn convert_rename_edit(
         new_name: new_name.to_string(),
         changes,
         summary: None,
+        warnings: Vec::new(),
     }
 }
 

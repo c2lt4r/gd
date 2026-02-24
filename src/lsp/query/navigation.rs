@@ -199,12 +199,25 @@ pub fn query_rename(
     let edit = crate::lsp::rename::rename_cross_file(&source, &uri, position, new_name, &workspace)
         .ok_or_else(|| miette::miette!("no renameable symbol at {file}:{line}:{column}"))?;
 
+    let mut warnings = Vec::new();
+    if let Ok(tree) = crate::core::parser::parse(&source) {
+        let point = tree_sitter::Point::new(line - 1, column - 1);
+        let scope_names =
+            crate::lsp::refactor::collision::collect_scope_names(tree.root_node(), &source, point);
+        if let Some(kind) =
+            crate::lsp::refactor::collision::check_collision(new_name, &scope_names)
+        {
+            warnings.push(format!("'{new_name}' collides with a {kind}"));
+        }
+    }
+
     let changes = convert_workspace_edit(&edit, &project_root);
     Ok(RenameOutput {
         symbol,
         new_name: new_name.to_string(),
         changes,
         summary: None,
+        warnings,
     })
 }
 
@@ -251,12 +264,36 @@ pub fn query_rename_by_name(
         change_annotations: None,
     };
 
+    let mut warnings = Vec::new();
+    // Check collision at the first reference location
+    if let Some(first) = locations.first()
+        && let Ok(first_path) = first.uri.to_file_path()
+        && let Ok(first_source) = std::fs::read_to_string(&first_path)
+        && let Ok(tree) = crate::core::parser::parse(&first_source)
+    {
+        let point = tree_sitter::Point::new(
+            first.range.start.line as usize,
+            first.range.start.character as usize,
+        );
+        let scope_names = crate::lsp::refactor::collision::collect_scope_names(
+            tree.root_node(),
+            &first_source,
+            point,
+        );
+        if let Some(kind) =
+            crate::lsp::refactor::collision::check_collision(new_name, &scope_names)
+        {
+            warnings.push(format!("'{new_name}' collides with a {kind}"));
+        }
+    }
+
     let file_edits = convert_workspace_edit(&edit, &project_root);
     Ok(RenameOutput {
         symbol: name.to_string(),
         new_name: new_name.to_string(),
         changes: file_edits,
         summary: None,
+        warnings,
     })
 }
 

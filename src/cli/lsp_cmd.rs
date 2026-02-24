@@ -797,6 +797,9 @@ fn print_rename_human(r: &crate::lsp::query::RenameOutput) {
             }
         }
     }
+    for w in &r.warnings {
+        cprintln!("  {} {w}", "warning:".yellow().bold());
+    }
 }
 
 fn print_delete_symbol_human(r: &crate::lsp::refactor::DeleteSymbolOutput) {
