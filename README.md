@@ -12,7 +12,7 @@ Built with [tree-sitter-gdscript](https://github.com/PrestonKnopp/tree-sitter-gd
 - **Watch** for file changes and auto-lint/format on save
 - **Manage addons** from Git or the Godot Asset Library (with lockfile and update support)
 - **Generate CI/CD** configurations for GitHub Actions and GitLab CI
-- **LSP server** with formatting, diagnostics, hover, go-to-definition, references, rename, completion, inlay hints, signature help, call hierarchy, find implementations, semantic tokens, workspace symbol search, scene-aware cross-referencing, 17 refactoring commands with undo support, and collision warnings
+- **LSP server** with formatting, diagnostics, hover, go-to-definition, references, rename, completion, inlay hints, signature help, call hierarchy, find implementations, semantic tokens, workspace symbol search, scene-aware cross-referencing, 21 refactoring commands with undo support, and collision warnings
 - **Scene management** &mdash; create scenes, add/remove/duplicate nodes, instance scenes, add sub-resources, batch-add nodes, set properties, wire connections, attach/detach scripts &mdash; plus validate `.tscn`/`.tres` files and visualize scene hierarchies
 - **Debug** a running Godot game via Godot's binary debug protocol &mdash; breakpoints, stepping, variable inspection, expression evaluation, live scene tree, node inspection, game speed control, and hot-reload
 - **Godot LSP proxy** &mdash; forward hover, completion, and go-to-definition to Godot's built-in LSP when the editor is running
@@ -983,6 +983,27 @@ gd lsp introduce-variable --file player.gd --line 5 --column 10 --end-column 30 
 
 # Turn a hardcoded value into a parameter with default
 gd lsp introduce-parameter --file player.gd --line 5 --column 10 --end-column 20 --name speed
+
+# Invert an if/else: negate condition, swap branches
+gd lsp invert-if --file player.gd --line 5
+
+# Flatten nested ifs to early return/continue guard clauses
+gd lsp extract-guards --file player.gd --name _process
+
+# Split/join variable declaration and assignment
+gd lsp split-declaration --file player.gd --line 3
+gd lsp join-declaration --file player.gd --line 3
+
+# Convert between $NodePath and get_node() syntax
+gd lsp convert-node-path --file player.gd --line 5 --column 10
+
+# Convert between @onready var and _ready() assignment
+gd lsp convert-onready --file player.gd --name sprite --to-ready
+gd lsp convert-onready --file player.gd --name sprite --to-onready
+
+# Convert signal connections between scene wiring and code
+gd lsp convert-signal --file player.tscn --signal pressed --from Button --method _on_btn --to-code
+gd lsp convert-signal --file player.tscn --signal pressed --from Button --method _on_btn --to-scene
 
 # AST-aware editing (reads new content from stdin or --input-file)
 echo -e '\tprint("hello")' | gd lsp replace-body --file player.gd --name _ready

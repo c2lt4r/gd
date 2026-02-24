@@ -36,9 +36,25 @@ pub fn convert_signal(
     let relative_scene = crate::core::fs::relative_slash(scene_file, project_root);
 
     if to_code {
-        convert_to_code(scene_file, signal, from, method, dry_run, project_root, &relative_scene)
+        convert_to_code(
+            scene_file,
+            signal,
+            from,
+            method,
+            dry_run,
+            project_root,
+            &relative_scene,
+        )
     } else {
-        convert_to_scene(scene_file, signal, from, method, dry_run, project_root, &relative_scene)
+        convert_to_scene(
+            scene_file,
+            signal,
+            from,
+            method,
+            dry_run,
+            project_root,
+            &relative_scene,
+        )
     }
 }
 
@@ -63,11 +79,7 @@ fn convert_to_code(
         .connections
         .iter()
         .find(|c| c.signal == signal && c.from == from && c.method == method)
-        .ok_or_else(|| {
-            miette::miette!(
-                "connection not found: {from}.{signal} → {method}"
-            )
-        })?;
+        .ok_or_else(|| miette::miette!("connection not found: {from}.{signal} → {method}"))?;
     let to_node = conn.to.clone();
 
     // Find the script file attached to the target node
@@ -103,7 +115,16 @@ fn convert_to_code(
         .map_err(|e| miette::miette!("cannot write script: {e}"))?;
 
     // Record undo for both files
-    record_undo(scene_file, &scene_source, &script_path, &script_source, project_root, signal, from, "to-code");
+    record_undo(
+        scene_file,
+        &scene_source,
+        &script_path,
+        &script_source,
+        project_root,
+        signal,
+        from,
+        "to-code",
+    );
 
     Ok(ConvertSignalOutput {
         signal: signal.to_string(),
@@ -174,7 +195,16 @@ fn convert_to_scene(
     std::fs::write(scene_file, &new_scene)
         .map_err(|e| miette::miette!("cannot write scene: {e}"))?;
 
-    record_undo(scene_file, &scene_source, &script_path, &script_source, project_root, signal, from, "to-scene");
+    record_undo(
+        scene_file,
+        &scene_source,
+        &script_path,
+        &script_source,
+        project_root,
+        signal,
+        from,
+        "to-scene",
+    );
 
     Ok(ConvertSignalOutput {
         signal: signal.to_string(),
@@ -393,9 +423,7 @@ fn remove_connect_call(source: &str, from: &str, signal: &str, method: &str) -> 
     }
 
     if !found {
-        return Err(miette::miette!(
-            ".connect() call not found: {pattern}"
-        ));
+        return Err(miette::miette!(".connect() call not found: {pattern}"));
     }
 
     let mut output = result.join("\n");
@@ -551,7 +579,10 @@ mod tests {
     fn scene_to_code() {
         let temp = setup_project(&[
             ("main.tscn", &basic_scene("main.gd")),
-            ("main.gd", "func _ready():\n\tpass\n\nfunc _on_button_pressed():\n\tprint(\"pressed\")\n"),
+            (
+                "main.gd",
+                "func _ready():\n\tpass\n\nfunc _on_button_pressed():\n\tprint(\"pressed\")\n",
+            ),
         ]);
         let result = convert_signal(
             &temp.path().join("main.tscn"),
@@ -590,7 +621,10 @@ mod tests {
         );
         let temp = setup_project(&[
             ("main.tscn", scene_without_conn),
-            ("main.gd", "func _ready():\n\t$Button.pressed.connect(_on_button_pressed)\n\nfunc _on_button_pressed():\n\tprint(\"pressed\")\n"),
+            (
+                "main.gd",
+                "func _ready():\n\t$Button.pressed.connect(_on_button_pressed)\n\nfunc _on_button_pressed():\n\tprint(\"pressed\")\n",
+            ),
         ]);
         let result = convert_signal(
             &temp.path().join("main.tscn"),
@@ -647,7 +681,10 @@ mod tests {
     fn scene_to_code_creates_ready() {
         let temp = setup_project(&[
             ("main.tscn", &basic_scene("main.gd")),
-            ("main.gd", "func _on_button_pressed():\n\tprint(\"pressed\")\n"),
+            (
+                "main.gd",
+                "func _on_button_pressed():\n\tprint(\"pressed\")\n",
+            ),
         ]);
         let result = convert_signal(
             &temp.path().join("main.tscn"),

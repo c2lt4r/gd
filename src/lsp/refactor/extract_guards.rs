@@ -44,11 +44,7 @@ struct GuardChainResult {
 }
 
 /// Recursively find a chain of guardable trailing ifs.
-fn find_guard_chain(
-    stmts: &[Node],
-    source: &str,
-    exit_kw: &str,
-) -> GuardChainResult {
+fn find_guard_chain(stmts: &[Node], source: &str, exit_kw: &str) -> GuardChainResult {
     if stmts.is_empty() {
         return GuardChainResult {
             guards: vec![],
@@ -61,10 +57,7 @@ fn find_guard_chain(
     // Only guardable if last stmt is an if_statement without else/elif
     if last.kind() != "if_statement" || !is_guardable_if(last) {
         // No more guards — return all statements as tail
-        let tail_lines = stmts
-            .iter()
-            .map(|s| node_text(s, source))
-            .collect();
+        let tail_lines = stmts.iter().map(|s| node_text(s, source)).collect();
         return GuardChainResult {
             guards: vec![],
             tail_lines,
@@ -163,21 +156,18 @@ pub fn extract_guards(
     let tree = crate::core::parser::parse(&source)?;
     let root = tree.root_node();
 
-    let func_node = super::find_declaration_by_name(root, &source, function_name).ok_or_else(
-        || miette::miette!("function '{function_name}' not found"),
-    )?;
+    let func_node = super::find_declaration_by_name(root, &source, function_name)
+        .ok_or_else(|| miette::miette!("function '{function_name}' not found"))?;
 
     if !matches!(
         func_node.kind(),
         "function_definition" | "constructor_definition"
     ) {
-        return Err(miette::miette!(
-            "'{function_name}' is not a function"
-        ));
+        return Err(miette::miette!("'{function_name}' is not a function"));
     }
 
-    let func_body = find_body_node(&func_node)
-        .ok_or_else(|| miette::miette!("cannot find function body"))?;
+    let func_body =
+        find_body_node(&func_node).ok_or_else(|| miette::miette!("cannot find function body"))?;
     let body_stmts = collect_statements(&func_body);
 
     if body_stmts.is_empty() {
@@ -185,18 +175,17 @@ pub fn extract_guards(
     }
 
     // Detect loop wrapper: if body is a single for/while, flatten its body with "continue"
-    let (stmts_to_flatten, exit_kw, loop_wrapper) =
-        if body_stmts.len() == 1
-            && matches!(body_stmts[0].kind(), "for_statement" | "while_statement")
-        {
-            let loop_node = &body_stmts[0];
-            let loop_body = find_body_node(loop_node)
-                .ok_or_else(|| miette::miette!("cannot find loop body"))?;
-            let loop_stmts = collect_statements(&loop_body);
-            (loop_stmts, "continue", Some(*loop_node))
-        } else {
-            (body_stmts, "return", None)
-        };
+    let (stmts_to_flatten, exit_kw, loop_wrapper) = if body_stmts.len() == 1
+        && matches!(body_stmts[0].kind(), "for_statement" | "while_statement")
+    {
+        let loop_node = &body_stmts[0];
+        let loop_body =
+            find_body_node(loop_node).ok_or_else(|| miette::miette!("cannot find loop body"))?;
+        let loop_stmts = collect_statements(&loop_body);
+        (loop_stmts, "continue", Some(*loop_node))
+    } else {
+        (body_stmts, "return", None)
+    };
 
     let chain = find_guard_chain(&stmts_to_flatten, &source, exit_kw);
 
@@ -332,9 +321,7 @@ fn splice_body_contents(source: &str, body_node: &Node, new_contents: &str) -> S
     let body_end = body_node.end_byte();
 
     // The body text starts with \n — skip it
-    let content_start = if body_start < source.len()
-        && source.as_bytes()[body_start] == b'\n'
-    {
+    let content_start = if body_start < source.len() && source.as_bytes()[body_start] == b'\n' {
         body_start + 1
     } else {
         body_start
@@ -473,10 +460,7 @@ mod tests {
 
     #[test]
     fn no_guard_candidates_errors() {
-        let temp = setup_project(&[(
-            "test.gd",
-            "func foo():\n\tdo_thing()\n\tdo_other()\n",
-        )]);
+        let temp = setup_project(&[("test.gd", "func foo():\n\tdo_thing()\n\tdo_other()\n")]);
         let result = extract_guards(&temp.path().join("test.gd"), "foo", false, temp.path());
         assert!(result.is_err());
     }
@@ -520,16 +504,19 @@ mod tests {
     #[test]
     fn function_not_found() {
         let temp = setup_project(&[("test.gd", "func foo():\n\tpass\n")]);
-        let result =
-            extract_guards(&temp.path().join("test.gd"), "nonexistent", false, temp.path());
+        let result = extract_guards(
+            &temp.path().join("test.gd"),
+            "nonexistent",
+            false,
+            temp.path(),
+        );
         assert!(result.is_err());
     }
 
     #[test]
     fn not_a_function() {
         let temp = setup_project(&[("test.gd", "var speed = 10\n")]);
-        let result =
-            extract_guards(&temp.path().join("test.gd"), "speed", false, temp.path());
+        let result = extract_guards(&temp.path().join("test.gd"), "speed", false, temp.path());
         assert!(result.is_err());
     }
 

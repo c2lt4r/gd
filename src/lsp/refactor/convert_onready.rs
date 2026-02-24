@@ -35,9 +35,25 @@ pub fn convert_onready(
     let relative_file = crate::core::fs::relative_slash(file, project_root);
 
     if to_ready {
-        convert_to_ready(file, name, &source, root, dry_run, &relative_file, project_root)
+        convert_to_ready(
+            file,
+            name,
+            &source,
+            root,
+            dry_run,
+            &relative_file,
+            project_root,
+        )
     } else {
-        convert_to_onready(file, name, &source, root, dry_run, &relative_file, project_root)
+        convert_to_onready(
+            file,
+            name,
+            &source,
+            root,
+            dry_run,
+            &relative_file,
+            project_root,
+        )
     }
 }
 
@@ -62,7 +78,9 @@ fn convert_to_ready(
 
     // Verify it has @onready
     if !has_annotation(&var_node, source, "onready") {
-        return Err(miette::miette!("'{name}' does not have @onready annotation"));
+        return Err(miette::miette!(
+            "'{name}' does not have @onready annotation"
+        ));
     }
 
     // Extract the value expression
@@ -152,8 +170,7 @@ fn convert_to_onready(
     let ready_func = super::find_declaration_by_name(root, source, "_ready")
         .ok_or_else(|| miette::miette!("no _ready() function found"))?;
 
-    let (assignment_value, assignment_stmt) =
-        find_assignment_in_func(&ready_func, source, name)?;
+    let (assignment_value, assignment_stmt) = find_assignment_in_func(&ready_func, source, name)?;
 
     let line = var_node.start_position().row + 1;
 
@@ -411,9 +428,9 @@ fn ensure_ready_not_empty(source: &str) -> Result<String> {
 
     // Check if body has any non-comment statements
     let mut cursor = body.walk();
-    let has_stmts = body.children(&mut cursor).any(|c| {
-        c.is_named() && c.kind() != "comment" && c.kind() != "pass_statement"
-    });
+    let has_stmts = body
+        .children(&mut cursor)
+        .any(|c| c.is_named() && c.kind() != "comment" && c.kind() != "pass_statement");
 
     if !has_stmts {
         // Body is empty — check if it even has pass
@@ -472,9 +489,14 @@ mod tests {
             "test.gd",
             "@onready var sprite = $Sprite2D\n\nfunc _ready():\n\tpass\n",
         )]);
-        let result =
-            convert_onready(&temp.path().join("test.gd"), "sprite", true, false, temp.path())
-                .unwrap();
+        let result = convert_onready(
+            &temp.path().join("test.gd"),
+            "sprite",
+            true,
+            false,
+            temp.path(),
+        )
+        .unwrap();
         assert!(result.applied);
         assert_eq!(result.direction, "to-ready");
         let content = fs::read_to_string(temp.path().join("test.gd")).unwrap();
@@ -494,13 +516,15 @@ mod tests {
 
     #[test]
     fn onready_to_ready_creates_ready() {
-        let temp = setup_project(&[(
-            "test.gd",
-            "@onready var sprite = $Sprite2D\n",
-        )]);
-        let result =
-            convert_onready(&temp.path().join("test.gd"), "sprite", true, false, temp.path())
-                .unwrap();
+        let temp = setup_project(&[("test.gd", "@onready var sprite = $Sprite2D\n")]);
+        let result = convert_onready(
+            &temp.path().join("test.gd"),
+            "sprite",
+            true,
+            false,
+            temp.path(),
+        )
+        .unwrap();
         assert!(result.applied);
         let content = fs::read_to_string(temp.path().join("test.gd")).unwrap();
         assert!(
@@ -519,9 +543,14 @@ mod tests {
             "test.gd",
             "@onready var sprite: Sprite2D = $Sprite2D\n\nfunc _ready():\n\tpass\n",
         )]);
-        let result =
-            convert_onready(&temp.path().join("test.gd"), "sprite", true, false, temp.path())
-                .unwrap();
+        let result = convert_onready(
+            &temp.path().join("test.gd"),
+            "sprite",
+            true,
+            false,
+            temp.path(),
+        )
+        .unwrap();
         assert!(result.applied);
         let content = fs::read_to_string(temp.path().join("test.gd")).unwrap();
         assert!(
@@ -536,9 +565,14 @@ mod tests {
             "test.gd",
             "var sprite\n\nfunc _ready():\n\tsprite = $Sprite2D\n",
         )]);
-        let result =
-            convert_onready(&temp.path().join("test.gd"), "sprite", false, false, temp.path())
-                .unwrap();
+        let result = convert_onready(
+            &temp.path().join("test.gd"),
+            "sprite",
+            false,
+            false,
+            temp.path(),
+        )
+        .unwrap();
         assert!(result.applied);
         assert_eq!(result.direction, "to-onready");
         let content = fs::read_to_string(temp.path().join("test.gd")).unwrap();
@@ -554,9 +588,14 @@ mod tests {
             "test.gd",
             "var sprite: Sprite2D\n\nfunc _ready():\n\tsprite = $Sprite2D\n",
         )]);
-        let result =
-            convert_onready(&temp.path().join("test.gd"), "sprite", false, false, temp.path())
-                .unwrap();
+        let result = convert_onready(
+            &temp.path().join("test.gd"),
+            "sprite",
+            false,
+            false,
+            temp.path(),
+        )
+        .unwrap();
         assert!(result.applied);
         let content = fs::read_to_string(temp.path().join("test.gd")).unwrap();
         assert!(
@@ -569,9 +608,14 @@ mod tests {
     fn dry_run_no_modify() {
         let original = "@onready var sprite = $Sprite2D\n\nfunc _ready():\n\tpass\n";
         let temp = setup_project(&[("test.gd", original)]);
-        let result =
-            convert_onready(&temp.path().join("test.gd"), "sprite", true, true, temp.path())
-                .unwrap();
+        let result = convert_onready(
+            &temp.path().join("test.gd"),
+            "sprite",
+            true,
+            true,
+            temp.path(),
+        )
+        .unwrap();
         assert!(!result.applied);
         let content = fs::read_to_string(temp.path().join("test.gd")).unwrap();
         assert_eq!(content, original, "dry run should not modify file");
@@ -583,9 +627,14 @@ mod tests {
             "test.gd",
             "var sprite\n\nfunc _ready():\n\tsprite = $Sprite2D\n\tprint(\"ready\")\n",
         )]);
-        let result =
-            convert_onready(&temp.path().join("test.gd"), "sprite", false, false, temp.path())
-                .unwrap();
+        let result = convert_onready(
+            &temp.path().join("test.gd"),
+            "sprite",
+            false,
+            false,
+            temp.path(),
+        )
+        .unwrap();
         assert!(result.applied);
         let content = fs::read_to_string(temp.path().join("test.gd")).unwrap();
         assert!(
@@ -600,12 +649,14 @@ mod tests {
 
     #[test]
     fn no_onready_errors() {
-        let temp = setup_project(&[(
-            "test.gd",
-            "var sprite = null\n",
-        )]);
-        let result =
-            convert_onready(&temp.path().join("test.gd"), "sprite", true, false, temp.path());
+        let temp = setup_project(&[("test.gd", "var sprite = null\n")]);
+        let result = convert_onready(
+            &temp.path().join("test.gd"),
+            "sprite",
+            true,
+            false,
+            temp.path(),
+        );
         assert!(result.is_err());
     }
 
@@ -615,8 +666,13 @@ mod tests {
             "test.gd",
             "@onready var sprite = $Sprite2D\n\nfunc _ready():\n\tpass\n",
         )]);
-        let result =
-            convert_onready(&temp.path().join("test.gd"), "sprite", false, false, temp.path());
+        let result = convert_onready(
+            &temp.path().join("test.gd"),
+            "sprite",
+            false,
+            false,
+            temp.path(),
+        );
         assert!(result.is_err());
     }
 }

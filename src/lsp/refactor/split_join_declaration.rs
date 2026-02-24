@@ -47,9 +47,7 @@ pub fn split_declaration(
     }
 
     if node.kind() != "variable_statement" {
-        return Err(miette::miette!(
-            "line {line} is not a variable declaration"
-        ));
+        return Err(miette::miette!("line {line} is not a variable declaration"));
     }
 
     // Must have an initializer (value field)
@@ -154,9 +152,7 @@ pub fn join_declaration(
     }
 
     if node.kind() != "variable_statement" {
-        return Err(miette::miette!(
-            "line {line} is not a variable declaration"
-        ));
+        return Err(miette::miette!("line {line} is not a variable declaration"));
     }
 
     // Must NOT have an initializer
@@ -354,9 +350,7 @@ fn find_next_assignment<'a>(
         }
     }
 
-    Err(miette::miette!(
-        "no statement found after 'var {var_name}'"
-    ))
+    Err(miette::miette!("no statement found after 'var {var_name}'"))
 }
 
 /// Replace a node's line range with new text.
@@ -474,8 +468,7 @@ mod tests {
     fn split_dry_run() {
         let original = "var speed = 10\n";
         let temp = setup_project(&[("test.gd", original)]);
-        let result =
-            split_declaration(&temp.path().join("test.gd"), 1, true, temp.path()).unwrap();
+        let result = split_declaration(&temp.path().join("test.gd"), 1, true, temp.path()).unwrap();
         assert!(!result.applied);
         assert_eq!(result.variable, "speed");
         let content = fs::read_to_string(temp.path().join("test.gd")).unwrap();
@@ -515,10 +508,7 @@ mod tests {
 
     #[test]
     fn split_preserves_indent() {
-        let temp = setup_project(&[(
-            "test.gd",
-            "func foo():\n\tvar speed = 10\n\treturn speed\n",
-        )]);
+        let temp = setup_project(&[("test.gd", "func foo():\n\tvar speed = 10\n\treturn speed\n")]);
         // var speed is on line 2 (1-based) but it's inside a func body, not top-level
         // find_declaration_by_line only finds top-level declarations, so this should error
         let result = split_declaration(&temp.path().join("test.gd"), 2, false, temp.path());
@@ -547,8 +537,7 @@ mod tests {
     #[test]
     fn join_basic_var() {
         let temp = setup_project(&[("test.gd", "var speed\nspeed = 10\n")]);
-        let result =
-            join_declaration(&temp.path().join("test.gd"), 1, false, temp.path()).unwrap();
+        let result = join_declaration(&temp.path().join("test.gd"), 1, false, temp.path()).unwrap();
         assert!(result.applied);
         assert_eq!(result.variable, "speed");
         let content = fs::read_to_string(temp.path().join("test.gd")).unwrap();
@@ -564,8 +553,7 @@ mod tests {
     #[test]
     fn join_with_type() {
         let temp = setup_project(&[("test.gd", "var speed: int\nspeed = 5\n")]);
-        let result =
-            join_declaration(&temp.path().join("test.gd"), 1, false, temp.path()).unwrap();
+        let result = join_declaration(&temp.path().join("test.gd"), 1, false, temp.path()).unwrap();
         assert!(result.applied);
         let content = fs::read_to_string(temp.path().join("test.gd")).unwrap();
         assert!(
@@ -578,8 +566,7 @@ mod tests {
     fn join_dry_run() {
         let original = "var speed\nspeed = 10\n";
         let temp = setup_project(&[("test.gd", original)]);
-        let result =
-            join_declaration(&temp.path().join("test.gd"), 1, true, temp.path()).unwrap();
+        let result = join_declaration(&temp.path().join("test.gd"), 1, true, temp.path()).unwrap();
         assert!(!result.applied);
         assert_eq!(result.variable, "speed");
         let content = fs::read_to_string(temp.path().join("test.gd")).unwrap();
@@ -646,12 +633,8 @@ mod tests {
 
     #[test]
     fn join_skips_comments() {
-        let temp = setup_project(&[(
-            "test.gd",
-            "var speed\n# initialize speed\nspeed = 10\n",
-        )]);
-        let result =
-            join_declaration(&temp.path().join("test.gd"), 1, false, temp.path()).unwrap();
+        let temp = setup_project(&[("test.gd", "var speed\n# initialize speed\nspeed = 10\n")]);
+        let result = join_declaration(&temp.path().join("test.gd"), 1, false, temp.path()).unwrap();
         assert!(result.applied);
         let content = fs::read_to_string(temp.path().join("test.gd")).unwrap();
         assert!(

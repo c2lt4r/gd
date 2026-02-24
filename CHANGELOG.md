@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.2.43] - 2026-02-24
+
+### Added
+- **`gd lsp invert-if`** — invert an if/else statement: negate the condition, swap branches. Supports elif chain rotation, De Morgan's law, comparison flipping, and boolean literal inversion.
+- **`gd lsp extract-guards`** — flatten nested ifs into early return/continue guard clauses. Auto-detects exit keyword (return/continue) from function context.
+- **`gd lsp split-declaration` / `join-declaration`** — split `var x = expr` into `var x` + `x = expr`, or join them back. Useful for separating declaration from initialization.
+- **`gd lsp introduce-variable --const`** — introduce a constant instead of a variable. Emits `const NAME = expr` with UPPER_SNAKE_CASE naming.
+- **`gd lsp convert-node-path`** — convert between `$NodePath` and `get_node("NodePath")` syntax. Auto-detects direction from cursor position, handles quoting for paths with `/`, `..`, etc.
+- **`gd lsp convert-onready`** — convert between `@onready var` and explicit `_ready()` assignment. Creates `_ready()` if it doesn't exist, preserves type annotations, inserts `pass` when body becomes empty.
+- **`gd lsp convert-signal`** — move signal connections between `.tscn` scene wiring and `.connect()` calls in GDScript. Cross-file operation with undo support for both files.
+- **Collision warnings for rename** — `gd lsp rename` now warns when the new name collides with existing symbols in scope.
+- **Post-refactoring syntax validation** — all refactoring commands now verify the output has no new parse errors compared to the original, preventing broken code from being written.
+
+### Fixed
+- **`gd lsp extract-method`** — correctly captures local variables that are assigned in the extracted range and used after it, returning them from the new function.
+
 ## [0.2.42] - 2026-02-24
 
 ### Added

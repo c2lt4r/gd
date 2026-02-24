@@ -2361,8 +2361,7 @@ pub fn exec(args: LspArgs) -> Result<()> {
             dry_run,
             format,
         } => {
-            let result =
-                crate::lsp::query::query_convert_node_path(&file, line, column, dry_run)?;
+            let result = crate::lsp::query::query_convert_node_path(&file, line, column, dry_run)?;
             if is_json(format.as_ref()) {
                 let json =
                     serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
@@ -2386,7 +2385,7 @@ pub fn exec(args: LspArgs) -> Result<()> {
                 _ => {
                     return Err(miette::miette!(
                         "specify exactly one of --to-ready or --to-onready"
-                    ))
+                    ));
                 }
             };
             let result =
@@ -2416,7 +2415,7 @@ pub fn exec(args: LspArgs) -> Result<()> {
                 _ => {
                     return Err(miette::miette!(
                         "specify exactly one of --to-code or --to-scene"
-                    ))
+                    ));
                 }
             };
             let result = crate::lsp::query::query_convert_signal(

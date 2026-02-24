@@ -132,12 +132,7 @@ pub fn introduce_variable(
         } else {
             "introduce-variable"
         };
-        let _ = stack.record(
-            label,
-            &format!("introduce {name}"),
-            &snaps,
-            project_root,
-        );
+        let _ = stack.record(label, &format!("introduce {name}"), &snaps, project_root);
     }
 
     Ok(IntroduceVariableOutput {
@@ -275,10 +270,7 @@ mod tests {
 
     #[test]
     fn introduce_as_const_literal() {
-        let temp = setup_project(&[(
-            "player.gd",
-            "func calc():\n\tvar x = speed * 0.15\n",
-        )]);
+        let temp = setup_project(&[("player.gd", "func calc():\n\tvar x = speed * 0.15\n")]);
         // Select "0.15" on line 2, col 18-22 (1-based)
         let result = introduce_variable(
             &temp.path().join("player.gd"),
@@ -308,10 +300,7 @@ mod tests {
 
     #[test]
     fn introduce_as_const_naming_warning() {
-        let temp = setup_project(&[(
-            "player.gd",
-            "func calc():\n\tvar x = speed * 0.15\n",
-        )]);
+        let temp = setup_project(&[("player.gd", "func calc():\n\tvar x = speed * 0.15\n")]);
         let result = introduce_variable(
             &temp.path().join("player.gd"),
             2,
@@ -325,7 +314,10 @@ mod tests {
         .unwrap();
         assert!(result.is_const);
         assert!(
-            result.warnings.iter().any(|w| w.contains("UPPER_SNAKE_CASE")),
+            result
+                .warnings
+                .iter()
+                .any(|w| w.contains("UPPER_SNAKE_CASE")),
             "should warn about naming: {:?}",
             result.warnings
         );
@@ -333,10 +325,7 @@ mod tests {
 
     #[test]
     fn introduce_as_const_false_no_const() {
-        let temp = setup_project(&[(
-            "player.gd",
-            "func calc():\n\tvar x = speed * 0.15\n",
-        )]);
+        let temp = setup_project(&[("player.gd", "func calc():\n\tvar x = speed * 0.15\n")]);
         let result = introduce_variable(
             &temp.path().join("player.gd"),
             2,
@@ -358,10 +347,7 @@ mod tests {
 
     #[test]
     fn introduce_as_const_output_fields() {
-        let temp = setup_project(&[(
-            "player.gd",
-            "func calc():\n\tvar x = speed * 0.15\n",
-        )]);
+        let temp = setup_project(&[("player.gd", "func calc():\n\tvar x = speed * 0.15\n")]);
         let result = introduce_variable(
             &temp.path().join("player.gd"),
             2,

@@ -700,7 +700,11 @@ fn generate_call_site_multi_return(
     let mut lines = format!("{indent}var {result_name} = {name}({args})\n");
     for v in return_vars {
         if v.needs_var_declaration {
-            let _ = writeln!(lines, "{indent}var {} = {result_name}[\"{}\"]", v.name, v.name);
+            let _ = writeln!(
+                lines,
+                "{indent}var {} = {result_name}[\"{}\"]",
+                v.name, v.name
+            );
         } else {
             let _ = writeln!(lines, "{indent}{} = {result_name}[\"{}\"]", v.name, v.name);
         }

@@ -204,8 +204,7 @@ pub fn query_rename(
         let point = tree_sitter::Point::new(line - 1, column - 1);
         let scope_names =
             crate::lsp::refactor::collision::collect_scope_names(tree.root_node(), &source, point);
-        if let Some(kind) =
-            crate::lsp::refactor::collision::check_collision(new_name, &scope_names)
+        if let Some(kind) = crate::lsp::refactor::collision::check_collision(new_name, &scope_names)
         {
             warnings.push(format!("'{new_name}' collides with a {kind}"));
         }
@@ -280,8 +279,7 @@ pub fn query_rename_by_name(
             &first_source,
             point,
         );
-        if let Some(kind) =
-            crate::lsp::refactor::collision::check_collision(new_name, &scope_names)
+        if let Some(kind) = crate::lsp::refactor::collision::check_collision(new_name, &scope_names)
         {
             warnings.push(format!("'{new_name}' collides with a {kind}"));
         }

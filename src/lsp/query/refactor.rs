@@ -325,7 +325,15 @@ pub fn query_convert_signal(
 ) -> Result<crate::lsp::refactor::ConvertSignalOutput> {
     let path = resolve_file(scene)?;
     let project_root = find_root(&path)?;
-    crate::lsp::refactor::convert_signal(&path, signal, from, method, to_code, dry_run, &project_root)
+    crate::lsp::refactor::convert_signal(
+        &path,
+        signal,
+        from,
+        method,
+        to_code,
+        dry_run,
+        &project_root,
+    )
 }
 
 // ── Convert node path ─────────────────────────────────────────────────────────

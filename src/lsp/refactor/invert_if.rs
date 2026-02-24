@@ -42,11 +42,7 @@ pub fn invert_if(
     let condition_node = children
         .iter()
         .find(|c| {
-            c.is_named()
-                && !matches!(
-                    c.kind(),
-                    "body" | "elif_clause" | "else_clause" | "comment"
-                )
+            c.is_named() && !matches!(c.kind(), "body" | "elif_clause" | "else_clause" | "comment")
         })
         .ok_or_else(|| miette::miette!("cannot find condition in if statement"))?;
 
@@ -56,7 +52,10 @@ pub fn invert_if(
         .find(|c| c.kind() == "body")
         .ok_or_else(|| miette::miette!("cannot find if body"))?;
 
-    let elif_clauses: Vec<&Node> = children.iter().filter(|c| c.kind() == "elif_clause").collect();
+    let elif_clauses: Vec<&Node> = children
+        .iter()
+        .filter(|c| c.kind() == "elif_clause")
+        .collect();
     let else_clause = children.iter().find(|c| c.kind() == "else_clause");
 
     if elif_clauses.is_empty() && else_clause.is_none() {
@@ -87,7 +86,14 @@ pub fn invert_if(
             else_clause.unwrap(),
         )?
     } else {
-        build_elif_inversion(&source, if_node, condition_node, if_body, &elif_clauses, else_clause)?
+        build_elif_inversion(
+            &source,
+            if_node,
+            condition_node,
+            if_body,
+            &elif_clauses,
+            else_clause,
+        )?
     };
 
     super::validate_no_new_errors(&source, &new_source)?;
@@ -257,7 +263,11 @@ pub(super) fn apply_de_morgan(text: &str) -> Option<String> {
     let lhs = text[..pos].trim();
     let rhs = text[pos + op_kind.len() + 2..].trim();
     let new_op = if op_kind == "and" { "or" } else { "and" };
-    Some(format!("{} {new_op} {}", negate_simple(lhs), negate_simple(rhs)))
+    Some(format!(
+        "{} {new_op} {}",
+        negate_simple(lhs),
+        negate_simple(rhs)
+    ))
 }
 
 /// Find top-level `and` / `or` (not inside parentheses).
@@ -400,7 +410,10 @@ fn get_elif_condition(elif: &Node, source: &str) -> Option<String> {
     let mut cursor = elif.walk();
     for child in elif.children(&mut cursor) {
         if child.is_named()
-            && !matches!(child.kind(), "body" | "elif_clause" | "else_clause" | "comment")
+            && !matches!(
+                child.kind(),
+                "body" | "elif_clause" | "else_clause" | "comment"
+            )
         {
             return Some(node_text(&child, source));
         }
@@ -507,15 +520,15 @@ mod tests {
         assert_eq!(result.original_condition, "true");
         assert_eq!(result.inverted_condition, "false");
         let content = fs::read_to_string(temp.path().join("test.gd")).unwrap();
-        assert!(content.contains("if true:"), "dry run should not modify file");
+        assert!(
+            content.contains("if true:"),
+            "dry run should not modify file"
+        );
     }
 
     #[test]
     fn invert_no_else_errors() {
-        let temp = setup_project(&[(
-            "test.gd",
-            "func foo():\n\tif true:\n\t\tpass\n",
-        )]);
+        let temp = setup_project(&[("test.gd", "func foo():\n\tif true:\n\t\tpass\n")]);
         let result = invert_if(&temp.path().join("test.gd"), 2, false, temp.path());
         assert!(result.is_err());
     }
@@ -591,7 +604,8 @@ mod tests {
         // Our function sees "not not x", strips "not " → "not x". That's correct:
         // the negation of `not not x` is `not x`.
         let source = "not x";
-        let tree = crate::core::parser::parse(&format!("if {source}:\n\tpass\nelse:\n\tpass\n")).unwrap();
+        let tree =
+            crate::core::parser::parse(&format!("if {source}:\n\tpass\nelse:\n\tpass\n")).unwrap();
         let if_node = tree.root_node().child(0).unwrap();
         let mut cursor = if_node.walk();
         let condition = if_node

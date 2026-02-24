@@ -33,7 +33,7 @@ enum Direction {
 pub fn convert_node_path(
     file: &Path,
     line: usize,   // 1-based
-    column: usize,  // 1-based
+    column: usize, // 1-based
     dry_run: bool,
     project_root: &Path,
 ) -> Result<ConvertNodePathOutput> {
@@ -236,11 +236,9 @@ mod tests {
 
     #[test]
     fn dollar_to_get_node_simple() {
-        let temp = setup_project(&[(
-            "test.gd",
-            "func foo():\n\tvar node = $Sprite2D\n",
-        )]);
-        let result = convert_node_path(&temp.path().join("test.gd"), 2, 13, false, temp.path()).unwrap();
+        let temp = setup_project(&[("test.gd", "func foo():\n\tvar node = $Sprite2D\n")]);
+        let result =
+            convert_node_path(&temp.path().join("test.gd"), 2, 13, false, temp.path()).unwrap();
         assert!(result.applied);
         assert_eq!(result.direction, "to-call");
         assert_eq!(result.converted, "get_node(\"Sprite2D\")");
@@ -257,7 +255,8 @@ mod tests {
             "test.gd",
             "func foo():\n\tvar node = $\"Player/Sprite2D\"\n",
         )]);
-        let result = convert_node_path(&temp.path().join("test.gd"), 2, 13, false, temp.path()).unwrap();
+        let result =
+            convert_node_path(&temp.path().join("test.gd"), 2, 13, false, temp.path()).unwrap();
         assert!(result.applied);
         assert_eq!(result.direction, "to-call");
         assert_eq!(result.converted, "get_node(\"Player/Sprite2D\")");
@@ -274,7 +273,8 @@ mod tests {
             "test.gd",
             "func foo():\n\tvar node = get_node(\"Sprite2D\")\n",
         )]);
-        let result = convert_node_path(&temp.path().join("test.gd"), 2, 13, false, temp.path()).unwrap();
+        let result =
+            convert_node_path(&temp.path().join("test.gd"), 2, 13, false, temp.path()).unwrap();
         assert!(result.applied);
         assert_eq!(result.direction, "to-dollar");
         assert_eq!(result.converted, "$Sprite2D");
@@ -291,7 +291,8 @@ mod tests {
             "test.gd",
             "func foo():\n\tvar node = get_node(\"Player/Sprite2D\")\n",
         )]);
-        let result = convert_node_path(&temp.path().join("test.gd"), 2, 13, false, temp.path()).unwrap();
+        let result =
+            convert_node_path(&temp.path().join("test.gd"), 2, 13, false, temp.path()).unwrap();
         assert!(result.applied);
         assert_eq!(result.direction, "to-dollar");
         assert_eq!(result.converted, "$\"Player/Sprite2D\"");
@@ -308,7 +309,8 @@ mod tests {
             "test.gd",
             "func foo():\n\tvar node = get_node(\"../Sibling\")\n",
         )]);
-        let result = convert_node_path(&temp.path().join("test.gd"), 2, 13, false, temp.path()).unwrap();
+        let result =
+            convert_node_path(&temp.path().join("test.gd"), 2, 13, false, temp.path()).unwrap();
         assert!(result.applied);
         assert_eq!(result.direction, "to-dollar");
         assert_eq!(result.converted, "$\"../Sibling\"");
@@ -323,7 +325,8 @@ mod tests {
     fn dry_run_no_modify() {
         let original = "func foo():\n\tvar node = $Sprite2D\n";
         let temp = setup_project(&[("test.gd", original)]);
-        let result = convert_node_path(&temp.path().join("test.gd"), 2, 13, true, temp.path()).unwrap();
+        let result =
+            convert_node_path(&temp.path().join("test.gd"), 2, 13, true, temp.path()).unwrap();
         assert!(!result.applied);
         assert_eq!(result.direction, "to-call");
         assert_eq!(result.converted, "get_node(\"Sprite2D\")");
