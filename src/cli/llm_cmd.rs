@@ -257,6 +257,7 @@ gd lsp change-signature --file <f> --name <sym> --add-param "name: Type = defaul
 gd lsp introduce-variable --file <f> --line <L> --column <C> --end-column <C> --name <name>
 gd lsp introduce-parameter --file <f> --line <L> --column <C> --end-column <C> --name <name>
 gd lsp invert-if --file <f> --line <L>             # Invert if/else: negate condition, swap branches
+gd lsp convert-node-path --file <f> --line <L> --column <C>  # Convert $Path ↔ get_node("Path")
 gd lsp extract-guards --file <f> --name <name>    # Flatten nested ifs to early return/continue guards
 gd lsp split-declaration --file <f> --line <L>     # Split var x = expr into declaration + assignment
 gd lsp join-declaration --file <f> --line <L>      # Join bare var declaration with following assignment

@@ -300,6 +300,19 @@ pub fn query_join_declaration(
     crate::lsp::refactor::join_declaration(&path, line, dry_run, &project_root)
 }
 
+// ── Convert node path ─────────────────────────────────────────────────────────
+
+pub fn query_convert_node_path(
+    file: &str,
+    line: usize,
+    column: usize,
+    dry_run: bool,
+) -> Result<crate::lsp::refactor::ConvertNodePathOutput> {
+    let path = resolve_file(file)?;
+    let project_root = find_root(&path)?;
+    crate::lsp::refactor::convert_node_path(&path, line, column, dry_run, &project_root)
+}
+
 // ── Invert if ────────────────────────────────────────────────────────────────
 
 pub fn query_invert_if(

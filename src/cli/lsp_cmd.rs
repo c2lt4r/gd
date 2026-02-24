@@ -334,6 +334,24 @@ pub enum LspCommand {
         #[arg(long)]
         format: Option<String>,
     },
+    /// Convert between $NodePath and get_node() syntax
+    ConvertNodePath {
+        /// Path to the GDScript file
+        #[arg(long)]
+        file: String,
+        /// Line number (1-based)
+        #[arg(long)]
+        line: usize,
+        /// Column number (1-based)
+        #[arg(long)]
+        column: usize,
+        /// Preview without writing changes
+        #[arg(long)]
+        dry_run: bool,
+        /// Output format: json or human (default: human)
+        #[arg(long)]
+        format: Option<String>,
+    },
     /// Flatten nested ifs to early return/continue guard clauses
     ExtractGuards {
         /// Path to the GDScript file
@@ -1086,6 +1104,19 @@ fn print_invert_if_human(r: &crate::lsp::refactor::InvertIfOutput) {
         r.original_condition.dimmed(),
         "→".dimmed(),
         r.inverted_condition.green().bold(),
+        dry_run_suffix(r.applied),
+    );
+}
+
+fn print_convert_node_path_human(r: &crate::lsp::refactor::ConvertNodePathOutput) {
+    use owo_colors::OwoColorize;
+    cprintln!(
+        "Converted {} {} {} in {}:{}{}",
+        r.original.dimmed(),
+        "→".dimmed(),
+        r.converted.green().bold(),
+        r.file.cyan(),
+        r.line,
         dry_run_suffix(r.applied),
     );
 }
@@ -2235,6 +2266,24 @@ pub fn exec(args: LspArgs) -> Result<()> {
                 cprintln!("{json}");
             } else {
                 print_invert_if_human(&result);
+            }
+            Ok(())
+        }
+        LspCommand::ConvertNodePath {
+            file,
+            line,
+            column,
+            dry_run,
+            format,
+        } => {
+            let result =
+                crate::lsp::query::query_convert_node_path(&file, line, column, dry_run)?;
+            if is_json(format.as_ref()) {
+                let json =
+                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+                cprintln!("{json}");
+            } else {
+                print_convert_node_path_human(&result);
             }
             Ok(())
         }

@@ -17,9 +17,9 @@ pub use navigation::{
     query_scene_refs, query_signal_connections,
 };
 pub use refactor::{
-    query_bulk_delete_symbol, query_bulk_rename, query_change_signature, query_delete_symbol,
-    query_extract_class, query_extract_guards, query_extract_method, query_inline_delegate,
-    query_inline_method, query_inline_method_by_name, query_inline_variable,
+    query_bulk_delete_symbol, query_bulk_rename, query_change_signature, query_convert_node_path,
+    query_delete_symbol, query_extract_class, query_extract_guards, query_extract_method,
+    query_inline_delegate, query_inline_method, query_inline_method_by_name, query_inline_variable,
     query_introduce_parameter, query_introduce_variable, query_invert_if, query_join_declaration,
     query_move_file, query_move_symbol, query_split_declaration, query_undo, query_undo_list,
 };
