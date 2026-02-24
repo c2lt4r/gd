@@ -19,7 +19,6 @@ fn test_lsp_delete_symbol_function() {
         .args([
             "refactor",
             "delete-symbol",
-            "--file",
             "player.gd",
             "--name",
             "unused",
@@ -53,7 +52,6 @@ fn test_lsp_delete_symbol_dry_run() {
         .args([
             "refactor",
             "delete-symbol",
-            "--file",
             "player.gd",
             "--name",
             "unused",
@@ -84,7 +82,6 @@ fn test_lsp_delete_symbol_with_references() {
         .args([
             "refactor",
             "delete-symbol",
-            "--file",
             "player.gd",
             "--name",
             "speed",
@@ -119,7 +116,6 @@ fn test_lsp_delete_symbol_force() {
         .args([
             "refactor",
             "delete-symbol",
-            "--file",
             "player.gd",
             "--name",
             "speed",
@@ -150,7 +146,6 @@ fn test_lsp_delete_symbol_by_line() {
         .args([
             "refactor",
             "delete-symbol",
-            "--file",
             "player.gd",
             "--line",
             "4",
@@ -291,7 +286,6 @@ fn test_lsp_extract_method_simple() {
         .args([
             "refactor",
             "extract-method",
-            "--file",
             "player.gd",
             "--start-line",
             "4",
@@ -337,7 +331,6 @@ fn test_lsp_extract_method_with_params() {
         .args([
             "refactor",
             "extract-method",
-            "--file",
             "player.gd",
             "--start-line",
             "4",
@@ -374,7 +367,6 @@ fn test_lsp_extract_method_with_return() {
         .args([
             "refactor",
             "extract-method",
-            "--file",
             "player.gd",
             "--start-line",
             "3",
@@ -420,7 +412,6 @@ fn test_lsp_extract_method_dry_run() {
         .args([
             "refactor",
             "extract-method",
-            "--file",
             "player.gd",
             "--start-line",
             "2",
@@ -462,7 +453,6 @@ fn test_lsp_extract_method_async_warning() {
         .args([
             "refactor",
             "extract-method",
-            "--file",
             "player.gd",
             "--start-line",
             "2",
@@ -503,7 +493,6 @@ fn test_lsp_extract_method_no_async_no_warning() {
         .args([
             "refactor",
             "extract-method",
-            "--file",
             "player.gd",
             "--start-line",
             "2",
@@ -542,7 +531,6 @@ fn test_lsp_extract_method_multi_return() {
         .args([
             "refactor",
             "extract-method",
-            "--file",
             "player.gd",
             "--start-line",
             "4",
@@ -593,7 +581,6 @@ fn test_lsp_delete_symbol_inner_class() {
         .args([
             "refactor",
             "delete-symbol",
-            "--file",
             "player.gd",
             "--name",
             "unused",
@@ -689,7 +676,6 @@ fn test_lsp_delete_enum_member() {
         .args([
             "refactor",
             "delete-symbol",
-            "--file",
             "state.gd",
             "--name",
             "State.RUNNING",
@@ -726,7 +712,6 @@ fn test_lsp_delete_enum_member_dry_run() {
         .args([
             "refactor",
             "delete-symbol",
-            "--file",
             "state.gd",
             "--name",
             "State.IDLE",
@@ -863,7 +848,6 @@ fn test_lsp_inline_method_simple() {
         .args([
             "refactor",
             "inline-method",
-            "--file",
             "player.gd",
             "--line",
             "6",
@@ -903,7 +887,6 @@ fn test_lsp_inline_method_with_params() {
         .args([
             "refactor",
             "inline-method",
-            "--file",
             "player.gd",
             "--line",
             "6",
@@ -950,7 +933,6 @@ fn test_lsp_change_signature_add_param() {
         .args([
             "refactor",
             "change-signature",
-            "--file",
             "player.gd",
             "--name",
             "attack",
@@ -994,7 +976,6 @@ fn test_lsp_change_signature_remove_param() {
         .args([
             "refactor",
             "change-signature",
-            "--file",
             "player.gd",
             "--name",
             "attack",
@@ -1034,7 +1015,6 @@ fn test_lsp_change_signature_dry_run() {
         .args([
             "refactor",
             "change-signature",
-            "--file",
             "player.gd",
             "--name",
             "attack",
@@ -1072,7 +1052,6 @@ fn test_lsp_introduce_variable_simple() {
         .args([
             "refactor",
             "introduce-variable",
-            "--file",
             "player.gd",
             "--line",
             "2",
@@ -1121,7 +1100,6 @@ fn test_lsp_introduce_variable_dry_run() {
         .args([
             "refactor",
             "introduce-variable",
-            "--file",
             "player.gd",
             "--line",
             "2",
@@ -1158,7 +1136,6 @@ fn test_lsp_introduce_variable_call_expression() {
         .args([
             "refactor",
             "introduce-variable",
-            "--file",
             "player.gd",
             "--line",
             "2",
@@ -1208,7 +1185,6 @@ fn test_lsp_introduce_parameter_with_type() {
         .args([
             "refactor",
             "introduce-parameter",
-            "--file",
             "player.gd",
             "--line",
             "2",
@@ -1263,7 +1239,6 @@ fn test_lsp_introduce_parameter_no_type() {
         .args([
             "refactor",
             "introduce-parameter",
-            "--file",
             "player.gd",
             "--line",
             "2",
@@ -1307,7 +1282,6 @@ fn test_lsp_introduce_parameter_dry_run() {
         .args([
             "refactor",
             "introduce-parameter",
-            "--file",
             "player.gd",
             "--line",
             "2",
@@ -1346,7 +1320,6 @@ fn test_lsp_bulk_delete_symbol() {
         .args([
             "refactor",
             "bulk-delete-symbol",
-            "--file",
             "player.gd",
             "--names",
             "a,b,c",
@@ -1384,7 +1357,6 @@ fn test_lsp_bulk_delete_symbol_skips_referenced() {
         .args([
             "refactor",
             "bulk-delete-symbol",
-            "--file",
             "player.gd",
             "--names",
             "speed,unused",
@@ -1411,7 +1383,6 @@ fn test_lsp_bulk_delete_symbol_dry_run() {
         .args([
             "refactor",
             "bulk-delete-symbol",
-            "--file",
             "player.gd",
             "--names",
             "a,b",
@@ -1446,7 +1417,6 @@ fn test_lsp_bulk_rename() {
         .args([
             "refactor",
             "bulk-rename",
-            "--file",
             "player.gd",
             "--renames",
             "speed:velocity,health:hp",
@@ -1481,7 +1451,6 @@ fn test_lsp_bulk_rename_dry_run() {
         .args([
             "refactor",
             "bulk-rename",
-            "--file",
             "player.gd",
             "--renames",
             "speed:velocity,health:hp",
@@ -1511,7 +1480,6 @@ fn test_lsp_bulk_rename_some_not_found() {
         .args([
             "refactor",
             "bulk-rename",
-            "--file",
             "player.gd",
             "--renames",
             "speed:velocity,nonexistent:whatever",
@@ -1542,7 +1510,6 @@ fn test_lsp_inline_delegate() {
         .args([
             "refactor",
             "inline-delegate",
-            "--file",
             "player.gd",
             "--name",
             "attack",
@@ -1585,7 +1552,6 @@ fn test_lsp_inline_delegate_dry_run() {
         .args([
             "refactor",
             "inline-delegate",
-            "--file",
             "player.gd",
             "--name",
             "attack",
@@ -1619,7 +1585,6 @@ fn test_lsp_inline_delegate_not_delegate() {
         .args([
             "refactor",
             "inline-delegate",
-            "--file",
             "player.gd",
             "--name",
             "foo",
@@ -1649,7 +1614,6 @@ fn test_lsp_extract_class() {
         .args([
             "refactor",
             "extract-class",
-            "--file",
             "player.gd",
             "--symbols",
             "helper",
@@ -1696,7 +1660,6 @@ fn test_lsp_extract_class_dry_run() {
         .args([
             "refactor",
             "extract-class",
-            "--file",
             "player.gd",
             "--symbols",
             "helper",
@@ -1736,7 +1699,6 @@ fn test_lsp_extract_class_multiple_symbols() {
         .args([
             "refactor",
             "extract-class",
-            "--file",
             "player.gd",
             "--symbols",
             "speed,helper",
@@ -1848,7 +1810,6 @@ fn test_lsp_replace_body() {
         &[
             "edit",
             "replace-body",
-            "--file",
             "player.gd",
             "--name",
             "_ready",
@@ -1880,7 +1841,6 @@ fn test_lsp_replace_body_dry_run() {
         &[
             "edit",
             "replace-body",
-            "--file",
             "player.gd",
             "--name",
             "_ready",
@@ -1910,7 +1870,6 @@ fn test_lsp_replace_body_reindents() {
         &[
             "edit",
             "replace-body",
-            "--file",
             "player.gd",
             "--name",
             "_ready",
@@ -1936,7 +1895,6 @@ fn test_lsp_replace_body_non_function_fails() {
         &[
             "edit",
             "replace-body",
-            "--file",
             "player.gd",
             "--name",
             "speed",
@@ -1962,7 +1920,6 @@ fn test_lsp_replace_body_with_class() {
         &[
             "edit",
             "replace-body",
-            "--file",
             "player.gd",
             "--name",
             "foo",
@@ -1989,7 +1946,6 @@ fn test_lsp_insert_after() {
         &[
             "edit",
             "insert",
-            "--file",
             "player.gd",
             "--after",
             "_ready",
@@ -2021,7 +1977,6 @@ fn test_lsp_insert_before() {
         &[
             "edit",
             "insert",
-            "--file",
             "player.gd",
             "--before",
             "_ready",
@@ -2049,7 +2004,6 @@ fn test_lsp_insert_dry_run() {
         &[
             "edit",
             "insert",
-            "--file",
             "player.gd",
             "--after",
             "_ready",
@@ -2078,7 +2032,6 @@ fn test_lsp_insert_no_anchor_fails() {
         &[
             "edit",
             "insert",
-            "--file",
             "player.gd",
             "--no-format",
             "--format",
@@ -2105,7 +2058,6 @@ fn test_lsp_insert_input_file() {
         .args([
             "edit",
             "insert",
-            "--file",
             "player.gd",
             "--after",
             "_ready",
@@ -2146,7 +2098,6 @@ fn test_lsp_replace_symbol() {
         &[
             "edit",
             "replace-symbol",
-            "--file",
             "player.gd",
             "--name",
             "speed",
@@ -2180,7 +2131,6 @@ fn test_lsp_replace_symbol_function() {
         &[
             "edit",
             "replace-symbol",
-            "--file",
             "player.gd",
             "--name",
             "old_func",
@@ -2207,7 +2157,6 @@ fn test_lsp_replace_symbol_dry_run() {
         &[
             "edit",
             "replace-symbol",
-            "--file",
             "player.gd",
             "--name",
             "speed",
@@ -2239,7 +2188,6 @@ fn test_lsp_edit_range() {
         &[
             "edit",
             "edit-range",
-            "--file",
             "player.gd",
             "--start-line",
             "2",
@@ -2275,7 +2223,6 @@ fn test_lsp_edit_range_dry_run() {
         &[
             "edit",
             "edit-range",
-            "--file",
             "player.gd",
             "--start-line",
             "2",
@@ -2306,7 +2253,6 @@ fn test_lsp_edit_range_invalid_lines() {
         &[
             "edit",
             "edit-range",
-            "--file",
             "player.gd",
             "--start-line",
             "5",
@@ -2332,7 +2278,6 @@ fn test_lsp_replace_body_with_format() {
         &[
             "edit",
             "replace-body",
-            "--file",
             "player.gd",
             "--name",
             "_ready",

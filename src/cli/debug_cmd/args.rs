@@ -447,7 +447,7 @@ pub struct LiveSetRootArgs {
     #[arg(long)]
     pub path: String,
     /// Scene file (e.g. "res://main.tscn") — the .tscn file for this scene
-    #[arg(long)]
+    #[arg()]
     pub file: String,
     /// Output format
     #[arg(long, default_value = "text")]
@@ -598,7 +598,7 @@ pub struct EvalBinArgs {
     #[arg(long, required_unless_present = "file")]
     pub expr: Option<String>,
     /// Read eval script from a file (preserves tabs, supports loops/if/else)
-    #[arg(long, conflicts_with = "expr")]
+    #[arg(conflicts_with = "expr")]
     pub file: Option<String>,
     /// Stack frame index (default: 0 = top frame)
     #[arg(long, default_value = "0")]

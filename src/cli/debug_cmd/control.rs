@@ -288,7 +288,7 @@ pub(crate) fn cmd_vars(args: &VarsArgs) -> Result<()> {
     Ok(())
 }
 
-/// Resolve eval input from --expr or --file (use `--file -` for stdin).
+/// Resolve eval input from --expr or positional file (use `-` for stdin).
 fn resolve_eval_input(args: &EvalBinArgs) -> Result<String> {
     if let Some(ref path) = args.file {
         if path == "-" {
@@ -305,7 +305,7 @@ fn resolve_eval_input(args: &EvalBinArgs) -> Result<String> {
     } else if let Some(ref expr) = args.expr {
         Ok(expr.clone())
     } else {
-        Err(miette!("Either --expr or --file is required"))
+        Err(miette!("Either --expr or a file argument is required"))
     }
 }
 

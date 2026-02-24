@@ -12,11 +12,11 @@ pub struct RefactorArgs {
 pub enum RefactorCommand {
     /// Rename a symbol across the project
     Rename {
-        /// Search by symbol name across the project (alternative to --file/--line/--column)
+        /// Search by symbol name across the project (alternative to <FILE>/--line/--column)
         #[arg(long)]
         name: Option<String>,
         /// Path to the GDScript file
-        #[arg(long)]
+        #[arg()]
         file: Option<String>,
         /// Line number (1-based)
         #[arg(long)]
@@ -37,7 +37,7 @@ pub enum RefactorCommand {
     /// Delete a symbol from a file (top-level or within an inner class)
     DeleteSymbol {
         /// Path to the GDScript file
-        #[arg(long)]
+        #[arg()]
         file: String,
         /// Symbol name to delete (alternative to --line)
         #[arg(long)]
@@ -88,7 +88,7 @@ pub enum RefactorCommand {
     /// Extract a range of lines into a new function
     ExtractMethod {
         /// Path to the GDScript file
-        #[arg(long)]
+        #[arg()]
         file: String,
         /// First line to extract (1-based, inclusive)
         #[arg(long)]
@@ -109,7 +109,7 @@ pub enum RefactorCommand {
     /// Inline a function call, replacing it with the function body
     InlineMethod {
         /// Path to the GDScript file
-        #[arg(long)]
+        #[arg()]
         file: String,
         /// Function name to inline everywhere (alternative to --line/--column)
         #[arg(long)]
@@ -133,7 +133,7 @@ pub enum RefactorCommand {
     /// Inline a variable: replace all usages with its initializer, then delete the declaration
     InlineVariable {
         /// Path to the GDScript file
-        #[arg(long)]
+        #[arg()]
         file: String,
         /// Line number of the variable (1-based)
         #[arg(long)]
@@ -151,7 +151,7 @@ pub enum RefactorCommand {
     /// Inline a pure pass-through delegate function
     InlineDelegate {
         /// Path to the GDScript file
-        #[arg(long)]
+        #[arg()]
         file: String,
         /// Name of the delegate function
         #[arg(long)]
@@ -166,7 +166,7 @@ pub enum RefactorCommand {
     /// Extract an expression into a local variable
     IntroduceVariable {
         /// Path to the GDScript file
-        #[arg(long)]
+        #[arg()]
         file: String,
         /// Line number of the expression (1-based)
         #[arg(long)]
@@ -193,7 +193,7 @@ pub enum RefactorCommand {
     /// Turn an expression into a function parameter with a default value
     IntroduceParameter {
         /// Path to the GDScript file
-        #[arg(long)]
+        #[arg()]
         file: String,
         /// Line number of the expression (1-based)
         #[arg(long)]
@@ -220,7 +220,7 @@ pub enum RefactorCommand {
     /// Invert an if/else: negate condition and swap branches
     InvertIf {
         /// Path to the GDScript file
-        #[arg(long)]
+        #[arg()]
         file: String,
         /// Line number of the if statement (1-based)
         #[arg(long)]
@@ -235,7 +235,7 @@ pub enum RefactorCommand {
     /// Convert between $NodePath and get_node() syntax
     ConvertNodePath {
         /// Path to the GDScript file
-        #[arg(long)]
+        #[arg()]
         file: String,
         /// Line number (1-based)
         #[arg(long)]
@@ -253,7 +253,7 @@ pub enum RefactorCommand {
     /// Convert between @onready var and _ready() assignment
     ConvertOnready {
         /// Path to the GDScript file
-        #[arg(long)]
+        #[arg()]
         file: String,
         /// Variable name to convert
         #[arg(long)]
@@ -274,7 +274,7 @@ pub enum RefactorCommand {
     /// Convert signal connection between scene wiring and code
     ConvertSignal {
         /// Path to the .tscn scene file
-        #[arg(long)]
+        #[arg()]
         file: String,
         /// Signal name (e.g., "pressed")
         #[arg(long)]
@@ -301,7 +301,7 @@ pub enum RefactorCommand {
     /// Flatten nested ifs to early return/continue guard clauses
     ExtractGuards {
         /// Path to the GDScript file
-        #[arg(long)]
+        #[arg()]
         file: String,
         /// Function name
         #[arg(long)]
@@ -316,7 +316,7 @@ pub enum RefactorCommand {
     /// Split `var x = expr` into separate declaration and assignment
     SplitDeclaration {
         /// Path to the GDScript file
-        #[arg(long)]
+        #[arg()]
         file: String,
         /// Line number of the variable declaration (1-based)
         #[arg(long)]
@@ -331,7 +331,7 @@ pub enum RefactorCommand {
     /// Join bare `var x` with following `x = expr` into `var x = expr`
     JoinDeclaration {
         /// Path to the GDScript file
-        #[arg(long)]
+        #[arg()]
         file: String,
         /// Line number of the bare variable declaration (1-based)
         #[arg(long)]
@@ -346,7 +346,7 @@ pub enum RefactorCommand {
     /// Delete multiple symbols in one pass without line-shifting issues
     BulkDeleteSymbol {
         /// Path to the GDScript file
-        #[arg(long)]
+        #[arg()]
         file: String,
         /// Comma-separated symbol names to delete
         #[arg(long)]
@@ -364,7 +364,7 @@ pub enum RefactorCommand {
     /// Rename multiple symbols atomically
     BulkRename {
         /// Path to the GDScript file
-        #[arg(long)]
+        #[arg()]
         file: String,
         /// Comma-separated rename pairs (format: "old1:new1,old2:new2")
         #[arg(long)]
@@ -379,7 +379,7 @@ pub enum RefactorCommand {
     /// Extract multiple symbols into a new class file
     ExtractClass {
         /// Path to the source GDScript file
-        #[arg(long)]
+        #[arg()]
         file: String,
         /// Comma-separated symbol names to extract
         #[arg(long)]
@@ -397,7 +397,7 @@ pub enum RefactorCommand {
     /// Check if a file can be safely deleted (find all cross-file references)
     SafeDeleteFile {
         /// Path to the GDScript file
-        #[arg(long)]
+        #[arg()]
         file: String,
         /// Actually delete the file (without this flag, only reports references)
         #[arg(long)]
@@ -427,7 +427,7 @@ pub enum RefactorCommand {
     /// Change a function's signature and update all call sites
     ChangeSignature {
         /// Path to the GDScript file
-        #[arg(long)]
+        #[arg()]
         file: String,
         /// Function name
         #[arg(long)]
@@ -980,7 +980,7 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
             } else {
                 let file_str = file
                     .as_deref()
-                    .ok_or_else(|| miette::miette!("--file is required when not using --name"))?;
+                    .ok_or_else(|| miette::miette!("<FILE> is required when not using --name"))?;
                 let line = line
                     .ok_or_else(|| miette::miette!("--line is required when not using --name"))?;
                 let column = column
@@ -1511,8 +1511,8 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
             } else {
                 let entry = crate::lsp::query::query_undo(id, dry_run)?;
                 if is_json(format.as_ref()) {
-                    let json = serde_json::to_string_pretty(&entry)
-                        .map_err(|e| miette::miette!("{e}"))?;
+                    let json =
+                        serde_json::to_string_pretty(&entry).map_err(|e| miette::miette!("{e}"))?;
                     cprintln!("{json}");
                 } else {
                     print_undo_human(&entry, dry_run);

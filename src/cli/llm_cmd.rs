@@ -161,7 +161,7 @@ gd debug profiler --name scripts|visual|servers [--off]  # Toggle profiler
 # These are NOT the same as object IDs from scene tree/inspect. Two ID systems:
 #   - Object IDs: from scene tree, used with inspect/set-prop/set-prop-field
 #   - Live edit IDs: from live set-root, used with live node-prop/res-prop/*-call
-gd debug live set-root --path </root/Main> --file <res://main.tscn>  # Set root for live edits
+gd debug live set-root --path </root/Main> <res://main.tscn>  # Set root for live edits
 gd debug live create-node --parent <path> --class <ClassName> --name <name>
 gd debug live instantiate --parent <path> --scene <res://scene.tscn> --name <name>
 gd debug live remove-node --path <node-path>
@@ -233,50 +233,50 @@ gd daemon restart                      # Restart daemon
 gd lsp                                 # Start LSP server (for editors)
 
 # One-shot queries (human-readable default, add --format json for structured output)
-gd lsp hover --file <f> --line <L> --column <C>
-gd lsp definition --file <f> --line <L> --column <C>
+gd lsp hover <f> --line <L> --column <C>
+gd lsp definition <f> --line <L> --column <C>
 gd lsp references --name <sym>                    # Cross-project search by name
 gd lsp references --name <sym> --class <cls>      # Filter to class
-gd lsp references --name <sym> --file <f>         # Filter to file
-gd lsp completions --file <f> --line <L> --column <C>
-gd lsp rename --name <sym> --new-name <name>                       # Rename by name (project-wide)
-gd lsp rename --file <f> --line <L> --column <C> --new-name <name> # Rename by position
+gd lsp references --name <sym> <f>                # Filter to file
+gd lsp completions <f> --line <L> --column <C>
+gd lsp rename --name <sym> --new-name <name>                  # Rename by name (project-wide)
+gd lsp rename <f> --line <L> --column <C> --new-name <name>   # Rename by position
 gd lsp diagnostics [files...]
-gd lsp symbols --file <f>                         # List symbols
-gd lsp symbols --file <f> --kind <kind>           # Filter: function,variable,class,signal,enum
-gd lsp code-actions --file <f> --line <L> --column <C>
-gd lsp view --file <f> [--start <L> --end <L>]   # View file lines
-gd lsp scene-info --file <f>                      # Scene structure from .tscn
+gd lsp symbols <f>                                # List symbols
+gd lsp symbols <f> --kind <kind>                  # Filter: function,variable,class,signal,enum
+gd lsp code-actions <f> --line <L> --column <C>
+gd lsp view <f> [--start <L> --end <L>]           # View file lines
+gd lsp scene-info <f>                             # Scene structure from .tscn
 
 # Refactoring (human-readable default, --format json for structured output, --dry-run to preview)
-gd lsp delete-symbol --file <f> --name <sym>       # Also: --line <L>, --force
+gd lsp delete-symbol <f> --name <sym>              # Also: --line <L>, --force
 gd lsp move-symbol --name <sym> --from <f> --to <f> [--update-callers]
-gd lsp extract-method --file <f> --start-line <L> --end-line <L> --name <name>
-gd lsp inline-method --file <f> --name <sym>
-gd lsp change-signature --file <f> --name <sym> --add-param "name: Type = default" --remove-param <name> --rename-param "old=new" --reorder "a,b,c"
-gd lsp introduce-variable --file <f> --line <L> --column <C> --end-column <C> --name <name>
-gd lsp introduce-parameter --file <f> --line <L> --column <C> --end-column <C> --name <name>
-gd lsp invert-if --file <f> --line <L>             # Invert if/else: negate condition, swap branches
-gd lsp convert-node-path --file <f> --line <L> --column <C>  # Convert $Path ↔ get_node("Path")
-gd lsp convert-onready --file <f> --name <sym> --to-ready   # @onready var → _ready() assignment
-gd lsp convert-onready --file <f> --name <sym> --to-onready # _ready() assignment → @onready var
-gd lsp convert-signal --file <f.tscn> --signal <sig> --from <node> --method <m> --to-code   # Scene connection → .connect() in _ready()
-gd lsp convert-signal --file <f.tscn> --signal <sig> --from <node> --method <m> --to-scene  # .connect() → scene connection
-gd lsp extract-guards --file <f> --name <name>    # Flatten nested ifs to early return/continue guards
-gd lsp split-declaration --file <f> --line <L>     # Split var x = expr into declaration + assignment
-gd lsp join-declaration --file <f> --line <L>      # Join bare var declaration with following assignment
-gd lsp bulk-delete-symbol --file <f> --names "a,b,c"
-gd lsp bulk-rename --file <f> --renames "old1:new1,old2:new2"
-gd lsp inline-delegate --file <f> --name <sym>
-gd lsp extract-class --file <f> --symbols "a,b" --to <new_file>
-gd lsp replace-body --file <f> --name <sym>        # Reads new body from stdin
-gd lsp replace-symbol --file <f> --name <sym>      # Reads replacement from stdin
-gd lsp insert --file <f> --after <sym>             # Insert after symbol (reads from stdin)
-gd lsp insert --file <f> --before <sym>            # Insert before symbol (reads from stdin)
-gd lsp edit-range --file <f> --range 5-20          # Replace lines 5-20 (reads from stdin)
-gd lsp edit-range --file <f> --start-line <L> --end-line <L>  # Alternative range syntax
+gd lsp extract-method <f> --start-line <L> --end-line <L> --name <name>
+gd lsp inline-method <f> --name <sym>
+gd lsp change-signature <f> --name <sym> --add-param "name: Type = default" --remove-param <name> --rename-param "old=new" --reorder "a,b,c"
+gd lsp introduce-variable <f> --line <L> --column <C> --end-column <C> --name <name>
+gd lsp introduce-parameter <f> --line <L> --column <C> --end-column <C> --name <name>
+gd lsp invert-if <f> --line <L>                    # Invert if/else: negate condition, swap branches
+gd lsp convert-node-path <f> --line <L> --column <C>  # Convert $Path ↔ get_node("Path")
+gd lsp convert-onready <f> --name <sym> --to-ready   # @onready var → _ready() assignment
+gd lsp convert-onready <f> --name <sym> --to-onready # _ready() assignment → @onready var
+gd lsp convert-signal <f.tscn> --signal <sig> --from <node> --method <m> --to-code   # Scene connection → .connect() in _ready()
+gd lsp convert-signal <f.tscn> --signal <sig> --from <node> --method <m> --to-scene  # .connect() → scene connection
+gd lsp extract-guards <f> --name <name>            # Flatten nested ifs to early return/continue guards
+gd lsp split-declaration <f> --line <L>            # Split var x = expr into declaration + assignment
+gd lsp join-declaration <f> --line <L>             # Join bare var declaration with following assignment
+gd lsp bulk-delete-symbol <f> --names "a,b,c"
+gd lsp bulk-rename <f> --renames "old1:new1,old2:new2"
+gd lsp inline-delegate <f> --name <sym>
+gd lsp extract-class <f> --symbols "a,b" --to <new_file>
+gd lsp replace-body <f> --name <sym>               # Reads new body from stdin
+gd lsp replace-symbol <f> --name <sym>             # Reads replacement from stdin
+gd lsp insert <f> --after <sym>                    # Insert after symbol (reads from stdin)
+gd lsp insert <f> --before <sym>                   # Insert before symbol (reads from stdin)
+gd lsp edit-range <f> --range 5-20                 # Replace lines 5-20 (reads from stdin)
+gd lsp edit-range <f> --start-line <L> --end-line <L>  # Alternative range syntax
 gd lsp create-file <f>                             # Create with boilerplate
-gd lsp safe-delete-file --file <f>                 # Check for cross-file refs first
+gd lsp safe-delete-file <f>                        # Check for cross-file refs first
 gd lsp find-implementations --name <method>        # Find all classes implementing a method
 
 ## Project Analysis

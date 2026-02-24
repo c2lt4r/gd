@@ -15,11 +15,11 @@ pub struct QueryArgs {
 pub enum QueryCommand {
     /// Find all references to a symbol
     References {
-        /// Search by symbol name across the project (alternative to --file/--line/--column)
+        /// Search by symbol name across the project (alternative to positional file/--line/--column)
         #[arg(long)]
         name: Option<String>,
         /// Path to the GDScript file
-        #[arg(long)]
+        #[arg()]
         file: Option<String>,
         /// Line number (1-based)
         #[arg(long)]
@@ -75,7 +75,7 @@ pub enum QueryCommand {
     /// List symbols in a file
     Symbols {
         /// Path to the GDScript file
-        #[arg(long)]
+        #[arg()]
         file: String,
         /// Filter by symbol kind (repeatable, comma-separated: function, method, variable, class, constant, enum, event; aliases: field/property = variable+field)
         #[arg(long)]
@@ -87,7 +87,7 @@ pub enum QueryCommand {
     /// View lines from a GDScript file (with optional line range)
     View {
         /// Path to the GDScript file
-        #[arg(long)]
+        #[arg()]
         file: String,
         /// Line range as START-END (e.g. 5-20; 1-based, inclusive)
         #[arg(long, conflicts_with_all = ["start_line", "end_line"])]
@@ -108,7 +108,7 @@ pub enum QueryCommand {
     /// Show scene structure from a .tscn file (nodes, resources, connections)
     SceneInfo {
         /// Path to the .tscn file
-        #[arg(long)]
+        #[arg()]
         file: String,
         /// Show only nodes (compact output)
         #[arg(long)]
@@ -120,7 +120,7 @@ pub enum QueryCommand {
     /// List all scenes that reference a GDScript file
     SceneRefs {
         /// Path to the .gd file
-        #[arg(long)]
+        #[arg()]
         file: String,
         /// Output format: json or human (default: human)
         #[arg(long)]
@@ -129,7 +129,7 @@ pub enum QueryCommand {
     /// List all signal connections targeting handler functions in a script
     SignalConnections {
         /// Path to the .gd file
-        #[arg(long)]
+        #[arg()]
         file: String,
         /// Output format: json or human (default: human)
         #[arg(long)]
@@ -152,7 +152,7 @@ pub enum QueryCommand {
 #[derive(Args)]
 pub struct QueryPositionArgs {
     /// Path to the GDScript file
-    #[arg(long)]
+    #[arg()]
     pub file: String,
     /// Line number (1-based)
     #[arg(long)]
@@ -481,7 +481,7 @@ pub fn exec(args: QueryArgs) -> Result<()> {
                 all
             } else {
                 let file = file
-                    .ok_or_else(|| miette::miette!("--file is required when not using --name"))?;
+                    .ok_or_else(|| miette::miette!("<FILE> is required when not using --name"))?;
                 let line = line
                     .ok_or_else(|| miette::miette!("--line is required when not using --name"))?;
                 let column = column

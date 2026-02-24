@@ -38,7 +38,7 @@ pub enum EditGdCommand {
     /// Replace a function's body (AST-aware, reads new body from stdin or --input-file)
     ReplaceBody {
         /// Path to the GDScript file
-        #[arg(long)]
+        #[arg()]
         file: String,
         /// Function name whose body to replace
         #[arg(long)]
@@ -62,7 +62,7 @@ pub enum EditGdCommand {
     /// Insert code before or after a named symbol (reads content from stdin or --input-file)
     Insert {
         /// Path to the GDScript file
-        #[arg(long)]
+        #[arg()]
         file: String,
         /// Insert after this symbol
         #[arg(long, conflicts_with = "before")]
@@ -89,7 +89,7 @@ pub enum EditGdCommand {
     /// Replace an entire symbol declaration (reads new content from stdin or --input-file)
     ReplaceSymbol {
         /// Path to the GDScript file
-        #[arg(long)]
+        #[arg()]
         file: String,
         /// Symbol name to replace
         #[arg(long)]
@@ -113,7 +113,7 @@ pub enum EditGdCommand {
     /// Replace a range of lines (reads new content from stdin or --input-file)
     EditRange {
         /// Path to the GDScript file
-        #[arg(long)]
+        #[arg()]
         file: String,
         /// Line range as START-END (e.g. 5-20; 1-based, inclusive)
         #[arg(long, conflicts_with_all = ["start_line", "end_line"])]

@@ -234,7 +234,7 @@ fn test_lsp_symbols_lists_all_declarations() {
     )]);
 
     let output = gd_bin()
-        .args(["query", "symbols", "--file", "player.gd", "--format", "json"])
+        .args(["query", "symbols", "player.gd", "--format", "json"])
         .current_dir(temp.path())
         .output()
         .expect("Failed to run gd query symbols");
@@ -275,7 +275,6 @@ fn test_lsp_hover_shows_function_signature() {
             "query",
             "--no-godot-proxy",
             "hover",
-            "--file",
             "player.gd",
             "--line",
             "1",
@@ -314,7 +313,6 @@ fn test_lsp_hover_attribute_member_shows_builtin_docs() {
             "query",
             "--no-godot-proxy",
             "hover",
-            "--file",
             "player.gd",
             "--line",
             "4",
@@ -353,7 +351,6 @@ fn test_lsp_hover_self_member_resolves_to_declaration() {
             "query",
             "--no-godot-proxy",
             "hover",
-            "--file",
             "player.gd",
             "--line",
             "4",
@@ -388,7 +385,6 @@ fn test_lsp_hover_unresolvable_identifier_returns_no_hover() {
             "query",
             "--no-godot-proxy",
             "hover",
-            "--file",
             "player.gd",
             "--line",
             "2",
@@ -418,7 +414,6 @@ fn test_lsp_hover_on_function_name_still_works() {
             "query",
             "--no-godot-proxy",
             "hover",
-            "--file",
             "player.gd",
             "--line",
             "1",
@@ -451,7 +446,6 @@ fn test_lsp_references_finds_all_usages() {
         .args([
             "query",
             "references",
-            "--file",
             "player.gd",
             "--line",
             "1",
@@ -489,7 +483,6 @@ fn test_lsp_definition_jumps_to_declaration() {
             "query",
             "--no-godot-proxy",
             "definition",
-            "--file",
             "player.gd",
             "--line",
             "5",
@@ -520,7 +513,6 @@ fn test_lsp_rename_dry_run_does_not_modify_file() {
         .args([
             "refactor",
             "rename",
-            "--file",
             "player.gd",
             "--line",
             "1",
@@ -562,7 +554,6 @@ fn test_lsp_rename_applies_changes_to_disk() {
         .args([
             "refactor",
             "rename",
-            "--file",
             "player.gd",
             "--line",
             "1",
@@ -613,7 +604,6 @@ fn test_lsp_rename_cross_file() {
         .args([
             "refactor",
             "rename",
-            "--file",
             "base.gd",
             "--line",
             "1",
@@ -653,7 +643,6 @@ fn test_lsp_completions_includes_keywords_and_symbols() {
             "query",
             "--no-godot-proxy",
             "completions",
-            "--file",
             "player.gd",
             "--line",
             "5",
@@ -703,7 +692,6 @@ fn test_lsp_completions_limit_caps_results() {
             "query",
             "--no-godot-proxy",
             "completions",
-            "--file",
             "player.gd",
             "--line",
             "5",
@@ -759,7 +747,6 @@ fn test_lsp_code_actions_returns_fixes() {
         .args([
             "query",
             "code-actions",
-            "--file",
             "player.gd",
             "--line",
             "5",
@@ -860,7 +847,6 @@ fn test_lsp_rename_local_variable_scoped() {
         .args([
             "refactor",
             "rename",
-            "--file",
             "player.gd",
             "--line",
             "3", // print(x) in foo
@@ -903,7 +889,6 @@ fn test_lsp_references_local_variable_scoped() {
         .args([
             "query",
             "references",
-            "--file",
             "player.gd",
             "--line",
             "2", // print(speed) in foo
@@ -945,7 +930,6 @@ fn test_lsp_definition_local_variable() {
             "query",
             "--no-godot-proxy",
             "definition",
-            "--file",
             "player.gd",
             "--line",
             "6", // print(speed) in foo
@@ -1011,10 +995,9 @@ fn test_lsp_references_by_name_with_file_filter() {
         .args([
             "query",
             "references",
+            "player.gd",
             "--name",
             "speed",
-            "--file",
-            "player.gd",
             "--format",
             "json",
         ])
@@ -1241,7 +1224,6 @@ fn test_lsp_references_position_mode_still_works() {
         .args([
             "query",
             "references",
-            "--file",
             "player.gd",
             "--line",
             "1",
@@ -1273,7 +1255,6 @@ fn test_lsp_symbols_kind_filter() {
         .args([
             "query",
             "symbols",
-            "--file",
             "player.gd",
             "--kind",
             "function",
@@ -1304,7 +1285,6 @@ fn test_lsp_symbols_kind_filter_multiple() {
         .args([
             "query",
             "symbols",
-            "--file",
             "player.gd",
             "--kind",
             "function,constant",
@@ -1336,7 +1316,6 @@ fn test_lsp_symbols_kind_filter_repeatable() {
         .args([
             "query",
             "symbols",
-            "--file",
             "player.gd",
             "--kind",
             "function",
@@ -1370,7 +1349,6 @@ fn test_lsp_symbols_kind_field_alias() {
         .args([
             "query",
             "symbols",
-            "--file",
             "player.gd",
             "--kind",
             "field",
@@ -1404,7 +1382,6 @@ fn test_lsp_safe_delete_file_does_not_delete_without_force() {
         .args([
             "refactor",
             "safe-delete-file",
-            "--file",
             "helper.gd",
             "--format",
             "json",
@@ -1434,7 +1411,6 @@ fn test_lsp_safe_delete_file_does_not_delete_unreferenced_without_force() {
         .args([
             "refactor",
             "safe-delete-file",
-            "--file",
             "orphan.gd",
             "--format",
             "json",
@@ -1463,7 +1439,6 @@ fn test_lsp_safe_delete_file_deletes_with_force() {
         .args([
             "refactor",
             "safe-delete-file",
-            "--file",
             "deleteme.gd",
             "--force",
             "--format",
@@ -1490,7 +1465,6 @@ fn test_lsp_safe_delete_file_dry_run_with_force_does_not_delete() {
         .args([
             "refactor",
             "safe-delete-file",
-            "--file",
             "keepme.gd",
             "--force",
             "--dry-run",
@@ -1524,7 +1498,6 @@ fn test_lsp_safe_delete_file_reports_references() {
         .args([
             "refactor",
             "safe-delete-file",
-            "--file",
             "base.gd",
             "--format",
             "json",
@@ -1560,7 +1533,7 @@ fn test_lsp_symbols_detail_shows_declarations() {
     )]);
 
     let output = gd_bin()
-        .args(["query", "symbols", "--file", "player.gd", "--format", "json"])
+        .args(["query", "symbols", "player.gd", "--format", "json"])
         .current_dir(temp.path())
         .output()
         .expect("Failed to run gd query symbols");
@@ -1616,7 +1589,6 @@ fn test_lsp_hover_cross_file_class_name() {
             "query",
             "--no-godot-proxy",
             "hover",
-            "--file",
             "game.gd",
             "--line",
             "1",

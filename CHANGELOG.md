@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.1] - 2026-02-24
+
+### Breaking
+- **`--file` is now a positional argument across all commands** — primary file arguments changed from `--file <path>` to positional `<path>` for all `gd query`, `gd refactor`, `gd edit`, `gd mesh batch/replay`, and `gd debug` subcommands. Secondary/destination files (`--from`, `--to`, `--input-file`) remain as flags. (closes #31)
+
 ## [0.3.0] - 2026-02-24
 
 ### Breaking

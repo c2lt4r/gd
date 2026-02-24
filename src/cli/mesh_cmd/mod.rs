@@ -943,7 +943,7 @@ pub struct ArrayArgs {
 #[derive(Args)]
 pub struct BatchArgs {
     /// Path to JSON command file
-    #[arg(long)]
+    #[arg()]
     pub file: String,
     /// Output format
     #[arg(long, default_value = "json")]
@@ -953,7 +953,7 @@ pub struct BatchArgs {
 #[derive(Args)]
 pub struct ReplayArgs {
     /// Path to JSONL replay file
-    #[arg(long)]
+    #[arg()]
     pub file: String,
     /// Preview without executing
     #[arg(long)]

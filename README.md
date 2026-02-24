@@ -577,7 +577,7 @@ gd mesh restore --name before-engines
 gd mesh snapshot output.tscn    # export to .tscn with materials and transforms
 
 # Batch execution (JSON command array)
-gd mesh batch --file commands.json
+gd mesh batch commands.json
 ```
 
 All mesh commands support `--format json` for structured output.
@@ -885,43 +885,43 @@ Example GitHub Actions step:
 
 ```sh
 # Find all references to a symbol (by position)
-gd query references --file player.gd --line 5 --column 10
+gd query references player.gd --line 5 --column 10
 
 # Find all references by name (project-wide search)
 gd query references --name speed
 
 # Go to definition
-gd query definition --file player.gd --line 5 --column 10
+gd query definition player.gd --line 5 --column 10
 
 # Hover information
-gd query hover --file player.gd --line 5 --column 10
+gd query hover player.gd --line 5 --column 10
 
 # List completions
-gd query completions --file player.gd --line 5 --column 10
+gd query completions player.gd --line 5 --column 10
 
 # Available code actions / quick fixes
-gd query code-actions --file player.gd --line 5 --column 1
+gd query code-actions player.gd --line 5 --column 1
 
 # List symbols in a file
-gd query symbols --file player.gd
+gd query symbols player.gd
 
 # Filter symbols by kind
-gd query symbols --file player.gd --kind function,signal
+gd query symbols player.gd --kind function,signal
 
 # View lines from a file
-gd query view --file player.gd --range 10-20
-gd query view --file player.gd --start-line 15 --context 3
-gd query view --file player.gd --format json  # structured output for AI tools
+gd query view player.gd --range 10-20
+gd query view player.gd --start-line 15 --context 3
+gd query view player.gd --format json  # structured output for AI tools
 
 # Scene info (nodes, resources, connections from a .tscn file)
-gd query scene-info --file main.tscn
-gd query scene-info --file main.tscn --nodes-only
+gd query scene-info main.tscn
+gd query scene-info main.tscn --nodes-only
 
 # List all scenes that reference a script
-gd query scene-refs --file player.gd
+gd query scene-refs player.gd
 
 # List signal connections targeting a script's handler functions
-gd query signal-connections --file player.gd
+gd query signal-connections player.gd
 ```
 
 All positions are **1-based** (line 1, column 1 is the first character). Paths in output are relative to the project root with forward slashes.
@@ -932,20 +932,20 @@ All positions are **1-based** (line 1, column 1 is the first character). Paths i
 
 ```sh
 # Rename a symbol across the project (applies to disk by default)
-gd refactor rename --file player.gd --line 5 --column 10 --new-name move_character
+gd refactor rename player.gd --line 5 --column 10 --new-name move_character
 
 # Rename by name (project-wide search)
 gd refactor rename --name old_func --new-name new_func
 
 # Preview without writing
-gd refactor rename --file player.gd --line 5 --column 10 --new-name move_character --dry-run
+gd refactor rename player.gd --line 5 --column 10 --new-name move_character --dry-run
 
 # Delete a symbol (fails if references exist, use --force to override)
-gd refactor delete-symbol --file player.gd --name unused_func
-gd refactor delete-symbol --file player.gd --name unused_func --force
+gd refactor delete-symbol player.gd --name unused_func
+gd refactor delete-symbol player.gd --name unused_func --force
 
 # Delete multiple symbols at once
-gd refactor bulk-delete-symbol --file player.gd --names "a,b,c"
+gd refactor bulk-delete-symbol player.gd --names "a,b,c"
 
 # Move a symbol between files
 gd refactor move-symbol --name helper --from utils.gd --to helpers.gd
@@ -954,56 +954,56 @@ gd refactor move-symbol --name helper --from utils.gd --to helpers.gd
 gd refactor move-symbol --name helper --from utils.gd --to helpers.gd --update-callers
 
 # Extract code into a new function
-gd refactor extract-method --file player.gd --start-line 10 --end-line 15 --name do_attack
+gd refactor extract-method player.gd --start-line 10 --end-line 15 --name do_attack
 
 # Extract symbols to a new file
-gd refactor extract-class --file player.gd --symbols "speed,health,take_damage" --to stats.gd
+gd refactor extract-class player.gd --symbols "speed,health,take_damage" --to stats.gd
 
 # Inline a function at its call sites
-gd refactor inline-method --file player.gd --line 5 --column 2
+gd refactor inline-method player.gd --line 5 --column 2
 
 # Inline a pass-through delegate function
-gd refactor inline-delegate --file player.gd --name attack
+gd refactor inline-delegate player.gd --name attack
 
 # Rename multiple symbols atomically
-gd refactor bulk-rename --file player.gd --renames "speed:velocity,health:hp"
+gd refactor bulk-rename player.gd --renames "speed:velocity,health:hp"
 
 # Change function signature (add/remove/reorder/rename params)
-gd refactor change-signature --file player.gd --name move \
+gd refactor change-signature player.gd --name move \
   --add-param "speed: float = 1.0" --remove-param old_param --reorder "a,b,c"
 
 # Inline a variable (replace usages with initializer, delete declaration)
-gd refactor inline-variable --file player.gd --line 5 --column 10
+gd refactor inline-variable player.gd --line 5 --column 10
 
 # Extract an expression into a local variable
-gd refactor introduce-variable --file player.gd --line 5 --column 10 --end-column 30 --name velocity
+gd refactor introduce-variable player.gd --line 5 --column 10 --end-column 30 --name velocity
 
 # Turn a hardcoded value into a parameter with default
-gd refactor introduce-parameter --file player.gd --line 5 --column 10 --end-column 20 --name speed
+gd refactor introduce-parameter player.gd --line 5 --column 10 --end-column 20 --name speed
 
 # Invert an if/else: negate condition, swap branches
-gd refactor invert-if --file player.gd --line 5
+gd refactor invert-if player.gd --line 5
 
 # Flatten nested ifs to early return/continue guard clauses
-gd refactor extract-guards --file player.gd --name _process
+gd refactor extract-guards player.gd --name _process
 
 # Split/join variable declaration and assignment
-gd refactor split-declaration --file player.gd --line 3
-gd refactor join-declaration --file player.gd --line 3
+gd refactor split-declaration player.gd --line 3
+gd refactor join-declaration player.gd --line 3
 
 # Convert between $NodePath and get_node() syntax
-gd refactor convert-node-path --file player.gd --line 5 --column 10
+gd refactor convert-node-path player.gd --line 5 --column 10
 
 # Convert between @onready var and _ready() assignment
-gd refactor convert-onready --file player.gd --name sprite --to-ready
-gd refactor convert-onready --file player.gd --name sprite --to-onready
+gd refactor convert-onready player.gd --name sprite --to-ready
+gd refactor convert-onready player.gd --name sprite --to-onready
 
 # Convert signal connections between scene wiring and code
-gd refactor convert-signal --file player.tscn --signal pressed --from Button --method _on_btn --to-code
-gd refactor convert-signal --file player.tscn --signal pressed --from Button --method _on_btn --to-scene
+gd refactor convert-signal player.tscn --signal pressed --from Button --method _on_btn --to-code
+gd refactor convert-signal player.tscn --signal pressed --from Button --method _on_btn --to-scene
 
 # Safely delete a file (checks for references first)
-gd refactor safe-delete-file --file unused.gd
+gd refactor safe-delete-file unused.gd
 
 # Move a file and update all references
 gd refactor move-file --from utils.gd --to lib/utils.gd
@@ -1037,25 +1037,25 @@ Multi-file refactorings (extract-class, move-symbol, move-file) use atomic trans
 
 ```sh
 # Replace a function body
-echo -e '\tprint("hello")' | gd edit replace-body --file player.gd --name _ready
+echo -e '\tprint("hello")' | gd edit replace-body player.gd --name _ready
 
 # Insert after a symbol
-echo 'func _process(delta):\n\tpass' | gd edit insert --file player.gd --after _ready
+echo 'func _process(delta):\n\tpass' | gd edit insert player.gd --after _ready
 
 # Replace a symbol declaration
-echo 'var speed: float = 42.0' | gd edit replace-symbol --file player.gd --name speed
+echo 'var speed: float = 42.0' | gd edit replace-symbol player.gd --name speed
 
 # Replace a line range
-echo '\t# replaced' | gd edit edit-range --file player.gd --range 5-7
+echo '\t# replaced' | gd edit edit-range player.gd --range 5-7
 
 # Create a new GDScript file with scaffolding
-gd edit create-file --file enemies/boss.gd --extends CharacterBody2D --class-name Boss
+gd edit create-file enemies/boss.gd --extends CharacterBody2D --class-name Boss
 
 # Create a file with custom content (from stdin or --input-file)
-echo 'extends Node2D' | gd edit create-file --file utils/helper.gd
+echo 'extends Node2D' | gd edit create-file utils/helper.gd
 
 # Or use --input-file to avoid stdin pipe encoding issues (recommended on Windows)
-gd edit insert --file player.gd --after _ready --input-file /tmp/new_func.gd
+gd edit insert player.gd --after _ready --input-file /tmp/new_func.gd
 ```
 
 Edit commands support `--dry-run` to preview, `--no-format` to skip auto-formatting, `--class` for inner class targets, and `--input-file` to read from a file instead of stdin.
