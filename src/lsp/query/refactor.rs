@@ -264,6 +264,18 @@ pub fn query_inline_variable(
     crate::lsp::refactor::inline_variable(&path, line, column, dry_run, &project_root)
 }
 
+// ── Extract guards ───────────────────────────────────────────────────────────
+
+pub fn query_extract_guards(
+    file: &str,
+    name: &str,
+    dry_run: bool,
+) -> Result<crate::lsp::refactor::ExtractGuardsOutput> {
+    let path = resolve_file(file)?;
+    let project_root = find_root(&path)?;
+    crate::lsp::refactor::extract_guards(&path, name, dry_run, &project_root)
+}
+
 // ── Invert if ────────────────────────────────────────────────────────────────
 
 pub fn query_invert_if(

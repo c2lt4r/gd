@@ -331,6 +331,21 @@ pub enum LspCommand {
         #[arg(long)]
         format: Option<String>,
     },
+    /// Flatten nested ifs to early return/continue guard clauses
+    ExtractGuards {
+        /// Path to the GDScript file
+        #[arg(long)]
+        file: String,
+        /// Function name
+        #[arg(long)]
+        name: String,
+        /// Preview without writing changes
+        #[arg(long)]
+        dry_run: bool,
+        /// Output format: json or human (default: human)
+        #[arg(long)]
+        format: Option<String>,
+    },
     /// Delete multiple symbols in one pass without line-shifting issues
     BulkDeleteSymbol {
         /// Path to the GDScript file
@@ -1035,6 +1050,28 @@ fn print_invert_if_human(r: &crate::lsp::refactor::InvertIfOutput) {
         r.inverted_condition.green().bold(),
         dry_run_suffix(r.applied),
     );
+}
+
+fn print_extract_guards_human(r: &crate::lsp::refactor::ExtractGuardsOutput) {
+    use owo_colors::OwoColorize;
+    cprintln!(
+        "Extracted {} guard{} in {} ({}){}",
+        r.guards.len().to_string().green().bold(),
+        if r.guards.len() == 1 { "" } else { "s" },
+        r.function.cyan(),
+        r.file.cyan(),
+        dry_run_suffix(r.applied),
+    );
+    for g in &r.guards {
+        cprintln!(
+            "  {} {} {} → {} {}",
+            "guard:".dimmed(),
+            g.original_condition.dimmed(),
+            "→".dimmed(),
+            format!("if {}:", g.negated_condition).green(),
+            g.exit_keyword.yellow(),
+        );
+    }
 }
 
 fn print_bulk_delete_human(r: &crate::lsp::refactor::BulkDeleteSymbolOutput) {
@@ -2137,6 +2174,22 @@ pub fn exec(args: LspArgs) -> Result<()> {
                 cprintln!("{json}");
             } else {
                 print_invert_if_human(&result);
+            }
+            Ok(())
+        }
+        LspCommand::ExtractGuards {
+            file,
+            name,
+            dry_run,
+            format,
+        } => {
+            let result = crate::lsp::query::query_extract_guards(&file, &name, dry_run)?;
+            if is_json(format.as_ref()) {
+                let json =
+                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+                cprintln!("{json}");
+            } else {
+                print_extract_guards_human(&result);
             }
             Ok(())
         }

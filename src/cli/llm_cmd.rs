@@ -257,6 +257,7 @@ gd lsp change-signature --file <f> --name <sym> --add-param "name: Type = defaul
 gd lsp introduce-variable --file <f> --line <L> --column <C> --end-column <C> --name <name>
 gd lsp introduce-parameter --file <f> --line <L> --column <C> --end-column <C> --name <name>
 gd lsp invert-if --file <f> --line <L>             # Invert if/else: negate condition, swap branches
+gd lsp extract-guards --file <f> --name <name>    # Flatten nested ifs to early return/continue guards
 gd lsp bulk-delete-symbol --file <f> --names "a,b,c"
 gd lsp bulk-rename --file <f> --renames "old1:new1,old2:new2"
 gd lsp inline-delegate --file <f> --name <sym>

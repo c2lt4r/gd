@@ -210,7 +210,7 @@ fn build_elif_inversion(
 
 /// Negate a GDScript condition, applying De Morgan's law where appropriate.
 /// Uses AST node kind for dispatch, text-based helpers for the transform.
-fn negate_condition(node: &Node, source: &str) -> String {
+pub(super) fn negate_condition(node: &Node, source: &str) -> String {
     match node.kind() {
         "unary_operator" => {
             let ct = node_text(node, source);
@@ -252,7 +252,7 @@ fn negate_condition(node: &Node, source: &str) -> String {
 
 /// Apply De Morgan's law: `a and b` → `not a or not b`, `a or b` → `not a and not b`.
 /// Only splits at the top-level operator (not inside parentheses).
-fn apply_de_morgan(text: &str) -> Option<String> {
+pub(super) fn apply_de_morgan(text: &str) -> Option<String> {
     let (pos, op_kind) = find_top_level_bool_op(text)?;
     let lhs = text[..pos].trim();
     let rhs = text[pos + op_kind.len() + 2..].trim();
@@ -283,7 +283,7 @@ fn find_top_level_bool_op(text: &str) -> Option<(usize, &'static str)> {
 }
 
 /// Negate a simple sub-expression (text-based, for De Morgan operands).
-fn negate_simple(text: &str) -> String {
+pub(super) fn negate_simple(text: &str) -> String {
     if let Some(rest) = text.strip_prefix("not ") {
         return rest.to_string();
     }
@@ -300,7 +300,7 @@ fn negate_simple(text: &str) -> String {
 }
 
 /// Flip comparison: `x > 0` → `x <= 0`, `x == y` → `x != y`, etc.
-fn flip_comparison(text: &str) -> Option<String> {
+pub(super) fn flip_comparison(text: &str) -> Option<String> {
     // Check longer operators first to avoid partial matches
     let ops: &[(&str, &str)] = &[
         ("!=", "=="),
@@ -341,11 +341,11 @@ fn find_if_recursive(node: Node, line: usize) -> Option<Node> {
     None
 }
 
-fn node_text(node: &Node, source: &str) -> String {
+pub(super) fn node_text(node: &Node, source: &str) -> String {
     source[node.start_byte()..node.end_byte()].to_string()
 }
 
-fn get_line_indent(source: &str, line: usize) -> String {
+pub(super) fn get_line_indent(source: &str, line: usize) -> String {
     if let Some(line_str) = source.lines().nth(line) {
         let trimmed = line_str.trim_start();
         line_str[..line_str.len() - trimmed.len()].to_string()
@@ -354,7 +354,7 @@ fn get_line_indent(source: &str, line: usize) -> String {
     }
 }
 
-fn line_start_offset(source: &str, line: usize) -> usize {
+pub(super) fn line_start_offset(source: &str, line: usize) -> usize {
     let mut current = 0;
     for (i, ch) in source.char_indices() {
         if current == line {
@@ -368,7 +368,7 @@ fn line_start_offset(source: &str, line: usize) -> usize {
 }
 
 /// Replace an AST node's range in the source with new text.
-fn splice(source: &str, node: Node, replacement: &str) -> String {
+pub(super) fn splice(source: &str, node: Node, replacement: &str) -> String {
     let start = line_start_offset(source, node.start_position().row);
     let end = node.end_byte();
     let mut out = String::with_capacity(source.len());
@@ -380,7 +380,7 @@ fn splice(source: &str, node: Node, replacement: &str) -> String {
 
 /// Get body text from a body node, stripping the leading newline that
 /// tree-sitter includes (the newline between `:` and the body content).
-fn body_lines(body_node: &Node, source: &str) -> String {
+pub(super) fn body_lines(body_node: &Node, source: &str) -> String {
     let raw = node_text(body_node, source);
     raw.strip_prefix('\n').unwrap_or(&raw).to_string()
 }
