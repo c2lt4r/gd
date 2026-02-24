@@ -282,6 +282,9 @@ pub enum LspCommand {
         /// Name for the new variable
         #[arg(long)]
         name: String,
+        /// Introduce as const instead of var
+        #[arg(long = "const")]
+        as_const: bool,
         /// Preview without writing changes
         #[arg(long)]
         dry_run: bool,
@@ -1049,13 +1052,18 @@ fn print_change_signature_human(r: &crate::lsp::refactor::ChangeSignatureOutput)
 
 fn print_introduce_variable_human(r: &crate::lsp::refactor::IntroduceVariableOutput) {
     use owo_colors::OwoColorize;
+    let keyword = if r.is_const { "const" } else { "var" };
     cprintln!(
-        "Introduced {} = {} in {}{}",
+        "Introduced {} {} = {} in {}{}",
+        keyword.bold(),
         r.variable.green().bold(),
         r.expression.dimmed(),
         r.file.cyan(),
         dry_run_suffix(r.applied),
     );
+    for w in &r.warnings {
+        cprintln!("  {}: {w}", "warning".yellow());
+    }
 }
 
 fn print_introduce_parameter_human(r: &crate::lsp::refactor::IntroduceParameterOutput) {
@@ -1983,11 +1991,12 @@ pub fn exec(args: LspArgs) -> Result<()> {
             column,
             end_column,
             name,
+            as_const,
             dry_run,
             format,
         } => {
             let result = crate::lsp::query::query_introduce_variable(
-                &file, line, column, end_column, &name, dry_run,
+                &file, line, column, end_column, &name, as_const, dry_run,
             )?;
             if is_json(format.as_ref()) {
                 let json =

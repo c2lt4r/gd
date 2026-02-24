@@ -15,6 +15,7 @@ use super::line_starts;
 pub struct IntroduceVariableOutput {
     pub variable: String,
     pub expression: String,
+    pub is_const: bool,
     pub file: String,
     pub applied: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -43,12 +44,23 @@ const EXPRESSION_KINDS: &[&str] = &[
     "await_expression",
 ];
 
+/// Check that `name` is `UPPER_SNAKE_CASE` (e.g. `MAX_SPEED`, `PI`).
+fn is_upper_snake_case(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
+        && name.as_bytes()[0].is_ascii_uppercase()
+}
+
+#[allow(clippy::too_many_arguments)]
 pub fn introduce_variable(
     file: &Path,
     line: usize,       // 1-based
     column: usize,     // 1-based
     end_column: usize, // 1-based
     name: &str,
+    as_const: bool,
     dry_run: bool,
     project_root: &Path,
 ) -> Result<IntroduceVariableOutput> {
@@ -87,6 +99,9 @@ pub fn introduce_variable(
     if let Some(kind) = check_collision(name, &scope_names) {
         warnings.push(format!("'{name}' collides with a {kind}"));
     }
+    if as_const && !is_upper_snake_case(name) {
+        warnings.push(format!("constant name '{name}' is not UPPER_SNAKE_CASE"));
+    }
 
     if !dry_run {
         let starts = line_starts(&source);
@@ -102,7 +117,8 @@ pub fn introduce_variable(
         // The statement starts at starts[stmt_line], which is before expr_start,
         // so it's still valid.
         let insert_byte = starts[stmt_line];
-        let var_line = format!("{indent}var {name} = {expr_text}\n");
+        let keyword = if as_const { "const" } else { "var" };
+        let var_line = format!("{indent}{keyword} {name} = {expr_text}\n");
         new_source.insert_str(insert_byte, &var_line);
 
         super::validate_no_new_errors(&source, &new_source)?;
@@ -111,8 +127,13 @@ pub fn introduce_variable(
         let mut snaps: HashMap<PathBuf, Option<Vec<u8>>> = HashMap::new();
         snaps.insert(file.to_path_buf(), Some(source.as_bytes().to_vec()));
         let stack = super::undo::UndoStack::open(project_root);
+        let label = if as_const {
+            "introduce-constant"
+        } else {
+            "introduce-variable"
+        };
         let _ = stack.record(
-            "introduce-variable",
+            label,
             &format!("introduce {name}"),
             &snaps,
             project_root,
@@ -122,6 +143,7 @@ pub fn introduce_variable(
     Ok(IntroduceVariableOutput {
         variable: name.to_string(),
         expression: expr_text,
+        is_const: as_const,
         file: relative_file,
         applied: !dry_run,
         warnings,
@@ -208,6 +230,7 @@ mod tests {
             29,
             "velocity",
             false,
+            false,
             temp.path(),
         )
         .unwrap();
@@ -237,6 +260,7 @@ mod tests {
             17,
             29,
             "velocity",
+            false,
             true,
             temp.path(),
         )
@@ -250,6 +274,113 @@ mod tests {
     }
 
     #[test]
+    fn introduce_as_const_literal() {
+        let temp = setup_project(&[(
+            "player.gd",
+            "func calc():\n\tvar x = speed * 0.15\n",
+        )]);
+        // Select "0.15" on line 2, col 18-22 (1-based)
+        let result = introduce_variable(
+            &temp.path().join("player.gd"),
+            2,
+            18,
+            22,
+            "RATIO",
+            true,
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        assert!(result.is_const);
+        assert_eq!(result.variable, "RATIO");
+        assert_eq!(result.expression, "0.15");
+        let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+        assert!(
+            content.contains("const RATIO = 0.15"),
+            "should insert const, got: {content}"
+        );
+        assert!(
+            content.contains("speed * RATIO"),
+            "should replace expression, got: {content}"
+        );
+    }
+
+    #[test]
+    fn introduce_as_const_naming_warning() {
+        let temp = setup_project(&[(
+            "player.gd",
+            "func calc():\n\tvar x = speed * 0.15\n",
+        )]);
+        let result = introduce_variable(
+            &temp.path().join("player.gd"),
+            2,
+            18,
+            22,
+            "ratio",
+            true,
+            true,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.is_const);
+        assert!(
+            result.warnings.iter().any(|w| w.contains("UPPER_SNAKE_CASE")),
+            "should warn about naming: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn introduce_as_const_false_no_const() {
+        let temp = setup_project(&[(
+            "player.gd",
+            "func calc():\n\tvar x = speed * 0.15\n",
+        )]);
+        let result = introduce_variable(
+            &temp.path().join("player.gd"),
+            2,
+            18,
+            22,
+            "ratio",
+            false,
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(!result.is_const);
+        let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+        assert!(
+            content.contains("var ratio = 0.15"),
+            "should insert var not const, got: {content}"
+        );
+    }
+
+    #[test]
+    fn introduce_as_const_output_fields() {
+        let temp = setup_project(&[(
+            "player.gd",
+            "func calc():\n\tvar x = speed * 0.15\n",
+        )]);
+        let result = introduce_variable(
+            &temp.path().join("player.gd"),
+            2,
+            18,
+            22,
+            "RATIO",
+            true,
+            true,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.is_const);
+        assert!(!result.applied);
+        assert_eq!(result.variable, "RATIO");
+        assert_eq!(result.expression, "0.15");
+        assert!(result.warnings.is_empty());
+    }
+
+    #[test]
     fn introduce_call_expression() {
         let temp = setup_project(&[("player.gd", "func _ready():\n\tprint(get_health())\n")]);
         // Select "get_health()" on line 2, col 8-20
@@ -259,6 +390,7 @@ mod tests {
             8,
             20,
             "hp",
+            false,
             false,
             temp.path(),
         )

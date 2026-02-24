@@ -135,6 +135,7 @@ pub fn query_introduce_variable(
     column: usize,
     end_column: usize,
     name: &str,
+    as_const: bool,
     dry_run: bool,
 ) -> Result<crate::lsp::refactor::IntroduceVariableOutput> {
     let path = resolve_file(file)?;
@@ -145,6 +146,7 @@ pub fn query_introduce_variable(
         column,
         end_column,
         name,
+        as_const,
         dry_run,
         &project_root,
     )
