@@ -177,8 +177,10 @@ pub fn move_symbol(
                 target_source.push_str(&spacing);
                 target_source.push_str(&decl_text);
             }
+            super::validate_no_new_errors("", &target_source)?;
             tx.write_file(to_file, &target_source)?;
         } else {
+            super::validate_no_new_errors("", &decl_text)?;
             tx.write_file(to_file, &decl_text)?;
         }
 
@@ -187,6 +189,7 @@ pub fn move_symbol(
         new_source.push_str(&source[..start_byte]);
         new_source.push_str(&source[end_byte..]);
         normalize_blank_lines(&mut new_source);
+        super::validate_no_new_errors(&source, &new_source)?;
         tx.write_file(from_file, &new_source)?;
 
         let snapshots = tx.into_snapshots();

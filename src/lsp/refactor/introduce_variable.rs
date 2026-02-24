@@ -105,6 +105,7 @@ pub fn introduce_variable(
         let var_line = format!("{indent}var {name} = {expr_text}\n");
         new_source.insert_str(insert_byte, &var_line);
 
+        super::validate_no_new_errors(&source, &new_source)?;
         std::fs::write(file, &new_source).map_err(|e| miette::miette!("cannot write file: {e}"))?;
 
         let mut snaps: HashMap<PathBuf, Option<Vec<u8>>> = HashMap::new();

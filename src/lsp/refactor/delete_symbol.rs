@@ -145,6 +145,7 @@ pub fn delete_symbol(
         new_source.push_str(&source[..start_byte]);
         new_source.push_str(&source[end_byte..]);
         normalize_blank_lines(&mut new_source);
+        super::validate_no_new_errors(&source, &new_source)?;
         std::fs::write(file, &new_source).map_err(|e| miette::miette!("cannot write file: {e}"))?;
 
         let mut snaps: HashMap<PathBuf, Option<Vec<u8>>> = HashMap::new();
@@ -307,6 +308,7 @@ fn delete_enum_member(
         let mut new_source = String::with_capacity(source.len());
         new_source.push_str(&source[..remove_start]);
         new_source.push_str(&source[remove_end..]);
+        super::validate_no_new_errors(&source, &new_source)?;
         std::fs::write(file, &new_source).map_err(|e| miette::miette!("cannot write file: {e}"))?;
 
         let mut snaps: HashMap<PathBuf, Option<Vec<u8>>> = HashMap::new();
@@ -351,11 +353,10 @@ fn compute_enum_member_removal_range(
         let next = enumerators[1];
         (member.start_byte(), next.start_byte())
     } else {
-        // Middle or last: remove from previous member end to this member end
+        // Middle or last: remove from comma after previous member to this member end
         let prev = enumerators[idx - 1];
-        // Find the comma after prev
         let between = &source[prev.end_byte()..member.end_byte()];
-        let comma_offset = between.find(',').map_or(0, |p| p + 1);
+        let comma_offset = between.find(',').unwrap_or(0);
         (prev.end_byte() + comma_offset, member.end_byte())
     }
 }

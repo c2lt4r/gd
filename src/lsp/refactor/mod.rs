@@ -287,6 +287,34 @@ pub(super) fn declaration_full_range(node: Node, source: &str) -> (usize, usize)
     (start_byte, end_byte)
 }
 
+// ── Post-refactoring validation ─────────────────────────────────────────────
+
+/// Count ERROR/MISSING nodes in a tree-sitter tree.
+pub(super) fn count_error_nodes(node: &tree_sitter::Node) -> usize {
+    let mut count = usize::from(node.is_error() || node.is_missing());
+    for i in 0..node.child_count() {
+        if let Some(child) = node.child(i) {
+            count += count_error_nodes(&child);
+        }
+    }
+    count
+}
+
+/// Validate that a refactoring didn't introduce new parse errors compared to the original.
+pub(super) fn validate_no_new_errors(original: &str, refactored: &str) -> miette::Result<()> {
+    let orig_errors = crate::core::parser::parse(original)
+        .map(|t| count_error_nodes(&t.root_node()))
+        .unwrap_or(0);
+    let new_tree = crate::core::parser::parse(refactored)?;
+    let new_errors = count_error_nodes(&new_tree.root_node());
+    if new_errors > orig_errors {
+        return Err(miette::miette!(
+            "refactoring introduced parse errors ({orig_errors} -> {new_errors})"
+        ));
+    }
+    Ok(())
+}
+
 /// After removing a range, collapse runs of 3+ blank lines down to 2.
 pub(super) fn normalize_blank_lines(source: &mut String) {
     let mut result = String::with_capacity(source.len());
@@ -682,5 +710,29 @@ mod tests {
         let mut s = "a\n\n\nb".to_string();
         normalize_blank_lines(&mut s);
         assert_eq!(s, "a\n\n\nb");
+    }
+
+    // ── validate_no_new_errors ──────────────────────────────────────────
+
+    #[test]
+    fn validate_accepts_valid_refactoring() {
+        let original = "var x = 1\n";
+        let refactored = "var y = 1\n";
+        assert!(validate_no_new_errors(original, refactored).is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_broken_output() {
+        let original = "var x = 1\n";
+        let broken = "var x = \n"; // missing initializer
+        assert!(validate_no_new_errors(original, broken).is_err());
+    }
+
+    #[test]
+    fn validate_tolerates_preexisting_errors() {
+        // If original already has errors, don't reject refactored with same count
+        let original = "func ():\n\tpass\n";
+        let refactored = "func ():\n\treturn 1\n";
+        assert!(validate_no_new_errors(original, refactored).is_ok());
     }
 }

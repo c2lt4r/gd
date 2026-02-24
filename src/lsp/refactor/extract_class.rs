@@ -180,6 +180,7 @@ pub fn extract_class(
                 .map_err(|e| miette::miette!("cannot create directory: {e}"))?;
         }
 
+        super::validate_no_new_errors("", &target_content)?;
         tx.write_file(to_file, &target_content)?;
 
         // Remove extracted symbols from source (bottom to top)
@@ -191,6 +192,7 @@ pub fn extract_class(
             new_source.replace_range(*start..*end, "");
         }
         normalize_blank_lines(&mut new_source);
+        super::validate_no_new_errors(&source, &new_source)?;
         tx.write_file(file, &new_source)?;
 
         let snapshots = tx.into_snapshots();

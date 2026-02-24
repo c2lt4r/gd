@@ -271,10 +271,11 @@ pub fn change_signature(
 
             if !edits.is_empty() {
                 edits.sort_by(|a, b| b.0.cmp(&a.0));
-                let mut cs_new = cs;
+                let mut cs_new = cs.clone();
                 for (start, end, replacement) in edits {
                     cs_new.replace_range(start..end, &replacement);
                 }
+                super::validate_no_new_errors(&cs, &cs_new)?;
                 std::fs::write(call_file, &cs_new)
                     .map_err(|e| miette::miette!("cannot write {}: {e}", call_file.display()))?;
             }

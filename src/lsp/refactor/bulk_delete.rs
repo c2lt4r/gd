@@ -126,6 +126,7 @@ pub fn bulk_delete_symbol(
             });
         }
         normalize_blank_lines(&mut new_source);
+        super::validate_no_new_errors(&source, &new_source)?;
         std::fs::write(file, &new_source).map_err(|e| miette::miette!("cannot write file: {e}"))?;
     }
 

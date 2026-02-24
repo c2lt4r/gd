@@ -193,6 +193,7 @@ pub fn extract_method(
         new_source.insert_str(insert_byte, &insert_text);
 
         normalize_blank_lines(&mut new_source);
+        super::validate_no_new_errors(&source, &new_source)?;
         std::fs::write(file, &new_source).map_err(|e| miette::miette!("cannot write file: {e}"))?;
 
         let mut snaps: std::collections::HashMap<std::path::PathBuf, Option<Vec<u8>>> =

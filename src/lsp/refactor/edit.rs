@@ -24,30 +24,9 @@ pub struct EditOutput {
 
 // ── Shared helpers ──────────────────────────────────────────────────────────
 
-/// Count ERROR/MISSING nodes in a tree-sitter tree.
-fn count_error_nodes(node: &tree_sitter::Node) -> usize {
-    let mut count = usize::from(node.is_error() || node.is_missing());
-    for i in 0..node.child_count() {
-        if let Some(child) = node.child(i) {
-            count += count_error_nodes(&child);
-        }
-    }
-    count
-}
-
 /// Validate that an edit didn't introduce new parse errors compared to the original.
 fn validate_no_new_errors(original: &str, edited: &str) -> Result<()> {
-    let orig_errors = crate::core::parser::parse(original)
-        .map(|t| count_error_nodes(&t.root_node()))
-        .unwrap_or(0);
-    let new_tree = crate::core::parser::parse(edited)?;
-    let new_errors = count_error_nodes(&new_tree.root_node());
-    if new_errors > orig_errors {
-        return Err(miette::miette!(
-            "edit introduced parse errors ({orig_errors} -> {new_errors})"
-        ));
-    }
-    Ok(())
+    super::validate_no_new_errors(original, edited)
 }
 
 /// Format GDScript source using the project's formatter config.
