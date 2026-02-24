@@ -264,6 +264,18 @@ pub fn query_inline_variable(
     crate::lsp::refactor::inline_variable(&path, line, column, dry_run, &project_root)
 }
 
+// ── Invert if ────────────────────────────────────────────────────────────────
+
+pub fn query_invert_if(
+    file: &str,
+    line: usize,
+    dry_run: bool,
+) -> Result<crate::lsp::refactor::InvertIfOutput> {
+    let path = resolve_file(file)?;
+    let project_root = find_root(&path)?;
+    crate::lsp::refactor::invert_if(&path, line, dry_run, &project_root)
+}
+
 // ── Undo ─────────────────────────────────────────────────────────────────────
 
 pub fn query_undo_list() -> Result<Vec<crate::lsp::refactor::UndoEntry>> {

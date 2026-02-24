@@ -316,6 +316,21 @@ pub enum LspCommand {
         #[arg(long)]
         format: Option<String>,
     },
+    /// Invert an if/else: negate condition and swap branches
+    InvertIf {
+        /// Path to the GDScript file
+        #[arg(long)]
+        file: String,
+        /// Line number of the if statement (1-based)
+        #[arg(long)]
+        line: usize,
+        /// Preview without writing changes
+        #[arg(long)]
+        dry_run: bool,
+        /// Output format: json or human (default: human)
+        #[arg(long)]
+        format: Option<String>,
+    },
     /// Delete multiple symbols in one pass without line-shifting issues
     BulkDeleteSymbol {
         /// Path to the GDScript file
@@ -1005,6 +1020,19 @@ fn print_introduce_parameter_human(r: &crate::lsp::refactor::IntroduceParameterO
         r.parameter.green().bold(),
         r.function.bold(),
         r.file.cyan(),
+        dry_run_suffix(r.applied),
+    );
+}
+
+fn print_invert_if_human(r: &crate::lsp::refactor::InvertIfOutput) {
+    use owo_colors::OwoColorize;
+    cprintln!(
+        "Inverted if at {}:{} ({} {} {}){}",
+        r.file.cyan(),
+        r.line,
+        r.original_condition.dimmed(),
+        "→".dimmed(),
+        r.inverted_condition.green().bold(),
         dry_run_suffix(r.applied),
     );
 }
@@ -2093,6 +2121,22 @@ pub fn exec(args: LspArgs) -> Result<()> {
                 cprintln!("{json}");
             } else {
                 print_change_signature_human(&result);
+            }
+            Ok(())
+        }
+        LspCommand::InvertIf {
+            file,
+            line,
+            dry_run,
+            format,
+        } => {
+            let result = crate::lsp::query::query_invert_if(&file, line, dry_run)?;
+            if is_json(format.as_ref()) {
+                let json =
+                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+                cprintln!("{json}");
+            } else {
+                print_invert_if_human(&result);
             }
             Ok(())
         }
