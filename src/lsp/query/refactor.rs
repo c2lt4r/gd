@@ -300,6 +300,34 @@ pub fn query_join_declaration(
     crate::lsp::refactor::join_declaration(&path, line, dry_run, &project_root)
 }
 
+// ── Convert onready ───────────────────────────────────────────────────────────
+
+pub fn query_convert_onready(
+    file: &str,
+    name: &str,
+    to_ready: bool,
+    dry_run: bool,
+) -> Result<crate::lsp::refactor::ConvertOnreadyOutput> {
+    let path = resolve_file(file)?;
+    let project_root = find_root(&path)?;
+    crate::lsp::refactor::convert_onready(&path, name, to_ready, dry_run, &project_root)
+}
+
+// ── Convert signal ────────────────────────────────────────────────────────────
+
+pub fn query_convert_signal(
+    scene: &str,
+    signal: &str,
+    from: &str,
+    method: &str,
+    to_code: bool,
+    dry_run: bool,
+) -> Result<crate::lsp::refactor::ConvertSignalOutput> {
+    let path = resolve_file(scene)?;
+    let project_root = find_root(&path)?;
+    crate::lsp::refactor::convert_signal(&path, signal, from, method, to_code, dry_run, &project_root)
+}
+
 // ── Convert node path ─────────────────────────────────────────────────────────
 
 pub fn query_convert_node_path(

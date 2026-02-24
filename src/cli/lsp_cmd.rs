@@ -352,6 +352,54 @@ pub enum LspCommand {
         #[arg(long)]
         format: Option<String>,
     },
+    /// Convert between @onready var and _ready() assignment
+    ConvertOnready {
+        /// Path to the GDScript file
+        #[arg(long)]
+        file: String,
+        /// Variable name to convert
+        #[arg(long)]
+        name: String,
+        /// Convert @onready → _ready() assignment
+        #[arg(long)]
+        to_ready: bool,
+        /// Convert _ready() assignment → @onready
+        #[arg(long)]
+        to_onready: bool,
+        /// Preview without writing changes
+        #[arg(long)]
+        dry_run: bool,
+        /// Output format: json or human (default: human)
+        #[arg(long)]
+        format: Option<String>,
+    },
+    /// Convert signal connection between scene wiring and code
+    ConvertSignal {
+        /// Path to the .tscn scene file
+        #[arg(long)]
+        file: String,
+        /// Signal name (e.g., "pressed")
+        #[arg(long)]
+        signal: String,
+        /// Source node path (e.g., "Button")
+        #[arg(long)]
+        from: String,
+        /// Handler method name (e.g., "_on_button_pressed")
+        #[arg(long)]
+        method: String,
+        /// Move connection from scene to code (.connect() in _ready())
+        #[arg(long)]
+        to_code: bool,
+        /// Move connection from code to scene ([connection] in .tscn)
+        #[arg(long)]
+        to_scene: bool,
+        /// Preview without writing changes
+        #[arg(long)]
+        dry_run: bool,
+        /// Output format: json or human (default: human)
+        #[arg(long)]
+        format: Option<String>,
+    },
     /// Flatten nested ifs to early return/continue guard clauses
     ExtractGuards {
         /// Path to the GDScript file
@@ -1117,6 +1165,43 @@ fn print_convert_node_path_human(r: &crate::lsp::refactor::ConvertNodePathOutput
         r.converted.green().bold(),
         r.file.cyan(),
         r.line,
+        dry_run_suffix(r.applied),
+    );
+}
+
+fn print_convert_onready_human(r: &crate::lsp::refactor::ConvertOnreadyOutput) {
+    use owo_colors::OwoColorize;
+    let dir = if r.direction == "to-ready" {
+        "@onready → _ready()"
+    } else {
+        "_ready() → @onready"
+    };
+    cprintln!(
+        "Converted {} ({}) in {}:{}{}",
+        r.variable.green().bold(),
+        dir.dimmed(),
+        r.file.cyan(),
+        r.line,
+        dry_run_suffix(r.applied),
+    );
+}
+
+fn print_convert_signal_human(r: &crate::lsp::refactor::ConvertSignalOutput) {
+    use owo_colors::OwoColorize;
+    let dir = if r.direction == "to-code" {
+        "scene → code"
+    } else {
+        "code → scene"
+    };
+    cprintln!(
+        "Converted {}.{} → {} ({}) [{} {} {}]{}",
+        r.from_node,
+        r.signal.green().bold(),
+        r.method.green().bold(),
+        dir.dimmed(),
+        r.scene_file.cyan(),
+        "↔".dimmed(),
+        r.script_file.cyan(),
         dry_run_suffix(r.applied),
     );
 }
@@ -2284,6 +2369,65 @@ pub fn exec(args: LspArgs) -> Result<()> {
                 cprintln!("{json}");
             } else {
                 print_convert_node_path_human(&result);
+            }
+            Ok(())
+        }
+        LspCommand::ConvertOnready {
+            file,
+            name,
+            to_ready,
+            to_onready,
+            dry_run,
+            format,
+        } => {
+            let direction = match (to_ready, to_onready) {
+                (true, false) => true,
+                (false, true) => false,
+                _ => {
+                    return Err(miette::miette!(
+                        "specify exactly one of --to-ready or --to-onready"
+                    ))
+                }
+            };
+            let result =
+                crate::lsp::query::query_convert_onready(&file, &name, direction, dry_run)?;
+            if is_json(format.as_ref()) {
+                let json =
+                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+                cprintln!("{json}");
+            } else {
+                print_convert_onready_human(&result);
+            }
+            Ok(())
+        }
+        LspCommand::ConvertSignal {
+            file,
+            signal,
+            from,
+            method,
+            to_code,
+            to_scene,
+            dry_run,
+            format,
+        } => {
+            let direction = match (to_code, to_scene) {
+                (true, false) => true,
+                (false, true) => false,
+                _ => {
+                    return Err(miette::miette!(
+                        "specify exactly one of --to-code or --to-scene"
+                    ))
+                }
+            };
+            let result = crate::lsp::query::query_convert_signal(
+                &file, &signal, &from, &method, direction, dry_run,
+            )?;
+            if is_json(format.as_ref()) {
+                let json =
+                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+                cprintln!("{json}");
+            } else {
+                print_convert_signal_human(&result);
             }
             Ok(())
         }
