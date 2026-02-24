@@ -346,6 +346,36 @@ pub enum LspCommand {
         #[arg(long)]
         format: Option<String>,
     },
+    /// Split `var x = expr` into separate declaration and assignment
+    SplitDeclaration {
+        /// Path to the GDScript file
+        #[arg(long)]
+        file: String,
+        /// Line number of the variable declaration (1-based)
+        #[arg(long)]
+        line: usize,
+        /// Preview without writing changes
+        #[arg(long)]
+        dry_run: bool,
+        /// Output format: json or human (default: human)
+        #[arg(long)]
+        format: Option<String>,
+    },
+    /// Join bare `var x` with following `x = expr` into `var x = expr`
+    JoinDeclaration {
+        /// Path to the GDScript file
+        #[arg(long)]
+        file: String,
+        /// Line number of the bare variable declaration (1-based)
+        #[arg(long)]
+        line: usize,
+        /// Preview without writing changes
+        #[arg(long)]
+        dry_run: bool,
+        /// Output format: json or human (default: human)
+        #[arg(long)]
+        format: Option<String>,
+    },
     /// Delete multiple symbols in one pass without line-shifting issues
     BulkDeleteSymbol {
         /// Path to the GDScript file
@@ -1072,6 +1102,28 @@ fn print_extract_guards_human(r: &crate::lsp::refactor::ExtractGuardsOutput) {
             g.exit_keyword.yellow(),
         );
     }
+}
+
+fn print_split_declaration_human(r: &crate::lsp::refactor::SplitDeclarationOutput) {
+    use owo_colors::OwoColorize;
+    cprintln!(
+        "Split {} at {}:{}{}",
+        r.variable.green().bold(),
+        r.file.cyan(),
+        r.line,
+        dry_run_suffix(r.applied),
+    );
+}
+
+fn print_join_declaration_human(r: &crate::lsp::refactor::JoinDeclarationOutput) {
+    use owo_colors::OwoColorize;
+    cprintln!(
+        "Joined {} at {}:{}{}",
+        r.variable.green().bold(),
+        r.file.cyan(),
+        r.line,
+        dry_run_suffix(r.applied),
+    );
 }
 
 fn print_bulk_delete_human(r: &crate::lsp::refactor::BulkDeleteSymbolOutput) {
@@ -2190,6 +2242,38 @@ pub fn exec(args: LspArgs) -> Result<()> {
                 cprintln!("{json}");
             } else {
                 print_extract_guards_human(&result);
+            }
+            Ok(())
+        }
+        LspCommand::SplitDeclaration {
+            file,
+            line,
+            dry_run,
+            format,
+        } => {
+            let result = crate::lsp::query::query_split_declaration(&file, line, dry_run)?;
+            if is_json(format.as_ref()) {
+                let json =
+                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+                cprintln!("{json}");
+            } else {
+                print_split_declaration_human(&result);
+            }
+            Ok(())
+        }
+        LspCommand::JoinDeclaration {
+            file,
+            line,
+            dry_run,
+            format,
+        } => {
+            let result = crate::lsp::query::query_join_declaration(&file, line, dry_run)?;
+            if is_json(format.as_ref()) {
+                let json =
+                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+                cprintln!("{json}");
+            } else {
+                print_join_declaration_human(&result);
             }
             Ok(())
         }

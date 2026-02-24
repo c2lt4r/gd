@@ -15,6 +15,7 @@ mod invert_if;
 mod introduce_variable;
 mod move_file;
 mod move_symbol;
+mod split_join_declaration;
 mod transaction;
 mod undo;
 
@@ -34,6 +35,7 @@ pub use introduce_variable::*;
 pub use invert_if::*;
 pub use move_file::*;
 pub use move_symbol::*;
+pub use split_join_declaration::*;
 pub use undo::*;
 
 use serde::Serialize;

@@ -276,6 +276,28 @@ pub fn query_extract_guards(
     crate::lsp::refactor::extract_guards(&path, name, dry_run, &project_root)
 }
 
+// ── Split/join declaration ────────────────────────────────────────────────────
+
+pub fn query_split_declaration(
+    file: &str,
+    line: usize,
+    dry_run: bool,
+) -> Result<crate::lsp::refactor::SplitDeclarationOutput> {
+    let path = resolve_file(file)?;
+    let project_root = find_root(&path)?;
+    crate::lsp::refactor::split_declaration(&path, line, dry_run, &project_root)
+}
+
+pub fn query_join_declaration(
+    file: &str,
+    line: usize,
+    dry_run: bool,
+) -> Result<crate::lsp::refactor::JoinDeclarationOutput> {
+    let path = resolve_file(file)?;
+    let project_root = find_root(&path)?;
+    crate::lsp::refactor::join_declaration(&path, line, dry_run, &project_root)
+}
+
 // ── Invert if ────────────────────────────────────────────────────────────────
 
 pub fn query_invert_if(
