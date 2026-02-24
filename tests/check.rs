@@ -84,3 +84,89 @@ fn test_check_json_with_errors() {
     assert!(first_error["file"].as_str().is_some());
     assert!(first_error["line"].as_u64().unwrap() > 0);
 }
+
+#[test]
+fn test_check_catches_duplicate_function() {
+    let temp = setup_gd_project(&[(
+        "dup.gd",
+        "extends Node\n\n\nfunc foo():\n\tpass\n\n\nfunc foo():\n\tpass\n",
+    )]);
+
+    let output = gd_bin()
+        .args(["check", "--format", "json"])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd check");
+
+    assert!(
+        !output.status.success(),
+        "should exit non-zero on duplicate function"
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["ok"], false);
+    let errors = json["errors"].as_array().unwrap();
+    assert!(
+        errors.iter().any(|e| {
+            e["message"]
+                .as_str()
+                .is_some_and(|m| m.contains("foo") && m.contains("already defined"))
+        }),
+        "should report duplicate function: {errors:?}",
+    );
+}
+
+#[test]
+fn test_check_catches_duplicate_signal() {
+    let temp = setup_gd_project(&[(
+        "dup.gd",
+        "extends Node\nsignal health_changed\nsignal health_changed\n",
+    )]);
+
+    let output = gd_bin()
+        .args(["check", "--format", "json"])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd check");
+
+    assert!(
+        !output.status.success(),
+        "should exit non-zero on duplicate signal"
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["ok"], false);
+    let errors = json["errors"].as_array().unwrap();
+    assert!(
+        errors.iter().any(|e| e["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("health_changed") && m.contains("already declared"))),
+        "should report duplicate signal: {errors:?}",
+    );
+}
+
+#[test]
+fn test_check_catches_duplicate_variable() {
+    let temp = setup_gd_project(&[(
+        "dup.gd",
+        "extends Node\nvar speed: float\nvar speed: float\n",
+    )]);
+
+    let output = gd_bin()
+        .args(["check", "--format", "json"])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd check");
+
+    assert!(
+        !output.status.success(),
+        "should exit non-zero on duplicate variable"
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["ok"], false);
+    let errors = json["errors"].as_array().unwrap();
+    assert!(
+        errors.iter().any(|e| e["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("speed") && m.contains("already declared"))),
+        "should report duplicate variable: {errors:?}",
+    );
+}

@@ -12,6 +12,10 @@ use crate::core::{
     fs::collect_resource_files, parser, resource_parser, scene, type_inference,
 };
 use crate::lint::matches_ignore_pattern;
+use crate::lint::rules::LintRule;
+use crate::lint::rules::duplicate_function::DuplicateFunction;
+use crate::lint::rules::duplicate_signal::DuplicateSignal;
+use crate::lint::rules::duplicate_variable::DuplicateVariable;
 use crate::{ceprintln, cprintln};
 
 #[derive(Args)]
@@ -68,8 +72,11 @@ pub fn exec(args: &CheckArgs) -> Result<()> {
                     let root_node = tree.root_node();
                     let has_parse_errors = root_node.has_error();
                     let structural = validate_structure(&root_node, &source);
+                    let duplicates = check_duplicates(&tree, &source);
 
-                    if has_parse_errors || !structural.is_empty() {
+                    let has_errors =
+                        has_parse_errors || !structural.is_empty() || !duplicates.is_empty();
+                    if has_errors {
                         error_count += 1;
                         if json_mode {
                             let rel = crate::core::fs::relative_slash(file, &cwd);
@@ -85,12 +92,21 @@ pub fn exec(args: &CheckArgs) -> Result<()> {
                                     message: err.message.clone(),
                                 });
                             }
+                            for diag in &duplicates {
+                                parse_errors.push(ParseError {
+                                    file: rel.clone(),
+                                    line: diag.line as u32 + 1,
+                                    column: diag.column as u32 + 1,
+                                    message: diag.message.clone(),
+                                });
+                            }
                         } else {
                             if has_parse_errors {
                                 let mut cursor = root_node.walk();
                                 report_errors(&mut cursor, &source, file);
                             }
                             report_structural(&structural, &source, file);
+                            report_duplicates(&duplicates, &source, file);
                         }
                     }
                 }
@@ -792,6 +808,38 @@ fn report_structural(errors: &[StructuralError], source: &str, file: &Path) {
             err.column,
             "error:".red().bold(),
             err.message,
+        );
+        ceprintln!("  {line}");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Duplicate declaration checks (compile errors in Godot)
+// ---------------------------------------------------------------------------
+
+fn check_duplicates(
+    tree: &tree_sitter::Tree,
+    source: &str,
+) -> Vec<crate::lint::rules::LintDiagnostic> {
+    let lint_config = crate::core::config::LintConfig::default();
+    let rules: [&dyn LintRule; 3] = [&DuplicateFunction, &DuplicateSignal, &DuplicateVariable];
+    let mut diags = Vec::new();
+    for rule in rules {
+        diags.extend(rule.check(tree, source, &lint_config));
+    }
+    diags
+}
+
+fn report_duplicates(diags: &[crate::lint::rules::LintDiagnostic], source: &str, file: &Path) {
+    for diag in diags {
+        let line = source.lines().nth(diag.line).unwrap_or("");
+        ceprintln!(
+            "{}:{}:{} {} {}",
+            file.display(),
+            diag.line + 1,
+            diag.column + 1,
+            "error:".red().bold(),
+            diag.message,
         );
         ceprintln!("  {line}");
     }

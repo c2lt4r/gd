@@ -177,6 +177,20 @@ fn check_attribute_call(node: Node, src: &[u8], referenced: &mut HashSet<String>
         {
             referenced.insert(name.clone());
         }
+    } else if identifiers.len() >= 2
+        && matches!(
+            identifiers.last().map(String::as_str),
+            Some("emit" | "connect" | "disconnect")
+        )
+    {
+        // Bare callable reference: signal_name.emit (no parentheses)
+        // identifiers = ["signal_name", "emit"]
+        // self.signal_name.emit → identifiers = ["self", "signal_name", "emit"]
+        let signal_idx = identifiers.len() - 2;
+        let name = &identifiers[signal_idx];
+        if name != "self" {
+            referenced.insert(name.clone());
+        }
     }
 }
 
@@ -275,5 +289,29 @@ mod tests {
         let source = "signal my_signal\n\nfunc f():\n\tpass\n";
         let diags = check(source);
         assert_eq!(diags.len(), 1);
+    }
+
+    #[test]
+    fn no_warning_when_emit_callable_ref() {
+        let source = "signal my_signal\n\nfunc _ready() -> void:\n\tother.some_signal.connect(my_signal.emit)\n";
+        assert!(check(source).is_empty());
+    }
+
+    #[test]
+    fn no_warning_when_self_emit_callable_ref() {
+        let source = "signal my_signal\n\nfunc _ready() -> void:\n\tother.some_signal.connect(self.my_signal.emit)\n";
+        assert!(check(source).is_empty());
+    }
+
+    #[test]
+    fn no_warning_when_connect_callable_ref() {
+        let source = "signal my_signal\n\nfunc _ready() -> void:\n\tmy_signal.connect\n";
+        assert!(check(source).is_empty());
+    }
+
+    #[test]
+    fn no_warning_when_disconnect_callable_ref() {
+        let source = "signal my_signal\n\nfunc _ready() -> void:\n\tmy_signal.disconnect\n";
+        assert!(check(source).is_empty());
     }
 }

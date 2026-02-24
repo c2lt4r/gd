@@ -145,7 +145,7 @@ fn check_signal_method(
         }
     }
 
-    if let Some(method) = method_name
+    if let Some(ref method) = method_name
         && let Some(signal_name) = identifiers.last()
         && signal_name != "self"
     {
@@ -157,6 +157,27 @@ fn check_signal_method(
                 connected.insert(signal_name.clone());
             }
             _ => {}
+        }
+    } else if method_name.is_none()
+        && identifiers.len() >= 2
+        && matches!(
+            identifiers.last().map(String::as_str),
+            Some("emit" | "connect" | "disconnect")
+        )
+    {
+        // Bare callable reference: signal_name.emit (no parentheses)
+        let signal_idx = identifiers.len() - 2;
+        let name = &identifiers[signal_idx];
+        if name != "self" {
+            match identifiers.last().map(String::as_str) {
+                Some("emit") => {
+                    emitted.insert(name.clone());
+                }
+                Some("connect" | "disconnect") => {
+                    connected.insert(name.clone());
+                }
+                _ => {}
+            }
         }
     }
 }
@@ -257,5 +278,27 @@ mod tests {
     #[test]
     fn opt_in_rule() {
         assert!(!SignalNotConnected.default_enabled());
+    }
+
+    #[test]
+    fn no_warning_when_emit_callable_ref_connected() {
+        let source = "signal my_signal\n\nfunc _ready() -> void:\n\tmy_signal.connect(_handler)\n\tother.some_signal.connect(my_signal.emit)\n\nfunc _handler():\n\tpass\n";
+        assert!(check(source).is_empty());
+    }
+
+    #[test]
+    fn bare_emit_ref_counts_as_emitted() {
+        // my_signal.emit used as callable ref → emitted but not connected
+        let source = "signal my_signal\n\nfunc _ready() -> void:\n\tother.some_signal.connect(my_signal.emit)\n";
+        let diags = check(source);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("my_signal"));
+    }
+
+    #[test]
+    fn bare_connect_ref_counts_as_connected() {
+        let source =
+            "signal my_signal\n\nfunc _ready() -> void:\n\tmy_signal.emit()\n\tmy_signal.connect\n";
+        assert!(check(source).is_empty());
     }
 }

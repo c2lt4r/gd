@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.2] - 2026-02-24
+
+### Fixed
+- **`unused-signal` false positive with `.emit` callable** — `signal_name.emit` passed as a callable reference (without parentheses) is now correctly recognized as a signal reference. Same fix applied to `signal-not-connected` rule. (closes #36)
+
+### Added
+- **`gd check` catches duplicate declarations** — `gd check` now runs `duplicate-function`, `duplicate-signal`, and `duplicate-variable` checks as part of validation. These are Godot compile errors that were previously only caught by `gd lint`. (closes #38)
+
 ## [0.3.1] - 2026-02-24
 
 ### Breaking
