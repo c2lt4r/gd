@@ -8,6 +8,7 @@ pub mod daemon_cmd;
 pub mod debug_cmd;
 pub mod deps_cmd;
 pub mod doc_cmd;
+pub mod edit_gd_cmd;
 pub mod env_cmd;
 pub mod eval_cmd;
 pub mod fmt_cmd;
@@ -20,6 +21,8 @@ pub mod man_cmd;
 pub mod mesh_cmd;
 pub mod new_cmd;
 pub mod overview_cmd;
+pub mod query_cmd;
+pub mod refactor_cmd;
 pub mod resource_cmd;
 pub mod run_cmd;
 pub mod scene_cmd;
@@ -93,6 +96,12 @@ pub enum Command {
     Log(log_cmd::LogArgs),
     /// Start the Language Server Protocol server
     Lsp(lsp_cmd::LspArgs),
+    /// Refactoring operations (rename, extract, inline, etc.)
+    Refactor(refactor_cmd::RefactorArgs),
+    /// Code editing primitives (replace-body, insert, edit-range, etc.)
+    Edit(edit_gd_cmd::EditGdArgs),
+    /// Code intelligence queries (references, hover, definition, etc.)
+    Query(query_cmd::QueryArgs),
     /// AI-assisted 3D mesh building (experimental)
     Mesh(mesh_cmd::MeshArgs),
     /// Evaluate a GDScript expression or run a script
@@ -135,6 +144,9 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Ci(args) => ci_cmd::exec(args),
         Command::Log(ref args) => log_cmd::exec(args),
         Command::Lsp(args) => lsp_cmd::exec(args),
+        Command::Refactor(args) => refactor_cmd::exec(args),
+        Command::Edit(args) => edit_gd_cmd::exec(args),
+        Command::Query(args) => query_cmd::exec(args),
         Command::Mesh(ref args) => mesh_cmd::exec(args),
         Command::Eval(ref args) => eval_cmd::exec(args),
         Command::Env(ref args) => env_cmd::exec(args),
