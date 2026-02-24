@@ -227,7 +227,7 @@ pub fn find_references_cross_file(
 // ── Scope-aware helpers ────────────────────────────────────────────────────
 
 /// Find the enclosing function_definition or constructor_definition for a position.
-pub(super) fn enclosing_function(
+pub(crate) fn enclosing_function(
     root: tree_sitter::Node,
     point: tree_sitter::Point,
 ) -> Option<tree_sitter::Node> {

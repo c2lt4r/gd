@@ -253,14 +253,14 @@ mod tests {
 
     #[test]
     fn no_warning_inner_else() {
-        let source = "func f():\n\tif a:\n\t\tif b:\n\t\t\tdo_something()\n\t\telse:\n\t\t\tother()\n";
+        let source =
+            "func f():\n\tif a:\n\t\tif b:\n\t\t\tdo_something()\n\t\telse:\n\t\t\tother()\n";
         assert!(check(source).is_empty());
     }
 
     #[test]
     fn no_warning_outer_else() {
-        let source =
-            "func f():\n\tif a:\n\t\tif b:\n\t\t\tdo_something()\n\telse:\n\t\tother()\n";
+        let source = "func f():\n\tif a:\n\t\tif b:\n\t\t\tdo_something()\n\telse:\n\t\tother()\n";
         assert!(check(source).is_empty());
     }
 
@@ -272,7 +272,8 @@ mod tests {
 
     #[test]
     fn no_warning_inner_elif() {
-        let source = "func f():\n\tif a:\n\t\tif b:\n\t\t\tdo_something()\n\t\telif c:\n\t\t\tother()\n";
+        let source =
+            "func f():\n\tif a:\n\t\tif b:\n\t\t\tdo_something()\n\t\telif c:\n\t\t\tother()\n";
         assert!(check(source).is_empty());
     }
 
@@ -288,8 +289,7 @@ mod tests {
 
     #[test]
     fn fix_preserves_multi_line_body() {
-        let source =
-            "func f():\n\tif a:\n\t\tif b:\n\t\t\tdo_something()\n\t\t\tdo_more()\n";
+        let source = "func f():\n\tif a:\n\t\tif b:\n\t\t\tdo_something()\n\t\t\tdo_more()\n";
         let diags = check(source);
         assert_eq!(diags.len(), 1);
         let fix = diags[0].fix.as_ref().unwrap();

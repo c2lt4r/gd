@@ -382,6 +382,42 @@ pub enum LspCommand {
         #[arg(long)]
         format: Option<String>,
     },
+    /// Inline a variable: replace all usages with its initializer, then delete the declaration
+    InlineVariable {
+        /// Path to the GDScript file
+        #[arg(long)]
+        file: String,
+        /// Line number of the variable (1-based)
+        #[arg(long)]
+        line: usize,
+        /// Column number of the variable (1-based)
+        #[arg(long)]
+        column: usize,
+        /// Preview without writing changes
+        #[arg(long)]
+        dry_run: bool,
+        /// Output format: json or human (default: human)
+        #[arg(long)]
+        format: Option<String>,
+    },
+    /// List recent refactoring operations that can be undone
+    UndoList {
+        /// Output format: json or human (default: human)
+        #[arg(long)]
+        format: Option<String>,
+    },
+    /// Undo a refactoring operation (most recent by default)
+    Undo {
+        /// Undo a specific entry by ID (default: most recent)
+        #[arg(long)]
+        id: Option<u64>,
+        /// Preview without restoring files
+        #[arg(long)]
+        dry_run: bool,
+        /// Output format: json or human (default: human)
+        #[arg(long)]
+        format: Option<String>,
+    },
     /// Create a new GDScript file with boilerplate (or custom content from stdin/--input-file)
     CreateFile {
         /// Path for the new file
@@ -1055,6 +1091,62 @@ fn print_extract_class_human(r: &crate::lsp::refactor::ExtractClassOutput) {
     );
     for w in &r.warnings {
         cprintln!("  {}: {w}", "warning".yellow());
+    }
+}
+
+fn print_inline_variable_human(r: &crate::lsp::refactor::InlineVariableOutput) {
+    use owo_colors::OwoColorize;
+    cprintln!(
+        "Inlined {} = {} ({} usage{}, line {}) in {}{}",
+        r.variable.green().bold(),
+        r.expression.dimmed(),
+        r.reference_count,
+        if r.reference_count == 1 { "" } else { "s" },
+        r.definition_line,
+        r.file.cyan(),
+        dry_run_suffix(r.applied),
+    );
+    for w in &r.warnings {
+        cprintln!("  {}: {w}", "warning".yellow());
+    }
+}
+
+fn print_undo_list_human(entries: &[crate::lsp::refactor::UndoEntry]) {
+    use owo_colors::OwoColorize;
+    if entries.is_empty() {
+        cprintln!("No undo entries.");
+        return;
+    }
+    cprintln!(
+        "{} undo entr{}:",
+        entries.len(),
+        if entries.len() == 1 { "y" } else { "ies" }
+    );
+    for entry in entries {
+        cprintln!(
+            "  {} {} {} ({})",
+            format!("#{}", entry.id).yellow().bold(),
+            entry.command.bold(),
+            entry.description.dimmed(),
+            entry.timestamp.dimmed(),
+        );
+        for f in &entry.files {
+            cprintln!("    {} {:?}", f.path.cyan(), f.action);
+        }
+    }
+}
+
+fn print_undo_human(entry: &crate::lsp::refactor::UndoEntry, dry_run: bool) {
+    use owo_colors::OwoColorize;
+    cprintln!(
+        "{} {} {}{}",
+        if dry_run { "Would undo" } else { "Undone" },
+        format!("#{}", entry.id).yellow().bold(),
+        entry.description.dimmed(),
+        dry_run_suffix(!dry_run),
+    );
+    for f in &entry.files {
+        cprintln!("  {} {:?}", f.path.cyan(), f.action);
     }
 }
 
@@ -2065,6 +2157,49 @@ pub fn exec(args: LspArgs) -> Result<()> {
                 cprintln!("{json}");
             } else {
                 print_extract_class_human(&result);
+            }
+            Ok(())
+        }
+        LspCommand::InlineVariable {
+            file,
+            line,
+            column,
+            dry_run,
+            format,
+        } => {
+            let result = crate::lsp::query::query_inline_variable(&file, line, column, dry_run)?;
+            if is_json(format.as_ref()) {
+                let json =
+                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+                cprintln!("{json}");
+            } else {
+                print_inline_variable_human(&result);
+            }
+            Ok(())
+        }
+        LspCommand::UndoList { format } => {
+            let entries = crate::lsp::query::query_undo_list()?;
+            if is_json(format.as_ref()) {
+                let json =
+                    serde_json::to_string_pretty(&entries).map_err(|e| miette::miette!("{e}"))?;
+                cprintln!("{json}");
+            } else {
+                print_undo_list_human(&entries);
+            }
+            Ok(())
+        }
+        LspCommand::Undo {
+            id,
+            dry_run,
+            format,
+        } => {
+            let entry = crate::lsp::query::query_undo(id, dry_run)?;
+            if is_json(format.as_ref()) {
+                let json =
+                    serde_json::to_string_pretty(&entry).map_err(|e| miette::miette!("{e}"))?;
+                cprintln!("{json}");
+            } else {
+                print_undo_human(&entry, dry_run);
             }
             Ok(())
         }

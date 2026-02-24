@@ -161,10 +161,7 @@ fn common_underscore_suffix(names: &[String]) -> Option<String> {
     let mut common_count = 0;
     for i in 1..min_segments {
         let first = split[0][split[0].len() - i];
-        if split
-            .iter()
-            .all(|s| s[s.len() - i] == first)
-        {
+        if split.iter().all(|s| s[s.len() - i] == first) {
             common_count = i;
         } else {
             break;

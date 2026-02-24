@@ -250,3 +250,52 @@ pub fn query_extract_class(
         .collect();
     crate::lsp::refactor::extract_class(&path, &names, &to_path, dry_run, &project_root)
 }
+
+// ── Inline variable ──────────────────────────────────────────────────────────
+
+pub fn query_inline_variable(
+    file: &str,
+    line: usize,
+    column: usize,
+    dry_run: bool,
+) -> Result<crate::lsp::refactor::InlineVariableOutput> {
+    let path = resolve_file(file)?;
+    let project_root = find_root(&path)?;
+    crate::lsp::refactor::inline_variable(&path, line, column, dry_run, &project_root)
+}
+
+// ── Undo ─────────────────────────────────────────────────────────────────────
+
+pub fn query_undo_list() -> Result<Vec<crate::lsp::refactor::UndoEntry>> {
+    let cwd = std::env::current_dir().map_err(|e| miette::miette!("cannot get cwd: {e}"))?;
+    let project_root = find_root(&cwd)?;
+    let stack = crate::lsp::refactor::UndoStack::open(&project_root);
+    stack.list()
+}
+
+pub fn query_undo(id: Option<u64>, dry_run: bool) -> Result<crate::lsp::refactor::UndoEntry> {
+    let cwd = std::env::current_dir().map_err(|e| miette::miette!("cannot get cwd: {e}"))?;
+    let project_root = find_root(&cwd)?;
+    let stack = crate::lsp::refactor::UndoStack::open(&project_root);
+
+    if dry_run {
+        // Just return the entry info without actually undoing
+        let entries = stack.list()?;
+        if entries.is_empty() {
+            return Err(miette::miette!("no undo entries available"));
+        }
+        if let Some(target_id) = id {
+            entries
+                .into_iter()
+                .find(|e| e.id == target_id)
+                .ok_or_else(|| miette::miette!("undo entry {target_id} not found"))
+        } else {
+            entries
+                .into_iter()
+                .next()
+                .ok_or_else(|| miette::miette!("no undo entries available"))
+        }
+    } else {
+        stack.undo(id, &project_root)
+    }
+}

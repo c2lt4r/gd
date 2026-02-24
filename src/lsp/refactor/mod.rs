@@ -1,16 +1,20 @@
 mod bulk_delete;
 mod bulk_rename;
 mod change_signature;
+pub mod collision;
 mod delete_symbol;
 mod edit;
 mod extract_class;
 mod extract_method;
 mod inline_delegate;
 mod inline_method;
+mod inline_variable;
 mod introduce_parameter;
 mod introduce_variable;
 mod move_file;
 mod move_symbol;
+mod transaction;
+mod undo;
 
 pub use bulk_delete::*;
 pub use bulk_rename::*;
@@ -21,10 +25,12 @@ pub use extract_class::*;
 pub use extract_method::*;
 pub use inline_delegate::*;
 pub use inline_method::*;
+pub use inline_variable::*;
 pub use introduce_parameter::*;
 pub use introduce_variable::*;
 pub use move_file::*;
 pub use move_symbol::*;
+pub use undo::*;
 
 use serde::Serialize;
 use tree_sitter::Node;

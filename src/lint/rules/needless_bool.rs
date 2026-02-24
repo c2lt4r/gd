@@ -77,8 +77,10 @@ fn check_if_statement(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>)
     // Pattern 1: both return boolean literals
     if if_stmt.kind() == "return_statement"
         && else_stmt.kind() == "return_statement"
-        && let (Some(if_bool), Some(else_bool)) =
-            (return_bool_value(if_stmt, source), return_bool_value(else_stmt, source))
+        && let (Some(if_bool), Some(else_bool)) = (
+            return_bool_value(if_stmt, source),
+            return_bool_value(else_stmt, source),
+        )
         && if_bool != else_bool
     {
         let suggestion = if if_bool {
@@ -89,9 +91,7 @@ fn check_if_statement(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>)
         let fix = generate_if_else_fix(node, &suggestion, source);
         diags.push(LintDiagnostic {
             rule: "needless-bool",
-            message: format!(
-                "this if/else returns booleans; simplify to `{suggestion}`"
-            ),
+            message: format!("this if/else returns booleans; simplify to `{suggestion}`"),
             severity: Severity::Warning,
             line: node.start_position().row,
             column: node.start_position().column,
@@ -106,8 +106,7 @@ fn check_if_statement(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>)
     if let (Some((if_var, if_bool)), Some((else_var, else_bool))) = (
         assignment_bool_value(if_stmt, source),
         assignment_bool_value(else_stmt, source),
-    )
-        && if_var == else_var
+    ) && if_var == else_var
         && if_bool != else_bool
     {
         let suggestion = if if_bool {
@@ -162,9 +161,7 @@ fn check_ternary(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
 
     diags.push(LintDiagnostic {
         rule: "needless-bool",
-        message: format!(
-            "this ternary returns booleans; simplify to `{suggestion}`"
-        ),
+        message: format!("this ternary returns booleans; simplify to `{suggestion}`"),
         severity: Severity::Warning,
         line: node.start_position().row,
         column: node.start_position().column,
@@ -263,7 +260,11 @@ fn assignment_bool_value<'a>(stmt: Node<'a>, source: &'a str) -> Option<(&'a str
     // Unwrap expression_statement > assignment
     let assign = if stmt.kind() == "expression_statement" {
         let inner = stmt.named_child(0)?;
-        if inner.kind() == "assignment" { inner } else { return None }
+        if inner.kind() == "assignment" {
+            inner
+        } else {
+            return None;
+        }
     } else if stmt.kind() == "assignment" {
         stmt
     } else {

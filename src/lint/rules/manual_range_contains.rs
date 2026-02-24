@@ -99,9 +99,7 @@ fn check_and_range(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
         let suggestion = format!("{var} in range({lower}, {upper})");
         diags.push(LintDiagnostic {
             rule: "manual-range-contains",
-            message: format!(
-                "manual range check can be written as `{suggestion}`"
-            ),
+            message: format!("manual range check can be written as `{suggestion}`"),
             severity: Severity::Info,
             line: node.start_position().row,
             column: node.start_position().column,
@@ -137,9 +135,7 @@ fn check_or_range(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
         let suggestion = format!("{var} not in range({lower}, {upper})");
         diags.push(LintDiagnostic {
             rule: "manual-range-contains",
-            message: format!(
-                "manual negated range check can be written as `{suggestion}`"
-            ),
+            message: format!("manual negated range check can be written as `{suggestion}`"),
             severity: Severity::Info,
             line: node.start_position().row,
             column: node.start_position().column,
