@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.3.0] - 2026-02-24
+
+### Breaking
+- **`gd lsp` subcommands split into `gd refactor`, `gd edit`, `gd query`** — the 37 one-shot subcommands previously under `gd lsp` are now organized into semantic groups:
+  - `gd refactor` — 23 commands: rename, extract-method, inline-method, change-signature, delete-symbol, move-symbol, etc. Includes merged `undo` command (`gd refactor undo --list` replaces `gd lsp undo-list`).
+  - `gd edit` — 5 commands: replace-body, insert, replace-symbol, edit-range, create-file.
+  - `gd query` — 11 commands: references, definition, hover, completions, symbols, view, scene-info, etc.
+  - `gd lsp` now only starts the LSP server (no subcommands).
+- **`gd lsp diagnostics` removed** — use `gd lint` directly (they were identical).
+
 ## [0.2.44] - 2026-02-24
 
 ### Added

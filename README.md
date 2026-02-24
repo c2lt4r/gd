@@ -12,7 +12,10 @@ Built with [tree-sitter-gdscript](https://github.com/PrestonKnopp/tree-sitter-gd
 - **Watch** for file changes and auto-lint/format on save
 - **Manage addons** from Git or the Godot Asset Library (with lockfile and update support)
 - **Generate CI/CD** configurations for GitHub Actions and GitLab CI
-- **LSP server** with formatting, diagnostics, hover, go-to-definition, references, rename, completion, inlay hints, signature help, call hierarchy, find implementations, semantic tokens, workspace symbol search, scene-aware cross-referencing, 21 refactoring commands with undo support, and collision warnings
+- **LSP server** with formatting, diagnostics, hover, go-to-definition, references, rename, completion, inlay hints, signature help, call hierarchy, find implementations, semantic tokens, workspace symbol search, scene-aware cross-referencing, and Godot LSP proxy
+- **Refactoring** (`gd refactor`) &mdash; 21 structural refactoring commands with undo support and collision warnings
+- **Code editing** (`gd edit`) &mdash; AST-aware editing primitives (replace-body, insert, replace-symbol, edit-range, create-file)
+- **Code queries** (`gd query`) &mdash; one-shot code intelligence (references, hover, definition, symbols, completions, scene info, and more)
 - **Scene management** &mdash; create scenes, add/remove/duplicate nodes, instance scenes, add sub-resources, batch-add nodes, set properties, wire connections, attach/detach scripts &mdash; plus validate `.tscn`/`.tres` files and visualize scene hierarchies
 - **Debug** a running Godot game via Godot's binary debug protocol &mdash; breakpoints, stepping, variable inspection, expression evaluation, live scene tree, node inspection, game speed control, and hot-reload
 - **Godot LSP proxy** &mdash; forward hover, completion, and go-to-definition to Godot's built-in LSP when the editor is running
@@ -78,7 +81,10 @@ gd run
 | `gd debug` | Debug a running Godot game (breakpoints, stepping, eval, scene tree, inspect, time control) |
 | `gd resource` | Manage `.tres` resource files (create, properties, scripts, info) |
 | `gd scene` | Manage `.tscn` scene files (create, add/remove nodes, properties, connections, scripts) |
-| `gd lsp` | Start the LSP server, or run one-shot queries (see below) |
+| `gd lsp` | Start the LSP server |
+| `gd refactor` | Refactoring operations (rename, extract, inline, change-signature, undo, etc.) |
+| `gd edit` | Code editing primitives (replace-body, insert, replace-symbol, edit-range, create-file) |
+| `gd query` | Code intelligence queries (references, hover, definition, symbols, completions, etc.) |
 | `gd deps` | Show script dependency graph (`--include-resources` for `.tscn`/`.tres`) |
 | `gd env` | Show environment info (gd version, Godot version/path, OS, project root) |
 | `gd man` | Generate man page |
@@ -873,172 +879,188 @@ Example GitHub Actions step:
 - **Workspace symbol search** &mdash; fuzzy search across all project symbols (Ctrl+T)
 - **Godot proxy** &mdash; forwards hover, completion, and definition to Godot's built-in LSP (port 6005) when the editor is running, with `--godot-port` and `--no-godot-proxy` flags
 
-### One-Shot CLI Queries
+## Code Queries
 
-`gd lsp` also exposes one-shot subcommands — human-readable by default, `--format json` for structured output:
+`gd query` provides one-shot code intelligence queries &mdash; human-readable by default, `--format json` for structured output:
 
 ```sh
-# Rename a symbol across the project (applies to disk by default)
-gd lsp rename --file player.gd --line 5 --column 10 --new-name move_character
-
-# Rename by name (project-wide search)
-gd lsp rename --name old_func --new-name new_func
-
-# Preview without writing
-gd lsp rename --file player.gd --line 5 --column 10 --new-name move_character --dry-run
-
 # Find all references to a symbol (by position)
-gd lsp references --file player.gd --line 5 --column 10
+gd query references --file player.gd --line 5 --column 10
 
 # Find all references by name (project-wide search)
-gd lsp references --name speed
+gd query references --name speed
 
 # Go to definition
-gd lsp definition --file player.gd --line 5 --column 10
+gd query definition --file player.gd --line 5 --column 10
 
 # Hover information
-gd lsp hover --file player.gd --line 5 --column 10
+gd query hover --file player.gd --line 5 --column 10
 
 # List completions
-gd lsp completions --file player.gd --line 5 --column 10
+gd query completions --file player.gd --line 5 --column 10
 
 # Available code actions / quick fixes
-gd lsp code-actions --file player.gd --line 5 --column 1
-
-# Run diagnostics (same as gd lint; --format json for structured output)
-gd lsp diagnostics
+gd query code-actions --file player.gd --line 5 --column 1
 
 # List symbols in a file
-gd lsp symbols --file player.gd
+gd query symbols --file player.gd
 
 # Filter symbols by kind
-gd lsp symbols --file player.gd --kind function,signal
+gd query symbols --file player.gd --kind function,signal
 
 # View lines from a file
-gd lsp view --file player.gd --range 10-20
-gd lsp view --file player.gd --start-line 15 --context 3
-gd lsp view --file player.gd --format json  # structured output for AI tools
+gd query view --file player.gd --range 10-20
+gd query view --file player.gd --start-line 15 --context 3
+gd query view --file player.gd --format json  # structured output for AI tools
 
 # Scene info (nodes, resources, connections from a .tscn file)
-gd lsp scene-info --file main.tscn
-gd lsp scene-info --file main.tscn --nodes-only
+gd query scene-info --file main.tscn
+gd query scene-info --file main.tscn --nodes-only
 
 # List all scenes that reference a script
-gd lsp scene-refs --file player.gd
+gd query scene-refs --file player.gd
 
 # List signal connections targeting a script's handler functions
-gd lsp signal-connections --file player.gd
-
-# Create a new GDScript file with scaffolding
-gd lsp create-file --file enemies/boss.gd --extends CharacterBody2D --class-name Boss
-
-# Create a file with custom content (from stdin or --input-file)
-echo 'extends Node2D' | gd lsp create-file --file utils/helper.gd
+gd query signal-connections --file player.gd
 ```
 
 All positions are **1-based** (line 1, column 1 is the first character). Paths in output are relative to the project root with forward slashes.
 
-### Refactoring Commands
+## Refactoring
 
-`gd lsp` includes structural refactoring commands — human-readable by default, `--format json` for structured output, `--dry-run` to preview:
+`gd refactor` provides structural refactoring commands &mdash; human-readable by default, `--format json` for structured output, `--dry-run` to preview:
 
 ```sh
+# Rename a symbol across the project (applies to disk by default)
+gd refactor rename --file player.gd --line 5 --column 10 --new-name move_character
+
+# Rename by name (project-wide search)
+gd refactor rename --name old_func --new-name new_func
+
+# Preview without writing
+gd refactor rename --file player.gd --line 5 --column 10 --new-name move_character --dry-run
+
 # Delete a symbol (fails if references exist, use --force to override)
-gd lsp delete-symbol --file player.gd --name unused_func
-gd lsp delete-symbol --file player.gd --name unused_func --force
+gd refactor delete-symbol --file player.gd --name unused_func
+gd refactor delete-symbol --file player.gd --name unused_func --force
 
 # Delete multiple symbols at once
-gd lsp bulk-delete-symbol --file player.gd --names "a,b,c"
+gd refactor bulk-delete-symbol --file player.gd --names "a,b,c"
 
 # Move a symbol between files
-gd lsp move-symbol --name helper --from utils.gd --to helpers.gd
+gd refactor move-symbol --name helper --from utils.gd --to helpers.gd
 
 # Move and update preload paths in callers
-gd lsp move-symbol --name helper --from utils.gd --to helpers.gd --update-callers
+gd refactor move-symbol --name helper --from utils.gd --to helpers.gd --update-callers
 
 # Extract code into a new function
-gd lsp extract-method --file player.gd --start-line 10 --end-line 15 --name do_attack
+gd refactor extract-method --file player.gd --start-line 10 --end-line 15 --name do_attack
 
 # Extract symbols to a new file
-gd lsp extract-class --file player.gd --symbols "speed,health,take_damage" --to stats.gd
+gd refactor extract-class --file player.gd --symbols "speed,health,take_damage" --to stats.gd
 
 # Inline a function at its call sites
-gd lsp inline-method --file player.gd --line 5 --column 2
+gd refactor inline-method --file player.gd --line 5 --column 2
 
 # Inline a pass-through delegate function
-gd lsp inline-delegate --file player.gd --name attack
+gd refactor inline-delegate --file player.gd --name attack
 
 # Rename multiple symbols atomically
-gd lsp bulk-rename --file player.gd --renames "speed:velocity,health:hp"
+gd refactor bulk-rename --file player.gd --renames "speed:velocity,health:hp"
 
 # Change function signature (add/remove/reorder/rename params)
-gd lsp change-signature --file player.gd --name move \
+gd refactor change-signature --file player.gd --name move \
   --add-param "speed: float = 1.0" --remove-param old_param --reorder "a,b,c"
 
 # Inline a variable (replace usages with initializer, delete declaration)
-gd lsp inline-variable --file player.gd --line 5 --column 10
+gd refactor inline-variable --file player.gd --line 5 --column 10
 
 # Extract an expression into a local variable
-gd lsp introduce-variable --file player.gd --line 5 --column 10 --end-column 30 --name velocity
+gd refactor introduce-variable --file player.gd --line 5 --column 10 --end-column 30 --name velocity
 
 # Turn a hardcoded value into a parameter with default
-gd lsp introduce-parameter --file player.gd --line 5 --column 10 --end-column 20 --name speed
+gd refactor introduce-parameter --file player.gd --line 5 --column 10 --end-column 20 --name speed
 
 # Invert an if/else: negate condition, swap branches
-gd lsp invert-if --file player.gd --line 5
+gd refactor invert-if --file player.gd --line 5
 
 # Flatten nested ifs to early return/continue guard clauses
-gd lsp extract-guards --file player.gd --name _process
+gd refactor extract-guards --file player.gd --name _process
 
 # Split/join variable declaration and assignment
-gd lsp split-declaration --file player.gd --line 3
-gd lsp join-declaration --file player.gd --line 3
+gd refactor split-declaration --file player.gd --line 3
+gd refactor join-declaration --file player.gd --line 3
 
 # Convert between $NodePath and get_node() syntax
-gd lsp convert-node-path --file player.gd --line 5 --column 10
+gd refactor convert-node-path --file player.gd --line 5 --column 10
 
 # Convert between @onready var and _ready() assignment
-gd lsp convert-onready --file player.gd --name sprite --to-ready
-gd lsp convert-onready --file player.gd --name sprite --to-onready
+gd refactor convert-onready --file player.gd --name sprite --to-ready
+gd refactor convert-onready --file player.gd --name sprite --to-onready
 
 # Convert signal connections between scene wiring and code
-gd lsp convert-signal --file player.tscn --signal pressed --from Button --method _on_btn --to-code
-gd lsp convert-signal --file player.tscn --signal pressed --from Button --method _on_btn --to-scene
+gd refactor convert-signal --file player.tscn --signal pressed --from Button --method _on_btn --to-code
+gd refactor convert-signal --file player.tscn --signal pressed --from Button --method _on_btn --to-scene
 
-# AST-aware editing (reads new content from stdin or --input-file)
-echo -e '\tprint("hello")' | gd lsp replace-body --file player.gd --name _ready
-echo 'func _process(delta):\n\tpass' | gd lsp insert --file player.gd --after _ready
-echo 'var speed: float = 42.0' | gd lsp replace-symbol --file player.gd --name speed
-echo '\t# replaced' | gd lsp edit-range --file player.gd --range 5-7
+# Safely delete a file (checks for references first)
+gd refactor safe-delete-file --file unused.gd
 
-# Or use --input-file to avoid stdin pipe encoding issues (recommended on Windows)
-gd lsp insert --file player.gd --after _ready --input-file /tmp/new_func.gd
+# Move a file and update all references
+gd refactor move-file --from utils.gd --to lib/utils.gd
 ```
 
 All refactoring commands support `--dry-run` to preview changes without writing to disk.
-Edit commands also support `--no-format` to skip auto-formatting, `--class` for inner class targets, and `--input-file` to read from a file instead of stdin.
 
-#### Undo
+### Undo
 
 Every refactoring command records an undo entry. If a refactoring produces unexpected results, revert it:
 
 ```sh
 # List recent refactoring operations
-gd lsp undo-list
+gd refactor undo --list
 
 # Undo the most recent refactoring
-gd lsp undo
+gd refactor undo
 
 # Undo a specific entry by ID
-gd lsp undo --id 3
+gd refactor undo --id 3
 
 # Preview what would be restored
-gd lsp undo --dry-run
+gd refactor undo --dry-run
 ```
 
-Multi-file refactorings (extract-class, move-symbol, move-file) use atomic transactions — if any step fails, all files are automatically restored to their original state.
+Multi-file refactorings (extract-class, move-symbol, move-file) use atomic transactions &mdash; if any step fails, all files are automatically restored to their original state.
 
-### Editor Setup
+## Code Editing
+
+`gd edit` provides AST-aware editing primitives for AI agent workflows &mdash; reads new content from stdin or `--input-file`:
+
+```sh
+# Replace a function body
+echo -e '\tprint("hello")' | gd edit replace-body --file player.gd --name _ready
+
+# Insert after a symbol
+echo 'func _process(delta):\n\tpass' | gd edit insert --file player.gd --after _ready
+
+# Replace a symbol declaration
+echo 'var speed: float = 42.0' | gd edit replace-symbol --file player.gd --name speed
+
+# Replace a line range
+echo '\t# replaced' | gd edit edit-range --file player.gd --range 5-7
+
+# Create a new GDScript file with scaffolding
+gd edit create-file --file enemies/boss.gd --extends CharacterBody2D --class-name Boss
+
+# Create a file with custom content (from stdin or --input-file)
+echo 'extends Node2D' | gd edit create-file --file utils/helper.gd
+
+# Or use --input-file to avoid stdin pipe encoding issues (recommended on Windows)
+gd edit insert --file player.gd --after _ready --input-file /tmp/new_func.gd
+```
+
+Edit commands support `--dry-run` to preview, `--no-format` to skip auto-formatting, `--class` for inner class targets, and `--input-file` to read from a file instead of stdin.
+
+## Editor Setup
 
 **VS Code:** Download the `.vsix` from the [latest release](https://github.com/c2lt4r/gd/releases/latest), then install it with:
 
