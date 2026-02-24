@@ -15,6 +15,7 @@ struct CapturedVar {
     type_hint: Option<String>,
     is_written: bool,
     is_used_after: bool,
+    needs_var_declaration: bool, // true for vars declared inside extracted range
 }
 
 #[allow(clippy::too_many_lines)]
@@ -124,6 +125,11 @@ pub fn extract_method(
             return_vars.push(cap.clone());
         }
     }
+
+    // Find locally-declared variables that are used after the range — they must be returned
+    let local_returns =
+        find_local_return_vars(&local_decls, &statements, body, &source, extracted_range.1);
+    return_vars.extend(local_returns);
 
     // All captured vars are parameters
     let params: Vec<&CapturedVar> = captured.iter().collect();
@@ -410,6 +416,7 @@ fn find_captured_variables(
                 type_hint: type_hint.clone(),
                 is_written,
                 is_used_after,
+                needs_var_declaration: false,
             });
         }
     }
@@ -457,6 +464,63 @@ fn is_used_after_range(name: &str, body: Node, source: &str, range_end: usize) -
     false
 }
 
+/// Find locally-declared variables (inside the extracted range) that are used after the range,
+/// meaning they must be returned from the extracted function and re-declared at the call site.
+fn find_local_return_vars(
+    local_decls: &HashSet<String>,
+    statements: &[Node],
+    body: Node,
+    source: &str,
+    range_end: usize,
+) -> Vec<CapturedVar> {
+    let mut result = Vec::new();
+    for var_name in local_decls {
+        if !is_used_after_range(var_name, body, source, range_end) {
+            continue;
+        }
+        // Extract type hint from the variable_statement node in the extracted range
+        let type_hint = find_var_type_hint(var_name, statements, source);
+        result.push(CapturedVar {
+            name: var_name.clone(),
+            type_hint,
+            is_written: true,
+            is_used_after: true,
+            needs_var_declaration: true,
+        });
+    }
+    result.sort_by(|a, b| a.name.cmp(&b.name));
+    result
+}
+
+/// Find the type hint for a variable declaration within the given statements.
+fn find_var_type_hint(name: &str, statements: &[Node], source: &str) -> Option<String> {
+    for stmt in statements {
+        if let Some(hint) = find_var_type_hint_recursive(*stmt, name, source) {
+            return Some(hint);
+        }
+    }
+    None
+}
+
+fn find_var_type_hint_recursive(node: Node, name: &str, source: &str) -> Option<String> {
+    if node.kind() == "variable_statement"
+        && let Some(name_node) = node.child_by_field_name("name")
+        && name_node.utf8_text(source.as_bytes()).ok() == Some(name)
+    {
+        return node
+            .child_by_field_name("type")
+            .and_then(|t| t.utf8_text(source.as_bytes()).ok())
+            .map(std::string::ToString::to_string);
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if let Some(hint) = find_var_type_hint_recursive(child, name, source) {
+            return Some(hint);
+        }
+    }
+    None
+}
+
 fn has_identifier(node: Node, name: &str, source: &str) -> bool {
     if (node.kind() == "identifier" || node.kind() == "name")
         && node.utf8_text(source.as_bytes()).ok() == Some(name)
@@ -501,10 +565,13 @@ fn generate_extracted_function(
 
     let signature = format!("func {name}({param_str}){return_type}:");
 
-    // Extract body text from the statements
-    let first_byte = statements[0].start_byte();
+    // Extract body text from the statements (include first line's indentation
+    // so re_indent sees consistent indentation across all lines)
+    let first_line_start = source[..statements[0].start_byte()]
+        .rfind('\n')
+        .map_or(0, |pos| pos + 1);
     let last_byte = statements.last().unwrap().end_byte();
-    let body_text = &source[first_byte..last_byte];
+    let body_text = &source[first_line_start..last_byte];
 
     // Re-indent to 1 level
     let re_indented = re_indent(body_text);
@@ -559,7 +626,11 @@ fn generate_call_site(
         .join(", ");
 
     if let Some(ret) = return_var {
-        format!("{indent}{} = {name}({args})\n", ret.name)
+        if ret.needs_var_declaration {
+            format!("{indent}var {} = {name}({args})\n", ret.name)
+        } else {
+            format!("{indent}{} = {name}({args})\n", ret.name)
+        }
     } else {
         format!("{indent}{name}({args})\n")
     }
@@ -594,9 +665,11 @@ fn generate_extracted_function_multi_return(
 
     let signature = format!("func {name}({param_str}) -> Dictionary:");
 
-    let first_byte = statements[0].start_byte();
+    let first_line_start = source[..statements[0].start_byte()]
+        .rfind('\n')
+        .map_or(0, |pos| pos + 1);
     let last_byte = statements.last().unwrap().end_byte();
-    let body_text = &source[first_byte..last_byte];
+    let body_text = &source[first_line_start..last_byte];
     let re_indented = re_indent(body_text);
 
     let dict_entries = return_vars
@@ -626,7 +699,11 @@ fn generate_call_site_multi_return(
 
     let mut lines = format!("{indent}var {result_name} = {name}({args})\n");
     for v in return_vars {
-        let _ = writeln!(lines, "{indent}{} = {result_name}[\"{}\"]", v.name, v.name);
+        if v.needs_var_declaration {
+            let _ = writeln!(lines, "{indent}var {} = {result_name}[\"{}\"]", v.name, v.name);
+        } else {
+            let _ = writeln!(lines, "{indent}{} = {result_name}[\"{}\"]", v.name, v.name);
+        }
     }
     lines
 }
@@ -962,6 +1039,175 @@ mod tests {
         )
         .unwrap();
         assert!(result.warnings.is_empty(), "no await = no warning");
+    }
+
+    // ── re_indent ────────────────────────────────────────────────────────
+
+    // ── local var return detection (issue #23) ─────────────────────────
+
+    #[test]
+    fn extract_local_var_used_after_becomes_return() {
+        // The core bug: var declared in range, used after → must be returned
+        let temp = setup_project(&[(
+            "player.gd",
+            "func process(delta):\n\tvar velocity = speed * delta\n\tvelocity = clamp(velocity, 0, max_speed)\n\tposition += velocity\n",
+        )]);
+        // Extract lines 2-3: var velocity = ... ; velocity = clamp(...)
+        let result = extract_method(
+            &temp.path().join("player.gd"),
+            2,
+            3,
+            "calculate_velocity",
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        assert_eq!(
+            result.returns.as_deref(),
+            Some("velocity"),
+            "velocity should be a return value"
+        );
+        let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+        assert!(
+            content.contains("var velocity = calculate_velocity("),
+            "call site should declare var, got:\n{content}"
+        );
+        assert!(
+            content.contains("return velocity"),
+            "extracted function should return velocity, got:\n{content}"
+        );
+    }
+
+    #[test]
+    fn extract_local_var_not_used_after_no_return() {
+        // var declared and consumed entirely within range → no return needed
+        let temp = setup_project(&[(
+            "player.gd",
+            "func process():\n\tvar tmp = 42\n\tprint(tmp)\n\tprint(\"done\")\n",
+        )]);
+        // Extract lines 2-3: var tmp = 42; print(tmp)
+        let result = extract_method(
+            &temp.path().join("player.gd"),
+            2,
+            3,
+            "helper",
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        assert!(
+            result.returns.is_none(),
+            "tmp not used after range → no return"
+        );
+        let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+        assert!(
+            !content.contains("var tmp = helper("),
+            "should not have var declaration at call site, got:\n{content}"
+        );
+    }
+
+    #[test]
+    fn extract_multiple_local_return_vars() {
+        // Two local vars used after → Dictionary return with var declarations
+        let temp = setup_project(&[(
+            "player.gd",
+            "func process():\n\tvar a = 1\n\tvar b = 2\n\tprint(a)\n\tprint(b)\n",
+        )]);
+        // Extract lines 2-3: var a = 1; var b = 2
+        let result = extract_method(
+            &temp.path().join("player.gd"),
+            2,
+            3,
+            "init_vars",
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        assert_eq!(result.return_vars.len(), 2);
+        let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+        assert!(
+            content.contains("-> Dictionary:"),
+            "should return Dictionary, got:\n{content}"
+        );
+        assert!(
+            content.contains("var a = _result[\"a\"]"),
+            "should declare var a at call site, got:\n{content}"
+        );
+        assert!(
+            content.contains("var b = _result[\"b\"]"),
+            "should declare var b at call site, got:\n{content}"
+        );
+    }
+
+    #[test]
+    fn extract_mix_preexisting_and_local_return_vars() {
+        // pre-existing var (x) modified + local var (y) declared, both used after
+        let temp = setup_project(&[(
+            "player.gd",
+            "func process():\n\tvar x = 1\n\tx += 10\n\tvar y = x * 2\n\tprint(x)\n\tprint(y)\n",
+        )]);
+        // Extract lines 3-4: x += 10; var y = x * 2
+        let result = extract_method(
+            &temp.path().join("player.gd"),
+            3,
+            4,
+            "compute",
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        assert_eq!(result.return_vars.len(), 2);
+        let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+        assert!(
+            content.contains("-> Dictionary:"),
+            "should return Dictionary, got:\n{content}"
+        );
+        // x is pre-existing → plain assignment; y is local → var declaration
+        assert!(
+            content.contains("x = _result[\"x\"]"),
+            "x should be plain assignment, got:\n{content}"
+        );
+        assert!(
+            !content.contains("var x = _result[\"x\"]"),
+            "x should NOT have var, got:\n{content}"
+        );
+        assert!(
+            content.contains("var y = _result[\"y\"]"),
+            "y should have var declaration, got:\n{content}"
+        );
+    }
+
+    #[test]
+    fn extract_local_var_with_type_hint_returned() {
+        let temp = setup_project(&[(
+            "player.gd",
+            "func process():\n\tvar speed: float = 10.0\n\tprint(speed)\n",
+        )]);
+        // Extract line 2: var speed: float = 10.0
+        let result = extract_method(
+            &temp.path().join("player.gd"),
+            2,
+            2,
+            "get_speed",
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        assert_eq!(result.returns.as_deref(), Some("speed"));
+        let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+        assert!(
+            content.contains("-> float:"),
+            "return type should be float, got:\n{content}"
+        );
+        assert!(
+            content.contains("var speed = get_speed()"),
+            "call site should have var declaration, got:\n{content}"
+        );
     }
 
     // ── re_indent ────────────────────────────────────────────────────────
