@@ -332,7 +332,7 @@ fn test_tree_scene_human_output() {
     );
 }
 
-// ── gd lsp scene-info ────────────────────────────────────────────────────
+// ── gd query scene-info ──────────────────────────────────────────────────
 
 #[test]
 fn test_lsp_scene_info() {
@@ -340,17 +340,17 @@ fn test_lsp_scene_info() {
     create_godot_project_with_scene(&temp);
 
     let output = gd_bin()
-        .arg("lsp")
+        .arg("query")
         .arg("scene-info")
         .arg("--file")
         .arg(temp.path().join("main.tscn"))
         .args(["--format", "json"])
         .output()
-        .expect("Failed to run gd lsp scene-info");
+        .expect("Failed to run gd query scene-info");
 
     assert!(
         output.status.success(),
-        "gd lsp scene-info should succeed: {}",
+        "gd query scene-info should succeed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
 
@@ -947,7 +947,7 @@ fn test_scene_full_workflow_teardown() {
     assert!(!c.contains("[connection"));
 }
 
-// ── gd lsp scene-info ────────────────────────────────────────────────────
+// ── gd query scene-info ──────────────────────────────────────────────────
 
 #[test]
 fn test_lsp_scene_info_nodes_only() {
@@ -955,14 +955,14 @@ fn test_lsp_scene_info_nodes_only() {
     create_godot_project_with_scene(&temp);
 
     let output = gd_bin()
-        .arg("lsp")
+        .arg("query")
         .arg("scene-info")
         .arg("--file")
         .arg(temp.path().join("main.tscn"))
         .arg("--nodes-only")
         .args(["--format", "json"])
         .output()
-        .expect("Failed to run gd lsp scene-info --nodes-only");
+        .expect("Failed to run gd query scene-info --nodes-only");
 
     assert!(output.status.success());
 

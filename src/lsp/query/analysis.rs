@@ -101,14 +101,6 @@ pub fn query_code_actions(file: &str, line: usize, column: usize) -> Result<Vec<
         .collect())
 }
 
-pub fn query_diagnostics(paths: &[String], json: bool) -> Result<()> {
-    let opts = crate::lint::LintOptions {
-        format: if json { "json" } else { "human" }.to_string(),
-        ..Default::default()
-    };
-    crate::lint::run_lint(paths, &opts)
-}
-
 pub fn query_symbols(file: &str) -> Result<Vec<SymbolOutput>> {
     let path = resolve_file(file)?;
     let source =

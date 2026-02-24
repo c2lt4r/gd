@@ -17,7 +17,7 @@ fn test_lsp_delete_symbol_function() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "refactor",
             "delete-symbol",
             "--file",
             "player.gd",
@@ -28,7 +28,7 @@ fn test_lsp_delete_symbol_function() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp delete-symbol");
+        .expect("Failed to run gd refactor delete-symbol");
 
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -51,7 +51,7 @@ fn test_lsp_delete_symbol_dry_run() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "refactor",
             "delete-symbol",
             "--file",
             "player.gd",
@@ -63,7 +63,7 @@ fn test_lsp_delete_symbol_dry_run() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp delete-symbol --dry-run");
+        .expect("Failed to run gd refactor delete-symbol --dry-run");
 
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -82,7 +82,7 @@ fn test_lsp_delete_symbol_with_references() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "refactor",
             "delete-symbol",
             "--file",
             "player.gd",
@@ -93,7 +93,7 @@ fn test_lsp_delete_symbol_with_references() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp delete-symbol");
+        .expect("Failed to run gd refactor delete-symbol");
 
     // Should exit non-zero when references exist
     assert!(
@@ -117,7 +117,7 @@ fn test_lsp_delete_symbol_force() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "refactor",
             "delete-symbol",
             "--file",
             "player.gd",
@@ -129,7 +129,7 @@ fn test_lsp_delete_symbol_force() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp delete-symbol --force");
+        .expect("Failed to run gd refactor delete-symbol --force");
 
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -148,7 +148,7 @@ fn test_lsp_delete_symbol_by_line() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "refactor",
             "delete-symbol",
             "--file",
             "player.gd",
@@ -159,7 +159,7 @@ fn test_lsp_delete_symbol_by_line() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp delete-symbol --line");
+        .expect("Failed to run gd refactor delete-symbol --line");
 
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -173,7 +173,7 @@ fn test_lsp_move_symbol_to_new_file() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "refactor",
             "move-symbol",
             "--name",
             "helper",
@@ -186,7 +186,7 @@ fn test_lsp_move_symbol_to_new_file() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp move-symbol");
+        .expect("Failed to run gd refactor move-symbol");
 
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -216,7 +216,7 @@ fn test_lsp_move_symbol_to_existing_file() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "refactor",
             "move-symbol",
             "--name",
             "to_move",
@@ -229,7 +229,7 @@ fn test_lsp_move_symbol_to_existing_file() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp move-symbol to existing");
+        .expect("Failed to run gd refactor move-symbol to existing");
 
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -249,7 +249,7 @@ fn test_lsp_move_symbol_dry_run() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "refactor",
             "move-symbol",
             "--name",
             "helper",
@@ -263,7 +263,7 @@ fn test_lsp_move_symbol_dry_run() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp move-symbol --dry-run");
+        .expect("Failed to run gd refactor move-symbol --dry-run");
 
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -289,7 +289,7 @@ fn test_lsp_extract_method_simple() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "refactor",
             "extract-method",
             "--file",
             "player.gd",
@@ -304,7 +304,7 @@ fn test_lsp_extract_method_simple() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp extract-method");
+        .expect("Failed to run gd refactor extract-method");
 
     assert!(
         output.status.success(),
@@ -335,7 +335,7 @@ fn test_lsp_extract_method_with_params() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "refactor",
             "extract-method",
             "--file",
             "player.gd",
@@ -350,7 +350,7 @@ fn test_lsp_extract_method_with_params() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp extract-method with params");
+        .expect("Failed to run gd refactor extract-method with params");
 
     assert!(
         output.status.success(),
@@ -372,7 +372,7 @@ fn test_lsp_extract_method_with_return() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "refactor",
             "extract-method",
             "--file",
             "player.gd",
@@ -387,7 +387,7 @@ fn test_lsp_extract_method_with_return() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp extract-method with return");
+        .expect("Failed to run gd refactor extract-method with return");
 
     assert!(
         output.status.success(),
@@ -418,7 +418,7 @@ fn test_lsp_extract_method_dry_run() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "refactor",
             "extract-method",
             "--file",
             "player.gd",
@@ -434,7 +434,7 @@ fn test_lsp_extract_method_dry_run() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp extract-method --dry-run");
+        .expect("Failed to run gd refactor extract-method --dry-run");
 
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -460,7 +460,7 @@ fn test_lsp_extract_method_async_warning() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "refactor",
             "extract-method",
             "--file",
             "player.gd",
@@ -475,7 +475,7 @@ fn test_lsp_extract_method_async_warning() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp extract-method");
+        .expect("Failed to run gd refactor extract-method");
 
     assert!(
         output.status.success(),
@@ -501,7 +501,7 @@ fn test_lsp_extract_method_no_async_no_warning() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "refactor",
             "extract-method",
             "--file",
             "player.gd",
@@ -516,7 +516,7 @@ fn test_lsp_extract_method_no_async_no_warning() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp extract-method");
+        .expect("Failed to run gd refactor extract-method");
 
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -540,7 +540,7 @@ fn test_lsp_extract_method_multi_return() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "refactor",
             "extract-method",
             "--file",
             "player.gd",
@@ -555,7 +555,7 @@ fn test_lsp_extract_method_multi_return() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp extract-method multi-return");
+        .expect("Failed to run gd refactor extract-method multi-return");
 
     assert!(
         output.status.success(),
@@ -591,7 +591,7 @@ fn test_lsp_delete_symbol_inner_class() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "refactor",
             "delete-symbol",
             "--file",
             "player.gd",
@@ -604,7 +604,7 @@ fn test_lsp_delete_symbol_inner_class() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp delete-symbol --class");
+        .expect("Failed to run gd refactor delete-symbol --class");
 
     assert!(
         output.status.success(),
@@ -636,7 +636,7 @@ fn test_lsp_move_symbol_with_class() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "refactor",
             "move-symbol",
             "--name",
             "helper",
@@ -651,7 +651,7 @@ fn test_lsp_move_symbol_with_class() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp move-symbol --class");
+        .expect("Failed to run gd refactor move-symbol --class");
 
     assert!(
         output.status.success(),
@@ -687,7 +687,7 @@ fn test_lsp_delete_enum_member() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "refactor",
             "delete-symbol",
             "--file",
             "state.gd",
@@ -698,7 +698,7 @@ fn test_lsp_delete_enum_member() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp delete-symbol enum member");
+        .expect("Failed to run gd refactor delete-symbol enum member");
 
     assert!(
         output.status.success(),
@@ -724,7 +724,7 @@ fn test_lsp_delete_enum_member_dry_run() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "refactor",
             "delete-symbol",
             "--file",
             "state.gd",
@@ -736,7 +736,7 @@ fn test_lsp_delete_enum_member_dry_run() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp delete-symbol enum member --dry-run");
+        .expect("Failed to run gd refactor delete-symbol enum member --dry-run");
 
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -762,7 +762,7 @@ fn test_lsp_move_symbol_reports_preloads() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "refactor",
             "move-symbol",
             "--name",
             "helper",
@@ -775,7 +775,7 @@ fn test_lsp_move_symbol_reports_preloads() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp move-symbol");
+        .expect("Failed to run gd refactor move-symbol");
 
     assert!(
         output.status.success(),
@@ -809,7 +809,7 @@ fn test_lsp_move_symbol_self_ref_warning() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "refactor",
             "move-symbol",
             "--name",
             "take_damage",
@@ -826,7 +826,7 @@ fn test_lsp_move_symbol_self_ref_warning() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp move-symbol with self-ref");
+        .expect("Failed to run gd refactor move-symbol with self-ref");
 
     assert!(
         output.status.success(),
@@ -861,7 +861,7 @@ fn test_lsp_inline_method_simple() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "refactor",
             "inline-method",
             "--file",
             "player.gd",
@@ -874,7 +874,7 @@ fn test_lsp_inline_method_simple() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp inline-method");
+        .expect("Failed to run gd refactor inline-method");
 
     assert!(
         output.status.success(),
@@ -901,7 +901,7 @@ fn test_lsp_inline_method_with_params() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "refactor",
             "inline-method",
             "--file",
             "player.gd",
@@ -914,7 +914,7 @@ fn test_lsp_inline_method_with_params() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp inline-method with params");
+        .expect("Failed to run gd refactor inline-method with params");
 
     assert!(
         output.status.success(),
@@ -948,7 +948,7 @@ fn test_lsp_change_signature_add_param() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "refactor",
             "change-signature",
             "--file",
             "player.gd",
@@ -961,7 +961,7 @@ fn test_lsp_change_signature_add_param() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp change-signature");
+        .expect("Failed to run gd refactor change-signature");
 
     assert!(
         output.status.success(),
@@ -992,7 +992,7 @@ fn test_lsp_change_signature_remove_param() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "refactor",
             "change-signature",
             "--file",
             "player.gd",
@@ -1005,7 +1005,7 @@ fn test_lsp_change_signature_remove_param() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp change-signature remove");
+        .expect("Failed to run gd refactor change-signature remove");
 
     assert!(
         output.status.success(),
@@ -1032,7 +1032,7 @@ fn test_lsp_change_signature_dry_run() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "refactor",
             "change-signature",
             "--file",
             "player.gd",
@@ -1046,7 +1046,7 @@ fn test_lsp_change_signature_dry_run() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp change-signature --dry-run");
+        .expect("Failed to run gd refactor change-signature --dry-run");
 
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -1070,7 +1070,7 @@ fn test_lsp_introduce_variable_simple() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "refactor",
             "introduce-variable",
             "--file",
             "player.gd",
@@ -1087,7 +1087,7 @@ fn test_lsp_introduce_variable_simple() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp introduce-variable");
+        .expect("Failed to run gd refactor introduce-variable");
 
     assert!(
         output.status.success(),
@@ -1119,7 +1119,7 @@ fn test_lsp_introduce_variable_dry_run() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "refactor",
             "introduce-variable",
             "--file",
             "player.gd",
@@ -1137,7 +1137,7 @@ fn test_lsp_introduce_variable_dry_run() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp introduce-variable --dry-run");
+        .expect("Failed to run gd refactor introduce-variable --dry-run");
 
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -1156,7 +1156,7 @@ fn test_lsp_introduce_variable_call_expression() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "refactor",
             "introduce-variable",
             "--file",
             "player.gd",
@@ -1173,7 +1173,7 @@ fn test_lsp_introduce_variable_call_expression() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp introduce-variable call");
+        .expect("Failed to run gd refactor introduce-variable call");
 
     assert!(
         output.status.success(),
@@ -1206,7 +1206,7 @@ fn test_lsp_introduce_parameter_with_type() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "refactor",
             "introduce-parameter",
             "--file",
             "player.gd",
@@ -1225,7 +1225,7 @@ fn test_lsp_introduce_parameter_with_type() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp introduce-parameter");
+        .expect("Failed to run gd refactor introduce-parameter");
 
     assert!(
         output.status.success(),
@@ -1261,7 +1261,7 @@ fn test_lsp_introduce_parameter_no_type() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "refactor",
             "introduce-parameter",
             "--file",
             "player.gd",
@@ -1278,7 +1278,7 @@ fn test_lsp_introduce_parameter_no_type() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp introduce-parameter no type");
+        .expect("Failed to run gd refactor introduce-parameter no type");
 
     assert!(
         output.status.success(),
@@ -1305,7 +1305,7 @@ fn test_lsp_introduce_parameter_dry_run() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "refactor",
             "introduce-parameter",
             "--file",
             "player.gd",
@@ -1323,7 +1323,7 @@ fn test_lsp_introduce_parameter_dry_run() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp introduce-parameter --dry-run");
+        .expect("Failed to run gd refactor introduce-parameter --dry-run");
 
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -1344,7 +1344,7 @@ fn test_lsp_bulk_delete_symbol() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "refactor",
             "bulk-delete-symbol",
             "--file",
             "player.gd",
@@ -1355,7 +1355,7 @@ fn test_lsp_bulk_delete_symbol() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp bulk-delete-symbol");
+        .expect("Failed to run gd refactor bulk-delete-symbol");
 
     assert!(
         output.status.success(),
@@ -1382,7 +1382,7 @@ fn test_lsp_bulk_delete_symbol_skips_referenced() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "refactor",
             "bulk-delete-symbol",
             "--file",
             "player.gd",
@@ -1393,7 +1393,7 @@ fn test_lsp_bulk_delete_symbol_skips_referenced() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp bulk-delete-symbol");
+        .expect("Failed to run gd refactor bulk-delete-symbol");
 
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -1409,7 +1409,7 @@ fn test_lsp_bulk_delete_symbol_dry_run() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "refactor",
             "bulk-delete-symbol",
             "--file",
             "player.gd",
@@ -1421,7 +1421,7 @@ fn test_lsp_bulk_delete_symbol_dry_run() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp bulk-delete-symbol --dry-run");
+        .expect("Failed to run gd refactor bulk-delete-symbol --dry-run");
 
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -1444,7 +1444,7 @@ fn test_lsp_bulk_rename() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "refactor",
             "bulk-rename",
             "--file",
             "player.gd",
@@ -1455,7 +1455,7 @@ fn test_lsp_bulk_rename() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp bulk-rename");
+        .expect("Failed to run gd refactor bulk-rename");
 
     assert!(
         output.status.success(),
@@ -1479,7 +1479,7 @@ fn test_lsp_bulk_rename_dry_run() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "refactor",
             "bulk-rename",
             "--file",
             "player.gd",
@@ -1491,7 +1491,7 @@ fn test_lsp_bulk_rename_dry_run() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp bulk-rename --dry-run");
+        .expect("Failed to run gd refactor bulk-rename --dry-run");
 
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -1509,7 +1509,7 @@ fn test_lsp_bulk_rename_some_not_found() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "refactor",
             "bulk-rename",
             "--file",
             "player.gd",
@@ -1520,7 +1520,7 @@ fn test_lsp_bulk_rename_some_not_found() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp bulk-rename");
+        .expect("Failed to run gd refactor bulk-rename");
 
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -1540,7 +1540,7 @@ fn test_lsp_inline_delegate() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "refactor",
             "inline-delegate",
             "--file",
             "player.gd",
@@ -1551,7 +1551,7 @@ fn test_lsp_inline_delegate() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp inline-delegate");
+        .expect("Failed to run gd refactor inline-delegate");
 
     assert!(
         output.status.success(),
@@ -1583,7 +1583,7 @@ fn test_lsp_inline_delegate_dry_run() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "refactor",
             "inline-delegate",
             "--file",
             "player.gd",
@@ -1595,7 +1595,7 @@ fn test_lsp_inline_delegate_dry_run() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp inline-delegate --dry-run");
+        .expect("Failed to run gd refactor inline-delegate --dry-run");
 
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -1617,7 +1617,7 @@ fn test_lsp_inline_delegate_not_delegate() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "refactor",
             "inline-delegate",
             "--file",
             "player.gd",
@@ -1628,7 +1628,7 @@ fn test_lsp_inline_delegate_not_delegate() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp inline-delegate");
+        .expect("Failed to run gd refactor inline-delegate");
 
     assert!(
         !output.status.success(),
@@ -1647,7 +1647,7 @@ fn test_lsp_extract_class() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "refactor",
             "extract-class",
             "--file",
             "player.gd",
@@ -1660,7 +1660,7 @@ fn test_lsp_extract_class() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp extract-class");
+        .expect("Failed to run gd refactor extract-class");
 
     assert!(
         output.status.success(),
@@ -1694,7 +1694,7 @@ fn test_lsp_extract_class_dry_run() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "refactor",
             "extract-class",
             "--file",
             "player.gd",
@@ -1708,7 +1708,7 @@ fn test_lsp_extract_class_dry_run() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp extract-class --dry-run");
+        .expect("Failed to run gd refactor extract-class --dry-run");
 
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -1734,7 +1734,7 @@ fn test_lsp_extract_class_multiple_symbols() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "refactor",
             "extract-class",
             "--file",
             "player.gd",
@@ -1747,7 +1747,7 @@ fn test_lsp_extract_class_multiple_symbols() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp extract-class");
+        .expect("Failed to run gd refactor extract-class");
 
     assert!(
         output.status.success(),
@@ -1781,7 +1781,7 @@ fn test_lsp_move_symbol_update_callers() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "refactor",
             "move-symbol",
             "--name",
             "helper",
@@ -1795,7 +1795,7 @@ fn test_lsp_move_symbol_update_callers() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp move-symbol --update-callers");
+        .expect("Failed to run gd refactor move-symbol --update-callers");
 
     assert!(
         output.status.success(),
@@ -1819,7 +1819,7 @@ fn test_lsp_move_symbol_update_callers() {
 
 // ── AST-aware edit commands ─────────────────────────────────────────────────
 
-/// Helper: run a gd lsp subcommand with stdin content piped in.
+/// Helper: run a gd edit subcommand with stdin content piped in.
 fn run_lsp_edit(dir: &std::path::Path, args: &[&str], stdin_content: &str) -> std::process::Output {
     use std::process::Stdio;
     let mut child = Command::new(env!("CARGO_BIN_EXE_gd"))
@@ -1829,7 +1829,7 @@ fn run_lsp_edit(dir: &std::path::Path, args: &[&str], stdin_content: &str) -> st
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("Failed to spawn gd lsp");
+        .expect("Failed to spawn gd edit");
     child
         .stdin
         .as_mut()
@@ -1846,7 +1846,7 @@ fn test_lsp_replace_body() {
     let output = run_lsp_edit(
         temp.path(),
         &[
-            "lsp",
+            "edit",
             "replace-body",
             "--file",
             "player.gd",
@@ -1878,7 +1878,7 @@ fn test_lsp_replace_body_dry_run() {
     let output = run_lsp_edit(
         temp.path(),
         &[
-            "lsp",
+            "edit",
             "replace-body",
             "--file",
             "player.gd",
@@ -1908,7 +1908,7 @@ fn test_lsp_replace_body_reindents() {
     let output = run_lsp_edit(
         temp.path(),
         &[
-            "lsp",
+            "edit",
             "replace-body",
             "--file",
             "player.gd",
@@ -1934,7 +1934,7 @@ fn test_lsp_replace_body_non_function_fails() {
     let output = run_lsp_edit(
         temp.path(),
         &[
-            "lsp",
+            "edit",
             "replace-body",
             "--file",
             "player.gd",
@@ -1960,7 +1960,7 @@ fn test_lsp_replace_body_with_class() {
     let output = run_lsp_edit(
         temp.path(),
         &[
-            "lsp",
+            "edit",
             "replace-body",
             "--file",
             "player.gd",
@@ -1987,7 +1987,7 @@ fn test_lsp_insert_after() {
     let output = run_lsp_edit(
         temp.path(),
         &[
-            "lsp",
+            "edit",
             "insert",
             "--file",
             "player.gd",
@@ -2019,7 +2019,7 @@ fn test_lsp_insert_before() {
     let output = run_lsp_edit(
         temp.path(),
         &[
-            "lsp",
+            "edit",
             "insert",
             "--file",
             "player.gd",
@@ -2047,7 +2047,7 @@ fn test_lsp_insert_dry_run() {
     let output = run_lsp_edit(
         temp.path(),
         &[
-            "lsp",
+            "edit",
             "insert",
             "--file",
             "player.gd",
@@ -2076,7 +2076,7 @@ fn test_lsp_insert_no_anchor_fails() {
     let output = run_lsp_edit(
         temp.path(),
         &[
-            "lsp",
+            "edit",
             "insert",
             "--file",
             "player.gd",
@@ -2103,7 +2103,7 @@ fn test_lsp_insert_input_file() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "edit",
             "insert",
             "--file",
             "player.gd",
@@ -2116,7 +2116,7 @@ fn test_lsp_insert_input_file() {
         .args(["--format", "json"])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp insert --input-file");
+        .expect("Failed to run gd edit insert --input-file");
 
     assert!(
         output.status.success(),
@@ -2144,7 +2144,7 @@ fn test_lsp_replace_symbol() {
     let output = run_lsp_edit(
         temp.path(),
         &[
-            "lsp",
+            "edit",
             "replace-symbol",
             "--file",
             "player.gd",
@@ -2178,7 +2178,7 @@ fn test_lsp_replace_symbol_function() {
     let output = run_lsp_edit(
         temp.path(),
         &[
-            "lsp",
+            "edit",
             "replace-symbol",
             "--file",
             "player.gd",
@@ -2205,7 +2205,7 @@ fn test_lsp_replace_symbol_dry_run() {
     let output = run_lsp_edit(
         temp.path(),
         &[
-            "lsp",
+            "edit",
             "replace-symbol",
             "--file",
             "player.gd",
@@ -2237,7 +2237,7 @@ fn test_lsp_edit_range() {
     let output = run_lsp_edit(
         temp.path(),
         &[
-            "lsp",
+            "edit",
             "edit-range",
             "--file",
             "player.gd",
@@ -2273,7 +2273,7 @@ fn test_lsp_edit_range_dry_run() {
     let output = run_lsp_edit(
         temp.path(),
         &[
-            "lsp",
+            "edit",
             "edit-range",
             "--file",
             "player.gd",
@@ -2304,7 +2304,7 @@ fn test_lsp_edit_range_invalid_lines() {
     let output = run_lsp_edit(
         temp.path(),
         &[
-            "lsp",
+            "edit",
             "edit-range",
             "--file",
             "player.gd",
@@ -2330,7 +2330,7 @@ fn test_lsp_replace_body_with_format() {
     let output = run_lsp_edit(
         temp.path(),
         &[
-            "lsp",
+            "edit",
             "replace-body",
             "--file",
             "player.gd",
@@ -2362,7 +2362,7 @@ fn test_lsp_create_file_stdin() {
 
     let output = run_lsp_edit(
         temp.path(),
-        &["lsp", "create-file", "player.gd", "--format", "json"],
+        &["edit", "create-file", "player.gd", "--format", "json"],
         custom_script,
     );
 
@@ -2399,7 +2399,7 @@ fn test_lsp_create_file_stdin_with_class_name() {
     let output = run_lsp_edit(
         temp.path(),
         &[
-            "lsp",
+            "edit",
             "create-file",
             "input_deserializer.gd",
             "--class-name",

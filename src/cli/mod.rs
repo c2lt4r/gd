@@ -143,7 +143,7 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Stats(ref args) => stats_cmd::exec(args),
         Command::Ci(args) => ci_cmd::exec(args),
         Command::Log(ref args) => log_cmd::exec(args),
-        Command::Lsp(args) => lsp_cmd::exec(args),
+        Command::Lsp(ref args) => lsp_cmd::exec(args),
         Command::Refactor(args) => refactor_cmd::exec(args),
         Command::Edit(args) => edit_gd_cmd::exec(args),
         Command::Query(args) => query_cmd::exec(args),

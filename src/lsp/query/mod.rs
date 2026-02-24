@@ -4,7 +4,7 @@ mod navigation;
 mod refactor;
 
 pub use analysis::{
-    query_code_actions, query_diagnostics, query_find_implementations, query_safe_delete_file,
+    query_code_actions, query_find_implementations, query_safe_delete_file,
     query_symbols,
 };
 pub use edit::{

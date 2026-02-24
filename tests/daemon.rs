@@ -26,7 +26,7 @@ fn test_hover_fallback_no_daemon() {
     // Hover over the function name "hello" on line 3
     let output = gd_bin()
         .args([
-            "lsp",
+            "query",
             "--no-godot-proxy",
             "hover",
             "--file",
@@ -55,7 +55,7 @@ fn test_completions_fallback_no_daemon() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "query",
             "--no-godot-proxy",
             "completions",
             "--file",
@@ -84,7 +84,7 @@ fn test_definition_fallback_no_daemon() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "query",
             "--no-godot-proxy",
             "definition",
             "--file",

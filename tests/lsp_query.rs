@@ -234,10 +234,10 @@ fn test_lsp_symbols_lists_all_declarations() {
     )]);
 
     let output = gd_bin()
-        .args(["lsp", "symbols", "--file", "player.gd", "--format", "json"])
+        .args(["query", "symbols", "--file", "player.gd", "--format", "json"])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp symbols");
+        .expect("Failed to run gd query symbols");
 
     assert!(output.status.success(), "should exit 0");
     let json: serde_json::Value =
@@ -272,7 +272,7 @@ fn test_lsp_hover_shows_function_signature() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "query",
             "--no-godot-proxy",
             "hover",
             "--file",
@@ -286,7 +286,7 @@ fn test_lsp_hover_shows_function_signature() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp hover");
+        .expect("Failed to run gd query hover");
 
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -311,7 +311,7 @@ fn test_lsp_hover_attribute_member_shows_builtin_docs() {
     // Hover on "global_position" (line 4, column 15 is within "global_position")
     let output = gd_bin()
         .args([
-            "lsp",
+            "query",
             "--no-godot-proxy",
             "hover",
             "--file",
@@ -325,7 +325,7 @@ fn test_lsp_hover_attribute_member_shows_builtin_docs() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp hover");
+        .expect("Failed to run gd query hover");
 
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -350,7 +350,7 @@ fn test_lsp_hover_self_member_resolves_to_declaration() {
     // Hover on "speed" in self.speed (line 4, column 7)
     let output = gd_bin()
         .args([
-            "lsp",
+            "query",
             "--no-godot-proxy",
             "hover",
             "--file",
@@ -364,7 +364,7 @@ fn test_lsp_hover_self_member_resolves_to_declaration() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp hover");
+        .expect("Failed to run gd query hover");
 
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -385,7 +385,7 @@ fn test_lsp_hover_unresolvable_identifier_returns_no_hover() {
     // Hover on "some_unknown_var" (line 2, column 2)
     let output = gd_bin()
         .args([
-            "lsp",
+            "query",
             "--no-godot-proxy",
             "hover",
             "--file",
@@ -397,7 +397,7 @@ fn test_lsp_hover_unresolvable_identifier_returns_no_hover() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp hover");
+        .expect("Failed to run gd query hover");
 
     // Should fail (no hover info) instead of showing enclosing function
     assert!(
@@ -415,7 +415,7 @@ fn test_lsp_hover_on_function_name_still_works() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "query",
             "--no-godot-proxy",
             "hover",
             "--file",
@@ -429,7 +429,7 @@ fn test_lsp_hover_on_function_name_still_works() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp hover");
+        .expect("Failed to run gd query hover");
 
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -449,7 +449,7 @@ fn test_lsp_references_finds_all_usages() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "query",
             "references",
             "--file",
             "player.gd",
@@ -462,7 +462,7 @@ fn test_lsp_references_finds_all_usages() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp references");
+        .expect("Failed to run gd query references");
 
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -486,7 +486,7 @@ fn test_lsp_definition_jumps_to_declaration() {
     // Ask for definition of `speed` on the usage line (line 5, inside print)
     let output = gd_bin()
         .args([
-            "lsp",
+            "query",
             "--no-godot-proxy",
             "definition",
             "--file",
@@ -500,7 +500,7 @@ fn test_lsp_definition_jumps_to_declaration() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp definition");
+        .expect("Failed to run gd query definition");
 
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -518,7 +518,7 @@ fn test_lsp_rename_dry_run_does_not_modify_file() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "refactor",
             "rename",
             "--file",
             "player.gd",
@@ -534,7 +534,7 @@ fn test_lsp_rename_dry_run_does_not_modify_file() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp rename --dry-run");
+        .expect("Failed to run gd refactor rename --dry-run");
 
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -560,7 +560,7 @@ fn test_lsp_rename_applies_changes_to_disk() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "refactor",
             "rename",
             "--file",
             "player.gd",
@@ -573,7 +573,7 @@ fn test_lsp_rename_applies_changes_to_disk() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp rename");
+        .expect("Failed to run gd refactor rename");
 
     assert!(output.status.success());
 
@@ -611,7 +611,7 @@ fn test_lsp_rename_cross_file() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "refactor",
             "rename",
             "--file",
             "base.gd",
@@ -624,7 +624,7 @@ fn test_lsp_rename_cross_file() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp rename");
+        .expect("Failed to run gd refactor rename");
 
     assert!(output.status.success());
 
@@ -650,7 +650,7 @@ fn test_lsp_completions_includes_keywords_and_symbols() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "query",
             "--no-godot-proxy",
             "completions",
             "--file",
@@ -664,7 +664,7 @@ fn test_lsp_completions_includes_keywords_and_symbols() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp completions");
+        .expect("Failed to run gd query completions");
 
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -700,7 +700,7 @@ fn test_lsp_completions_limit_caps_results() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "query",
             "--no-godot-proxy",
             "completions",
             "--file",
@@ -716,7 +716,7 @@ fn test_lsp_completions_limit_caps_results() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp completions --limit");
+        .expect("Failed to run gd query completions --limit");
 
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -732,10 +732,10 @@ fn test_lsp_diagnostics_outputs_json() {
     )]);
 
     let output = gd_bin()
-        .args(["lsp", "diagnostics", "--format", "json"])
+        .args(["lint", "--format", "json"])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp diagnostics");
+        .expect("Failed to run gd lint");
 
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -757,7 +757,7 @@ fn test_lsp_code_actions_returns_fixes() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "query",
             "code-actions",
             "--file",
             "player.gd",
@@ -770,7 +770,7 @@ fn test_lsp_code_actions_returns_fixes() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp code-actions");
+        .expect("Failed to run gd query code-actions");
 
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -858,7 +858,7 @@ fn test_lsp_rename_local_variable_scoped() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "refactor",
             "rename",
             "--file",
             "player.gd",
@@ -871,7 +871,7 @@ fn test_lsp_rename_local_variable_scoped() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp rename");
+        .expect("Failed to run gd refactor rename");
 
     assert!(output.status.success());
 
@@ -901,7 +901,7 @@ fn test_lsp_references_local_variable_scoped() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "query",
             "references",
             "--file",
             "player.gd",
@@ -914,7 +914,7 @@ fn test_lsp_references_local_variable_scoped() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp references");
+        .expect("Failed to run gd query references");
 
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -942,7 +942,7 @@ fn test_lsp_definition_local_variable() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "query",
             "--no-godot-proxy",
             "definition",
             "--file",
@@ -956,7 +956,7 @@ fn test_lsp_definition_local_variable() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp definition");
+        .expect("Failed to run gd query definition");
 
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -980,10 +980,10 @@ fn test_lsp_references_by_name() {
     ]);
 
     let output = gd_bin()
-        .args(["lsp", "references", "--name", "speed", "--format", "json"])
+        .args(["query", "references", "--name", "speed", "--format", "json"])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp references --name");
+        .expect("Failed to run gd query references --name");
 
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -1009,7 +1009,7 @@ fn test_lsp_references_by_name_with_file_filter() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "query",
             "references",
             "--name",
             "speed",
@@ -1020,7 +1020,7 @@ fn test_lsp_references_by_name_with_file_filter() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp references --name --file");
+        .expect("Failed to run gd query references --name --file");
 
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -1047,7 +1047,7 @@ fn test_lsp_references_by_name_with_class_filter() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "query",
             "references",
             "--name",
             "speed",
@@ -1058,7 +1058,7 @@ fn test_lsp_references_by_name_with_class_filter() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp references --name --class");
+        .expect("Failed to run gd query references --name --class");
 
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -1083,7 +1083,7 @@ fn test_lsp_references_by_name_inner_class() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "query",
             "references",
             "--name",
             "speed",
@@ -1094,7 +1094,7 @@ fn test_lsp_references_by_name_inner_class() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp references --name --class inner");
+        .expect("Failed to run gd query references --name --class inner");
 
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -1127,7 +1127,7 @@ fn test_lsp_references_by_name_class_finds_autoload_callers() {
     // Should find: declaration in game_manager.gd + caller in lobby_screen.gd
     let output = gd_bin()
         .args([
-            "lsp",
+            "query",
             "references",
             "--name",
             "submit_vote",
@@ -1138,7 +1138,7 @@ fn test_lsp_references_by_name_class_finds_autoload_callers() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp references --class autoload");
+        .expect("Failed to run gd query references --class autoload");
 
     assert!(
         output.status.success(),
@@ -1179,7 +1179,7 @@ fn test_lsp_references_by_name_class_finds_property_access() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "query",
             "references",
             "--name",
             "score",
@@ -1190,7 +1190,7 @@ fn test_lsp_references_by_name_class_finds_property_access() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp references --class property");
+        .expect("Failed to run gd query references --class property");
 
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -1212,7 +1212,7 @@ fn test_lsp_references_by_name_no_match() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "query",
             "references",
             "--name",
             "nonexistent_symbol",
@@ -1221,7 +1221,7 @@ fn test_lsp_references_by_name_no_match() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp references --name nonexistent");
+        .expect("Failed to run gd query references --name nonexistent");
 
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -1239,7 +1239,7 @@ fn test_lsp_references_position_mode_still_works() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "query",
             "references",
             "--file",
             "player.gd",
@@ -1252,7 +1252,7 @@ fn test_lsp_references_position_mode_still_works() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp references positional");
+        .expect("Failed to run gd query references positional");
 
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -1271,7 +1271,7 @@ fn test_lsp_symbols_kind_filter() {
     // Filter by function only
     let output = gd_bin()
         .args([
-            "lsp",
+            "query",
             "symbols",
             "--file",
             "player.gd",
@@ -1282,7 +1282,7 @@ fn test_lsp_symbols_kind_filter() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp symbols --kind");
+        .expect("Failed to run gd query symbols --kind");
 
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -1302,7 +1302,7 @@ fn test_lsp_symbols_kind_filter_multiple() {
     // Filter by function and constant (comma-separated)
     let output = gd_bin()
         .args([
-            "lsp",
+            "query",
             "symbols",
             "--file",
             "player.gd",
@@ -1313,7 +1313,7 @@ fn test_lsp_symbols_kind_filter_multiple() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp symbols --kind multiple");
+        .expect("Failed to run gd query symbols --kind multiple");
 
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -1334,7 +1334,7 @@ fn test_lsp_symbols_kind_filter_repeatable() {
     // Filter by function and variable (repeated --kind)
     let output = gd_bin()
         .args([
-            "lsp",
+            "query",
             "symbols",
             "--file",
             "player.gd",
@@ -1347,7 +1347,7 @@ fn test_lsp_symbols_kind_filter_repeatable() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp symbols --kind repeatable");
+        .expect("Failed to run gd query symbols --kind repeatable");
 
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -1368,7 +1368,7 @@ fn test_lsp_symbols_kind_field_alias() {
     // "field" should match both "variable" and "field" (onready)
     let output = gd_bin()
         .args([
-            "lsp",
+            "query",
             "symbols",
             "--file",
             "player.gd",
@@ -1379,7 +1379,7 @@ fn test_lsp_symbols_kind_field_alias() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp symbols --kind field");
+        .expect("Failed to run gd query symbols --kind field");
 
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -1402,7 +1402,7 @@ fn test_lsp_safe_delete_file_does_not_delete_without_force() {
     // Run safe-delete-file WITHOUT --force — should only report, not delete
     let output = gd_bin()
         .args([
-            "lsp",
+            "refactor",
             "safe-delete-file",
             "--file",
             "helper.gd",
@@ -1411,7 +1411,7 @@ fn test_lsp_safe_delete_file_does_not_delete_without_force() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp safe-delete-file");
+        .expect("Failed to run gd refactor safe-delete-file");
 
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -1432,7 +1432,7 @@ fn test_lsp_safe_delete_file_does_not_delete_unreferenced_without_force() {
     // No other file references orphan.gd — previously this would delete it!
     let output = gd_bin()
         .args([
-            "lsp",
+            "refactor",
             "safe-delete-file",
             "--file",
             "orphan.gd",
@@ -1441,7 +1441,7 @@ fn test_lsp_safe_delete_file_does_not_delete_unreferenced_without_force() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp safe-delete-file");
+        .expect("Failed to run gd refactor safe-delete-file");
 
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -1461,7 +1461,7 @@ fn test_lsp_safe_delete_file_deletes_with_force() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "refactor",
             "safe-delete-file",
             "--file",
             "deleteme.gd",
@@ -1471,7 +1471,7 @@ fn test_lsp_safe_delete_file_deletes_with_force() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp safe-delete-file --force");
+        .expect("Failed to run gd refactor safe-delete-file --force");
 
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -1488,7 +1488,7 @@ fn test_lsp_safe_delete_file_dry_run_with_force_does_not_delete() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "refactor",
             "safe-delete-file",
             "--file",
             "keepme.gd",
@@ -1499,7 +1499,7 @@ fn test_lsp_safe_delete_file_dry_run_with_force_does_not_delete() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp safe-delete-file --force --dry-run");
+        .expect("Failed to run gd refactor safe-delete-file --force --dry-run");
 
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -1522,7 +1522,7 @@ fn test_lsp_safe_delete_file_reports_references() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "refactor",
             "safe-delete-file",
             "--file",
             "base.gd",
@@ -1531,7 +1531,7 @@ fn test_lsp_safe_delete_file_reports_references() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp safe-delete-file");
+        .expect("Failed to run gd refactor safe-delete-file");
 
     // Exit code 1 is expected when references exist (signals "unsafe to delete")
     let json: serde_json::Value =
@@ -1560,10 +1560,10 @@ fn test_lsp_symbols_detail_shows_declarations() {
     )]);
 
     let output = gd_bin()
-        .args(["lsp", "symbols", "--file", "player.gd", "--format", "json"])
+        .args(["query", "symbols", "--file", "player.gd", "--format", "json"])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp symbols");
+        .expect("Failed to run gd query symbols");
 
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -1613,7 +1613,7 @@ fn test_lsp_hover_cross_file_class_name() {
     // Hover on "Player" type annotation in game.gd (line 1, column 8)
     let output = gd_bin()
         .args([
-            "lsp",
+            "query",
             "--no-godot-proxy",
             "hover",
             "--file",
@@ -1627,7 +1627,7 @@ fn test_lsp_hover_cross_file_class_name() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp hover");
+        .expect("Failed to run gd query hover");
 
     assert!(
         output.status.success(),
@@ -1660,7 +1660,7 @@ fn test_lsp_find_implementations_method() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "query",
             "find-implementations",
             "--name",
             "setup",
@@ -1669,7 +1669,7 @@ fn test_lsp_find_implementations_method() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp find-implementations");
+        .expect("Failed to run gd query find-implementations");
 
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -1700,7 +1700,7 @@ fn test_lsp_find_implementations_with_base_filter() {
 
     let output = gd_bin()
         .args([
-            "lsp",
+            "query",
             "find-implementations",
             "--name",
             "run",
@@ -1711,7 +1711,7 @@ fn test_lsp_find_implementations_with_base_filter() {
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd lsp find-implementations --base");
+        .expect("Failed to run gd query find-implementations --base");
 
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
