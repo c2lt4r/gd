@@ -162,8 +162,9 @@ fn convert_to_scene(
         });
     }
 
-    // 1. Remove .connect() from script
-    let new_script = remove_connect_call(&script_source, from, signal, method)?;
+    // 1. Remove .connect() from script, ensure _ready() isn't left empty
+    let mut new_script = remove_connect_call(&script_source, from, signal, method)?;
+    new_script = ensure_ready_has_body(&new_script)?;
     super::validate_no_new_errors(&script_source, &new_script)?;
     std::fs::write(&script_path, &new_script)
         .map_err(|e| miette::miette!("cannot write script: {e}"))?;
@@ -404,6 +405,38 @@ fn remove_connect_call(source: &str, from: &str, signal: &str, method: &str) -> 
     Ok(output)
 }
 
+/// If _ready() body is empty after removing a statement, insert `pass`.
+fn ensure_ready_has_body(source: &str) -> Result<String> {
+    let tree = crate::core::parser::parse(source)?;
+    let root = tree.root_node();
+
+    let Some(ready_func) = super::find_declaration_by_name(root, source, "_ready") else {
+        return Ok(source.to_string());
+    };
+    let Some(body) = ready_func.child_by_field_name("body") else {
+        // No body at all — insert one
+        let end = ready_func.end_byte();
+        let mut new_source = String::with_capacity(source.len() + 8);
+        new_source.push_str(&source[..end]);
+        new_source.push_str("\n\tpass");
+        new_source.push_str(&source[end..]);
+        return Ok(new_source);
+    };
+
+    let body_text = super::invert_if::node_text(&body, source);
+    let has_stmts = body_text.trim().chars().any(|c| !c.is_whitespace());
+
+    if !has_stmts {
+        let mut new_source = String::with_capacity(source.len());
+        new_source.push_str(&source[..body.start_byte()]);
+        new_source.push_str("\n\tpass");
+        new_source.push_str(&source[body.end_byte()..]);
+        return Ok(new_source);
+    }
+
+    Ok(source.to_string())
+}
+
 /// Add a line to _ready(), creating it if necessary.
 fn add_to_ready(source: &str, line: &str) -> Result<String> {
     let tree = crate::core::parser::parse(source)?;
@@ -418,9 +451,13 @@ fn add_to_ready(source: &str, line: &str) -> Result<String> {
         let body_trimmed = body_text.trim();
 
         if body_trimmed == "pass" {
-            // Replace `pass` with the new line
-            let replacement = format!("\n\t{line}");
-            return Ok(super::invert_if::splice(source, body, &replacement));
+            // Replace body using byte offsets (not splice, which uses
+            // line_start_offset and would clobber the func header)
+            let mut new_source = String::with_capacity(source.len());
+            new_source.push_str(&source[..body.start_byte()]);
+            write!(new_source, "\n\t{line}").unwrap();
+            new_source.push_str(&source[body.end_byte()..]);
+            return Ok(new_source);
         }
 
         // Append to end of body

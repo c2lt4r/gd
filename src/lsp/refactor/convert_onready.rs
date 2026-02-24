@@ -6,7 +6,7 @@ use miette::Result;
 use serde::Serialize;
 use tree_sitter::Node;
 
-use super::invert_if::{node_text, splice};
+use super::invert_if::node_text;
 
 // ── Output ──────────────────────────────────────────────────────────────────
 
@@ -371,9 +371,12 @@ fn add_to_ready(source: &str, assignment: &str) -> Result<String> {
         let body_trimmed = body_text.trim();
 
         if body_trimmed == "pass" {
-            // Replace `pass` with the assignment
-            let replacement = format!("\n\t{assignment}");
-            let new_source = splice(source, body, &replacement);
+            // Replace body contents using byte offsets (not splice, which
+            // uses line_start_offset and would clobber the func header)
+            let mut new_source = String::with_capacity(source.len());
+            new_source.push_str(&source[..body.start_byte()]);
+            write!(new_source, "\n\t{assignment}").unwrap();
+            new_source.push_str(&source[body.end_byte()..]);
             return Ok(new_source);
         }
 
@@ -416,8 +419,11 @@ fn ensure_ready_not_empty(source: &str) -> Result<String> {
         // Body is empty — check if it even has pass
         let body_text = node_text(&body, source);
         if !body_text.trim().contains("pass") {
-            let replacement = "\n\tpass".to_string();
-            return Ok(splice(source, body, &replacement));
+            let mut new_source = String::with_capacity(source.len());
+            new_source.push_str(&source[..body.start_byte()]);
+            new_source.push_str("\n\tpass");
+            new_source.push_str(&source[body.end_byte()..]);
+            return Ok(new_source);
         }
     }
 
