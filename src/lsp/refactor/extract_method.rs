@@ -81,8 +81,14 @@ pub fn extract_method(
         }
     }
 
-    // Async detection: warn if extracted code contains await
+    // Name collision detection
     let mut warnings = Vec::new();
+    let scope_names = super::collision::collect_scope_names(root, &source, point);
+    if let Some(kind) = super::collision::check_collision(name, &scope_names) {
+        warnings.push(format!("'{name}' collides with a {kind}"));
+    }
+
+    // Async detection: warn if extracted code contains await
     for stmt in &statements {
         if contains_node_kind(*stmt, "await_expression") {
             warnings.push(
@@ -188,6 +194,17 @@ pub fn extract_method(
 
         normalize_blank_lines(&mut new_source);
         std::fs::write(file, &new_source).map_err(|e| miette::miette!("cannot write file: {e}"))?;
+
+        let mut snaps: std::collections::HashMap<std::path::PathBuf, Option<Vec<u8>>> =
+            std::collections::HashMap::new();
+        snaps.insert(file.to_path_buf(), Some(source.as_bytes().to_vec()));
+        let stack = super::undo::UndoStack::open(project_root);
+        let _ = stack.record(
+            "extract-method",
+            &format!("extract {name}"),
+            &snaps,
+            project_root,
+        );
     }
 
     let param_outputs: Vec<ParameterOutput> = params

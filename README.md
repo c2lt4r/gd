@@ -12,7 +12,7 @@ Built with [tree-sitter-gdscript](https://github.com/PrestonKnopp/tree-sitter-gd
 - **Watch** for file changes and auto-lint/format on save
 - **Manage addons** from Git or the Godot Asset Library (with lockfile and update support)
 - **Generate CI/CD** configurations for GitHub Actions and GitLab CI
-- **LSP server** with formatting, diagnostics, hover, go-to-definition, references, rename, completion, inlay hints, signature help, call hierarchy, find implementations, semantic tokens, workspace symbol search, scene-aware cross-referencing, and 16 refactoring commands
+- **LSP server** with formatting, diagnostics, hover, go-to-definition, references, rename, completion, inlay hints, signature help, call hierarchy, find implementations, semantic tokens, workspace symbol search, scene-aware cross-referencing, 17 refactoring commands with undo support, and collision warnings
 - **Scene management** &mdash; create scenes, add/remove/duplicate nodes, instance scenes, add sub-resources, batch-add nodes, set properties, wire connections, attach/detach scripts &mdash; plus validate `.tscn`/`.tres` files and visualize scene hierarchies
 - **Debug** a running Godot game via Godot's binary debug protocol &mdash; breakpoints, stepping, variable inspection, expression evaluation, live scene tree, node inspection, game speed control, and hot-reload
 - **Godot LSP proxy** &mdash; forward hover, completion, and go-to-definition to Godot's built-in LSP when the editor is running
@@ -975,6 +975,9 @@ gd lsp bulk-rename --file player.gd --renames "speed:velocity,health:hp"
 gd lsp change-signature --file player.gd --name move \
   --add-param "speed: float = 1.0" --remove-param old_param --reorder "a,b,c"
 
+# Inline a variable (replace usages with initializer, delete declaration)
+gd lsp inline-variable --file player.gd --line 5 --column 10
+
 # Extract an expression into a local variable
 gd lsp introduce-variable --file player.gd --line 5 --column 10 --end-column 30 --name velocity
 
@@ -993,6 +996,26 @@ gd lsp insert --file player.gd --after _ready --input-file /tmp/new_func.gd
 
 All refactoring commands support `--dry-run` to preview changes without writing to disk.
 Edit commands also support `--no-format` to skip auto-formatting, `--class` for inner class targets, and `--input-file` to read from a file instead of stdin.
+
+#### Undo
+
+Every refactoring command records an undo entry. If a refactoring produces unexpected results, revert it:
+
+```sh
+# List recent refactoring operations
+gd lsp undo-list
+
+# Undo the most recent refactoring
+gd lsp undo
+
+# Undo a specific entry by ID
+gd lsp undo --id 3
+
+# Preview what would be restored
+gd lsp undo --dry-run
+```
+
+Multi-file refactorings (extract-class, move-symbol, move-file) use atomic transactions — if any step fails, all files are automatically restored to their original state.
 
 ### Editor Setup
 

@@ -152,6 +152,8 @@ pub fn move_symbol(
     let to_relative = crate::core::fs::relative_slash(to_file, project_root);
 
     if !dry_run {
+        let mut tx = super::transaction::RefactorTransaction::new();
+
         // Write target file
         if to_file.exists() {
             let mut target_source = std::fs::read_to_string(to_file)
@@ -175,11 +177,9 @@ pub fn move_symbol(
                 target_source.push_str(&spacing);
                 target_source.push_str(&decl_text);
             }
-            std::fs::write(to_file, &target_source)
-                .map_err(|e| miette::miette!("cannot write target file: {e}"))?;
+            tx.write_file(to_file, &target_source)?;
         } else {
-            std::fs::write(to_file, &decl_text)
-                .map_err(|e| miette::miette!("cannot write target file: {e}"))?;
+            tx.write_file(to_file, &decl_text)?;
         }
 
         // Remove from source file
@@ -187,8 +187,16 @@ pub fn move_symbol(
         new_source.push_str(&source[..start_byte]);
         new_source.push_str(&source[end_byte..]);
         normalize_blank_lines(&mut new_source);
-        std::fs::write(from_file, &new_source)
-            .map_err(|e| miette::miette!("cannot write source file: {e}"))?;
+        tx.write_file(from_file, &new_source)?;
+
+        let snapshots = tx.into_snapshots();
+        let stack = super::undo::UndoStack::open(project_root);
+        let _ = stack.record(
+            "move-symbol",
+            &format!("move {name} from {from_relative} to {to_relative}"),
+            &snapshots,
+            project_root,
+        );
     }
 
     // Detect preload/load references to the source file

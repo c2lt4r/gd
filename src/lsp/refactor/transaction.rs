@@ -7,16 +7,12 @@ use miette::Result;
 
 /// Write-ahead-log wrapper: snapshots original file contents before writing,
 /// restores all on drop if not committed.
-///
-/// Awaiting adoption into multi-file refactorings (extract-class, move-symbol, etc.).
-#[allow(dead_code)]
 pub struct RefactorTransaction {
     /// Original content before any writes. `None` means the file didn't exist.
     snapshots: HashMap<PathBuf, Option<Vec<u8>>>,
     committed: bool,
 }
 
-#[allow(dead_code)]
 impl RefactorTransaction {
     pub fn new() -> Self {
         Self {
@@ -44,6 +40,8 @@ impl RefactorTransaction {
     }
 
     /// Mark transaction as successful — drop becomes a no-op.
+    /// (Currently callers prefer `into_snapshots()` for undo support.)
+    #[allow(dead_code)]
     pub fn commit(&mut self) {
         self.committed = true;
     }

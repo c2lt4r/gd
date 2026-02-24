@@ -155,6 +155,8 @@ pub fn extract_class(
         .collect();
 
     if !dry_run {
+        let mut tx = super::transaction::RefactorTransaction::new();
+
         // Build target content
         let mut target_content = if to_file.exists() {
             std::fs::read_to_string(to_file)
@@ -178,8 +180,7 @@ pub fn extract_class(
                 .map_err(|e| miette::miette!("cannot create directory: {e}"))?;
         }
 
-        std::fs::write(to_file, &target_content)
-            .map_err(|e| miette::miette!("cannot write target file: {e}"))?;
+        tx.write_file(to_file, &target_content)?;
 
         // Remove extracted symbols from source (bottom to top)
         let mut sorted = extractions.clone();
@@ -190,8 +191,16 @@ pub fn extract_class(
             new_source.replace_range(*start..*end, "");
         }
         normalize_blank_lines(&mut new_source);
-        std::fs::write(file, &new_source)
-            .map_err(|e| miette::miette!("cannot write source file: {e}"))?;
+        tx.write_file(file, &new_source)?;
+
+        let snapshots = tx.into_snapshots();
+        let stack = super::undo::UndoStack::open(project_root);
+        let _ = stack.record(
+            "extract-class",
+            &format!("extract {} to {}", names.join(", "), to_relative),
+            &snapshots,
+            project_root,
+        );
     }
 
     Ok(ExtractClassOutput {

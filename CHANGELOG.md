@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.2.42] - 2026-02-24
+
+### Added
+- **`gd lsp inline-variable`** — inline a variable by replacing all usages with its initializer expression, then deleting the declaration. Supports `--dry-run`.
+- **`gd lsp undo-list`** — list recent refactoring operations that can be undone, with timestamps and affected files.
+- **`gd lsp undo`** — undo the most recent refactoring (or a specific entry by `--id`). Restores original file contents from snapshots. Supports `--dry-run`.
+- **Undo support for all refactoring commands** — every file-writing refactoring now records an undo entry: extract-method, extract-class, inline-method, inline-variable, introduce-variable, delete-symbol, move-symbol, and move-file.
+- **Collision warnings** — `introduce-variable` and `extract-method` now warn when the chosen name collides with a local variable, function, class, or GDScript builtin in scope.
+- **Atomic rollback** — multi-file refactorings (extract-class, move-symbol, move-file) now use a write-ahead-log transaction that automatically restores all files if any step fails.
+
 ## [0.2.41] - 2026-02-23
 
 ### Added

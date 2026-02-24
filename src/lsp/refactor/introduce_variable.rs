@@ -1,9 +1,11 @@
-use std::path::Path;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 use miette::Result;
 use serde::Serialize;
 use tree_sitter::Node;
 
+use super::collision::{check_collision, collect_scope_names};
 use super::extract_method::get_indent;
 use super::line_starts;
 
@@ -15,6 +17,8 @@ pub struct IntroduceVariableOutput {
     pub expression: String,
     pub file: String,
     pub applied: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
 }
 
 /// Expression node types we accept for extraction.
@@ -78,6 +82,12 @@ pub fn introduce_variable(
 
     let relative_file = crate::core::fs::relative_slash(file, project_root);
 
+    let mut warnings = Vec::new();
+    let scope_names = collect_scope_names(root, &source, start_point);
+    if let Some(kind) = check_collision(name, &scope_names) {
+        warnings.push(format!("'{name}' collides with a {kind}"));
+    }
+
     if !dry_run {
         let starts = line_starts(&source);
         let mut new_source = source.clone();
@@ -96,6 +106,16 @@ pub fn introduce_variable(
         new_source.insert_str(insert_byte, &var_line);
 
         std::fs::write(file, &new_source).map_err(|e| miette::miette!("cannot write file: {e}"))?;
+
+        let mut snaps: HashMap<PathBuf, Option<Vec<u8>>> = HashMap::new();
+        snaps.insert(file.to_path_buf(), Some(source.as_bytes().to_vec()));
+        let stack = super::undo::UndoStack::open(project_root);
+        let _ = stack.record(
+            "introduce-variable",
+            &format!("introduce {name}"),
+            &snaps,
+            project_root,
+        );
     }
 
     Ok(IntroduceVariableOutput {
@@ -103,6 +123,7 @@ pub fn introduce_variable(
         expression: expr_text,
         file: relative_file,
         applied: !dry_run,
+        warnings,
     })
 }
 

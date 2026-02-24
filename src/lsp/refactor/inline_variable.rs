@@ -1,4 +1,5 @@
-use std::path::Path;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 use miette::Result;
 use serde::Serialize;
@@ -154,6 +155,16 @@ pub fn inline_variable(
 
         normalize_blank_lines(&mut new_source);
         std::fs::write(file, &new_source).map_err(|e| miette::miette!("cannot write file: {e}"))?;
+
+        let mut snaps: HashMap<PathBuf, Option<Vec<u8>>> = HashMap::new();
+        snaps.insert(file.to_path_buf(), Some(source.as_bytes().to_vec()));
+        let stack = super::undo::UndoStack::open(project_root);
+        let _ = stack.record(
+            "inline-variable",
+            &format!("inline {var_name}"),
+            &snaps,
+            project_root,
+        );
     }
 
     Ok(InlineVariableOutput {

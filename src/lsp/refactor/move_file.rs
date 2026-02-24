@@ -34,6 +34,7 @@ pub fn move_file(
     let mut updated_resources = Vec::new();
     let mut updated_autoload: Option<String> = None;
     let mut warnings = Vec::new();
+    let mut tx = super::transaction::RefactorTransaction::new();
 
     // ── Scan .gd files for preload/load/extends references ──────────────
     let gd_files = crate::core::fs::collect_gdscript_files(project_root)?;
@@ -56,8 +57,7 @@ pub fn move_file(
         }
         if !dry_run {
             let new_content = content.replace(&old_res, &new_res);
-            std::fs::write(gd_path, new_content)
-                .map_err(|e| miette::miette!("cannot write {}: {e}", file_rel))?;
+            tx.write_file(gd_path, &new_content)?;
         }
     }
 
@@ -82,8 +82,7 @@ pub fn move_file(
         }
         if !dry_run {
             let new_content = content.replace(&old_res, &new_res);
-            std::fs::write(res_path, new_content)
-                .map_err(|e| miette::miette!("cannot write {}: {e}", file_rel))?;
+            tx.write_file(res_path, &new_content)?;
         }
     }
 
@@ -98,8 +97,7 @@ pub fn move_file(
                     let content = std::fs::read_to_string(&project_file)
                         .map_err(|e| miette::miette!("cannot read project.godot: {e}"))?;
                     let new_content = content.replace(&old_res, &new_res);
-                    std::fs::write(&project_file, new_content)
-                        .map_err(|e| miette::miette!("cannot write project.godot: {e}"))?;
+                    tx.write_file(&project_file, &new_content)?;
                 }
                 break;
             }
@@ -112,8 +110,9 @@ pub fn move_file(
             std::fs::create_dir_all(parent)
                 .map_err(|e| miette::miette!("cannot create directories: {e}"))?;
         }
-        // Try rename first; fall back to copy+delete for cross-device moves
-        if std::fs::rename(from, to).is_err() {
+        // Try rename through transaction (snapshots both paths automatically);
+        // fall back to copy+delete for cross-device moves.
+        if tx.rename_file(from, to).is_err() {
             let content =
                 std::fs::read(from).map_err(|e| miette::miette!("cannot read source file: {e}"))?;
             std::fs::write(to, &content)
@@ -121,6 +120,15 @@ pub fn move_file(
             std::fs::remove_file(from)
                 .map_err(|e| miette::miette!("cannot remove source file: {e}"))?;
         }
+
+        let snapshots = tx.into_snapshots();
+        let stack = super::undo::UndoStack::open(project_root);
+        let _ = stack.record(
+            "move-file",
+            &format!("{from_rel} → {to_rel}"),
+            &snapshots,
+            project_root,
+        );
     }
 
     // ── Warn about potential references we can't statically detect ───────

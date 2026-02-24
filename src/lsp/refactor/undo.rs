@@ -6,7 +6,6 @@ use serde::{Deserialize, Serialize};
 
 // ── Undo types ──────────────────────────────────────────────────────────────
 
-#[allow(dead_code)] // used by record() — awaiting adoption into refactorings
 const MAX_ENTRIES: u64 = 50;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -46,9 +45,6 @@ impl UndoStack {
 
     /// Record a refactoring's snapshots as a new undo entry.
     /// Returns the entry ID.
-    ///
-    /// Awaiting adoption: refactorings will call this after `tx.commit()`.
-    #[allow(dead_code)]
     pub fn record(
         &self,
         command: &str,
@@ -214,7 +210,6 @@ impl UndoStack {
         Ok(entry)
     }
 
-    #[allow(dead_code)]
     fn next_id(&self) -> Result<u64> {
         let entries_dir = self.undo_dir.join("entries");
         if !entries_dir.exists() {
@@ -234,7 +229,6 @@ impl UndoStack {
         Ok(max_id + 1)
     }
 
-    #[allow(dead_code)]
     fn prune(&self) -> Result<()> {
         let entries_dir = self.undo_dir.join("entries");
         if !entries_dir.exists() {
@@ -258,7 +252,6 @@ impl UndoStack {
 }
 
 /// Simple ISO 8601 timestamp without pulling in the chrono crate.
-#[allow(dead_code)]
 fn chrono_now() -> String {
     use std::time::SystemTime;
     let duration = SystemTime::now()
@@ -277,7 +270,6 @@ fn chrono_now() -> String {
     format!("{year:04}-{month:02}-{day:02}T{hours:02}:{minutes:02}:{seconds:02}Z")
 }
 
-#[allow(dead_code)]
 fn days_to_date(days_since_epoch: u64) -> (u64, u64, u64) {
     // Algorithm from https://howardhinnant.github.io/date_algorithms.html
     let z = days_since_epoch + 719_468;

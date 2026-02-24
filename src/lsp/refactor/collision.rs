@@ -8,9 +8,6 @@ use super::{DECLARATION_KINDS, get_declaration_name};
 // ── Collision detection ─────────────────────────────────────────────────────
 
 /// Names visible at a given AST position, grouped by scope.
-///
-/// Awaiting retroactive integration into introduce-variable, extract-method, etc.
-#[allow(dead_code)]
 pub struct ScopeNames {
     pub locals: HashSet<String>,
     pub file_level: HashSet<String>,
@@ -19,7 +16,6 @@ pub struct ScopeNames {
 
 /// Which scope the collision was found in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 pub enum CollisionKind {
     Local,
     FileLevel,
@@ -49,7 +45,6 @@ pub fn collect_scope_names(root: Node, source: &str, position: Point) -> ScopeNa
 }
 
 /// Check if `name` collides with any visible name. Returns the collision kind.
-#[allow(dead_code)]
 pub fn check_collision(name: &str, scope: &ScopeNames) -> Option<CollisionKind> {
     if scope.locals.contains(name) {
         Some(CollisionKind::Local)

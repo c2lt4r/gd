@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fmt::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use miette::Result;
 use serde::Serialize;
@@ -303,6 +303,16 @@ pub fn inline_method(
 
         normalize_blank_lines(&mut new_source);
         std::fs::write(file, &new_source).map_err(|e| miette::miette!("cannot write file: {e}"))?;
+
+        let mut snaps: HashMap<PathBuf, Option<Vec<u8>>> = HashMap::new();
+        snaps.insert(file.to_path_buf(), Some(source.as_bytes().to_vec()));
+        let stack = super::undo::UndoStack::open(project_root);
+        let _ = stack.record(
+            "inline-method",
+            &format!("inline {func_name}"),
+            &snaps,
+            project_root,
+        );
     }
 
     Ok(InlineMethodOutput {
@@ -422,6 +432,16 @@ pub fn inline_method_by_name(
                 normalize_blank_lines(&mut final_source);
                 std::fs::write(file, &final_source)
                     .map_err(|e| miette::miette!("cannot write file: {e}"))?;
+
+                let mut snaps: HashMap<PathBuf, Option<Vec<u8>>> = HashMap::new();
+                snaps.insert(file.to_path_buf(), Some(current_source.into_bytes()));
+                let stack = super::undo::UndoStack::open(project_root);
+                let _ = stack.record(
+                    "inline-method",
+                    &format!("delete {name} after inline-all"),
+                    &snaps,
+                    project_root,
+                );
             }
         }
     }
