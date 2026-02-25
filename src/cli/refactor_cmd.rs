@@ -286,6 +286,27 @@ pub enum RefactorCommand {
         #[arg(long)]
         format: Option<String>,
     },
+    /// Encapsulate a variable with set/get accessors (inline property or backing field)
+    EncapsulateField {
+        /// Path to the GDScript file
+        #[arg()]
+        file: String,
+        /// Variable name to encapsulate (alternative to --line)
+        #[arg(long)]
+        name: Option<String>,
+        /// Line number of variable declaration (1-based; alternative to --name)
+        #[arg(long)]
+        line: Option<usize>,
+        /// Use backing field pattern (_name + getter/setter functions) instead of inline property syntax
+        #[arg(long)]
+        backing_field: bool,
+        /// Preview without writing changes
+        #[arg(long)]
+        dry_run: bool,
+        /// Output format: json or human (default: human)
+        #[arg(long)]
+        format: Option<String>,
+    },
     /// Convert signal connection between scene wiring and code
     ConvertSignal {
         /// Path to the .tscn scene file
@@ -403,6 +424,51 @@ pub enum RefactorCommand {
         #[arg(long)]
         format: Option<String>,
     },
+    /// Extract members into a new superclass file and update extends
+    ExtractSuperclass {
+        /// Path to the source GDScript file
+        #[arg()]
+        file: String,
+        /// Comma-separated symbol names to extract
+        #[arg(long)]
+        symbols: String,
+        /// Destination file path for the new superclass
+        #[arg(long)]
+        to: String,
+        /// Class name for the new superclass (adds class_name statement)
+        #[arg(long)]
+        class_name: Option<String>,
+        /// Preview without writing changes
+        #[arg(long)]
+        dry_run: bool,
+        /// Output format: json or human (default: human)
+        #[arg(long)]
+        format: Option<String>,
+    },
+    /// Push a member down from a parent class to one or more child classes
+    PushDownMember {
+        /// Path to the parent GDScript file
+        #[arg()]
+        file: String,
+        /// Symbol name to push down (alternative to --line)
+        #[arg(long)]
+        name: Option<String>,
+        /// Line number of declaration to push down (1-based; alternative to --name)
+        #[arg(long)]
+        line: Option<usize>,
+        /// Comma-separated target child files (auto-discovers if omitted)
+        #[arg(long)]
+        to: Option<String>,
+        /// Skip target files that already contain the symbol instead of erroring
+        #[arg(long)]
+        force: bool,
+        /// Preview without writing changes
+        #[arg(long)]
+        dry_run: bool,
+        /// Output format: json or human (default: human)
+        #[arg(long)]
+        format: Option<String>,
+    },
     /// Check if a file can be safely deleted (find all cross-file references)
     SafeDeleteFile {
         /// Path to the GDScript file
@@ -459,6 +525,24 @@ pub enum RefactorCommand {
         /// Inner class containing the function
         #[arg(long)]
         class: Option<String>,
+        /// Preview without writing changes
+        #[arg(long)]
+        dry_run: bool,
+        /// Output format: json or human (default: human)
+        #[arg(long)]
+        format: Option<String>,
+    },
+    /// Move a member from a child class up to its parent class
+    PullUpMember {
+        /// Path to the child GDScript file
+        #[arg()]
+        file: String,
+        /// Symbol name to pull up (alternative to --line)
+        #[arg(long)]
+        name: Option<String>,
+        /// Line number of declaration to pull up (1-based; alternative to --name)
+        #[arg(long)]
+        line: Option<usize>,
         /// Preview without writing changes
         #[arg(long)]
         dry_run: bool,
@@ -728,6 +812,21 @@ fn print_convert_onready_human(r: &crate::lsp::refactor::ConvertOnreadyOutput) {
     );
 }
 
+fn print_encapsulate_field_human(r: &crate::lsp::refactor::EncapsulateFieldOutput) {
+    use owo_colors::OwoColorize;
+    cprintln!(
+        "Encapsulated {} ({}) in {}:{}{}",
+        r.variable.green().bold(),
+        r.style.dimmed(),
+        r.file.cyan(),
+        r.line,
+        dry_run_suffix(r.applied),
+    );
+    for w in &r.warnings {
+        cprintln!("  {} {}", "warning:".yellow().bold(), w);
+    }
+}
+
 fn print_convert_signal_human(r: &crate::lsp::refactor::ConvertSignalOutput) {
     use owo_colors::OwoColorize;
     let dir = if r.direction == "to-code" {
@@ -856,6 +955,83 @@ fn print_extract_class_human(r: &crate::lsp::refactor::ExtractClassOutput) {
         names.join(", ").bold(),
         dry_run_suffix(r.applied),
     );
+    for w in &r.warnings {
+        cprintln!("  {}: {w}", "warning".yellow());
+    }
+}
+
+fn print_extract_superclass_human(r: &crate::lsp::refactor::ExtractSuperclassOutput) {
+    use owo_colors::OwoColorize;
+    let names: Vec<&str> = r.extracted.iter().map(|s| s.name.as_str()).collect();
+    cprintln!(
+        "Extracted {} member{} from {} {} {}: {}{}",
+        r.extracted.len(),
+        if r.extracted.len() == 1 { "" } else { "s" },
+        r.from.cyan(),
+        "→".dimmed(),
+        r.to.cyan(),
+        names.join(", ").bold(),
+        dry_run_suffix(r.applied),
+    );
+    if let Some(ref cn) = r.class_name {
+        cprintln!("  superclass: {}", cn.green().bold());
+    }
+    cprintln!("  extends: {}", r.new_extends.green(),);
+    for w in &r.warnings {
+        cprintln!("  {}: {w}", "warning".yellow());
+    }
+}
+
+fn print_pull_up_member_human(r: &crate::lsp::refactor::PullUpMemberOutput) {
+    use owo_colors::OwoColorize;
+    cprintln!(
+        "{} {} ({}) from {} {} {} (parent: {}){}",
+        if r.applied {
+            "Pulled up"
+        } else {
+            "Would pull up"
+        },
+        r.symbol.bold(),
+        r.kind.dimmed(),
+        r.child_file.cyan(),
+        "→".dimmed(),
+        r.parent_file.cyan(),
+        r.parent_class.green(),
+        dry_run_suffix(r.applied),
+    );
+    for w in &r.warnings {
+        cprintln!("  {}: {w}", "warning".yellow());
+    }
+}
+
+fn print_push_down_member_human(r: &crate::lsp::refactor::PushDownMemberOutput) {
+    use owo_colors::OwoColorize;
+    let applied_targets: Vec<&str> = r
+        .targets
+        .iter()
+        .filter(|t| t.skipped.is_none())
+        .map(|t| t.file.as_str())
+        .collect();
+    cprintln!(
+        "Pushed {} {} from {} to {} child{}{}",
+        r.kind.dimmed(),
+        r.symbol.bold(),
+        r.from.cyan(),
+        applied_targets.len(),
+        if applied_targets.len() == 1 {
+            ""
+        } else {
+            "ren"
+        },
+        dry_run_suffix(r.applied),
+    );
+    for t in &r.targets {
+        if let Some(ref reason) = t.skipped {
+            cprintln!("  {} {}", t.file.cyan(), reason.dimmed());
+        } else {
+            cprintln!("  {} {}", t.file.cyan(), "✓".green());
+        }
+    }
     for w in &r.warnings {
         cprintln!("  {}: {w}", "warning".yellow());
     }
@@ -1400,6 +1576,42 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
             }
             Ok(())
         }
+        RefactorCommand::EncapsulateField {
+            file,
+            name,
+            line,
+            backing_field,
+            dry_run,
+            format,
+        } => {
+            if name.is_some() && line.is_some() {
+                return Err(miette::miette!("--name and --line are mutually exclusive"));
+            }
+            if name.is_none() && line.is_none() {
+                return Err(miette::miette!("either --name or --line is required"));
+            }
+            let resolved_name = if let Some(ref n) = name {
+                n.clone()
+            } else {
+                let source = std::fs::read_to_string(&file)
+                    .map_err(|e| miette::miette!("cannot read {file}: {e}"))?;
+                crate::lsp::refactor::resolve_line_to_name(&source, line.unwrap(), None)?
+            };
+            let result = crate::lsp::query::query_encapsulate_field(
+                &file,
+                &resolved_name,
+                backing_field,
+                dry_run,
+            )?;
+            if is_json(format.as_ref()) {
+                let json =
+                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+                cprintln!("{json}");
+            } else {
+                print_encapsulate_field_human(&result);
+            }
+            Ok(())
+        }
         RefactorCommand::ConvertSignal {
             file,
             signal,
@@ -1556,6 +1768,30 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
             }
             Ok(())
         }
+        RefactorCommand::ExtractSuperclass {
+            file,
+            symbols,
+            to,
+            class_name,
+            dry_run,
+            format,
+        } => {
+            let result = crate::lsp::query::query_extract_superclass(
+                &file,
+                &symbols,
+                &to,
+                class_name.as_deref(),
+                dry_run,
+            )?;
+            if is_json(format.as_ref()) {
+                let json =
+                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+                cprintln!("{json}");
+            } else {
+                print_extract_superclass_human(&result);
+            }
+            Ok(())
+        }
         RefactorCommand::SafeDeleteFile {
             file,
             force,
@@ -1636,6 +1872,78 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
                 cprintln!("{json}");
             } else {
                 print_change_signature_human(&result);
+            }
+            Ok(())
+        }
+        RefactorCommand::PullUpMember {
+            file,
+            name,
+            line,
+            dry_run,
+            format,
+        } => {
+            if name.is_some() && line.is_some() {
+                return Err(miette::miette!("--name and --line are mutually exclusive"));
+            }
+            if name.is_none() && line.is_none() {
+                return Err(miette::miette!("either --name or --line is required"));
+            }
+            let resolved_name = if let Some(ref n) = name {
+                n.clone()
+            } else {
+                let source = std::fs::read_to_string(&file)
+                    .map_err(|e| miette::miette!("cannot read {file}: {e}"))?;
+                crate::lsp::refactor::resolve_line_to_name(&source, line.unwrap(), None)?
+            };
+            let result = crate::lsp::query::query_pull_up_member(&file, &resolved_name, dry_run)?;
+            if is_json(format.as_ref()) {
+                let json =
+                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+                cprintln!("{json}");
+            } else {
+                print_pull_up_member_human(&result);
+            }
+            Ok(())
+        }
+        RefactorCommand::PushDownMember {
+            file,
+            name,
+            line,
+            to,
+            force,
+            dry_run,
+            format,
+        } => {
+            if name.is_some() && line.is_some() {
+                return Err(miette::miette!("--name and --line are mutually exclusive"));
+            }
+            if name.is_none() && line.is_none() {
+                return Err(miette::miette!("either --name or --line is required"));
+            }
+            let resolved_name = if let Some(ref n) = name {
+                n.clone()
+            } else {
+                let source = std::fs::read_to_string(&file)
+                    .map_err(|e| miette::miette!("cannot read {file}: {e}"))?;
+                crate::lsp::refactor::resolve_line_to_name(&source, line.unwrap(), None)?
+            };
+            let targets: Vec<String> = to
+                .as_deref()
+                .map(|s| s.split(',').map(|t| t.trim().to_string()).collect())
+                .unwrap_or_default();
+            let result = crate::lsp::query::query_push_down_member(
+                &file,
+                &resolved_name,
+                &targets,
+                force,
+                dry_run,
+            )?;
+            if is_json(format.as_ref()) {
+                let json =
+                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+                cprintln!("{json}");
+            } else {
+                print_push_down_member_human(&result);
             }
             Ok(())
         }

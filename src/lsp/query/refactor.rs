@@ -255,6 +255,32 @@ pub fn query_extract_class(
     crate::lsp::refactor::extract_class(&path, &names, &to_path, dry_run, &project_root)
 }
 
+// ── Extract superclass ────────────────────────────────────────────────────────
+
+pub fn query_extract_superclass(
+    file: &str,
+    symbols_str: &str,
+    to: &str,
+    class_name: Option<&str>,
+    dry_run: bool,
+) -> Result<crate::lsp::refactor::ExtractSuperclassOutput> {
+    let path = resolve_file(file)?;
+    let project_root = find_root(&path)?;
+    let to_path = project_root.join(to);
+    let names: Vec<String> = symbols_str
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .collect();
+    crate::lsp::refactor::extract_superclass(
+        &path,
+        &names,
+        &to_path,
+        class_name,
+        dry_run,
+        &project_root,
+    )
+}
+
 // ── Inline variable ──────────────────────────────────────────────────────────
 
 pub fn query_inline_variable(
@@ -349,6 +375,45 @@ pub fn query_convert_node_path(
     let path = resolve_file(file)?;
     let project_root = find_root(&path)?;
     crate::lsp::refactor::convert_node_path(&path, line, column, dry_run, &project_root)
+}
+
+// ── Encapsulate field ─────────────────────────────────────────────────────────
+
+pub fn query_encapsulate_field(
+    file: &str,
+    name: &str,
+    backing_field: bool,
+    dry_run: bool,
+) -> Result<crate::lsp::refactor::EncapsulateFieldOutput> {
+    let path = resolve_file(file)?;
+    let project_root = find_root(&path)?;
+    crate::lsp::refactor::encapsulate_field(&path, name, backing_field, dry_run, &project_root)
+}
+
+// ── Push down member ──────────────────────────────────────────────────────────
+
+pub fn query_push_down_member(
+    file: &str,
+    name: &str,
+    to: &[String],
+    force: bool,
+    dry_run: bool,
+) -> Result<crate::lsp::refactor::PushDownMemberOutput> {
+    let path = resolve_file(file)?;
+    let project_root = find_root(&path)?;
+    crate::lsp::refactor::push_down_member(&path, name, to, force, dry_run, &project_root)
+}
+
+// ── Pull up member ────────────────────────────────────────────────────────────
+
+pub fn query_pull_up_member(
+    file: &str,
+    name: &str,
+    dry_run: bool,
+) -> Result<crate::lsp::refactor::PullUpMemberOutput> {
+    let path = resolve_file(file)?;
+    let project_root = find_root(&path)?;
+    crate::lsp::refactor::pull_up_member(name, &path, dry_run, &project_root)
 }
 
 // ── Invert if ────────────────────────────────────────────────────────────────

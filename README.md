@@ -13,7 +13,7 @@ Built with [tree-sitter-gdscript](https://github.com/PrestonKnopp/tree-sitter-gd
 - **Manage addons** from Git or the Godot Asset Library (with lockfile and update support)
 - **Generate CI/CD** configurations for GitHub Actions and GitLab CI
 - **LSP server** with formatting, diagnostics, hover, go-to-definition, references, rename, completion, inlay hints, signature help, call hierarchy, find implementations, semantic tokens, workspace symbol search, scene-aware cross-referencing, and Godot LSP proxy
-- **Refactoring** (`gd refactor`) &mdash; 21 structural refactoring commands with undo support and collision warnings
+- **Refactoring** (`gd refactor`) &mdash; 25 structural refactoring commands with undo support and collision warnings
 - **Code editing** (`gd edit`) &mdash; AST-aware editing primitives (replace-body, insert, replace-symbol, edit-range, create-file)
 - **Code queries** (`gd query`) &mdash; one-shot code intelligence (references, hover, definition, symbols, completions, scene info, and more)
 - **Scene management** &mdash; create scenes, add/remove/duplicate nodes, instance scenes, add sub-resources, batch-add nodes, set properties, wire connections, attach/detach scripts &mdash; plus validate `.tscn`/`.tres` files and visualize scene hierarchies
@@ -1013,6 +1013,24 @@ gd refactor convert-onready player.gd --line 3 --to-onready
 # Convert signal connections between scene wiring and code
 gd refactor convert-signal player.tscn --signal pressed --from Button --method _on_btn --to-code
 gd refactor convert-signal player.tscn --signal pressed --from Button --method _on_btn --to-scene
+
+# Encapsulate a field with property accessors (inline syntax)
+gd refactor encapsulate-field player.gd --name health
+
+# Encapsulate with backing field pattern (_health + getter/setter)
+gd refactor encapsulate-field player.gd --name health --backing-field
+
+# Extract members into a new superclass
+gd refactor extract-superclass entity.gd --symbols "health,take_damage" --to base_entity.gd --class-name BaseEntity
+
+# Pull a member up from child to parent class
+gd refactor pull-up-member player.gd --name score
+
+# Push a member down from parent to all children
+gd refactor push-down-member entity.gd --name get_speed
+
+# Push down to specific children only
+gd refactor push-down-member entity.gd --name get_speed --to player.gd,enemy.gd
 
 # Safely delete a file (checks for references first)
 gd refactor safe-delete-file unused.gd

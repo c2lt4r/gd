@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.7] - 2026-02-25
+
+### Added
+- **`gd refactor encapsulate-field`** — convert a plain `var` into a GDScript property with `set(value):`/`get:` accessors (inline syntax by default), or `--backing-field` for `_name` + getter/setter functions. Preserves `@export`, `@onready`, and other annotations.
+- **`gd refactor extract-superclass`** — extract specified members into a new base class file and update `extends`. Supports `--class-name` for named classes, dependency warnings when moved members reference staying members.
+- **`gd refactor pull-up-member`** — move a member (function, variable, signal, constant) from a child class up to its parent class. Resolves parent via `extends` (both `class_name` and `res://` path-based). Warns on self-references to child-only members.
+- **`gd refactor push-down-member`** — move a member from a parent class down to child classes. Auto-discovers children via `WorkspaceIndex`, or target specific files with `--to`. Supports `--force` to skip collision errors.
+
 ## [0.3.6] - 2026-02-25
 
 ### Added
