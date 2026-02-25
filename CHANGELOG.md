@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.3.5] - 2026-02-25
+
+### Added
+- **6 new fixable style-preference lint rules** — all opt-in, all auto-fixable via `gd lint --fix` (closes #24):
+  - `prefer-dollar-syntax` — warns on `get_node("X")`, fixes to `$X` / `$"X"`
+  - `prefer-get-node-syntax` — warns on `$X`, fixes to `get_node("X")` (mutually exclusive with above)
+  - `prefer-in-operator` — warns on `x == 1 or x == 2 or x == 3`, fixes to `x in [1, 2, 3]`
+  - `prefer-ternary` — warns on simple if/else same-variable assignment, fixes to ternary
+  - `prefer-is-instance` — warns on `typeof(x) == TYPE_*`, fixes to `x is Type`
+  - `prefer-string-format` — warns on `str()` concatenation, fixes to `"%s" % [args]`
+
 ## [0.3.4] - 2026-02-24
 
 ### Changed

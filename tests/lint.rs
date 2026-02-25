@@ -1025,3 +1025,53 @@ fn test_lint_parameter_shadows_field_without_self() {
         "Should warn when param shadows field without self., got: {stderr}"
     );
 }
+
+#[test]
+fn test_lint_prefer_in_operator() {
+    let temp = TempDir::new().expect("Failed to create temp dir");
+    let file_path = temp.path().join("style.gd");
+    fs::write(
+        &file_path,
+        "extends Node\n\nfunc f(x):\n\tif x == 1 or x == 2 or x == 3:\n\t\tpass\n",
+    )
+    .unwrap();
+
+    let output = gd_bin()
+        .arg("lint")
+        .arg("--rule")
+        .arg("prefer-in-operator")
+        .arg(&file_path)
+        .output()
+        .expect("Failed to run gd lint --rule prefer-in-operator");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("prefer-in-operator"),
+        "Should detect prefer-in-operator, got: {stderr}"
+    );
+}
+
+#[test]
+fn test_lint_prefer_is_instance() {
+    let temp = TempDir::new().expect("Failed to create temp dir");
+    let file_path = temp.path().join("style.gd");
+    fs::write(
+        &file_path,
+        "extends Node\n\nfunc f(x):\n\tif typeof(x) == TYPE_STRING:\n\t\tpass\n",
+    )
+    .unwrap();
+
+    let output = gd_bin()
+        .arg("lint")
+        .arg("--rule")
+        .arg("prefer-is-instance")
+        .arg(&file_path)
+        .output()
+        .expect("Failed to run gd lint --rule prefer-is-instance");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("prefer-is-instance"),
+        "Should detect prefer-is-instance, got: {stderr}"
+    );
+}

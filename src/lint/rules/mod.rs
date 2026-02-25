@@ -86,6 +86,12 @@ pub mod unused_private_class_variable;
 
 pub mod missing_tool;
 pub mod nullable_current_scene;
+pub mod prefer_dollar_syntax;
+pub mod prefer_get_node_syntax;
+pub mod prefer_in_operator;
+pub mod prefer_is_instance;
+pub mod prefer_string_format;
+pub mod prefer_ternary;
 pub mod shadowed_variable_base_class;
 pub mod static_called_on_instance;
 pub mod unnamed_node;
@@ -376,6 +382,12 @@ pub fn all_rules(
         Box::new(manual_range_contains::ManualRangeContains),
         Box::new(needless_bool::NeedlessBool),
         Box::new(override_signature_mismatch::OverrideSignatureMismatch),
+        Box::new(prefer_dollar_syntax::PreferDollarSyntax),
+        Box::new(prefer_get_node_syntax::PreferGetNodeSyntax),
+        Box::new(prefer_in_operator::PreferInOperator),
+        Box::new(prefer_is_instance::PreferIsInstance),
+        Box::new(prefer_string_format::PreferStringFormat),
+        Box::new(prefer_ternary::PreferTernary),
     ];
     all.into_iter()
         .filter(|r| {
