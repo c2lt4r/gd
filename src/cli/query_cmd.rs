@@ -36,16 +36,36 @@ pub enum QueryCommand {
     },
     /// Go to the definition of a symbol
     Definition {
-        #[command(flatten)]
-        pos: QueryPositionArgs,
+        /// Search by symbol name (alternative to --line/--column)
+        #[arg(long)]
+        name: Option<String>,
+        /// Path to the GDScript file
+        #[arg()]
+        file: Option<String>,
+        /// Line number (1-based)
+        #[arg(long)]
+        line: Option<usize>,
+        /// Column number (1-based)
+        #[arg(long)]
+        column: Option<usize>,
         /// Output format: json or human (default: human)
         #[arg(long, default_value = "human")]
         format: String,
     },
     /// Show hover information for a symbol
     Hover {
-        #[command(flatten)]
-        pos: QueryPositionArgs,
+        /// Search by symbol name (alternative to --line/--column)
+        #[arg(long)]
+        name: Option<String>,
+        /// Path to the GDScript file
+        #[arg()]
+        file: Option<String>,
+        /// Line number (1-based)
+        #[arg(long)]
+        line: Option<usize>,
+        /// Column number (1-based)
+        #[arg(long)]
+        column: Option<usize>,
         /// Output format: json or human (default: human)
         #[arg(long, default_value = "human")]
         format: String,
@@ -504,12 +524,33 @@ pub fn exec(args: QueryArgs) -> Result<()> {
             }
             Ok(())
         }
-        QueryCommand::Definition { pos, format } => {
+        QueryCommand::Definition {
+            name,
+            file,
+            line,
+            column,
+            format,
+        } => {
+            let file = file.ok_or_else(|| miette::miette!("<FILE> is required"))?;
+            let (line, column) = if let Some(ref n) = name {
+                if line.is_some() {
+                    return Err(miette::miette!("--name and --line are mutually exclusive"));
+                }
+                let source = std::fs::read_to_string(&file)
+                    .map_err(|e| miette::miette!("cannot read {file}: {e}"))?;
+                crate::lsp::refactor::resolve_name_to_position(&source, n, None)?
+            } else {
+                let line = line
+                    .ok_or_else(|| miette::miette!("--line is required when not using --name"))?;
+                let column = column
+                    .ok_or_else(|| miette::miette!("--column is required when not using --name"))?;
+                (line, column)
+            };
             // Try daemon for rich Godot results
             if !args.no_godot_proxy
                 && let Some(result) = crate::lsp::daemon_client::query_daemon(
                     "definition",
-                    serde_json::json!({"file": pos.file, "line": pos.line, "column": pos.column}),
+                    serde_json::json!({"file": file, "line": line, "column": column}),
                     None,
                 )
             {
@@ -525,8 +566,7 @@ pub fn exec(args: QueryArgs) -> Result<()> {
                 return Ok(());
             }
             // Fallback: static analysis only
-            let result =
-                crate::lsp::query::query_definition(&pos.file, pos.line, pos.column, None)?;
+            let result = crate::lsp::query::query_definition(&file, line, column, None)?;
             if format == "json" {
                 let j =
                     serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
@@ -536,12 +576,33 @@ pub fn exec(args: QueryArgs) -> Result<()> {
             }
             Ok(())
         }
-        QueryCommand::Hover { pos, format } => {
+        QueryCommand::Hover {
+            name,
+            file,
+            line,
+            column,
+            format,
+        } => {
+            let file = file.ok_or_else(|| miette::miette!("<FILE> is required"))?;
+            let (line, column) = if let Some(ref n) = name {
+                if line.is_some() {
+                    return Err(miette::miette!("--name and --line are mutually exclusive"));
+                }
+                let source = std::fs::read_to_string(&file)
+                    .map_err(|e| miette::miette!("cannot read {file}: {e}"))?;
+                crate::lsp::refactor::resolve_name_to_position(&source, n, None)?
+            } else {
+                let line = line
+                    .ok_or_else(|| miette::miette!("--line is required when not using --name"))?;
+                let column = column
+                    .ok_or_else(|| miette::miette!("--column is required when not using --name"))?;
+                (line, column)
+            };
             // Try daemon for rich Godot results
             if !args.no_godot_proxy
                 && let Some(result) = crate::lsp::daemon_client::query_daemon(
                     "hover",
-                    serde_json::json!({"file": pos.file, "line": pos.line, "column": pos.column}),
+                    serde_json::json!({"file": file, "line": line, "column": column}),
                     None,
                 )
             {
@@ -557,7 +618,7 @@ pub fn exec(args: QueryArgs) -> Result<()> {
                 return Ok(());
             }
             // Fallback: static analysis only
-            let result = crate::lsp::query::query_hover(&pos.file, pos.line, pos.column, None)?;
+            let result = crate::lsp::query::query_hover(&file, line, column, None)?;
             if format == "json" {
                 let j =
                     serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;

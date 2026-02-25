@@ -299,6 +299,57 @@ pub(super) fn declaration_full_range(node: Node, source: &str) -> (usize, usize)
     (start_byte, end_byte)
 }
 
+// ── Public resolution helpers ────────────────────────────────────────────────
+
+/// Convert `--name` (+ optional inner class) into a 1-based (line, column) position.
+pub fn resolve_name_to_position(
+    source: &str,
+    name: &str,
+    class: Option<&str>,
+) -> miette::Result<(usize, usize)> {
+    let tree = crate::core::parser::parse(source)?;
+    let root = tree.root_node();
+    let decl = if let Some(cls) = class {
+        let class_node = find_class_definition(root, source, cls)
+            .ok_or_else(|| miette::miette!("inner class '{cls}' not found"))?;
+        find_declaration_in_class(class_node, source, name)
+    } else {
+        find_declaration_by_name(root, source, name)
+    }
+    .ok_or_else(|| miette::miette!("declaration '{name}' not found"))?;
+    let name_node = if decl.kind() == "constructor_definition" {
+        // _init has no "name" field — use the node start
+        decl
+    } else if decl.kind() == "class_name_statement" {
+        decl.child(1).unwrap_or(decl)
+    } else {
+        decl.child_by_field_name("name").unwrap_or(decl)
+    };
+    let pos = name_node.start_position();
+    Ok((pos.row + 1, pos.column + 1))
+}
+
+/// Convert `--line` (1-based, + optional inner class) into a symbol name.
+pub fn resolve_line_to_name(
+    source: &str,
+    line: usize,
+    class: Option<&str>,
+) -> miette::Result<String> {
+    let tree = crate::core::parser::parse(source)?;
+    let root = tree.root_node();
+    let zero_line = line.saturating_sub(1);
+    let decl = if let Some(cls) = class {
+        let class_node = find_class_definition(root, source, cls)
+            .ok_or_else(|| miette::miette!("inner class '{cls}' not found"))?;
+        find_declaration_in_class_by_line(class_node, zero_line)
+    } else {
+        find_declaration_by_line(root, zero_line)
+    }
+    .ok_or_else(|| miette::miette!("no declaration found at line {line}"))?;
+    get_declaration_name(decl, source)
+        .ok_or_else(|| miette::miette!("could not determine name of declaration at line {line}"))
+}
+
 // ── Post-refactoring validation ─────────────────────────────────────────────
 
 /// Count ERROR/MISSING nodes in a tree-sitter tree.
@@ -746,5 +797,66 @@ mod tests {
         let original = "func ():\n\tpass\n";
         let refactored = "func ():\n\treturn 1\n";
         assert!(validate_no_new_errors(original, refactored).is_ok());
+    }
+
+    // ── resolve_name_to_position ──────────────────────────────────────────
+
+    #[test]
+    fn resolve_name_to_position_function() {
+        let src = "var a = 1\n\nfunc foo():\n\tpass\n";
+        let (line, col) = resolve_name_to_position(src, "foo", None).unwrap();
+        assert_eq!(line, 3); // 1-based
+        assert_eq!(col, 6); // "func " = 5 chars, name starts at col 6
+    }
+
+    #[test]
+    fn resolve_name_to_position_variable() {
+        let src = "var speed = 10\n";
+        let (line, col) = resolve_name_to_position(src, "speed", None).unwrap();
+        assert_eq!(line, 1);
+        assert_eq!(col, 5); // "var " = 4 chars
+    }
+
+    #[test]
+    fn resolve_name_to_position_not_found() {
+        let src = "var speed = 10\n";
+        assert!(resolve_name_to_position(src, "nonexistent", None).is_err());
+    }
+
+    #[test]
+    fn resolve_name_to_position_inner_class() {
+        let src = "class Inner:\n\tvar x = 1\n\tfunc bar():\n\t\tpass\n";
+        let (line, col) = resolve_name_to_position(src, "bar", Some("Inner")).unwrap();
+        assert_eq!(line, 3);
+        assert_eq!(col, 7); // "\tfunc " = 6 chars
+    }
+
+    // ── resolve_line_to_name ──────────────────────────────────────────────
+
+    #[test]
+    fn resolve_line_to_name_function() {
+        let src = "var a = 1\n\nfunc foo():\n\tpass\n";
+        let name = resolve_line_to_name(src, 3, None).unwrap();
+        assert_eq!(name, "foo");
+    }
+
+    #[test]
+    fn resolve_line_to_name_variable() {
+        let src = "var speed = 10\n";
+        let name = resolve_line_to_name(src, 1, None).unwrap();
+        assert_eq!(name, "speed");
+    }
+
+    #[test]
+    fn resolve_line_to_name_not_found() {
+        let src = "var speed = 10\n\nfunc foo():\n\tpass\n";
+        assert!(resolve_line_to_name(src, 2, None).is_err()); // blank line
+    }
+
+    #[test]
+    fn resolve_line_to_name_inner_class() {
+        let src = "class Inner:\n\tvar x = 1\n\tfunc bar():\n\t\tpass\n";
+        let name = resolve_line_to_name(src, 3, Some("Inner")).unwrap();
+        assert_eq!(name, "bar");
     }
 }

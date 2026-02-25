@@ -7,6 +7,7 @@ __pycache__/
 .env
 docs/issues/
 docs/mesh/
+docs/style-rules-roadmap.md
 docs/multi-language-support.md
 docs/research/eval-improvements.md
 docs/research/godot-debug-protocol.md

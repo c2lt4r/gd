@@ -63,9 +63,12 @@ pub enum RefactorCommand {
     },
     /// Move a symbol from one file to another (top-level or between classes)
     MoveSymbol {
-        /// Symbol name to move
+        /// Symbol name to move (alternative to --line)
         #[arg(long)]
-        name: String,
+        name: Option<String>,
+        /// Line number of declaration to move (1-based; alternative to --name)
+        #[arg(long)]
+        line: Option<usize>,
         /// Source file
         #[arg(long)]
         from: String,
@@ -138,12 +141,15 @@ pub enum RefactorCommand {
         /// Path to the GDScript file
         #[arg()]
         file: String,
+        /// Variable name to inline (alternative to --line/--column)
+        #[arg(long)]
+        name: Option<String>,
         /// Line number of the variable (1-based)
         #[arg(long)]
-        line: usize,
+        line: Option<usize>,
         /// Column number of the variable (1-based)
         #[arg(long)]
-        column: usize,
+        column: Option<usize>,
         /// Preview without writing changes
         #[arg(long)]
         dry_run: bool,
@@ -156,9 +162,12 @@ pub enum RefactorCommand {
         /// Path to the GDScript file
         #[arg()]
         file: String,
-        /// Name of the delegate function
+        /// Name of the delegate function (alternative to --line)
         #[arg(long)]
-        name: String,
+        name: Option<String>,
+        /// Line number of the delegate function (1-based; alternative to --name)
+        #[arg(long)]
+        line: Option<usize>,
         /// Preview without writing changes
         #[arg(long)]
         dry_run: bool,
@@ -258,9 +267,12 @@ pub enum RefactorCommand {
         /// Path to the GDScript file
         #[arg()]
         file: String,
-        /// Variable name to convert
+        /// Variable name to convert (alternative to --line)
         #[arg(long)]
-        name: String,
+        name: Option<String>,
+        /// Line number of variable declaration (1-based; alternative to --name)
+        #[arg(long)]
+        line: Option<usize>,
         /// Convert @onready → _ready() assignment
         #[arg(long)]
         to_ready: bool,
@@ -306,9 +318,12 @@ pub enum RefactorCommand {
         /// Path to the GDScript file
         #[arg()]
         file: String,
-        /// Function name
+        /// Function name (alternative to --line)
         #[arg(long)]
-        name: String,
+        name: Option<String>,
+        /// Line number of the function (1-based; alternative to --name)
+        #[arg(long)]
+        line: Option<usize>,
         /// Preview without writing changes
         #[arg(long)]
         dry_run: bool,
@@ -321,9 +336,12 @@ pub enum RefactorCommand {
         /// Path to the GDScript file
         #[arg()]
         file: String,
+        /// Variable name to split (alternative to --line)
+        #[arg(long)]
+        name: Option<String>,
         /// Line number of the variable declaration (1-based)
         #[arg(long)]
-        line: usize,
+        line: Option<usize>,
         /// Preview without writing changes
         #[arg(long)]
         dry_run: bool,
@@ -336,9 +354,12 @@ pub enum RefactorCommand {
         /// Path to the GDScript file
         #[arg()]
         file: String,
+        /// Variable name to join (alternative to --line)
+        #[arg(long)]
+        name: Option<String>,
         /// Line number of the bare variable declaration (1-based)
         #[arg(long)]
-        line: usize,
+        line: Option<usize>,
         /// Preview without writing changes
         #[arg(long)]
         dry_run: bool,
@@ -417,9 +438,12 @@ pub enum RefactorCommand {
         /// Path to the GDScript file
         #[arg()]
         file: String,
-        /// Function name
+        /// Function name (alternative to --line)
         #[arg(long)]
-        name: String,
+        name: Option<String>,
+        /// Line number of the function (1-based; alternative to --name)
+        #[arg(long)]
+        line: Option<usize>,
         /// Add parameter (format: "name: Type = default" or just "name"; repeatable)
         #[arg(long)]
         add_param: Vec<String>,
@@ -1084,6 +1108,7 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
         }
         RefactorCommand::MoveSymbol {
             name,
+            line,
             from,
             to,
             class,
@@ -1092,8 +1117,25 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
             dry_run,
             format,
         } => {
+            if name.is_some() && line.is_some() {
+                return Err(miette::miette!("--name and --line are mutually exclusive"));
+            }
+            if name.is_none() && line.is_none() {
+                return Err(miette::miette!("either --name or --line is required"));
+            }
+            let resolved_name = if let Some(ref n) = name {
+                n.clone()
+            } else {
+                let source = std::fs::read_to_string(&from)
+                    .map_err(|e| miette::miette!("cannot read {from}: {e}"))?;
+                crate::lsp::refactor::resolve_line_to_name(
+                    &source,
+                    line.unwrap(),
+                    class.as_deref(),
+                )?
+            };
             let result = crate::lsp::query::query_move_symbol(
-                &name,
+                &resolved_name,
                 &from,
                 &to,
                 dry_run,
@@ -1167,11 +1209,28 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
         }
         RefactorCommand::InlineVariable {
             file,
+            name,
             line,
             column,
             dry_run,
             format,
         } => {
+            if name.is_some() && line.is_some() {
+                return Err(miette::miette!("--name and --line are mutually exclusive"));
+            }
+            if name.is_none() && line.is_none() {
+                return Err(miette::miette!("either --name or --line is required"));
+            }
+            let (line, column) = if let Some(ref n) = name {
+                let source = std::fs::read_to_string(&file)
+                    .map_err(|e| miette::miette!("cannot read {file}: {e}"))?;
+                crate::lsp::refactor::resolve_name_to_position(&source, n, None)?
+            } else {
+                let line = line.unwrap();
+                let column = column
+                    .ok_or_else(|| miette::miette!("--column is required when using --line"))?;
+                (line, column)
+            };
             let result = crate::lsp::query::query_inline_variable(&file, line, column, dry_run)?;
             if is_json(format.as_ref()) {
                 let json =
@@ -1185,10 +1244,24 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
         RefactorCommand::InlineDelegate {
             file,
             name,
+            line,
             dry_run,
             format,
         } => {
-            let result = crate::lsp::query::query_inline_delegate(&file, &name, dry_run)?;
+            if name.is_some() && line.is_some() {
+                return Err(miette::miette!("--name and --line are mutually exclusive"));
+            }
+            if name.is_none() && line.is_none() {
+                return Err(miette::miette!("either --name or --line is required"));
+            }
+            let resolved_name = if let Some(ref n) = name {
+                n.clone()
+            } else {
+                let source = std::fs::read_to_string(&file)
+                    .map_err(|e| miette::miette!("cannot read {file}: {e}"))?;
+                crate::lsp::refactor::resolve_line_to_name(&source, line.unwrap(), None)?
+            };
+            let result = crate::lsp::query::query_inline_delegate(&file, &resolved_name, dry_run)?;
             if is_json(format.as_ref()) {
                 let json =
                     serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
@@ -1284,11 +1357,25 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
         RefactorCommand::ConvertOnready {
             file,
             name,
+            line,
             to_ready,
             to_onready,
             dry_run,
             format,
         } => {
+            if name.is_some() && line.is_some() {
+                return Err(miette::miette!("--name and --line are mutually exclusive"));
+            }
+            if name.is_none() && line.is_none() {
+                return Err(miette::miette!("either --name or --line is required"));
+            }
+            let resolved_name = if let Some(ref n) = name {
+                n.clone()
+            } else {
+                let source = std::fs::read_to_string(&file)
+                    .map_err(|e| miette::miette!("cannot read {file}: {e}"))?;
+                crate::lsp::refactor::resolve_line_to_name(&source, line.unwrap(), None)?
+            };
             let direction = match (to_ready, to_onready) {
                 (true, false) => true,
                 (false, true) => false,
@@ -1298,8 +1385,12 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
                     ));
                 }
             };
-            let result =
-                crate::lsp::query::query_convert_onready(&file, &name, direction, dry_run)?;
+            let result = crate::lsp::query::query_convert_onready(
+                &file,
+                &resolved_name,
+                direction,
+                dry_run,
+            )?;
             if is_json(format.as_ref()) {
                 let json =
                     serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
@@ -1343,10 +1434,24 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
         RefactorCommand::ExtractGuards {
             file,
             name,
+            line,
             dry_run,
             format,
         } => {
-            let result = crate::lsp::query::query_extract_guards(&file, &name, dry_run)?;
+            if name.is_some() && line.is_some() {
+                return Err(miette::miette!("--name and --line are mutually exclusive"));
+            }
+            if name.is_none() && line.is_none() {
+                return Err(miette::miette!("either --name or --line is required"));
+            }
+            let resolved_name = if let Some(ref n) = name {
+                n.clone()
+            } else {
+                let source = std::fs::read_to_string(&file)
+                    .map_err(|e| miette::miette!("cannot read {file}: {e}"))?;
+                crate::lsp::refactor::resolve_line_to_name(&source, line.unwrap(), None)?
+            };
+            let result = crate::lsp::query::query_extract_guards(&file, &resolved_name, dry_run)?;
             if is_json(format.as_ref()) {
                 let json =
                     serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
@@ -1358,10 +1463,24 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
         }
         RefactorCommand::SplitDeclaration {
             file,
+            name,
             line,
             dry_run,
             format,
         } => {
+            if name.is_some() && line.is_some() {
+                return Err(miette::miette!("--name and --line are mutually exclusive"));
+            }
+            if name.is_none() && line.is_none() {
+                return Err(miette::miette!("either --name or --line is required"));
+            }
+            let line = if let Some(ref n) = name {
+                let source = std::fs::read_to_string(&file)
+                    .map_err(|e| miette::miette!("cannot read {file}: {e}"))?;
+                crate::lsp::refactor::resolve_name_to_position(&source, n, None)?.0
+            } else {
+                line.unwrap()
+            };
             let result = crate::lsp::query::query_split_declaration(&file, line, dry_run)?;
             if is_json(format.as_ref()) {
                 let json =
@@ -1374,10 +1493,24 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
         }
         RefactorCommand::JoinDeclaration {
             file,
+            name,
             line,
             dry_run,
             format,
         } => {
+            if name.is_some() && line.is_some() {
+                return Err(miette::miette!("--name and --line are mutually exclusive"));
+            }
+            if name.is_none() && line.is_none() {
+                return Err(miette::miette!("either --name or --line is required"));
+            }
+            let line = if let Some(ref n) = name {
+                let source = std::fs::read_to_string(&file)
+                    .map_err(|e| miette::miette!("cannot read {file}: {e}"))?;
+                crate::lsp::refactor::resolve_name_to_position(&source, n, None)?.0
+            } else {
+                line.unwrap()
+            };
             let result = crate::lsp::query::query_join_declaration(&file, line, dry_run)?;
             if is_json(format.as_ref()) {
                 let json =
@@ -1461,6 +1594,7 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
         RefactorCommand::ChangeSignature {
             file,
             name,
+            line,
             add_param,
             remove_param,
             rename_param,
@@ -1469,9 +1603,26 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
             dry_run,
             format,
         } => {
+            if name.is_some() && line.is_some() {
+                return Err(miette::miette!("--name and --line are mutually exclusive"));
+            }
+            if name.is_none() && line.is_none() {
+                return Err(miette::miette!("either --name or --line is required"));
+            }
+            let resolved_name = if let Some(ref n) = name {
+                n.clone()
+            } else {
+                let source = std::fs::read_to_string(&file)
+                    .map_err(|e| miette::miette!("cannot read {file}: {e}"))?;
+                crate::lsp::refactor::resolve_line_to_name(
+                    &source,
+                    line.unwrap(),
+                    class.as_deref(),
+                )?
+            };
             let result = crate::lsp::query::query_change_signature(
                 &file,
-                &name,
+                &resolved_name,
                 &add_param,
                 &remove_param,
                 &rename_param,

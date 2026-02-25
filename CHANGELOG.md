@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.6] - 2026-02-25
+
+### Added
+- **Unified `--name`/`--line` support across all symbol-targeting commands** — every command that identifies a symbol now accepts both `--name` and `--line` (mutually exclusive), so users and AI tools can target symbols either way:
+  - `query definition`, `query hover` — added `--name` (resolves to position, then queries)
+  - `refactor inline-variable`, `split-declaration`, `join-declaration` — added `--name` (resolves to line/column)
+  - `refactor move-symbol`, `change-signature`, `extract-guards`, `convert-onready`, `inline-delegate` — added `--line` (resolves to name)
+
 ## [0.3.5] - 2026-02-25
 
 ### Added

@@ -890,11 +890,13 @@ gd query references player.gd --line 5 --column 10
 # Find all references by name (project-wide search)
 gd query references --name speed
 
-# Go to definition
+# Go to definition (by position or by name)
 gd query definition player.gd --line 5 --column 10
+gd query definition player.gd --name my_func
 
-# Hover information
+# Hover information (by position or by name)
 gd query hover player.gd --line 5 --column 10
+gd query hover player.gd --name speed
 
 # List completions
 gd query completions player.gd --line 5 --column 10
@@ -947,8 +949,9 @@ gd refactor delete-symbol player.gd --name unused_func --force
 # Delete multiple symbols at once
 gd refactor delete-symbol player.gd --names "a,b,c"
 
-# Move a symbol between files
+# Move a symbol between files (by name or by line)
 gd refactor move-symbol --name helper --from utils.gd --to helpers.gd
+gd refactor move-symbol --line 5 --from utils.gd --to helpers.gd
 
 # Move and update preload paths in callers
 gd refactor move-symbol --name helper --from utils.gd --to helpers.gd --update-callers
@@ -962,8 +965,9 @@ gd refactor extract-class player.gd --symbols "speed,health,take_damage" --to st
 # Inline a function at its call sites
 gd refactor inline-method player.gd --line 5 --column 2
 
-# Inline a pass-through delegate function
+# Inline a pass-through delegate function (by name or by line)
 gd refactor inline-delegate player.gd --name attack
+gd refactor inline-delegate player.gd --line 5
 
 # Rename multiple symbols atomically
 gd refactor bulk-rename player.gd --renames "speed:velocity,health:hp"
@@ -971,12 +975,14 @@ gd refactor bulk-rename player.gd --renames "speed:velocity,health:hp"
 # Rename symbols in a single file only (skip cross-file references)
 gd refactor bulk-rename player.gd --renames "speed:velocity" --scope file
 
-# Change function signature (add/remove/reorder/rename params)
+# Change function signature (by name or by line)
 gd refactor change-signature player.gd --name move \
   --add-param "speed: float = 1.0" --remove-param old_param --reorder "a,b,c"
+gd refactor change-signature player.gd --line 12 --add-param "speed: float = 1.0"
 
-# Inline a variable (replace usages with initializer, delete declaration)
+# Inline a variable (by position or by name)
 gd refactor inline-variable player.gd --line 5 --column 10
+gd refactor inline-variable player.gd --name speed
 
 # Extract an expression into a local variable
 gd refactor introduce-variable player.gd --line 5 --column 10 --end-column 30 --name velocity
@@ -987,19 +993,22 @@ gd refactor introduce-parameter player.gd --line 5 --column 10 --end-column 20 -
 # Invert an if/else: negate condition, swap branches
 gd refactor invert-if player.gd --line 5
 
-# Flatten nested ifs to early return/continue guard clauses
+# Flatten nested ifs to early return/continue guard clauses (by name or by line)
 gd refactor extract-guards player.gd --name _process
+gd refactor extract-guards player.gd --line 5
 
-# Split/join variable declaration and assignment
+# Split/join variable declaration and assignment (by line or by name)
 gd refactor split-declaration player.gd --line 3
+gd refactor split-declaration player.gd --name health
 gd refactor join-declaration player.gd --line 3
+gd refactor join-declaration player.gd --name health
 
 # Convert between $NodePath and get_node() syntax
 gd refactor convert-node-path player.gd --line 5 --column 10
 
-# Convert between @onready var and _ready() assignment
+# Convert between @onready var and _ready() assignment (by name or by line)
 gd refactor convert-onready player.gd --name sprite --to-ready
-gd refactor convert-onready player.gd --name sprite --to-onready
+gd refactor convert-onready player.gd --line 3 --to-onready
 
 # Convert signal connections between scene wiring and code
 gd refactor convert-signal player.tscn --signal pressed --from Button --method _on_btn --to-code
