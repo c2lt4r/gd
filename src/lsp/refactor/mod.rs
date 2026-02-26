@@ -93,6 +93,14 @@ pub struct MoveSymbolOutput {
     pub warnings: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub preloads: Vec<PreloadRef>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub callers_updated: Vec<CallerUpdateInfo>,
+}
+
+#[derive(Serialize, Debug)]
+pub struct CallerUpdateInfo {
+    pub file: String,
+    pub action: String,
 }
 
 #[derive(Serialize, Debug)]

@@ -654,6 +654,16 @@ fn print_move_symbol_human(r: &crate::lsp::refactor::MoveSymbolOutput) {
     for w in &r.warnings {
         cprintln!("  {}: {w}", "warning".yellow());
     }
+    if !r.callers_updated.is_empty() {
+        cprintln!(
+            "  Updated {} caller{}:",
+            r.callers_updated.len().to_string().green(),
+            if r.callers_updated.len() == 1 { "" } else { "s" }
+        );
+        for update in &r.callers_updated {
+            cprintln!("    {} ({})", update.file.cyan(), update.action.dimmed());
+        }
+    }
 }
 
 fn print_extract_method_human(r: &crate::lsp::refactor::ExtractMethodOutput) {
@@ -1098,17 +1108,8 @@ fn print_move_file_human(r: &crate::lsp::refactor::MoveFileOutput) {
 
 fn print_change_signature_human(r: &crate::lsp::refactor::ChangeSignatureOutput) {
     use owo_colors::OwoColorize;
-    let overrides_str = if r.overrides_updated > 0 {
-        format!(
-            ", {} override{}",
-            r.overrides_updated,
-            if r.overrides_updated == 1 { "" } else { "s" }
-        )
-    } else {
-        String::new()
-    };
     cprintln!(
-        "{} {} {} ({} call site{}{overrides_str}){}",
+        "{} {} {} ({} call site{}){}",
         r.old_signature.dimmed(),
         "→".dimmed(),
         r.new_signature.green().bold(),

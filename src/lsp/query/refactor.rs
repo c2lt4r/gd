@@ -29,7 +29,7 @@ pub fn query_move_symbol(
     let from_path = resolve_file(from)?;
     let project_root = find_root(&from_path)?;
     let to_path = project_root.join(to);
-    let mut result = crate::lsp::refactor::move_symbol(
+    crate::lsp::refactor::move_symbol(
         name,
         &from_path,
         &to_path,
@@ -37,36 +37,8 @@ pub fn query_move_symbol(
         &project_root,
         class,
         target_class,
-    )?;
-
-    // Update callers after successful move
-    if update_callers && !dry_run && result.applied && !result.preloads.is_empty() {
-        let from_relative = crate::core::fs::relative_slash(&from_path, &project_root);
-        let to_relative = crate::core::fs::relative_slash(&to_path, &project_root);
-        let source_res = format!("res://{from_relative}");
-        let dest_res = format!("res://{to_relative}");
-
-        match crate::lsp::refactor::update_callers_after_move(
-            &source_res,
-            &dest_res,
-            &result.preloads,
-            &project_root,
-        ) {
-            Ok(updates) => {
-                for update in &updates {
-                    result.warnings.push(format!(
-                        "updated {}: added {}",
-                        update.file, update.added_preload
-                    ));
-                }
-            }
-            Err(e) => {
-                result.warnings.push(format!("caller update error: {e}"));
-            }
-        }
-    }
-
-    Ok(result)
+        update_callers,
+    )
 }
 
 pub fn query_extract_method(
