@@ -101,6 +101,7 @@ pub fn query_change_signature(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn query_introduce_variable(
     file: &str,
     line: usize,
@@ -108,6 +109,7 @@ pub fn query_introduce_variable(
     end_column: usize,
     name: &str,
     as_const: bool,
+    replace_all: bool,
     dry_run: bool,
 ) -> Result<crate::lsp::refactor::IntroduceVariableOutput> {
     let path = resolve_file(file)?;
@@ -119,6 +121,7 @@ pub fn query_introduce_variable(
         end_column,
         name,
         as_const,
+        replace_all,
         dry_run,
         &project_root,
     )

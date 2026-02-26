@@ -1233,6 +1233,7 @@ fn test_lsp_introduce_parameter_with_type() {
 
 #[test]
 fn test_lsp_introduce_parameter_no_type() {
+    // String literal — type inference should produce `: String` automatically
     let temp = setup_gd_project(&[("player.gd", "func greet():\n\tprint(\"hello\")\n")]);
 
     let output = gd_bin()
@@ -1262,11 +1263,16 @@ fn test_lsp_introduce_parameter_no_type() {
     );
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(json["applied"], true);
+    assert!(
+        json["parameter"].as_str().unwrap().contains("msg: String"),
+        "should infer String type, got: {}",
+        json["parameter"]
+    );
 
     let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
     assert!(
-        content.contains("func greet(msg = \"hello\")"),
-        "should add untyped param with default, got: {content}"
+        content.contains("func greet(msg: String = \"hello\")"),
+        "should add inferred-typed param with default, got: {content}"
     );
     assert!(
         content.contains("print(msg)"),

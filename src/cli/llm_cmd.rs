@@ -255,7 +255,7 @@ gd lsp move-symbol --name <sym> --from <f> --to <f> [--update-callers]
 gd lsp extract-method <f> --start-line <L> --end-line <L> --name <name>
 gd lsp inline-method <f> --name <sym>
 gd lsp change-signature <f> --name <sym> --add-param "name: Type = default" --remove-param <name> --rename-param "old=new" --reorder "a,b,c"
-gd lsp introduce-variable <f> --line <L> --column <C> --end-column <C> --name <name>
+gd lsp introduce-variable <f> --line <L> --column <C> --end-column <C> --name <name> [--const] [--replace-all]
 gd lsp introduce-parameter <f> --line <L> --column <C> --end-column <C> --name <name>
 gd lsp invert-if <f> --line <L>                    # Invert if/else: negate condition, swap branches
 gd lsp convert-node-path <f> --line <L> --column <C>  # Convert $Path ↔ get_node("Path")

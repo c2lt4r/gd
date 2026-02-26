@@ -231,10 +231,7 @@ pub fn move_symbol(
                     }
                     Ok(None) => {} // no update needed
                     Err(e) => {
-                        warnings.push(format!(
-                            "could not update {}: {e}",
-                            preload_ref.file
-                        ));
+                        warnings.push(format!("could not update {}: {e}", preload_ref.file));
                     }
                 }
             }
@@ -528,9 +525,7 @@ fn find_preload_assignment(root: Node, source: &str, res_path: &str) -> Option<P
             continue;
         }
         // Check if the initializer is a preload/load call with matching path
-        let text = child
-            .utf8_text(source.as_bytes())
-            .unwrap_or("");
+        let text = child.utf8_text(source.as_bytes()).unwrap_or("");
         if !text.contains(res_path) {
             continue;
         }
@@ -654,9 +649,7 @@ fn add_dest_preload_and_rewrite(
 /// - `res://helpers.gd` → `_Helpers`
 /// - `res://utils/math_helpers.gd` → `_MathHelpers`
 fn derive_preload_var_name(res_path: &str) -> String {
-    let path = res_path
-        .strip_prefix("res://")
-        .unwrap_or(res_path);
+    let path = res_path.strip_prefix("res://").unwrap_or(res_path);
     let stem = Path::new(path)
         .file_stem()
         .and_then(|s| s.to_str())
@@ -680,7 +673,6 @@ fn derive_preload_var_name(res_path: &str) -> String {
 
     format!("_{pascal}")
 }
-
 
 #[cfg(test)]
 mod tests {

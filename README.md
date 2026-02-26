@@ -13,7 +13,7 @@ Built with [tree-sitter-gdscript](https://github.com/PrestonKnopp/tree-sitter-gd
 - **Manage addons** from Git or the Godot Asset Library (with lockfile and update support)
 - **Generate CI/CD** configurations for GitHub Actions and GitLab CI
 - **LSP server** with formatting, diagnostics, hover, go-to-definition, references, rename, completion, inlay hints, signature help, call hierarchy, find implementations, semantic tokens, workspace symbol search, scene-aware cross-referencing, and Godot LSP proxy
-- **Refactoring** (`gd refactor`) &mdash; 25 structural refactoring commands with undo support and collision warnings
+- **Refactoring** (`gd refactor`) &mdash; 25 structural refactoring commands with undo support, collision warnings, type inference, and cross-file resolution
 - **Code editing** (`gd edit`) &mdash; AST-aware editing primitives (replace-body, insert, replace-symbol, edit-range, create-file)
 - **Code queries** (`gd query`) &mdash; one-shot code intelligence (references, hover, definition, symbols, completions, scene info, and more)
 - **Scene management** &mdash; create scenes, add/remove/duplicate nodes, instance scenes, add sub-resources, batch-add nodes, set properties, wire connections, attach/detach scripts &mdash; plus validate `.tscn`/`.tres` files and visualize scene hierarchies
@@ -962,7 +962,7 @@ gd refactor extract-method player.gd --start-line 10 --end-line 15 --name do_att
 # Extract symbols to a new file
 gd refactor extract-class player.gd --symbols "speed,health,take_damage" --to stats.gd
 
-# Inline a function at its call sites
+# Inline a function (same-file, cross-file, or self.method() / obj.method())
 gd refactor inline-method player.gd --line 5 --column 2
 
 # Inline a pass-through delegate function (by name or by line)
@@ -984,8 +984,11 @@ gd refactor change-signature player.gd --line 12 --add-param "speed: float = 1.0
 gd refactor inline-variable player.gd --line 5 --column 10
 gd refactor inline-variable player.gd --name speed
 
-# Extract an expression into a local variable
+# Extract an expression into a local variable (type inferred automatically)
 gd refactor introduce-variable player.gd --line 5 --column 10 --end-column 30 --name velocity
+
+# Replace all identical expressions in scope
+gd refactor introduce-variable player.gd --line 5 --column 10 --end-column 30 --name velocity --replace-all
 
 # Turn a hardcoded value into a parameter with default
 gd refactor introduce-parameter player.gd --line 5 --column 10 --end-column 20 --name speed

@@ -195,6 +195,9 @@ pub enum RefactorCommand {
         /// Introduce as const instead of var
         #[arg(long = "const")]
         as_const: bool,
+        /// Replace all matching occurrences of the expression in the scope
+        #[arg(long)]
+        replace_all: bool,
         /// Preview without writing changes
         #[arg(long)]
         dry_run: bool,
@@ -658,7 +661,11 @@ fn print_move_symbol_human(r: &crate::lsp::refactor::MoveSymbolOutput) {
         cprintln!(
             "  Updated {} caller{}:",
             r.callers_updated.len().to_string().green(),
-            if r.callers_updated.len() == 1 { "" } else { "s" }
+            if r.callers_updated.len() == 1 {
+                ""
+            } else {
+                "s"
+            }
         );
         for update in &r.callers_updated {
             cprintln!("    {} ({})", update.file.cyan(), update.action.dimmed());
@@ -758,14 +765,22 @@ fn print_inline_delegate_human(r: &crate::lsp::refactor::InlineDelegateOutput) {
 fn print_introduce_variable_human(r: &crate::lsp::refactor::IntroduceVariableOutput) {
     use owo_colors::OwoColorize;
     let keyword = if r.is_const { "const" } else { "var" };
+    let type_suffix = r
+        .inferred_type
+        .as_deref()
+        .map_or(String::new(), |t| format!(": {t}"));
     cprintln!(
-        "Introduced {} {} = {} in {}{}",
+        "Introduced {} {}{} = {} in {}{}",
         keyword.bold(),
         r.variable.green().bold(),
+        type_suffix.dimmed(),
         r.expression.dimmed(),
         r.file.cyan(),
         dry_run_suffix(r.applied),
     );
+    if r.replacements > 1 {
+        cprintln!("  replaced {} occurrences", r.replacements);
+    }
     for w in &r.warnings {
         cprintln!("  {}: {w}", "warning".yellow());
     }
@@ -1467,11 +1482,19 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
             end_column,
             name,
             as_const,
+            replace_all,
             dry_run,
             format,
         } => {
             let result = crate::lsp::query::query_introduce_variable(
-                &file, line, column, end_column, &name, as_const, dry_run,
+                &file,
+                line,
+                column,
+                end_column,
+                &name,
+                as_const,
+                replace_all,
+                dry_run,
             )?;
             if is_json(format.as_ref()) {
                 let json =

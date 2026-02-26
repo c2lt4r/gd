@@ -71,8 +71,7 @@ pub fn inline_method(
                     target_file.display()
                 )
             })?;
-        cross_file_relative =
-            Some(crate::core::fs::relative_slash(target_file, project_root));
+        cross_file_relative = Some(crate::core::fs::relative_slash(target_file, project_root));
     } else {
         // Same-file: check if the definition actually exists here
         let same_file_def = find_declaration_by_name(root, &source, &call_info.method_name);
@@ -84,21 +83,18 @@ pub fn inline_method(
                 .unwrap_or(local_def);
         } else {
             // Bare call not found in same file — try cross-file resolution
-            let cross =
-                resolve_cross_file_function(&call_info.method_name, file, project_root)?;
-            cross_file_relative =
-                Some(crate::core::fs::relative_slash(&cross.path, project_root));
+            let cross = resolve_cross_file_function(&call_info.method_name, file, project_root)?;
+            cross_file_relative = Some(crate::core::fs::relative_slash(&cross.path, project_root));
             def_source = cross.source;
             def_tree = crate::core::parser::parse(&def_source)?;
             def_root = def_tree.root_node();
-            func_def =
-                find_declaration_by_name(def_root, &def_source, &call_info.method_name)
-                    .ok_or_else(|| {
-                        miette::miette!(
-                            "cannot find definition of '{}' in resolved file",
-                            call_info.method_name
-                        )
-                    })?;
+            func_def = find_declaration_by_name(def_root, &def_source, &call_info.method_name)
+                .ok_or_else(|| {
+                    miette::miette!(
+                        "cannot find definition of '{}' in resolved file",
+                        call_info.method_name
+                    )
+                })?;
         }
     }
 
@@ -191,16 +187,23 @@ pub fn inline_method(
     }
 
     // Handle return value
+    // Note: we extract the return expression from `substituted` by text matching,
+    // NOT by AST byte offsets, because parameter substitution may have changed string lengths.
     let has_return = return_count == 1;
     let (inlined_text, return_expr) = if has_return {
-        let last_stmt = body_stmts.last().unwrap();
-        // Extract the return expression
-        let ret_expr_text = last_stmt
-            .named_child(0)
-            .map(|n| {
-                let rel_start = n.start_byte() - body_start;
-                let rel_end = n.end_byte() - body_start;
-                substituted[rel_start..rel_end].to_string()
+        // Find the last line starting with "return" in the substituted text
+        let lines: Vec<&str> = substituted.lines().collect();
+        let ret_expr_text = lines
+            .iter()
+            .rev()
+            .find(|l| l.trim_start().starts_with("return"))
+            .map(|l| {
+                let trimmed = l.trim_start();
+                if trimmed.len() > 6 {
+                    trimmed[6..].trim_start().to_string()
+                } else {
+                    String::new()
+                }
             })
             .unwrap_or_default();
 
@@ -208,10 +211,13 @@ pub fn inline_method(
             // Single return statement — just use the expression
             (String::new(), Some(ret_expr_text))
         } else {
-            // Multiple statements + trailing return
-            let non_return_end = body_stmts[body_stmts.len() - 2].end_byte() - body_start;
-            let prefix = &substituted[..non_return_end];
-            (prefix.to_string(), Some(ret_expr_text))
+            // Multiple statements + trailing return — everything except the last return line
+            let last_return_idx = lines
+                .iter()
+                .rposition(|l| l.trim_start().starts_with("return"))
+                .unwrap_or(lines.len());
+            let prefix = lines[..last_return_idx].join("\n");
+            (prefix, Some(ret_expr_text))
         }
     } else {
         (substituted.clone(), None)
@@ -439,7 +445,16 @@ pub fn inline_method_by_name(
     let same_file_def = find_declaration_by_name(root, &source, name);
 
     if let Some(func_def) = same_file_def {
-        inline_by_name_same_file(func_def, root, name, &source, file, all, dry_run, project_root)
+        inline_by_name_same_file(
+            func_def,
+            root,
+            name,
+            &source,
+            file,
+            all,
+            dry_run,
+            project_root,
+        )
     } else {
         inline_by_name_cross_file(root, name, &source, file, all, dry_run, project_root)
     }
@@ -1572,14 +1587,8 @@ mod tests {
             ("utils.gd", "func get_hp():\n\treturn self.hp\n"),
             ("player.gd", "func _ready():\n\tvar hp = get_hp()\n"),
         ]);
-        let result = inline_method(
-            &temp.path().join("player.gd"),
-            2,
-            12,
-            true,
-            temp.path(),
-        )
-        .unwrap();
+        let result =
+            inline_method(&temp.path().join("player.gd"), 2, 12, true, temp.path()).unwrap();
         assert!(
             result.warnings.iter().any(|w| w.contains("self.")),
             "should warn about self references, got: {:?}",
@@ -1630,10 +1639,7 @@ mod tests {
     fn cross_file_inline_by_name_multiple_call_sites() {
         let temp = setup_project(&[
             ("utils.gd", "func helper():\n\tprint(\"util\")\n"),
-            (
-                "player.gd",
-                "func _ready():\n\thelper()\n\thelper()\n",
-            ),
+            ("player.gd", "func _ready():\n\thelper()\n\thelper()\n"),
         ]);
         let result = inline_method_by_name(
             &temp.path().join("player.gd"),

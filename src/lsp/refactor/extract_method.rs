@@ -6,6 +6,8 @@ use miette::Result;
 use tree_sitter::Node;
 
 use super::{ExtractMethodOutput, ParameterOutput, line_starts, normalize_blank_lines};
+use crate::core::symbol_table::SymbolTable;
+use crate::core::type_inference::{InferredType, infer_expression_type};
 
 // ── extract-method ──────────────────────────────────────────────────────────
 
@@ -31,6 +33,7 @@ pub fn extract_method(
         std::fs::read_to_string(file).map_err(|e| miette::miette!("cannot read file: {e}"))?;
     let tree = crate::core::parser::parse(&source)?;
     let root = tree.root_node();
+    let symbols = crate::core::symbol_table::build(&tree, &source);
 
     let start_line_0 = start_line - 1;
     let end_line_0 = end_line - 1;
@@ -43,6 +46,12 @@ pub fn extract_method(
     let body = func
         .child_by_field_name("body")
         .ok_or_else(|| miette::miette!("function has no body"))?;
+
+    // Detect static modifier on the enclosing function
+    let is_static = has_static_keyword(&func);
+
+    // Detect whether the function is inside an inner class
+    let inner_class = find_enclosing_class(&func);
 
     // Verify entire range is within the function body
     if start_line_0 < body.start_position().row || end_line_0 > body.end_position().row {
@@ -129,6 +138,7 @@ pub fn extract_method(
         &local_decls,
         &statements,
         extracted_range,
+        &symbols,
     );
 
     // Separate params and return vars
@@ -140,15 +150,21 @@ pub fn extract_method(
     }
 
     // Find locally-declared variables that are used after the range — they must be returned
-    let local_returns =
-        find_local_return_vars(&local_decls, &statements, body, &source, extracted_range.1);
+    let local_returns = find_local_return_vars(
+        &local_decls,
+        &statements,
+        body,
+        &source,
+        extracted_range.1,
+        &symbols,
+    );
     return_vars.extend(local_returns);
 
     // All captured vars are parameters
     let params: Vec<&CapturedVar> = captured.iter().collect();
 
     // Generate the new function and call site based on return count
-    let (func_text, func_signature, call_site_line, returns_field, return_vars_field);
+    let (mut func_text, func_signature, call_site_line, returns_field, return_vars_field);
     let original_indent = get_indent(&source, start_line_0);
 
     if return_vars.len() >= 2 {
@@ -159,6 +175,7 @@ pub fn extract_method(
             &return_vars,
             &statements,
             &source,
+            is_static,
         );
         let result_name = pick_result_name(&source, body);
         let cl = generate_call_site_multi_return(
@@ -175,14 +192,25 @@ pub fn extract_method(
         return_vars_field = return_vars.iter().map(|v| v.name.clone()).collect();
     } else {
         let return_var = return_vars.into_iter().next();
-        let (ft, fs) =
-            generate_extracted_function(name, &params, return_var.as_ref(), &statements, &source);
+        let (ft, fs) = generate_extracted_function(
+            name,
+            &params,
+            return_var.as_ref(),
+            &statements,
+            &source,
+            is_static,
+        );
         let cl = generate_call_site(name, &params, return_var.as_ref(), &original_indent);
         func_text = ft;
         func_signature = fs;
         call_site_line = cl;
         returns_field = return_var.map(|v| v.name);
         return_vars_field = Vec::new();
+    }
+
+    // If inside an inner class, indent the extracted function to match class members
+    if inner_class.is_some() {
+        func_text = indent_block(&func_text, "\t");
     }
 
     let relative_file = crate::core::fs::relative_slash(file, project_root);
@@ -200,16 +228,28 @@ pub fn extract_method(
         };
         new_source.replace_range(replace_start..replace_end, &call_site_line);
 
-        // 2. Insert new function before the enclosing function
+        // 2. Insert new function
         // Re-compute line_starts after the first edit
         let new_starts = line_starts(&new_source);
-        let func_start_line = func.start_position().row;
-        // After our replacement, the enclosing function may have shifted.
-        // Use the original func start line to find the insertion point.
-        // The replacement was inside the function, so lines before the function are unchanged.
-        let insert_byte = new_starts[func_start_line];
-        let insert_text = format!("{func_text}\n\n\n");
-        new_source.insert_str(insert_byte, &insert_text);
+        if let Some(ref class_node) = inner_class {
+            // Inside an inner class: insert at the end of the class body (before closing)
+            // The class body end row is the last line of the class_definition.
+            let class_end_line = class_node.end_position().row;
+            // Insert before the class's last line (which is typically blank or the next
+            // declaration). We insert right before the end of the class body.
+            let insert_byte = new_starts[class_end_line];
+            let insert_text = format!("\n{func_text}\n");
+            new_source.insert_str(insert_byte, &insert_text);
+        } else {
+            let func_start_line = func.start_position().row;
+            // After our replacement, the enclosing function may have shifted.
+            // Use the original func start line to find the insertion point.
+            // The replacement was inside the function, so lines before the function
+            // are unchanged.
+            let insert_byte = new_starts[func_start_line];
+            let insert_text = format!("{func_text}\n\n\n");
+            new_source.insert_str(insert_byte, &insert_text);
+        }
 
         normalize_blank_lines(&mut new_source);
         super::validate_no_new_errors(&source, &new_source)?;
@@ -382,8 +422,41 @@ fn collect_decls_recursive(node: Node, source: &str, decls: &mut HashSet<String>
     }
 }
 
+/// Convert an `InferredType` to a type annotation string, returning `None` for
+/// `Void`, `Variant`, or types that would not be useful as annotations.
+fn inferred_type_to_hint(ty: &InferredType) -> Option<String> {
+    match ty {
+        InferredType::Void | InferredType::Variant => None,
+        _ => Some(ty.display_name()),
+    }
+}
+
+/// Try to infer a type for a local `variable_statement` node by checking its
+/// explicit type annotation first, then falling back to expression inference on
+/// its initialiser.
+fn infer_var_type(node: Node, source: &str, symbols: &SymbolTable) -> Option<String> {
+    // 1. Explicit annotation (`: int`, `: Vector2`, etc.)
+    if let Some(type_node) = node.child_by_field_name("type")
+        && type_node.kind() != "inferred_type"
+        && let Ok(text) = type_node.utf8_text(source.as_bytes())
+        && !text.is_empty()
+    {
+        return Some(text.to_string());
+    }
+
+    // 2. Infer from initialiser
+    if let Some(value) = node.child_by_field_name("value")
+        && let Some(ty) = infer_expression_type(&value, source, symbols)
+    {
+        return inferred_type_to_hint(&ty);
+    }
+
+    None
+}
+
 /// Find captured variables: identifiers in the range that are declared before the range
 /// in the enclosing function (as parameters or local vars).
+#[allow(clippy::too_many_arguments)]
 fn find_captured_variables(
     func: &Node,
     body: Node,
@@ -392,9 +465,17 @@ fn find_captured_variables(
     local_decls: &HashSet<String>,
     statements: &[Node],
     extracted_range: (usize, usize),
+    symbols: &SymbolTable,
 ) -> Vec<CapturedVar> {
     // Collect function parameters with optional type hints
     let mut pre_decls: HashMap<String, Option<String>> = HashMap::new();
+
+    // Look up the enclosing function in the symbol table for parameter types
+    let func_name = func
+        .child_by_field_name("name")
+        .and_then(|n| n.utf8_text(source.as_bytes()).ok())
+        .unwrap_or("");
+    let func_decl = symbols.functions.iter().find(|f| f.name == func_name);
 
     if let Some(params) = func.child_by_field_name("parameters") {
         let mut cursor = params.walk();
@@ -404,7 +485,13 @@ fn find_captured_variables(
                 match child.kind() {
                     "identifier" => {
                         let name = source[child.byte_range()].to_string();
-                        pre_decls.insert(name, None);
+                        // Try to get the type from the symbol table's FuncDecl
+                        let type_hint = func_decl
+                            .and_then(|fd| fd.params.iter().find(|p| p.name == name))
+                            .and_then(|p| p.type_ann.as_ref())
+                            .filter(|ann| !ann.is_inferred && !ann.name.is_empty())
+                            .map(|ann| ann.name.clone());
+                        pre_decls.insert(name, type_hint);
                     }
                     "typed_parameter" | "typed_default_parameter" => {
                         if let Some(name_node) = child.child(0)
@@ -423,7 +510,12 @@ fn find_captured_variables(
                             && name_node.kind() == "identifier"
                         {
                             let name = source[name_node.byte_range()].to_string();
-                            pre_decls.insert(name, None);
+                            // No explicit type, but try inference from default value
+                            let type_hint = child
+                                .child_by_field_name("value")
+                                .and_then(|v| infer_expression_type(&v, source, symbols))
+                                .and_then(|ty| inferred_type_to_hint(&ty));
+                            pre_decls.insert(name, type_hint);
                         }
                     }
                     _ => {}
@@ -445,10 +537,7 @@ fn find_captured_variables(
             && let Some(name_node) = child.child_by_field_name("name")
             && let Ok(var_name) = name_node.utf8_text(source.as_bytes())
         {
-            let type_hint = child
-                .child_by_field_name("type")
-                .and_then(|t| t.utf8_text(source.as_bytes()).ok())
-                .map(std::string::ToString::to_string);
+            let type_hint = infer_var_type(child, source, symbols);
             pre_decls.insert(var_name.to_string(), type_hint);
         }
     }
@@ -520,14 +609,16 @@ fn find_local_return_vars(
     body: Node,
     source: &str,
     range_end: usize,
+    symbols: &SymbolTable,
 ) -> Vec<CapturedVar> {
     let mut result = Vec::new();
     for var_name in local_decls {
         if !is_used_after_range(var_name, body, source, range_end) {
             continue;
         }
-        // Extract type hint from the variable_statement node in the extracted range
-        let type_hint = find_var_type_hint(var_name, statements, source);
+        // Extract type hint from the variable_statement node in the extracted range,
+        // falling back to type inference on the initialiser
+        let type_hint = find_var_type_hint_inferred(var_name, statements, source, symbols);
         result.push(CapturedVar {
             name: var_name.clone(),
             type_hint,
@@ -540,29 +631,37 @@ fn find_local_return_vars(
     result
 }
 
-/// Find the type hint for a variable declaration within the given statements.
-fn find_var_type_hint(name: &str, statements: &[Node], source: &str) -> Option<String> {
+/// Find the type for a variable declaration within the given statements,
+/// using explicit annotation first, then falling back to type inference.
+fn find_var_type_hint_inferred(
+    name: &str,
+    statements: &[Node],
+    source: &str,
+    symbols: &SymbolTable,
+) -> Option<String> {
     for stmt in statements {
-        if let Some(hint) = find_var_type_hint_recursive(*stmt, name, source) {
+        if let Some(hint) = find_var_type_hint_inferred_recursive(*stmt, name, source, symbols) {
             return Some(hint);
         }
     }
     None
 }
 
-fn find_var_type_hint_recursive(node: Node, name: &str, source: &str) -> Option<String> {
+fn find_var_type_hint_inferred_recursive(
+    node: Node,
+    name: &str,
+    source: &str,
+    symbols: &SymbolTable,
+) -> Option<String> {
     if node.kind() == "variable_statement"
         && let Some(name_node) = node.child_by_field_name("name")
         && name_node.utf8_text(source.as_bytes()).ok() == Some(name)
     {
-        return node
-            .child_by_field_name("type")
-            .and_then(|t| t.utf8_text(source.as_bytes()).ok())
-            .map(std::string::ToString::to_string);
+        return infer_var_type(node, source, symbols);
     }
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        if let Some(hint) = find_var_type_hint_recursive(child, name, source) {
+        if let Some(hint) = find_var_type_hint_inferred_recursive(child, name, source, symbols) {
             return Some(hint);
         }
     }
@@ -584,6 +683,42 @@ fn has_identifier(node: Node, name: &str, source: &str) -> bool {
     false
 }
 
+fn has_static_keyword(func_node: &Node) -> bool {
+    let mut cursor = func_node.walk();
+    for child in func_node.children(&mut cursor) {
+        if child.kind() == "static_keyword" {
+            return true;
+        }
+    }
+    false
+}
+
+/// Walk up from a function node to find an enclosing `class_definition` (inner class).
+/// Returns `None` if the function is at the top level (parent is the root/source_file).
+fn find_enclosing_class<'a>(func: &Node<'a>) -> Option<Node<'a>> {
+    let mut node = func.parent()?;
+    loop {
+        if node.kind() == "class_definition" {
+            return Some(node);
+        }
+        node = node.parent()?;
+    }
+}
+
+/// Indent every non-empty line of `text` by the given `prefix`.
+fn indent_block(text: &str, prefix: &str) -> String {
+    text.lines()
+        .map(|line| {
+            if line.trim().is_empty() {
+                String::new()
+            } else {
+                format!("{prefix}{line}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// Generate the extracted function text and its signature string.
 fn generate_extracted_function(
     name: &str,
@@ -591,6 +726,7 @@ fn generate_extracted_function(
     return_var: Option<&CapturedVar>,
     statements: &[Node],
     source: &str,
+    is_static: bool,
 ) -> (String, String) {
     // Build parameter list
     let param_str = params
@@ -611,7 +747,8 @@ fn generate_extracted_function(
         .map(|t| format!(" -> {t}"))
         .unwrap_or_default();
 
-    let signature = format!("func {name}({param_str}){return_type}:");
+    let static_prefix = if is_static { "static " } else { "" };
+    let signature = format!("{static_prefix}func {name}({param_str}){return_type}:");
 
     // Extract body text from the statements (include first line's indentation
     // so re_indent sees consistent indentation across all lines)
@@ -698,6 +835,7 @@ fn generate_extracted_function_multi_return(
     return_vars: &[CapturedVar],
     statements: &[Node],
     source: &str,
+    is_static: bool,
 ) -> (String, String) {
     let param_str = params
         .iter()
@@ -711,7 +849,8 @@ fn generate_extracted_function_multi_return(
         .collect::<Vec<_>>()
         .join(", ");
 
-    let signature = format!("func {name}({param_str}) -> Dictionary:");
+    let static_prefix = if is_static { "static " } else { "" };
+    let signature = format!("{static_prefix}func {name}({param_str}) -> Dictionary:");
 
     let first_line_start = source[..statements[0].start_byte()]
         .rfind('\n')
@@ -1262,6 +1401,22 @@ mod tests {
         );
     }
 
+    // ── re_indent ────────────────────────────────────────────────────────
+
+    #[test]
+    fn re_indent_strips_common_prefix() {
+        let text = "\t\tvar x = 1\n\t\tprint(x)";
+        let result = re_indent(text);
+        assert_eq!(result, "\tvar x = 1\n\tprint(x)");
+    }
+
+    #[test]
+    fn re_indent_single_line() {
+        let text = "\tprint(42)";
+        let result = re_indent(text);
+        assert_eq!(result, "\tprint(42)");
+    }
+
     // ── break/continue rejection ──────────────────────────────────────
 
     #[test]
@@ -1282,10 +1437,7 @@ mod tests {
         );
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(
-            err.contains("break"),
-            "should error on break: {err}"
-        );
+        assert!(err.contains("break"), "should error on break: {err}");
     }
 
     #[test]
@@ -1306,10 +1458,7 @@ mod tests {
         );
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(
-            err.contains("continue"),
-            "should error on continue: {err}"
-        );
+        assert!(err.contains("continue"), "should error on continue: {err}");
     }
 
     #[test]
@@ -1356,19 +1505,510 @@ mod tests {
         );
     }
 
-    // ── re_indent ────────────────────────────────────────────────────────
+    // ── type inference tests ───────────────────────────────────────────
 
     #[test]
-    fn re_indent_strips_common_prefix() {
-        let text = "\t\tvar x = 1\n\t\tprint(x)";
-        let result = re_indent(text);
-        assert_eq!(result, "\tvar x = 1\n\tprint(x)");
+    fn extract_infers_param_types_from_initializers() {
+        // var speed = 10.0 → float, var count = 5 → int
+        let temp = setup_project(&[(
+            "player.gd",
+            "func process():\n\tvar speed = 10.0\n\tvar count = 5\n\tprint(speed + count)\n\tprint(\"end\")\n",
+        )]);
+        let result = extract_method(
+            &temp.path().join("player.gd"),
+            4,
+            4,
+            "show",
+            true,
+            temp.path(),
+        )
+        .unwrap();
+        assert_eq!(result.parameters.len(), 2);
+        let count_p = result
+            .parameters
+            .iter()
+            .find(|p| p.name == "count")
+            .unwrap();
+        assert_eq!(
+            count_p.type_hint.as_deref(),
+            Some("int"),
+            "count should be int"
+        );
+        let speed_p = result
+            .parameters
+            .iter()
+            .find(|p| p.name == "speed")
+            .unwrap();
+        assert_eq!(
+            speed_p.type_hint.as_deref(),
+            Some("float"),
+            "speed should be float"
+        );
+        // Verify the generated function signature includes types
+        assert!(
+            result.function.contains("count: int"),
+            "signature should include count: int, got: {}",
+            result.function
+        );
+        assert!(
+            result.function.contains("speed: float"),
+            "signature should include speed: float, got: {}",
+            result.function
+        );
     }
 
     #[test]
-    fn re_indent_single_line() {
-        let text = "\tprint(42)";
-        let result = re_indent(text);
-        assert_eq!(result, "\tprint(42)");
+    fn extract_infers_return_type_from_initializer() {
+        // var velocity = Vector2(1, 2) → Vector2 return type
+        let temp = setup_project(&[(
+            "player.gd",
+            "func process():\n\tvar velocity = Vector2(1, 2)\n\tprint(velocity)\n",
+        )]);
+        let result = extract_method(
+            &temp.path().join("player.gd"),
+            2,
+            2,
+            "get_velocity",
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        assert_eq!(result.returns.as_deref(), Some("velocity"));
+        let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+        assert!(
+            content.contains("-> Vector2:"),
+            "return type should be Vector2, got:\n{content}"
+        );
+    }
+
+    #[test]
+    fn extract_infers_param_type_from_function_signature() {
+        // Function parameter with explicit type: delta: float
+        let temp = setup_project(&[(
+            "player.gd",
+            "func process(delta: float):\n\tvar x = delta * 2\n\tprint(\"end\")\n",
+        )]);
+        let result = extract_method(
+            &temp.path().join("player.gd"),
+            2,
+            2,
+            "compute",
+            true,
+            temp.path(),
+        )
+        .unwrap();
+        assert_eq!(result.parameters.len(), 1);
+        assert_eq!(result.parameters[0].name, "delta");
+        assert_eq!(
+            result.parameters[0].type_hint.as_deref(),
+            Some("float"),
+            "delta should have type float from function signature"
+        );
+        assert!(
+            result.function.contains("delta: float"),
+            "signature should include delta: float, got: {}",
+            result.function
+        );
+    }
+
+    #[test]
+    fn extract_untyped_stays_untyped() {
+        // var data = some_func() — can't infer type → stays untyped
+        let temp = setup_project(&[(
+            "player.gd",
+            "func process():\n\tvar data = unknown_func()\n\tprint(data)\n\tprint(\"end\")\n",
+        )]);
+        let result = extract_method(
+            &temp.path().join("player.gd"),
+            3,
+            3,
+            "show_data",
+            true,
+            temp.path(),
+        )
+        .unwrap();
+        assert_eq!(result.parameters.len(), 1);
+        assert_eq!(result.parameters[0].name, "data");
+        assert!(
+            result.parameters[0].type_hint.is_none(),
+            "unknown type should stay untyped, got: {:?}",
+            result.parameters[0].type_hint
+        );
+        assert!(
+            !result.function.contains("data:"),
+            "signature should not have type for data, got: {}",
+            result.function
+        );
+    }
+
+    #[test]
+    fn extract_static_with_typed_params() {
+        // Static function with typed params and inferred return
+        let temp = setup_project(&[(
+            "player.gd",
+            "static func calculate(x: int, y: int):\n\tvar sum = x + y\n\tprint(sum)\n",
+        )]);
+        let result = extract_method(
+            &temp.path().join("player.gd"),
+            2,
+            2,
+            "add",
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        assert_eq!(result.parameters.len(), 2);
+        let x_p = result.parameters.iter().find(|p| p.name == "x").unwrap();
+        assert_eq!(x_p.type_hint.as_deref(), Some("int"));
+        let y_p = result.parameters.iter().find(|p| p.name == "y").unwrap();
+        assert_eq!(y_p.type_hint.as_deref(), Some("int"));
+        let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+        assert!(
+            content.contains("func add(x: int, y: int)"),
+            "should have typed params, got:\n{content}"
+        );
+    }
+
+    #[test]
+    fn extract_infers_string_type() {
+        let temp = setup_project(&[(
+            "player.gd",
+            "func process():\n\tvar msg = \"hello\"\n\tprint(msg)\n\tprint(\"end\")\n",
+        )]);
+        let result = extract_method(
+            &temp.path().join("player.gd"),
+            3,
+            3,
+            "show_msg",
+            true,
+            temp.path(),
+        )
+        .unwrap();
+        assert_eq!(result.parameters.len(), 1);
+        assert_eq!(result.parameters[0].name, "msg");
+        assert_eq!(
+            result.parameters[0].type_hint.as_deref(),
+            Some("String"),
+            "string literal should infer as String"
+        );
+    }
+
+    #[test]
+    fn extract_infers_bool_type() {
+        let temp = setup_project(&[(
+            "player.gd",
+            "func process():\n\tvar flag = true\n\tprint(flag)\n\tprint(\"end\")\n",
+        )]);
+        let result = extract_method(
+            &temp.path().join("player.gd"),
+            3,
+            3,
+            "show_flag",
+            true,
+            temp.path(),
+        )
+        .unwrap();
+        assert_eq!(result.parameters.len(), 1);
+        assert_eq!(result.parameters[0].name, "flag");
+        assert_eq!(
+            result.parameters[0].type_hint.as_deref(),
+            Some("bool"),
+            "true literal should infer as bool"
+        );
+    }
+
+    #[test]
+    fn extract_mixed_typed_and_untyped_params() {
+        // One param has a type (from annotation), one doesn't (unknown function)
+        let temp = setup_project(&[(
+            "player.gd",
+            "func process():\n\tvar typed: int = 5\n\tvar untyped = unknown()\n\tprint(typed + untyped)\n\tprint(\"end\")\n",
+        )]);
+        let result = extract_method(
+            &temp.path().join("player.gd"),
+            4,
+            4,
+            "compute",
+            true,
+            temp.path(),
+        )
+        .unwrap();
+        assert_eq!(result.parameters.len(), 2);
+        let typed_p = result
+            .parameters
+            .iter()
+            .find(|p| p.name == "typed")
+            .unwrap();
+        assert_eq!(typed_p.type_hint.as_deref(), Some("int"));
+        let untyped_p = result
+            .parameters
+            .iter()
+            .find(|p| p.name == "untyped")
+            .unwrap();
+        assert!(
+            untyped_p.type_hint.is_none(),
+            "unknown should stay untyped, got: {:?}",
+            untyped_p.type_hint
+        );
+        // Verify the signature has mixed: typed: int but untyped without annotation
+        assert!(
+            result.function.contains("typed: int"),
+            "should have typed: int, got: {}",
+            result.function
+        );
+        assert!(
+            !result.function.contains("untyped:"),
+            "untyped should not have annotation, got: {}",
+            result.function
+        );
+    }
+
+    #[test]
+    fn extract_return_type_inferred_for_multi_return_is_dictionary() {
+        // Multi-return always uses Dictionary regardless of individual types
+        let temp = setup_project(&[(
+            "player.gd",
+            "func process():\n\tvar a: int = 1\n\tvar b: float = 2.0\n\ta += 1\n\tb += 1.0\n\tprint(a)\n\tprint(b)\n",
+        )]);
+        let result = extract_method(
+            &temp.path().join("player.gd"),
+            4,
+            5,
+            "update",
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+        assert!(
+            content.contains("-> Dictionary:"),
+            "multi-return should always be Dictionary, got:\n{content}"
+        );
+        // But params should be typed
+        assert!(
+            content.contains("a: int") && content.contains("b: float"),
+            "params should be typed, got:\n{content}"
+        );
+    }
+
+    #[test]
+    fn extract_default_param_type_inferred() {
+        // default_parameter: func f(x = 5) → x should be inferred as int
+        let temp = setup_project(&[(
+            "player.gd",
+            "func process(count = 10):\n\tprint(count)\n\tprint(\"end\")\n",
+        )]);
+        let result = extract_method(
+            &temp.path().join("player.gd"),
+            2,
+            2,
+            "show_count",
+            true,
+            temp.path(),
+        )
+        .unwrap();
+        assert_eq!(result.parameters.len(), 1);
+        assert_eq!(result.parameters[0].name, "count");
+        assert_eq!(
+            result.parameters[0].type_hint.as_deref(),
+            Some("int"),
+            "default param with integer literal should infer as int"
+        );
+    }
+
+    // ── static propagation ─────────────────────────────────────────────
+
+    #[test]
+    fn extract_from_static_func_produces_static() {
+        let temp = setup_project(&[(
+            "utils.gd",
+            "static func compute(x: int) -> int:\n\tvar doubled = x * 2\n\tprint(doubled)\n\treturn doubled\n",
+        )]);
+        // Extract `print(doubled)` (line 3)
+        let result = extract_method(
+            &temp.path().join("utils.gd"),
+            3,
+            3,
+            "log_value",
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        let content = fs::read_to_string(temp.path().join("utils.gd")).unwrap();
+        assert!(
+            content.contains("static func log_value("),
+            "extracted function should be static, got:\n{content}"
+        );
+        assert!(
+            result.function.starts_with("static func"),
+            "signature should start with 'static func', got: {}",
+            result.function
+        );
+    }
+
+    #[test]
+    fn extract_from_non_static_func_stays_non_static() {
+        let temp = setup_project(&[(
+            "player.gd",
+            "func _ready():\n\tprint(\"hello\")\n\tprint(\"world\")\n",
+        )]);
+        let result = extract_method(
+            &temp.path().join("player.gd"),
+            2,
+            2,
+            "greet",
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+        assert!(
+            !content.contains("static func greet"),
+            "non-static function should not get static, got:\n{content}"
+        );
+    }
+
+    #[test]
+    fn extract_static_with_return() {
+        let temp = setup_project(&[(
+            "utils.gd",
+            "static func compute():\n\tvar x = 1\n\tx += 10\n\tprint(x)\n",
+        )]);
+        // Extract `x += 10` (line 3) — x is written and used after
+        let result = extract_method(
+            &temp.path().join("utils.gd"),
+            3,
+            3,
+            "bump",
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        let content = fs::read_to_string(temp.path().join("utils.gd")).unwrap();
+        assert!(
+            content.contains("static func bump("),
+            "extracted function should be static, got:\n{content}"
+        );
+        assert!(
+            content.contains("return x"),
+            "should return x, got:\n{content}"
+        );
+    }
+
+    // ── inner class placement ──────────────────────────────────────────
+
+    #[test]
+    fn extract_in_inner_class_stays_in_class() {
+        let temp = setup_project(&[(
+            "player.gd",
+            "\
+extends Node
+
+func _ready():
+\tpass
+
+class InnerClass:
+\tfunc process():
+\t\tvar x = 1
+\t\tprint(x)
+\t\tprint(\"done\")
+",
+        )]);
+        // Extract `print("done")` (line 10)
+        let result = extract_method(
+            &temp.path().join("player.gd"),
+            10,
+            10,
+            "do_print",
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+        // The extracted function should be inside InnerClass (indented with one tab)
+        assert!(
+            content.contains("\tfunc do_print():"),
+            "extracted function should be indented inside inner class, got:\n{content}"
+        );
+        // It should NOT appear at the top level (before _ready or at column 0)
+        // Find the position of "func do_print" — it must come after "class InnerClass:"
+        let class_pos = content.find("class InnerClass:").unwrap();
+        let func_pos = content.find("func do_print").unwrap();
+        assert!(
+            func_pos > class_pos,
+            "extracted function should be after the inner class header, got:\n{content}"
+        );
+    }
+
+    #[test]
+    fn extract_in_inner_class_with_params() {
+        let temp = setup_project(&[(
+            "player.gd",
+            "\
+extends Node
+
+class Helper:
+\tfunc compute():
+\t\tvar a = 1
+\t\tvar b = 2
+\t\tprint(a + b)
+\t\tprint(\"end\")
+",
+        )]);
+        // Extract `print(a + b)` (line 7) — captures a and b
+        let result = extract_method(
+            &temp.path().join("player.gd"),
+            7,
+            7,
+            "show_sum",
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        assert_eq!(result.parameters.len(), 2);
+        let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+        assert!(
+            content.contains("\tfunc show_sum("),
+            "extracted function should be indented inside inner class, got:\n{content}"
+        );
+    }
+
+    #[test]
+    fn extract_static_in_inner_class() {
+        let temp = setup_project(&[(
+            "player.gd",
+            "\
+extends Node
+
+class Utils:
+\tstatic func helper():
+\t\tprint(\"a\")
+\t\tprint(\"b\")
+",
+        )]);
+        // Extract `print("b")` (line 6)
+        let result = extract_method(
+            &temp.path().join("player.gd"),
+            6,
+            6,
+            "print_b",
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+        assert!(
+            content.contains("\tstatic func print_b():"),
+            "should be static and indented inside inner class, got:\n{content}"
+        );
     }
 }

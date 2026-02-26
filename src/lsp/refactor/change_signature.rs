@@ -211,8 +211,7 @@ pub fn change_signature(
         snaps.insert(file.to_path_buf(), Some(source.as_bytes().to_vec()));
         // Pre-read call-site files for snapshot
         {
-            let mut seen: std::collections::HashSet<PathBuf> =
-                std::collections::HashSet::new();
+            let mut seen: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
             seen.insert(file.to_path_buf());
             for (path, _, _) in &call_sites {
                 if seen.insert(path.clone())
@@ -261,12 +260,7 @@ pub fn change_signature(
 
         // 2. Update override methods in subclasses
         for ovr_path in &override_files {
-            match apply_signature_to_override(
-                ovr_path,
-                name,
-                &new_param_str,
-                &rename_map,
-            ) {
+            match apply_signature_to_override(ovr_path, name, &new_param_str, &rename_map) {
                 Ok(()) => overrides_updated += 1,
                 Err(e) => {
                     let rel = crate::core::fs::relative_slash(ovr_path, project_root);
@@ -545,8 +539,7 @@ fn apply_signature_to_override(
     }
 
     super::validate_no_new_errors(&source, &new_source)?;
-    std::fs::write(file, &new_source)
-        .map_err(|e| miette::miette!("cannot write file: {e}"))?;
+    std::fs::write(file, &new_source).map_err(|e| miette::miette!("cannot write file: {e}"))?;
     Ok(())
 }
 
@@ -1131,10 +1124,7 @@ mod tests {
     #[test]
     fn change_sig_warns_about_tscn_connections() {
         let temp = setup_project(&[
-            (
-                "player.gd",
-                "func _on_hit(damage):\n\tprint(damage)\n",
-            ),
+            ("player.gd", "func _on_hit(damage):\n\tprint(damage)\n"),
             (
                 "level.tscn",
                 "[gd_scene format=3]\n\n\
@@ -1168,10 +1158,7 @@ mod tests {
     #[test]
     fn change_sig_no_tscn_warning_when_no_connections() {
         let temp = setup_project(&[
-            (
-                "player.gd",
-                "func attack(damage):\n\tprint(damage)\n",
-            ),
+            ("player.gd", "func attack(damage):\n\tprint(damage)\n"),
             (
                 "level.tscn",
                 "[gd_scene format=3]\n\n[node name=\"Root\" type=\"Node2D\"]\n",

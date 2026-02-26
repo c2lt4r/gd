@@ -5,6 +5,9 @@ use miette::Result;
 use serde::Serialize;
 use tree_sitter::Node;
 
+use crate::core::symbol_table;
+use crate::core::type_inference::{InferredType, infer_expression_type};
+
 // ── introduce-parameter ────────────────────────────────────────────────────
 
 #[derive(Serialize, Debug)]
@@ -82,8 +85,19 @@ pub fn introduce_parameter(
             .to_string()
     };
 
+    // Resolve the effective type: explicit --type flag wins, otherwise infer from AST.
+    let effective_type: Option<String> = if let Some(t) = type_hint {
+        Some(t.to_string())
+    } else {
+        let symbols = symbol_table::build(&tree, &source);
+        infer_expression_type(&expr, &source, &symbols).and_then(|ty| match ty {
+            InferredType::Void | InferredType::Variant => None,
+            _ => Some(ty.display_name()),
+        })
+    };
+
     // Build the parameter string: "name: Type = default" or "name = default"
-    let param_text = if let Some(t) = type_hint {
+    let param_text = if let Some(ref t) = effective_type {
         format!("{name}: {t} = {expr_text}")
     } else {
         format!("{name} = {expr_text}")
@@ -236,9 +250,9 @@ mod tests {
     }
 
     #[test]
-    fn introduce_param_no_type() {
+    fn introduce_param_inferred_string() {
         let temp = setup_project(&[("player.gd", "func greet():\n\tprint(\"hello\")\n")]);
-        // Select "\"hello\"" on line 2
+        // Select "\"hello\"" on line 2 — type inference should produce String
         let result = introduce_parameter(
             &temp.path().join("player.gd"),
             2,
@@ -251,10 +265,15 @@ mod tests {
         )
         .unwrap();
         assert!(result.applied);
+        assert!(
+            result.parameter.contains("msg: String"),
+            "should infer String type, got: {}",
+            result.parameter
+        );
         let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
         assert!(
-            content.contains("func greet(msg = \"hello\")"),
-            "should add untyped param, got: {content}"
+            content.contains("func greet(msg: String = \"hello\")"),
+            "should add typed param, got: {content}"
         );
         assert!(
             content.contains("print(msg)"),
@@ -279,5 +298,129 @@ mod tests {
         assert!(!result.applied);
         let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
         assert!(!content.contains("msg"), "dry run should not modify file");
+    }
+
+    #[test]
+    fn introduce_param_inferred_int() {
+        let temp = setup_project(&[("combat.gd", "func attack():\n\tvar hp = health - 42\n")]);
+        // Select "42" on line 2
+        // \tvar hp = health - 42
+        // col:                20 22 (1-based)
+        let result = introduce_parameter(
+            &temp.path().join("combat.gd"),
+            2,
+            20,
+            22,
+            "damage",
+            None,
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        assert_eq!(result.expression, "42");
+        assert!(
+            result.parameter.contains("damage: int"),
+            "should infer int type, got: {}",
+            result.parameter
+        );
+        let content = fs::read_to_string(temp.path().join("combat.gd")).unwrap();
+        assert!(
+            content.contains("func attack(damage: int = 42)"),
+            "should add typed param, got: {content}"
+        );
+    }
+
+    #[test]
+    fn introduce_param_inferred_vector2() {
+        let temp = setup_project(&[(
+            "movement.gd",
+            "func get_offset():\n\treturn Vector2(1, 2)\n",
+        )]);
+        // Select "Vector2(1, 2)" on line 2
+        // \treturn Vector2(1, 2)
+        // col:    9      22 (1-based)
+        let result = introduce_parameter(
+            &temp.path().join("movement.gd"),
+            2,
+            9,
+            22,
+            "offset",
+            None,
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        assert_eq!(result.expression, "Vector2(1, 2)");
+        assert!(
+            result.parameter.contains("offset: Vector2"),
+            "should infer Vector2 type, got: {}",
+            result.parameter
+        );
+        let content = fs::read_to_string(temp.path().join("movement.gd")).unwrap();
+        assert!(
+            content.contains("offset: Vector2 = Vector2(1, 2)"),
+            "should add typed param, got: {content}"
+        );
+    }
+
+    #[test]
+    fn introduce_param_unknown_expression_no_type() {
+        let temp = setup_project(&[("utils.gd", "func process():\n\tvar x = some_func()\n")]);
+        // Select "some_func()" on line 2 — unknown function, type not inferable
+        // \tvar x = some_func()
+        // col:     10       21 (1-based)
+        let result = introduce_parameter(
+            &temp.path().join("utils.gd"),
+            2,
+            10,
+            21,
+            "val",
+            None,
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        // Unknown call — should have no type annotation
+        assert!(
+            !result.parameter.contains(':'),
+            "unknown expression should have no type, got: {}",
+            result.parameter
+        );
+        let content = fs::read_to_string(temp.path().join("utils.gd")).unwrap();
+        assert!(
+            content.contains("val = some_func()"),
+            "should add untyped param, got: {content}"
+        );
+    }
+
+    #[test]
+    fn introduce_param_explicit_type_overrides_inference() {
+        let temp = setup_project(&[("player.gd", "func attack():\n\tvar hp = health - 42\n")]);
+        // Select "42" on line 2 but pass explicit type "float"
+        let result = introduce_parameter(
+            &temp.path().join("player.gd"),
+            2,
+            20,
+            22,
+            "damage",
+            Some("float"), // explicit override: int literal but user wants float
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        assert!(
+            result.parameter.contains("damage: float"),
+            "explicit type should win, got: {}",
+            result.parameter
+        );
+        let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+        assert!(
+            content.contains("func attack(damage: float = 42)"),
+            "should use explicit type, got: {content}"
+        );
     }
 }

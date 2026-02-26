@@ -1613,5 +1613,4 @@ func test():
         let locs = result.unwrap();
         assert_eq!(locs.len(), 2, "should find decl + qualified usage");
     }
-
 }

@@ -2206,10 +2206,7 @@ fn test_rename_enum_member_cross_file_qualified() {
 fn test_rename_enum_member_cross_file_by_name() {
     // The --name flag should also find and rename qualified enum member refs.
     let temp = setup_gd_project(&[
-        (
-            "types.gd",
-            "enum Direction { UP, DOWN, LEFT, RIGHT }\n",
-        ),
+        ("types.gd", "enum Direction { UP, DOWN, LEFT, RIGHT }\n"),
         (
             "player.gd",
             "extends Node\n\nfunc move():\n\tvar dir = Direction.UP\n",

@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.3.8] - 2026-02-26
+
+### Improved
+- **Rename** — enum member qualified references (`EnumName.MEMBER`) now found and updated cross-file, including nested patterns (`Outer.EnumName.MEMBER`)
+- **Extract method** — extracted function inherits `static` when source is a static function; extraction inside inner classes places the function in the correct class with proper indentation; `break`/`continue` targeting an outer loop is rejected
+- **Extract method** — parameters and return types are now inferred from the type inference engine (e.g., `func helper(speed: float) -> Vector2:`)
+- **Inline variable** — `@onready` variables are rejected with a clear error; warns when inlining discards a type annotation
+- **Inline method** — supports `self.method()` calls (same-file resolution) and `typed_var.method()` calls (cross-file type-based resolution with `self.` → receiver substitution); supports cross-file bare function calls via `ProjectIndex` lookup
+- **Move file** — path replacement in `.gd` files is now AST-aware: only updates `preload()`/`load()`/`extends` references, preserving paths in comments and data strings
+- **Move symbol** — automatically updates caller files when `--update-callers` is set: rewrites preload paths or adds new preloads with qualified reference rewriting
+- **Change signature** — propagates changes to overriding methods in subclasses (transitive); parameter rename in function body is now AST-aware (skips strings and comments); warns about `.tscn` signal connections referencing the handler
+- **Introduce variable** — infers type annotation from expression (e.g., `var dist: float = ...`); new `--replace-all` flag replaces all identical expressions in scope
+- **Introduce parameter** — infers type annotation from expression (e.g., `func f(damage: int = 10):`)
+
 ## [0.3.7] - 2026-02-25
 
 ### Added

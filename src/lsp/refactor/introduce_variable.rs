@@ -18,6 +18,9 @@ pub struct IntroduceVariableOutput {
     pub is_const: bool,
     pub file: String,
     pub applied: bool,
+    pub replacements: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inferred_type: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
 }
@@ -61,6 +64,7 @@ pub fn introduce_variable(
     end_column: usize, // 1-based
     name: &str,
     as_const: bool,
+    replace_all: bool,
     dry_run: bool,
     project_root: &Path,
 ) -> Result<IntroduceVariableOutput> {
@@ -84,14 +88,38 @@ pub fn introduce_variable(
         .utf8_text(source.as_bytes())
         .map_err(|e| miette::miette!("cannot read expression: {e}"))?
         .to_string();
+    let expr_kind = expr.kind().to_string();
 
-    // Find the containing statement to insert before
+    // ── Type inference ──────────────────────────────────────────────────
+    let symbols = crate::core::symbol_table::build(&tree, &source);
+    let inferred_type =
+        crate::core::type_inference::infer_expression_type(&expr, &source, &symbols)
+            .filter(|t| {
+                !matches!(
+                    t,
+                    crate::core::type_inference::InferredType::Void
+                        | crate::core::type_inference::InferredType::Variant
+                )
+            })
+            .map(|t| t.display_name());
+
+    // ── Find scope and matching occurrences ─────────────────────────────
     let containing_stmt = find_containing_statement(expr)
         .ok_or_else(|| miette::miette!("cannot find containing statement for the expression"))?;
 
-    let stmt_line = containing_stmt.start_position().row;
-    let indent = get_indent(&source, stmt_line);
+    let (replacements, earliest_stmt_line) = collect_replacements(
+        replace_all,
+        root,
+        start_point,
+        &expr,
+        &expr_kind,
+        &expr_text,
+        &source,
+        containing_stmt.start_position().row,
+    );
+    let replacement_count = u32::try_from(replacements.len()).unwrap_or(u32::MAX);
 
+    let indent = get_indent(&source, earliest_stmt_line);
     let relative_file = crate::core::fs::relative_slash(file, project_root);
 
     let mut warnings = Vec::new();
@@ -104,35 +132,18 @@ pub fn introduce_variable(
     }
 
     if !dry_run {
-        let starts = line_starts(&source);
-        let mut new_source = source.clone();
-
-        // 1. Replace expression with variable name
-        let expr_start = expr.start_byte();
-        let expr_end = expr.end_byte();
-        new_source.replace_range(expr_start..expr_end, name);
-
-        // 2. Insert variable declaration before the containing statement
-        // After the replacement, byte offsets above expr_start have shifted.
-        // The statement starts at starts[stmt_line], which is before expr_start,
-        // so it's still valid.
-        let insert_byte = starts[stmt_line];
-        let keyword = if as_const { "const" } else { "var" };
-        let var_line = format!("{indent}{keyword} {name} = {expr_text}\n");
-        new_source.insert_str(insert_byte, &var_line);
-
-        super::validate_no_new_errors(&source, &new_source)?;
-        std::fs::write(file, &new_source).map_err(|e| miette::miette!("cannot write file: {e}"))?;
-
-        let mut snaps: HashMap<PathBuf, Option<Vec<u8>>> = HashMap::new();
-        snaps.insert(file.to_path_buf(), Some(source.as_bytes().to_vec()));
-        let stack = super::undo::UndoStack::open(project_root);
-        let label = if as_const {
-            "introduce-constant"
-        } else {
-            "introduce-variable"
-        };
-        let _ = stack.record(label, &format!("introduce {name}"), &snaps, project_root);
+        apply_introduce(
+            file,
+            &source,
+            name,
+            &expr_text,
+            as_const,
+            inferred_type.as_deref(),
+            replacements,
+            earliest_stmt_line,
+            &indent,
+            project_root,
+        )?;
     }
 
     Ok(IntroduceVariableOutput {
@@ -141,8 +152,157 @@ pub fn introduce_variable(
         is_const: as_const,
         file: relative_file,
         applied: !dry_run,
+        replacements: replacement_count,
+        inferred_type,
         warnings,
     })
+}
+
+/// Gather all byte ranges to replace. Returns `(replacements, earliest_stmt_line)`.
+#[allow(clippy::too_many_arguments)]
+fn collect_replacements(
+    replace_all: bool,
+    root: Node,
+    start_point: tree_sitter::Point,
+    expr: &Node,
+    expr_kind: &str,
+    expr_text: &str,
+    source: &str,
+    initial_stmt_line: usize,
+) -> (Vec<(usize, usize)>, usize) {
+    let mut replacements: Vec<(usize, usize)> = vec![(expr.start_byte(), expr.end_byte())];
+    let mut earliest_stmt_line = initial_stmt_line;
+
+    if replace_all {
+        let scope = crate::lsp::references::enclosing_function(root, start_point)
+            .and_then(|f| f.child_by_field_name("body"))
+            .unwrap_or(root);
+
+        let mut extra = Vec::new();
+        collect_matching_expressions(scope, expr_kind, expr_text, source.as_bytes(), &mut extra);
+
+        for (s, e) in &extra {
+            if *s == expr.start_byte() && *e == expr.end_byte() {
+                continue;
+            }
+            if let Some(n) = root.descendant_for_byte_range(*s, *e)
+                && is_assignment_target(n)
+            {
+                continue;
+            }
+            replacements.push((*s, *e));
+
+            if let Some(n) = root.descendant_for_byte_range(*s, *e)
+                && let Some(stmt) = find_containing_statement(n)
+                && stmt.start_position().row < earliest_stmt_line
+            {
+                earliest_stmt_line = stmt.start_position().row;
+            }
+        }
+
+        replacements.sort_by_key(|(s, _)| *s);
+        replacements.dedup();
+    }
+
+    (replacements, earliest_stmt_line)
+}
+
+/// Apply the replacements and insert the declaration.
+#[allow(clippy::too_many_arguments)]
+fn apply_introduce(
+    file: &Path,
+    source: &str,
+    name: &str,
+    expr_text: &str,
+    as_const: bool,
+    inferred_type: Option<&str>,
+    mut replacements: Vec<(usize, usize)>,
+    earliest_stmt_line: usize,
+    indent: &str,
+    project_root: &Path,
+) -> Result<()> {
+    let starts = line_starts(source);
+    let mut new_source = source.to_string();
+
+    // 1. Replace occurrences in reverse byte order to preserve offsets
+    replacements.sort_by(|a, b| b.0.cmp(&a.0));
+    for (s, e) in &replacements {
+        new_source.replace_range(*s..*e, name);
+    }
+
+    // 2. Insert variable declaration before the earliest containing statement
+    let insert_byte = starts[earliest_stmt_line];
+    let keyword = if as_const { "const" } else { "var" };
+    let type_suffix = inferred_type.map_or(String::new(), |t| format!(": {t}"));
+    let var_line = format!("{indent}{keyword} {name}{type_suffix} = {expr_text}\n");
+    new_source.insert_str(insert_byte, &var_line);
+
+    super::validate_no_new_errors(source, &new_source)?;
+    std::fs::write(file, &new_source).map_err(|e| miette::miette!("cannot write file: {e}"))?;
+
+    let mut snaps: HashMap<PathBuf, Option<Vec<u8>>> = HashMap::new();
+    snaps.insert(file.to_path_buf(), Some(source.as_bytes().to_vec()));
+    let stack = super::undo::UndoStack::open(project_root);
+    let label = if as_const {
+        "introduce-constant"
+    } else {
+        "introduce-variable"
+    };
+    let _ = stack.record(label, &format!("introduce {name}"), &snaps, project_root);
+    Ok(())
+}
+
+/// Collect all expression nodes in `scope` that match the given kind and text.
+/// Does NOT recurse into nested function definitions.
+fn collect_matching_expressions(
+    scope: Node,
+    kind: &str,
+    text: &str,
+    source_bytes: &[u8],
+    out: &mut Vec<(usize, usize)>,
+) {
+    let mut cursor = scope.walk();
+    for child in scope.children(&mut cursor) {
+        // Don't recurse into nested function definitions (different scope)
+        if child.kind() == "function_definition" || child.kind() == "constructor_definition" {
+            continue;
+        }
+        if child.kind() == kind
+            && let Ok(node_text) = child.utf8_text(source_bytes)
+            && node_text == text
+        {
+            out.push((child.start_byte(), child.end_byte()));
+            // Don't recurse into matching nodes — the whole subtree is the match
+            continue;
+        }
+        // Recurse into children
+        collect_matching_expressions(child, kind, text, source_bytes, out);
+    }
+}
+
+/// Check whether a node is an assignment target (left side of `=`, `+=`, etc.,
+/// or a var/const declaration name).
+fn is_assignment_target(node: Node) -> bool {
+    if let Some(parent) = node.parent() {
+        match parent.kind() {
+            "assignment" | "augmented_assignment" => {
+                // Left child of assignment is at field "left" or position 0
+                if let Some(left) = parent.child_by_field_name("left") {
+                    return left.byte_range() == node.byte_range();
+                }
+                if let Some(first) = parent.child(0) {
+                    return first.byte_range() == node.byte_range();
+                }
+            }
+            "variable_statement" | "const_statement" => {
+                if let Some(name_node) = parent.child_by_field_name("name") {
+                    return name_node.byte_range() == node.byte_range();
+                }
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 /// Walk up from the deepest node at the given range to find the first expression node.
@@ -226,6 +386,7 @@ mod tests {
             "velocity",
             false,
             false,
+            false,
             temp.path(),
         )
         .unwrap();
@@ -256,6 +417,7 @@ mod tests {
             29,
             "velocity",
             false,
+            false,
             true,
             temp.path(),
         )
@@ -280,6 +442,7 @@ mod tests {
             "RATIO",
             true,
             false,
+            false,
             temp.path(),
         )
         .unwrap();
@@ -289,8 +452,8 @@ mod tests {
         assert_eq!(result.expression, "0.15");
         let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
         assert!(
-            content.contains("const RATIO = 0.15"),
-            "should insert const, got: {content}"
+            content.contains("const RATIO: float = 0.15"),
+            "should insert typed const, got: {content}"
         );
         assert!(
             content.contains("speed * RATIO"),
@@ -308,6 +471,7 @@ mod tests {
             22,
             "ratio",
             true,
+            false,
             true,
             temp.path(),
         )
@@ -334,14 +498,15 @@ mod tests {
             "ratio",
             false,
             false,
+            false,
             temp.path(),
         )
         .unwrap();
         assert!(!result.is_const);
         let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
         assert!(
-            content.contains("var ratio = 0.15"),
-            "should insert var not const, got: {content}"
+            content.contains("var ratio: float = 0.15"),
+            "should insert typed var not const, got: {content}"
         );
     }
 
@@ -355,6 +520,7 @@ mod tests {
             22,
             "RATIO",
             true,
+            false,
             true,
             temp.path(),
         )
@@ -378,6 +544,7 @@ mod tests {
             "hp",
             false,
             false,
+            false,
             temp.path(),
         )
         .unwrap();
@@ -390,6 +557,247 @@ mod tests {
         assert!(
             content.contains("print(hp)"),
             "should replace with var, got: {content}"
+        );
+    }
+
+    // ── Type inference tests ──────────────────────────────────────────────
+
+    #[test]
+    fn introduce_infers_int_from_arithmetic() {
+        // 1 + 2 → int via binary operator inference
+        let temp = setup_project(&[("player.gd", "func calc():\n\tprint(1 + 2)\n")]);
+        // Select "1 + 2" on line 2
+        // \tprint(1 + 2)
+        //        ^    ^ col 8 to 13 (1-based)
+        let result = introduce_variable(
+            &temp.path().join("player.gd"),
+            2,
+            8,
+            13,
+            "sum",
+            false,
+            false,
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        assert_eq!(result.inferred_type.as_deref(), Some("int"));
+        let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+        assert!(
+            content.contains("var sum: int = 1 + 2"),
+            "should have typed declaration, got: {content}"
+        );
+    }
+
+    #[test]
+    fn introduce_infers_vector2_from_constructor() {
+        let temp = setup_project(&[("player.gd", "func calc():\n\tprint(Vector2(1, 2))\n")]);
+        // Select "Vector2(1, 2)" on line 2
+        // \tprint(Vector2(1, 2))
+        //        ^             ^ col 8 to 21 (1-based)
+        let result = introduce_variable(
+            &temp.path().join("player.gd"),
+            2,
+            8,
+            21,
+            "pos",
+            false,
+            false,
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        assert_eq!(result.inferred_type.as_deref(), Some("Vector2"));
+        let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+        assert!(
+            content.contains("var pos: Vector2 = Vector2(1, 2)"),
+            "should have typed declaration, got: {content}"
+        );
+    }
+
+    #[test]
+    fn introduce_unknown_expression_stays_untyped() {
+        let temp = setup_project(&[("player.gd", "func calc():\n\tprint(some_unknown_func())\n")]);
+        // Select "some_unknown_func()" on line 2
+        // \tprint(some_unknown_func())
+        //        ^                   ^ col 8 to 27 (1-based)
+        let result = introduce_variable(
+            &temp.path().join("player.gd"),
+            2,
+            8,
+            27,
+            "val",
+            false,
+            false,
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        // Unknown function — no inferred type (or Variant which we skip)
+        let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+        assert!(
+            content.contains("var val = some_unknown_func()"),
+            "should have untyped declaration, got: {content}"
+        );
+    }
+
+    #[test]
+    fn introduce_const_with_type() {
+        let temp = setup_project(&[("player.gd", "func calc():\n\tprint(Vector2(1, 2))\n")]);
+        let result = introduce_variable(
+            &temp.path().join("player.gd"),
+            2,
+            8,
+            21,
+            "POS",
+            true,
+            false,
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        assert!(result.is_const);
+        assert_eq!(result.inferred_type.as_deref(), Some("Vector2"));
+        let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+        assert!(
+            content.contains("const POS: Vector2 = Vector2(1, 2)"),
+            "should have typed const, got: {content}"
+        );
+    }
+
+    // ── Replace-all tests ────────────────────────────────────────────────
+
+    #[test]
+    fn replace_all_replaces_all_occurrences() {
+        let temp = setup_project(&[(
+            "player.gd",
+            "func calc(a, b):\n\tvar x = a + b\n\tvar y = a + b\n\tprint(a + b)\n",
+        )]);
+        // Select "a + b" on line 2, col 10-15 (1-based)
+        let result = introduce_variable(
+            &temp.path().join("player.gd"),
+            2,
+            10,
+            15,
+            "sum",
+            false,
+            true,
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        assert_eq!(result.replacements, 3);
+        let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+        assert!(
+            content.contains("var sum = a + b"),
+            "should have declaration, got: {content}"
+        );
+        // All three occurrences should be replaced
+        assert_eq!(
+            content.matches("sum").count(),
+            4, // 1 declaration + 3 replacements
+            "should have 4 occurrences of 'sum', got: {content}"
+        );
+        // Original expression should not appear
+        assert_eq!(
+            content.matches("a + b").count(),
+            1, // Only in the declaration
+            "expression should only appear in declaration, got: {content}"
+        );
+    }
+
+    #[test]
+    fn replace_all_false_only_replaces_selected() {
+        let temp = setup_project(&[(
+            "player.gd",
+            "func calc(a, b):\n\tvar x = a + b\n\tvar y = a + b\n\tprint(a + b)\n",
+        )]);
+        // Same selection but replace_all=false
+        let result = introduce_variable(
+            &temp.path().join("player.gd"),
+            2,
+            10,
+            15,
+            "sum",
+            false,
+            false,
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        assert_eq!(result.replacements, 1);
+        let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+        // Only the selected occurrence replaced, others remain
+        assert_eq!(
+            content.matches("a + b").count(),
+            3, // 1 in declaration + 2 untouched occurrences
+            "only selected should be replaced, got: {content}"
+        );
+    }
+
+    #[test]
+    fn replace_all_declaration_before_earliest() {
+        let temp = setup_project(&[(
+            "player.gd",
+            "func calc(a, b):\n\tprint(a + b)\n\tvar x = a + b\n\tprint(a + b)\n",
+        )]);
+        // Select "a + b" on line 3 (the second occurrence)
+        let result = introduce_variable(
+            &temp.path().join("player.gd"),
+            3,
+            10,
+            15,
+            "sum",
+            false,
+            true,
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        assert_eq!(result.replacements, 3);
+        let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+        // Declaration should be before the first occurrence (line 2)
+        let decl_pos = content.find("var sum").expect("should have declaration");
+        let first_use = content.find("print(sum)").expect("should have first usage");
+        assert!(
+            decl_pos < first_use,
+            "declaration should be before first use, got: {content}"
+        );
+    }
+
+    #[test]
+    fn replace_all_respects_function_scope() {
+        let temp = setup_project(&[(
+            "player.gd",
+            "func calc(a, b):\n\tprint(a + b)\n\nfunc other(a, b):\n\tprint(a + b)\n",
+        )]);
+        // Select "a + b" on line 2, inside calc()
+        let result = introduce_variable(
+            &temp.path().join("player.gd"),
+            2,
+            8,
+            13,
+            "sum",
+            false,
+            true,
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        assert_eq!(result.replacements, 1);
+        let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+        // The "a + b" in other() should NOT be replaced
+        assert!(
+            content.contains("func other(a, b):\n\tprint(a + b)"),
+            "other function should be untouched, got: {content}"
         );
     }
 }

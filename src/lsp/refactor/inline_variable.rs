@@ -113,7 +113,9 @@ pub fn inline_variable(
         ));
     }
     if let Some(type_text) = &type_warning {
-        warnings.push(format!("type annotation ': {type_text}' will be lost after inlining"));
+        warnings.push(format!(
+            "type annotation ': {type_text}' will be lost after inlining"
+        ));
     }
 
     // Collision check: available for future use to warn about shadowing issues
@@ -331,7 +333,8 @@ fn has_onready_annotation(decl: Node, root: Node, source: &str) -> bool {
         if child.kind() == "annotations" {
             let mut annot_cursor = child.walk();
             for annot in child.children(&mut annot_cursor) {
-                if annot.kind() == "annotation" && annotation_name(&annot, source) == Some("onready")
+                if annot.kind() == "annotation"
+                    && annotation_name(&annot, source) == Some("onready")
                 {
                     return true;
                 }
@@ -667,7 +670,10 @@ mod tests {
             inline_variable(&temp.path().join("player.gd"), 2, 6, false, temp.path()).unwrap();
         assert!(result.applied);
         assert!(
-            !result.warnings.iter().any(|w| w.contains("type annotation")),
+            !result
+                .warnings
+                .iter()
+                .any(|w| w.contains("type annotation")),
             "should not warn about type for untyped var, got: {:?}",
             result.warnings
         );
@@ -675,15 +681,15 @@ mod tests {
 
     #[test]
     fn no_type_warning_for_inferred() {
-        let temp = setup_project(&[(
-            "player.gd",
-            "func _ready():\n\tvar x := 42\n\tprint(x)\n",
-        )]);
+        let temp = setup_project(&[("player.gd", "func _ready():\n\tvar x := 42\n\tprint(x)\n")]);
         let result =
             inline_variable(&temp.path().join("player.gd"), 2, 6, false, temp.path()).unwrap();
         assert!(result.applied);
         assert!(
-            !result.warnings.iter().any(|w| w.contains("type annotation")),
+            !result
+                .warnings
+                .iter()
+                .any(|w| w.contains("type annotation")),
             "should not warn about inferred type, got: {:?}",
             result.warnings
         );
@@ -699,10 +705,7 @@ mod tests {
             inline_variable(&temp.path().join("player.gd"), 2, 6, false, temp.path()).unwrap();
         assert!(result.applied);
         assert!(
-            result
-                .warnings
-                .iter()
-                .any(|w| w.contains("Array[String]")),
+            result.warnings.iter().any(|w| w.contains("Array[String]")),
             "should warn about lost type annotation, got: {:?}",
             result.warnings
         );
