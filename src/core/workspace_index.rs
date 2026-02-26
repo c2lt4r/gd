@@ -93,8 +93,27 @@ impl ProjectIndex {
         let project_file = project_root.join("project.godot");
         let mut autoloads = HashMap::new();
         for (name, res_path) in parse_autoloads(&project_file) {
-            // Only resolve .gd scripts (not .tscn scenes)
-            if Path::new(&res_path)
+            if res_path.starts_with("uid://") {
+                // UID-based autoloads: can't resolve path, but register name as known.
+                // Try to find a matching class_name in the project files.
+                if let Some(fs) = classes.get(&name) {
+                    autoloads.insert(name, fs.clone());
+                } else {
+                    autoloads.insert(
+                        name.clone(),
+                        FileSymbols {
+                            path: PathBuf::new(),
+                            class_name: Some(name),
+                            extends: None,
+                            has_tool: false,
+                            functions: Vec::new(),
+                            variables: Vec::new(),
+                            signals: Vec::new(),
+                            enums: Vec::new(),
+                        },
+                    );
+                }
+            } else if Path::new(&res_path)
                 .extension()
                 .is_some_and(|e| e.eq_ignore_ascii_case("gd"))
                 && let Some(real_path) = resolve_res_path(&res_path, project_root)

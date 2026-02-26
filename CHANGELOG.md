@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.3.10] - 2026-02-26
+
+### Improved
+- **`gd check` — 72% fewer false positives on real projects** (24,540 → 6,780 across 5 open-source projects, 1,158 files) while maintaining 100% mutation parity:
+  - **Singleton awareness**: recognize all 39 Godot singletons (Input, OS, Time, etc.) and skip false "non-static method on class" errors
+  - **Static method detection**: regenerated ClassDB with `is_static` flag from extension_api.json; `FileAccess.open()`, `Image.create()`, etc. no longer flagged
+  - **Cross-file resolution**: thread ProjectIndex to method-not-found and super-method checks; recognize methods/properties from project-defined base classes
+  - **Project root fix**: `gd check <path>` now builds the project index from the target path's root, not the CWD — fixes autoload and class_name resolution
+  - **UID autoloads**: handle Godot 4.4+ `uid://` paths in project.godot autoload entries
+  - **Global scope constants**: replace hardcoded constant list with `@GlobalScope` ClassDB lookup (512 enum values: MOUSE_BUTTON_LEFT, KEY_ESCAPE, etc.)
+  - **Extends chain constants**: recognize class enum members (CONNECT_DEFERRED, NOTIFICATION_PREDELETE, etc.) via inheritance
+  - **String formatting operator**: `"hello %s" % value` no longer flagged as invalid operator
+  - **Implicit type conversions**: String → StringName and String → NodePath now accepted in type checks
+  - **Annotation identifiers**: `@warning_ignore` and other annotations no longer flagged as undeclared
+  - **Builtin constructors**: `RID()`, `PackedVector2Array()`, etc. recognized; `Vector2(1)`, `Color("hex")` single-arg forms accepted
+  - **Color constructor type check**: `Color(float)` correctly rejected while `Color(String)` and `Color(Color)` accepted
+
 ## [0.3.9] - 2026-02-26
 
 ### Added

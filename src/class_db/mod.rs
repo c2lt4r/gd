@@ -139,6 +139,26 @@ pub fn property_type(class: &str, property: &str) -> Option<&'static str> {
     }
 }
 
+/// Check if a class name is a Godot singleton (e.g. Input, OS, Time).
+pub fn is_singleton(name: &str) -> bool {
+    generated::SINGLETONS.binary_search(&name).is_ok()
+}
+
+/// Check if a method is static on a class, walking the inheritance chain.
+pub fn method_is_static(class: &str, method: &str) -> bool {
+    let mut current = class;
+    loop {
+        let key = format!("{current}.{method}");
+        if let Ok(i) = generated::METHOD_SIGNATURES.binary_search_by_key(&key.as_str(), |s| s.key) {
+            return generated::METHOD_SIGNATURES[i].is_static;
+        }
+        match parent_class(current) {
+            Some(parent) => current = parent,
+            None => return false,
+        }
+    }
+}
+
 /// Check if a method exists on a class (including inherited methods).
 #[allow(dead_code)]
 pub fn method_exists(class: &str, method: &str) -> bool {

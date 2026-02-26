@@ -83,12 +83,13 @@ def main():
         for method in cls.get("methods", []):
             method_name = method["name"]
             ret = method.get("return_value", {}).get("type", "void")
+            is_static = method.get("is_static", False)
             methods.append((f"{name}.{method_name}", ret))
             # Build signature info for override checking
             args = method.get("arguments", [])
             param_types = ",".join(a["type"] for a in args)
             required = sum(1 for a in args if "default_value" not in a)
-            method_signatures.append((f"{name}.{method_name}", ret, required, len(args), param_types))
+            method_signatures.append((f"{name}.{method_name}", ret, required, len(args), param_types, is_static))
             # Doc
             doc = format_doc(method.get("description", ""))
             if doc:
@@ -197,18 +198,20 @@ def main():
     print('];')
     print()
 
-    # Method signatures: (key, return_type, required_params, total_params, param_types)
+    # Method signatures: (key, return_type, required_params, total_params, param_types, is_static)
     print('pub struct MethodSig {')
     print('    pub key: &\'static str,')
     print('    pub return_type: &\'static str,')
     print('    pub required_params: u8,')
     print('    pub total_params: u8,')
     print('    pub param_types: &\'static str,')
+    print('    pub is_static: bool,')
     print('}')
     print()
     print(f'pub static METHOD_SIGNATURES: &[MethodSig] = &[')
-    for key, ret, required, total, params in method_signatures:
-        print(f'    MethodSig {{ key: "{key}", return_type: "{ret}", required_params: {required}, total_params: {total}, param_types: "{params}" }},')
+    for key, ret, required, total, params, is_static in method_signatures:
+        st = "true" if is_static else "false"
+        print(f'    MethodSig {{ key: "{key}", return_type: "{ret}", required_params: {required}, total_params: {total}, param_types: "{params}", is_static: {st} }},')
     print('];')
     print()
 
@@ -267,6 +270,14 @@ def main():
     print('    pub doc: &\'static str,')
     print('}')
     print()
+    # Singletons
+    singletons = sorted(set(s["type"] for s in api.get("singletons", [])))
+    print(f'pub static SINGLETONS: &[&str] = &[')
+    for s in singletons:
+        print(f'    "{s}",')
+    print('];')
+    print()
+
     print(f'pub static ENUM_VALUES: &[EnumValue] = &[')
     for cls, enum_name, val_name, int_val, is_bitfield, doc in enum_values:
         bf = "true" if is_bitfield else "false"

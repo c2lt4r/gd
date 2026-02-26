@@ -56,14 +56,27 @@ pub fn exec(args: &CheckArgs) -> Result<()> {
     let config = Config::load(&cwd)?;
     let ignore_base = find_project_root(&cwd).unwrap_or_else(|| cwd.clone());
 
-    let roots = if args.paths.is_empty() {
+    let roots: Vec<std::path::PathBuf> = if args.paths.is_empty() {
         vec![cwd.clone()]
     } else {
         args.paths.iter().map(std::path::PathBuf::from).collect()
     };
 
-    // Build project-wide index for cross-file override checking
-    let project_index = ProjectIndex::build(&ignore_base);
+    // Build project-wide index for cross-file override checking.
+    // When explicit paths are given, use the first path's project root so
+    // autoloads, class_names, etc. are resolved from the target project.
+    let index_root = if args.paths.is_empty() {
+        ignore_base.clone()
+    } else {
+        let first = &roots[0];
+        let start = if first.is_file() {
+            first.parent().unwrap_or(first).to_path_buf()
+        } else {
+            first.clone()
+        };
+        find_project_root(&start).unwrap_or(start)
+    };
+    let project_index = ProjectIndex::build(&index_root);
 
     let json_mode = args.format == "json";
     let mut error_count = 0u32;
@@ -1795,8 +1808,8 @@ pub fn check_classdb_errors(
     check_invalid_operators(root, source, symbols, &mut errors);
     check_invalid_cast(root, source, symbols, &mut errors);
     check_type_not_found(root, source, symbols, project, &mut errors);
-    check_method_not_found(root, source, symbols, &mut errors);
-    check_super_method_not_found(root, source, symbols, &mut errors);
+    check_method_not_found(root, source, symbols, project, &mut errors);
+    check_super_method_not_found(root, source, symbols, project, &mut errors);
     check_undefined_identifiers(root, source, symbols, project, &mut errors);
     check_builtin_method_not_found(root, source, symbols, &mut errors);
     check_builtin_property_not_found(root, source, symbols, &mut errors);
@@ -2531,6 +2544,7 @@ fn check_instance_method_in_node(node: Node, source: &str, errors: &mut Vec<Stru
         && lhs.kind() == "identifier"
         && let Ok(class_name) = lhs.utf8_text(bytes)
         && crate::class_db::class_exists(class_name)
+        && !crate::class_db::is_singleton(class_name)
     {
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
@@ -2539,9 +2553,8 @@ fn check_instance_method_in_node(node: Node, source: &str, errors: &mut Vec<Stru
                 && let Ok(method_name) = name_node.utf8_text(bytes)
                 && method_name != "new"
                 && crate::class_db::method_exists(class_name, method_name)
+                && !crate::class_db::method_is_static(class_name, method_name)
             {
-                // ClassDB methods called on a class name are instance methods
-                // (static methods in Godot are rare — new() is excluded above)
                 let pos = node.start_position();
                 errors.push(StructuralError {
                     line: pos.row as u32 + 1,
@@ -2935,6 +2948,10 @@ fn types_assignable(declared: &str, actual: &str) -> bool {
     }
     // Numeric widening: int → float
     if declared == "float" && actual == "int" {
+        return true;
+    }
+    // Godot implicit conversions: String → StringName, String → NodePath
+    if (declared == "StringName" || declared == "NodePath") && actual == "String" {
         return true;
     }
     // Class inheritance: allow both upcast and downcast (Godot defers to runtime)
@@ -3401,7 +3418,18 @@ fn operator_valid(op: &str, left: &str, right: &str) -> bool {
             }
             false
         }
-        "%" => is_numeric_type(left) && is_numeric_type(right),
+        "%" => {
+            // Numeric modulo
+            if is_numeric_type(left) && is_numeric_type(right) {
+                return true;
+            }
+            // GDScript string formatting: "Hello %s" % value
+            if left == "String" {
+                return true;
+            }
+            // Vector element-wise modulo
+            left == right && is_vector_type(left)
+        }
         "<" | ">" | "<=" | ">=" => {
             if is_numeric_type(left) && is_numeric_type(right) {
                 return true;
@@ -3710,6 +3738,26 @@ fn check_constructor_arg_types(
             }
             return;
         }
+        // Color(x) with 1 arg: only Color(String) and Color(Color) are valid
+        "Color" => {
+            let mut cursor = args_node.walk();
+            let args: Vec<_> = args_node.named_children(&mut cursor).collect();
+            if args.len() == 1
+                && let Some(actual) =
+                    type_inference::infer_expression_type(&args[0], source, symbols)
+                && let Some(actual_name) = inferred_type_name(&actual)
+                && !matches!(actual_name, "String" | "Color" | "Variant")
+            {
+                errors.push(StructuralError {
+                    line: args[0].start_position().row as u32 + 1,
+                    column: args[0].start_position().column as u32 + 1,
+                    message: format!(
+                        "no constructor of \"Color\" matches the signature \"Color({actual_name})\"",
+                    ),
+                });
+            }
+            return;
+        }
         _ => None,
     };
 
@@ -3781,14 +3829,14 @@ fn parse_utility_param_count(sig: &str) -> (u8, u8) {
 /// Known constructor variants for builtin types. Returns list of valid param counts.
 fn constructor_param_counts(type_name: &str) -> Option<&'static [u8]> {
     match type_name {
-        "Color" => Some(&[0, 3, 4]),
-        "Vector2" | "Vector2i" | "Transform3D" | "AABB" => Some(&[0, 2]),
-        "Vector3" | "Vector3i" | "Basis" => Some(&[0, 3]),
-        "Vector4" | "Vector4i" => Some(&[0, 4]),
+        "Color" | "Plane" => Some(&[0, 1, 2, 3, 4]),
+        "Vector2" | "Vector2i" => Some(&[0, 1, 2]),
+        "Vector3" | "Vector3i" => Some(&[0, 1, 3]),
+        "Vector4" | "Vector4i" | "Projection" => Some(&[0, 1, 4]),
+        "Transform3D" | "AABB" => Some(&[0, 2]),
+        "Basis" => Some(&[0, 3]),
         "Rect2" | "Rect2i" | "Quaternion" => Some(&[0, 2, 4]),
         "Transform2D" => Some(&[0, 2, 3]),
-        "Plane" => Some(&[0, 1, 2, 3, 4]),
-        "Projection" => Some(&[0, 1, 4]),
         _ => None,
     }
 }
@@ -4430,15 +4478,17 @@ fn check_method_not_found(
     root: &Node,
     source: &str,
     symbols: &SymbolTable,
+    project: &ProjectIndex,
     errors: &mut Vec<StructuralError>,
 ) {
-    check_method_not_found_in_node(root, source, symbols, errors);
+    check_method_not_found_in_node(root, source, symbols, project, errors);
 }
 
 fn check_method_not_found_in_node(
     node: &Node,
     source: &str,
     symbols: &SymbolTable,
+    project: &ProjectIndex,
     errors: &mut Vec<StructuralError>,
 ) {
     // Self method calls: `call` node with identifier callee
@@ -4451,6 +4501,7 @@ fn check_method_not_found_in_node(
         let is_known = symbols.functions.iter().any(|f| f.name == func_name)
             || crate::class_db::utility_function(func_name).is_some()
             || crate::class_db::class_exists(func_name)
+            || crate::core::type_inference::is_builtin_type(func_name)
             || is_builtin_convertible(func_name)
             || constructor_param_counts(func_name).is_some()
             || matches!(
@@ -4470,11 +4521,15 @@ fn check_method_not_found_in_node(
             || func_name.starts_with('_'); // Virtual callbacks
         if !is_known {
             // Check ClassDB via extends chain
-            let found_in_classdb = symbols
+            let mut found = symbols
                 .extends
                 .as_ref()
                 .is_some_and(|ext| crate::class_db::method_exists(ext, func_name));
-            if !found_in_classdb {
+            // Check ProjectIndex for cross-file base class methods
+            if !found && let Some(ext) = &symbols.extends {
+                found = project.method_exists(ext, func_name);
+            }
+            if !found {
                 errors.push(StructuralError {
                     line: callee.start_position().row as u32 + 1,
                     column: callee.start_position().column as u32 + 1,
@@ -4490,7 +4545,7 @@ fn check_method_not_found_in_node(
     let mut cursor = node.walk();
     if cursor.goto_first_child() {
         loop {
-            check_method_not_found_in_node(&cursor.node(), source, symbols, errors);
+            check_method_not_found_in_node(&cursor.node(), source, symbols, project, errors);
             if !cursor.goto_next_sibling() {
                 break;
             }
@@ -4655,6 +4710,10 @@ fn is_identifier_in_declaration_context(node: &Node, source: &str) -> bool {
     {
         return true;
     }
+    // Annotation name (e.g. @warning_ignore, @export, @onready)
+    if parent.kind() == "annotation" {
+        return true;
+    }
     // `as`/`is` type operand — already checked by A4
     if parent.kind() == "binary_operator"
         && parent
@@ -4722,15 +4781,33 @@ fn is_identifier_context_ok(
         return true;
     }
 
-    // ClassDB: extends chain for properties and methods
+    // ClassDB: extends chain for properties, methods, and constants/enums
     if let Some(ext) = &symbols.extends
         && (crate::class_db::property_exists(ext, name)
-            || crate::class_db::method_exists(ext, name))
+            || crate::class_db::method_exists(ext, name)
+            || crate::class_db::constant_exists(ext, name))
     {
         return true;
     }
 
-    // Known GDScript global functions/constants
+    // Cross-file: methods/properties from project-defined base classes
+    if let Some(ext) = &symbols.extends
+        && (project.method_exists(ext, name) || project.variable_type(ext, name).is_some())
+    {
+        return true;
+    }
+
+    // Singletons used as identifiers (e.g., passing Input as argument)
+    if crate::class_db::is_singleton(name) {
+        return true;
+    }
+
+    // Global scope constants/enums (MOUSE_BUTTON_LEFT, KEY_ESCAPE, TYPE_INT, etc.)
+    if crate::class_db::constant_exists("@GlobalScope", name) {
+        return true;
+    }
+
+    // Known GDScript global functions not in utility_function registry
     matches!(
         name,
         "print"
@@ -4749,19 +4826,6 @@ fn is_identifier_context_ok(
             | "load"
             | "is_instance_valid"
             | "weakref"
-            | "TYPE_NIL"
-            | "TYPE_BOOL"
-            | "TYPE_INT"
-            | "TYPE_FLOAT"
-            | "TYPE_STRING"
-            | "TYPE_VECTOR2"
-            | "TYPE_VECTOR3"
-            | "TYPE_DICTIONARY"
-            | "TYPE_ARRAY"
-            | "PROPERTY_HINT_NONE"
-            | "PROPERTY_USAGE_DEFAULT"
-            | "CONNECT_DEFERRED"
-            | "CONNECT_ONE_SHOT"
     )
 }
 
@@ -4770,15 +4834,17 @@ fn check_super_method_not_found(
     root: &Node,
     source: &str,
     symbols: &SymbolTable,
+    project: &ProjectIndex,
     errors: &mut Vec<StructuralError>,
 ) {
-    check_super_method_in_node(root, source, symbols, errors);
+    check_super_method_in_node(root, source, symbols, project, errors);
 }
 
 fn check_super_method_in_node(
     node: &Node,
     source: &str,
     symbols: &SymbolTable,
+    project: &ProjectIndex,
     errors: &mut Vec<StructuralError>,
 ) {
     // Pattern: `super.method()` → attribute { identifier("super"), attribute_call { identifier("method"), arguments } }
@@ -4794,10 +4860,13 @@ fn check_super_method_in_node(
                 && let Some(method_node) = child.named_child(0)
                 && let Ok(method_name) = method_node.utf8_text(source.as_bytes())
             {
-                let found = symbols
+                let mut found = symbols
                     .extends
                     .as_ref()
                     .is_some_and(|ext| crate::class_db::method_exists(ext, method_name));
+                if !found && let Some(ext) = &symbols.extends {
+                    found = project.method_exists(ext, method_name);
+                }
                 if !found {
                     errors.push(StructuralError {
                         line: method_node.start_position().row as u32 + 1,
@@ -4815,7 +4884,7 @@ fn check_super_method_in_node(
     let mut cursor = node.walk();
     if cursor.goto_first_child() {
         loop {
-            check_super_method_in_node(&cursor.node(), source, symbols, errors);
+            check_super_method_in_node(&cursor.node(), source, symbols, project, errors);
             if !cursor.goto_next_sibling() {
                 break;
             }
