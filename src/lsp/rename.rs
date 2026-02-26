@@ -221,4 +221,59 @@ static func static_caller():
         assert!(lines.contains(&2), "should rename static decl at line 2");
         assert!(lines.contains(&12), "should rename static call at line 12");
     }
+
+    #[test]
+    fn rename_enum_member_updates_qualified_refs() {
+        // Renaming an enum member should update both the declaration and
+        // qualified references like `EnumName.MEMBER`.
+        let source = "\
+enum State { IDLE, RUNNING, DEAD }
+
+func test():
+\tvar s = State.IDLE
+\tif s == State.RUNNING:
+\t\tpass
+\tvar bare = IDLE
+";
+        let uri = test_uri();
+        // Rename `IDLE` at its declaration in the enum (line 0, col 13)
+        let result = rename_symbol(source, &uri, Position::new(0, 13), "WAITING");
+        assert!(result.is_some());
+        let edit = result.unwrap();
+        let changes = edit.changes.unwrap();
+        let edits = changes.get(&uri).unwrap();
+        // Declaration (line 0) + State.IDLE (line 3) + bare IDLE (line 6) = 3
+        assert_eq!(
+            edits.len(),
+            3,
+            "should rename enum member decl + qualified ref + bare ref"
+        );
+        for e in edits {
+            assert_eq!(e.new_text, "WAITING");
+        }
+    }
+
+    #[test]
+    fn rename_enum_member_from_qualified_usage() {
+        // Placing cursor on the member in a qualified usage should also work.
+        let source = "\
+enum State { IDLE, RUNNING }
+
+func test():
+\tvar s = State.IDLE
+";
+        let uri = test_uri();
+        // Rename `IDLE` from the qualified usage at line 3
+        // In `State.IDLE`, `IDLE` starts at column 15
+        let result = rename_symbol(source, &uri, Position::new(3, 15), "WAITING");
+        assert!(result.is_some());
+        let edit = result.unwrap();
+        let changes = edit.changes.unwrap();
+        let edits = changes.get(&uri).unwrap();
+        // Declaration (line 0) + qualified usage (line 3)
+        assert_eq!(edits.len(), 2, "should rename decl + qualified usage");
+        let lines: Vec<u32> = edits.iter().map(|e| e.range.start.line).collect();
+        assert!(lines.contains(&0), "should rename declaration");
+        assert!(lines.contains(&3), "should rename qualified usage");
+    }
 }

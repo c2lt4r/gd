@@ -1098,8 +1098,17 @@ fn print_move_file_human(r: &crate::lsp::refactor::MoveFileOutput) {
 
 fn print_change_signature_human(r: &crate::lsp::refactor::ChangeSignatureOutput) {
     use owo_colors::OwoColorize;
+    let overrides_str = if r.overrides_updated > 0 {
+        format!(
+            ", {} override{}",
+            r.overrides_updated,
+            if r.overrides_updated == 1 { "" } else { "s" }
+        )
+    } else {
+        String::new()
+    };
     cprintln!(
-        "{} {} {} ({} call site{}){}",
+        "{} {} {} ({} call site{}{overrides_str}){}",
         r.old_signature.dimmed(),
         "→".dimmed(),
         r.new_signature.green().bold(),

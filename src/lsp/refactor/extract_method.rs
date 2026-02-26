@@ -44,6 +44,12 @@ pub fn extract_method(
         .child_by_field_name("body")
         .ok_or_else(|| miette::miette!("function has no body"))?;
 
+    // Detect static modifier on the enclosing function
+    let is_static = has_static_keyword(&func);
+
+    // Detect whether the function is inside an inner class
+    let inner_class = find_enclosing_class(&func);
+
     // Verify entire range is within the function body
     if start_line_0 < body.start_position().row || end_line_0 > body.end_position().row {
         return Err(miette::miette!(
@@ -135,7 +141,7 @@ pub fn extract_method(
     let params: Vec<&CapturedVar> = captured.iter().collect();
 
     // Generate the new function and call site based on return count
-    let (func_text, func_signature, call_site_line, returns_field, return_vars_field);
+    let (mut func_text, func_signature, call_site_line, returns_field, return_vars_field);
     let original_indent = get_indent(&source, start_line_0);
 
     if return_vars.len() >= 2 {
@@ -146,6 +152,7 @@ pub fn extract_method(
             &return_vars,
             &statements,
             &source,
+            is_static,
         );
         let result_name = pick_result_name(&source, body);
         let cl = generate_call_site_multi_return(
@@ -162,14 +169,25 @@ pub fn extract_method(
         return_vars_field = return_vars.iter().map(|v| v.name.clone()).collect();
     } else {
         let return_var = return_vars.into_iter().next();
-        let (ft, fs) =
-            generate_extracted_function(name, &params, return_var.as_ref(), &statements, &source);
+        let (ft, fs) = generate_extracted_function(
+            name,
+            &params,
+            return_var.as_ref(),
+            &statements,
+            &source,
+            is_static,
+        );
         let cl = generate_call_site(name, &params, return_var.as_ref(), &original_indent);
         func_text = ft;
         func_signature = fs;
         call_site_line = cl;
         returns_field = return_var.map(|v| v.name);
         return_vars_field = Vec::new();
+    }
+
+    // If inside an inner class, indent the extracted function to match class members
+    if inner_class.is_some() {
+        func_text = indent_block(&func_text, "\t");
     }
 
     let relative_file = crate::core::fs::relative_slash(file, project_root);
@@ -187,16 +205,28 @@ pub fn extract_method(
         };
         new_source.replace_range(replace_start..replace_end, &call_site_line);
 
-        // 2. Insert new function before the enclosing function
+        // 2. Insert new function
         // Re-compute line_starts after the first edit
         let new_starts = line_starts(&new_source);
-        let func_start_line = func.start_position().row;
-        // After our replacement, the enclosing function may have shifted.
-        // Use the original func start line to find the insertion point.
-        // The replacement was inside the function, so lines before the function are unchanged.
-        let insert_byte = new_starts[func_start_line];
-        let insert_text = format!("{func_text}\n\n\n");
-        new_source.insert_str(insert_byte, &insert_text);
+        if let Some(ref class_node) = inner_class {
+            // Inside an inner class: insert at the end of the class body (before closing)
+            // The class body end row is the last line of the class_definition.
+            let class_end_line = class_node.end_position().row;
+            // Insert before the class's last line (which is typically blank or the next
+            // declaration). We insert right before the end of the class body.
+            let insert_byte = new_starts[class_end_line];
+            let insert_text = format!("\n{func_text}\n");
+            new_source.insert_str(insert_byte, &insert_text);
+        } else {
+            let func_start_line = func.start_position().row;
+            // After our replacement, the enclosing function may have shifted.
+            // Use the original func start line to find the insertion point.
+            // The replacement was inside the function, so lines before the function
+            // are unchanged.
+            let insert_byte = new_starts[func_start_line];
+            let insert_text = format!("{func_text}\n\n\n");
+            new_source.insert_str(insert_byte, &insert_text);
+        }
 
         normalize_blank_lines(&mut new_source);
         super::validate_no_new_errors(&source, &new_source)?;
@@ -536,6 +566,43 @@ fn has_identifier(node: Node, name: &str, source: &str) -> bool {
     false
 }
 
+/// Check if a `function_definition` node has a `static_keyword` child.
+fn has_static_keyword(func_node: &Node) -> bool {
+    let mut cursor = func_node.walk();
+    for child in func_node.children(&mut cursor) {
+        if child.kind() == "static_keyword" {
+            return true;
+        }
+    }
+    false
+}
+
+/// Walk up from a function node to find an enclosing `class_definition` (inner class).
+/// Returns `None` if the function is at the top level (parent is the root/source_file).
+fn find_enclosing_class<'a>(func: &Node<'a>) -> Option<Node<'a>> {
+    let mut node = func.parent()?;
+    loop {
+        if node.kind() == "class_definition" {
+            return Some(node);
+        }
+        node = node.parent()?;
+    }
+}
+
+/// Indent every non-empty line of `text` by the given `prefix`.
+fn indent_block(text: &str, prefix: &str) -> String {
+    text.lines()
+        .map(|line| {
+            if line.trim().is_empty() {
+                String::new()
+            } else {
+                format!("{prefix}{line}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// Generate the extracted function text and its signature string.
 fn generate_extracted_function(
     name: &str,
@@ -543,6 +610,7 @@ fn generate_extracted_function(
     return_var: Option<&CapturedVar>,
     statements: &[Node],
     source: &str,
+    is_static: bool,
 ) -> (String, String) {
     // Build parameter list
     let param_str = params
@@ -563,7 +631,8 @@ fn generate_extracted_function(
         .map(|t| format!(" -> {t}"))
         .unwrap_or_default();
 
-    let signature = format!("func {name}({param_str}){return_type}:");
+    let static_prefix = if is_static { "static " } else { "" };
+    let signature = format!("{static_prefix}func {name}({param_str}){return_type}:");
 
     // Extract body text from the statements (include first line's indentation
     // so re_indent sees consistent indentation across all lines)
@@ -650,6 +719,7 @@ fn generate_extracted_function_multi_return(
     return_vars: &[CapturedVar],
     statements: &[Node],
     source: &str,
+    is_static: bool,
 ) -> (String, String) {
     let param_str = params
         .iter()
@@ -663,7 +733,8 @@ fn generate_extracted_function_multi_return(
         .collect::<Vec<_>>()
         .join(", ");
 
-    let signature = format!("func {name}({param_str}) -> Dictionary:");
+    let static_prefix = if is_static { "static " } else { "" };
+    let signature = format!("{static_prefix}func {name}({param_str}) -> Dictionary:");
 
     let first_line_start = source[..statements[0].start_byte()]
         .rfind('\n')
@@ -1228,5 +1299,198 @@ mod tests {
         let text = "\tprint(42)";
         let result = re_indent(text);
         assert_eq!(result, "\tprint(42)");
+    }
+
+    // ── static propagation ─────────────────────────────────────────────
+
+    #[test]
+    fn extract_from_static_func_produces_static() {
+        let temp = setup_project(&[(
+            "utils.gd",
+            "static func compute(x: int) -> int:\n\tvar doubled = x * 2\n\tprint(doubled)\n\treturn doubled\n",
+        )]);
+        // Extract `print(doubled)` (line 3)
+        let result = extract_method(
+            &temp.path().join("utils.gd"),
+            3,
+            3,
+            "log_value",
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        let content = fs::read_to_string(temp.path().join("utils.gd")).unwrap();
+        assert!(
+            content.contains("static func log_value("),
+            "extracted function should be static, got:\n{content}"
+        );
+        assert!(
+            result.function.starts_with("static func"),
+            "signature should start with 'static func', got: {}",
+            result.function
+        );
+    }
+
+    #[test]
+    fn extract_from_non_static_func_stays_non_static() {
+        let temp = setup_project(&[(
+            "player.gd",
+            "func _ready():\n\tprint(\"hello\")\n\tprint(\"world\")\n",
+        )]);
+        let result = extract_method(
+            &temp.path().join("player.gd"),
+            2,
+            2,
+            "greet",
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+        assert!(
+            !content.contains("static func greet"),
+            "non-static function should not get static, got:\n{content}"
+        );
+    }
+
+    #[test]
+    fn extract_static_with_return() {
+        let temp = setup_project(&[(
+            "utils.gd",
+            "static func compute():\n\tvar x = 1\n\tx += 10\n\tprint(x)\n",
+        )]);
+        // Extract `x += 10` (line 3) — x is written and used after
+        let result = extract_method(
+            &temp.path().join("utils.gd"),
+            3,
+            3,
+            "bump",
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        let content = fs::read_to_string(temp.path().join("utils.gd")).unwrap();
+        assert!(
+            content.contains("static func bump("),
+            "extracted function should be static, got:\n{content}"
+        );
+        assert!(
+            content.contains("return x"),
+            "should return x, got:\n{content}"
+        );
+    }
+
+    // ── inner class placement ──────────────────────────────────────────
+
+    #[test]
+    fn extract_in_inner_class_stays_in_class() {
+        let temp = setup_project(&[(
+            "player.gd",
+            "\
+extends Node
+
+func _ready():
+\tpass
+
+class InnerClass:
+\tfunc process():
+\t\tvar x = 1
+\t\tprint(x)
+\t\tprint(\"done\")
+",
+        )]);
+        // Extract `print("done")` (line 10)
+        let result = extract_method(
+            &temp.path().join("player.gd"),
+            10,
+            10,
+            "do_print",
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+        // The extracted function should be inside InnerClass (indented with one tab)
+        assert!(
+            content.contains("\tfunc do_print():"),
+            "extracted function should be indented inside inner class, got:\n{content}"
+        );
+        // It should NOT appear at the top level (before _ready or at column 0)
+        // Find the position of "func do_print" — it must come after "class InnerClass:"
+        let class_pos = content.find("class InnerClass:").unwrap();
+        let func_pos = content.find("func do_print").unwrap();
+        assert!(
+            func_pos > class_pos,
+            "extracted function should be after the inner class header, got:\n{content}"
+        );
+    }
+
+    #[test]
+    fn extract_in_inner_class_with_params() {
+        let temp = setup_project(&[(
+            "player.gd",
+            "\
+extends Node
+
+class Helper:
+\tfunc compute():
+\t\tvar a = 1
+\t\tvar b = 2
+\t\tprint(a + b)
+\t\tprint(\"end\")
+",
+        )]);
+        // Extract `print(a + b)` (line 7) — captures a and b
+        let result = extract_method(
+            &temp.path().join("player.gd"),
+            7,
+            7,
+            "show_sum",
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        assert_eq!(result.parameters.len(), 2);
+        let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+        assert!(
+            content.contains("\tfunc show_sum("),
+            "extracted function should be indented inside inner class, got:\n{content}"
+        );
+    }
+
+    #[test]
+    fn extract_static_in_inner_class() {
+        let temp = setup_project(&[(
+            "player.gd",
+            "\
+extends Node
+
+class Utils:
+\tstatic func helper():
+\t\tprint(\"a\")
+\t\tprint(\"b\")
+",
+        )]);
+        // Extract `print("b")` (line 6)
+        let result = extract_method(
+            &temp.path().join("player.gd"),
+            6,
+            6,
+            "print_b",
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+        assert!(
+            content.contains("\tstatic func print_b():"),
+            "should be static and indented inside inner class, got:\n{content}"
+        );
     }
 }

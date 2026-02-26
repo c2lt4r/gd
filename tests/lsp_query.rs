@@ -2144,3 +2144,104 @@ fn test_lsp_call_hierarchy_prepare() {
     child.kill().ok();
     child.wait().ok();
 }
+
+// ── Enum member rename cross-file ───────────────────────────────────────────
+
+#[test]
+fn test_rename_enum_member_cross_file_qualified() {
+    // Renaming an enum member should update qualified references in other files.
+    let temp = setup_gd_project(&[
+        (
+            "types.gd",
+            "class_name Types\n\nenum State { IDLE, RUNNING, DEAD }\n",
+        ),
+        (
+            "player.gd",
+            "extends Node\n\nfunc update():\n\tvar s = Types.State.IDLE\n\tif s == Types.State.RUNNING:\n\t\tpass\n",
+        ),
+    ]);
+
+    let output = gd_bin()
+        .args([
+            "refactor",
+            "rename",
+            "types.gd",
+            "--line",
+            "3",
+            "--column",
+            "14",
+            "--new-name",
+            "WAITING",
+            "--format",
+            "json",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd refactor rename");
+
+    assert!(output.status.success());
+
+    let types = fs::read_to_string(temp.path().join("types.gd")).unwrap();
+    assert!(
+        types.contains("WAITING"),
+        "types.gd enum member should be renamed"
+    );
+    assert!(
+        !types.contains("IDLE"),
+        "types.gd should no longer contain IDLE"
+    );
+
+    let player = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+    assert!(
+        player.contains("Types.State.WAITING"),
+        "player.gd qualified reference should be updated"
+    );
+    assert!(
+        !player.contains("IDLE"),
+        "player.gd should no longer contain IDLE"
+    );
+}
+
+#[test]
+fn test_rename_enum_member_cross_file_by_name() {
+    // The --name flag should also find and rename qualified enum member refs.
+    let temp = setup_gd_project(&[
+        (
+            "types.gd",
+            "enum Direction { UP, DOWN, LEFT, RIGHT }\n",
+        ),
+        (
+            "player.gd",
+            "extends Node\n\nfunc move():\n\tvar dir = Direction.UP\n",
+        ),
+    ]);
+
+    let output = gd_bin()
+        .args([
+            "refactor",
+            "rename",
+            "--name",
+            "UP",
+            "--new-name",
+            "NORTH",
+            "--format",
+            "json",
+        ])
+        .current_dir(temp.path())
+        .output()
+        .expect("Failed to run gd refactor rename --name");
+
+    assert!(output.status.success());
+
+    let types = fs::read_to_string(temp.path().join("types.gd")).unwrap();
+    assert!(
+        types.contains("NORTH"),
+        "types.gd enum member should be renamed"
+    );
+
+    let player = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+    assert!(
+        player.contains("Direction.NORTH"),
+        "player.gd qualified reference should be updated"
+    );
+}

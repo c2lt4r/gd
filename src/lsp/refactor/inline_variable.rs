@@ -68,6 +68,13 @@ pub fn inline_variable(
         ));
     }
 
+    // Validate: not @onready — value depends on scene tree readiness
+    if has_onready_annotation(decl, root, &source) {
+        return Err(miette::miette!(
+            "cannot inline @onready variable '{var_name}' — its value depends on scene tree readiness"
+        ));
+    }
+
     // Must have initializer
     let init_node = decl
         .child_by_field_name("value")
@@ -77,6 +84,9 @@ pub fn inline_variable(
         .map_err(|e| miette::miette!("cannot read initializer: {e}"))?
         .to_string();
     let init_kind = init_node.kind();
+
+    // Check for type annotation loss
+    let type_warning = extract_type_annotation_text(decl, &source);
 
     // Determine scope for usage search and reassignment check
     let scope_node = if is_local {
@@ -101,6 +111,9 @@ pub fn inline_variable(
         warnings.push(format!(
             "variable '{var_name}' has no usages — only the declaration will be removed"
         ));
+    }
+    if let Some(type_text) = &type_warning {
+        warnings.push(format!("type annotation ': {type_text}' will be lost after inlining"));
     }
 
     // Collision check: available for future use to warn about shadowing issues
@@ -306,6 +319,73 @@ fn needs_parens(init_kind: &str, usage_parent: Option<Node>) -> bool {
     )
 }
 
+/// Check if a `variable_statement` has an `@onready` annotation.
+///
+/// Annotations can appear in two forms in tree-sitter GDScript:
+/// 1. Inline: `@onready var x` — an `annotations` child within the node
+/// 2. Preceding sibling: `@onready\nvar x` — a separate `annotation` node before the declaration
+fn has_onready_annotation(decl: Node, root: Node, source: &str) -> bool {
+    // Check inline annotations (children of the declaration node)
+    let mut cursor = decl.walk();
+    for child in decl.children(&mut cursor) {
+        if child.kind() == "annotations" {
+            let mut annot_cursor = child.walk();
+            for annot in child.children(&mut annot_cursor) {
+                if annot.kind() == "annotation" && annotation_name(&annot, source) == Some("onready")
+                {
+                    return true;
+                }
+            }
+        }
+    }
+
+    // Check preceding siblings at the top level (e.g. `@onready\nvar x`)
+    let parent = decl.parent().unwrap_or(root);
+    let mut sibling_cursor = parent.walk();
+    let children: Vec<_> = parent.children(&mut sibling_cursor).collect();
+    if let Some(idx) = children.iter().position(|c| c.id() == decl.id()) {
+        let mut i = idx;
+        while i > 0 {
+            i -= 1;
+            let prev = &children[i];
+            if prev.kind() == "annotation" {
+                if annotation_name(prev, source) == Some("onready") {
+                    return true;
+                }
+            } else if prev.kind() == "comment" {
+                // Comments can appear between annotations and declarations
+            } else {
+                break;
+            }
+        }
+    }
+
+    false
+}
+
+/// Extract the annotation identifier name (e.g. "onready" from `@onready`).
+fn annotation_name<'a>(node: &Node, source: &'a str) -> Option<&'a str> {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == "identifier" {
+            return child.utf8_text(source.as_bytes()).ok();
+        }
+    }
+    None
+}
+
+/// Extract the type annotation text from a variable declaration.
+///
+/// Returns `Some("int")` for `var x: int = ...`, `None` for `var x = ...` or `var x := ...`.
+fn extract_type_annotation_text<'a>(decl: Node, source: &'a str) -> Option<&'a str> {
+    let type_node = decl.child_by_field_name("type")?;
+    // Skip inferred types (`:=`) — they don't carry explicit type info to lose
+    if type_node.kind() == "inferred_type" {
+        return None;
+    }
+    type_node.utf8_text(source.as_bytes()).ok()
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -507,5 +587,124 @@ mod tests {
         .unwrap();
         assert!(result.applied);
         assert_eq!(result.variable, "speed");
+    }
+
+    #[test]
+    fn rejects_onready_variable() {
+        let temp = setup_project(&[(
+            "player.gd",
+            "@onready var sprite = $Sprite2D\n\nfunc _ready():\n\tprint(sprite)\n",
+        )]);
+        let result = inline_variable(&temp.path().join("player.gd"), 1, 14, false, temp.path());
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("@onready"),
+            "error should mention @onready, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn rejects_onready_with_type() {
+        let temp = setup_project(&[(
+            "player.gd",
+            "@onready var sprite: Sprite2D = $Sprite2D\n\nfunc _ready():\n\tprint(sprite)\n",
+        )]);
+        let result = inline_variable(&temp.path().join("player.gd"), 1, 14, false, temp.path());
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("@onready"),
+            "error should mention @onready, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn rejects_onready_multiline_annotation() {
+        // @onready on a separate preceding line
+        let temp = setup_project(&[(
+            "player.gd",
+            "@export\n@onready\nvar sprite = $Sprite2D\n\nfunc _ready():\n\tprint(sprite)\n",
+        )]);
+        let result = inline_variable(&temp.path().join("player.gd"), 3, 5, false, temp.path());
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("@onready"),
+            "error should mention @onready, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn warns_on_type_annotation_loss() {
+        let temp = setup_project(&[(
+            "player.gd",
+            "func _ready():\n\tvar x: int = get_value()\n\tprint(x)\n",
+        )]);
+        let result =
+            inline_variable(&temp.path().join("player.gd"), 2, 6, false, temp.path()).unwrap();
+        assert!(result.applied);
+        assert_eq!(result.reference_count, 1);
+        assert!(
+            result.warnings.iter().any(|w| w.contains("int")),
+            "should warn about lost type annotation, got: {:?}",
+            result.warnings
+        );
+        let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+        assert!(
+            content.contains("print(get_value())"),
+            "should still inline, got: {content}"
+        );
+    }
+
+    #[test]
+    fn no_type_warning_without_annotation() {
+        let temp = setup_project(&[(
+            "player.gd",
+            "func _ready():\n\tvar x = get_value()\n\tprint(x)\n",
+        )]);
+        let result =
+            inline_variable(&temp.path().join("player.gd"), 2, 6, false, temp.path()).unwrap();
+        assert!(result.applied);
+        assert!(
+            !result.warnings.iter().any(|w| w.contains("type annotation")),
+            "should not warn about type for untyped var, got: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn no_type_warning_for_inferred() {
+        let temp = setup_project(&[(
+            "player.gd",
+            "func _ready():\n\tvar x := 42\n\tprint(x)\n",
+        )]);
+        let result =
+            inline_variable(&temp.path().join("player.gd"), 2, 6, false, temp.path()).unwrap();
+        assert!(result.applied);
+        assert!(
+            !result.warnings.iter().any(|w| w.contains("type annotation")),
+            "should not warn about inferred type, got: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn warns_on_complex_type_annotation() {
+        let temp = setup_project(&[(
+            "player.gd",
+            "func _ready():\n\tvar items: Array[String] = get_items()\n\tprint(items)\n",
+        )]);
+        let result =
+            inline_variable(&temp.path().join("player.gd"), 2, 6, false, temp.path()).unwrap();
+        assert!(result.applied);
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|w| w.contains("Array[String]")),
+            "should warn about lost type annotation, got: {:?}",
+            result.warnings
+        );
     }
 }

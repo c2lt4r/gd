@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use miette::Result;
 use serde::Serialize;
@@ -20,6 +20,7 @@ pub struct ChangeSignatureOutput {
     pub old_signature: String,
     pub new_signature: String,
     pub call_sites_updated: u32,
+    pub overrides_updated: u32,
     pub applied: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
@@ -164,9 +165,13 @@ pub fn change_signature(
 
     // Find the parameters node to replace
     let params_node = func_def.child_by_field_name("parameters");
+    let original_params = extract_function_params(func_def, &source);
 
     let relative_file = crate::core::fs::relative_slash(file, project_root);
     let mut warnings = Vec::new();
+
+    // Build project index for cross-file resolution (overrides + call sites)
+    let project_index = crate::core::workspace_index::ProjectIndex::build(project_root);
 
     // Find call sites to update
     let workspace = crate::lsp::workspace::WorkspaceIndex::new(project_root.to_path_buf());
@@ -176,7 +181,7 @@ pub fn change_signature(
     let func_def_end = func_def.end_position().row as u32;
 
     // Collect call site info for updating
-    let mut call_sites: Vec<(std::path::PathBuf, u32, u32)> = Vec::new();
+    let mut call_sites: Vec<(PathBuf, u32, u32)> = Vec::new();
     for loc in &all_refs {
         if let Some(ref uri) = file_uri
             && &loc.uri == uri
@@ -191,17 +196,22 @@ pub fn change_signature(
         }
     }
 
+    // ── Find overriding methods in subclasses ────────────────────────────
+    let override_files = find_override_files(file, name, class, &project_index);
+
     let mut call_sites_updated = 0u32;
+    let mut overrides_updated = 0u32;
 
     if dry_run {
         call_sites_updated = call_sites.len() as u32;
+        overrides_updated = override_files.len() as u32;
     } else {
         // Snapshot all affected files for undo before any writes
-        let mut snaps: HashMap<std::path::PathBuf, Option<Vec<u8>>> = HashMap::new();
+        let mut snaps: HashMap<PathBuf, Option<Vec<u8>>> = HashMap::new();
         snaps.insert(file.to_path_buf(), Some(source.as_bytes().to_vec()));
         // Pre-read call-site files for snapshot
         {
-            let mut seen: std::collections::HashSet<std::path::PathBuf> =
+            let mut seen: std::collections::HashSet<PathBuf> =
                 std::collections::HashSet::new();
             seen.insert(file.to_path_buf());
             for (path, _, _) in &call_sites {
@@ -209,6 +219,14 @@ pub fn change_signature(
                     && let Ok(content) = std::fs::read(path)
                 {
                     snaps.insert(path.clone(), Some(content));
+                }
+            }
+            // Also snapshot override files
+            for ovr_path in &override_files {
+                if seen.insert(ovr_path.clone())
+                    && let Ok(content) = std::fs::read(ovr_path)
+                {
+                    snaps.insert(ovr_path.clone(), Some(content));
                 }
             }
         }
@@ -223,7 +241,7 @@ pub fn change_signature(
             new_source.replace_range(params_start..params_end, &new_params_text);
         }
 
-        // Rename param usages in function body
+        // Rename param usages in function body (AST-aware)
         if !rename_map.is_empty() {
             // Re-parse after signature change to get correct byte offsets
             let new_tree = crate::core::parser::parse(&new_source)?;
@@ -233,19 +251,33 @@ pub fn change_signature(
             {
                 let body_start = body.start_byte();
                 let body_end = body.end_byte();
-                let mut body_text = new_source[body_start..body_end].to_string();
-                for (old_name, new_name) in &rename_map {
-                    body_text = rename_identifier_in_text(&body_text, old_name, new_name);
-                }
-                new_source.replace_range(body_start..body_end, &body_text);
+                let body_text = new_source[body_start..body_end].to_string();
+                let renamed = rename_identifiers_ast(&body_text, &rename_map);
+                new_source.replace_range(body_start..body_end, &renamed);
             }
         }
 
         std::fs::write(file, &new_source).map_err(|e| miette::miette!("cannot write file: {e}"))?;
 
-        // 2. Update call sites
+        // 2. Update override methods in subclasses
+        for ovr_path in &override_files {
+            match apply_signature_to_override(
+                ovr_path,
+                name,
+                &new_param_str,
+                &rename_map,
+            ) {
+                Ok(()) => overrides_updated += 1,
+                Err(e) => {
+                    let rel = crate::core::fs::relative_slash(ovr_path, project_root);
+                    warnings.push(format!("failed to update override in {rel}: {e}"));
+                }
+            }
+        }
+
+        // 3. Update call sites
         // Group call sites by file
-        let mut sites_by_file: HashMap<std::path::PathBuf, Vec<(u32, u32)>> = HashMap::new();
+        let mut sites_by_file: HashMap<PathBuf, Vec<(u32, u32)>> = HashMap::new();
         for (path, line, col) in &call_sites {
             sites_by_file
                 .entry(path.clone())
@@ -268,7 +300,7 @@ pub fn change_signature(
                     let old_args = extract_call_arguments(call, &cs);
                     let (new_args, placeholder_params) = rewrite_call_arguments(
                         &old_args,
-                        &extract_function_params(func_def, &source),
+                        &original_params,
                         &existing_params,
                         remove_params,
                         add_params,
@@ -298,6 +330,9 @@ pub fn change_signature(
             }
         }
 
+        // 4. Check .tscn signal connections that reference this handler
+        check_tscn_connections(name, project_root, &mut warnings);
+
         // Record undo
         let stack = super::undo::UndoStack::open(project_root);
         let _ = stack.record(
@@ -323,6 +358,7 @@ pub fn change_signature(
         old_signature,
         new_signature,
         call_sites_updated,
+        overrides_updated,
         applied: !dry_run,
         warnings,
     })
@@ -361,35 +397,202 @@ fn parse_param_spec(spec: &str) -> Result<ParamInfo> {
     })
 }
 
-/// Rename an identifier in text, only matching whole words (not substrings).
-fn rename_identifier_in_text(text: &str, old_name: &str, new_name: &str) -> String {
-    let mut result = String::with_capacity(text.len());
-    let old_bytes = old_name.as_bytes();
-    let old_len = old_bytes.len();
-    let text_bytes = text.as_bytes();
-    let text_len = text_bytes.len();
-    let mut i = 0;
+/// Rename identifiers in text using tree-sitter AST to avoid renaming
+/// occurrences inside strings or comments.
+fn rename_identifiers_ast(text: &str, rename_map: &HashMap<String, String>) -> String {
+    let Ok(tree) = crate::core::parser::parse(text) else {
+        return text.to_string();
+    };
 
-    while i < text_len {
-        if i + old_len <= text_len && &text_bytes[i..i + old_len] == old_bytes {
-            // Check word boundary before
-            let before_ok = i == 0 || !is_ident_char(text_bytes[i - 1]);
-            // Check word boundary after
-            let after_ok = i + old_len >= text_len || !is_ident_char(text_bytes[i + old_len]);
-            if before_ok && after_ok {
-                result.push_str(new_name);
-                i += old_len;
-                continue;
-            }
-        }
-        result.push(text_bytes[i] as char);
-        i += 1;
+    // Collect all identifier nodes that match any old name in the rename map,
+    // skipping those inside string or comment nodes.
+    let mut replacements: Vec<(usize, usize, &str)> = Vec::new();
+    collect_identifier_replacements(tree.root_node(), text, rename_map, &mut replacements);
+
+    // Apply replacements in reverse order to preserve byte offsets
+    replacements.sort_by(|a, b| b.0.cmp(&a.0));
+    let mut result = text.to_string();
+    for (start, end, new_name) in replacements {
+        result.replace_range(start..end, new_name);
     }
     result
 }
 
-fn is_ident_char(b: u8) -> bool {
-    b.is_ascii_alphanumeric() || b == b'_'
+/// Recursively collect identifier nodes that should be renamed, skipping
+/// nodes inside `string`, `string_content`, or `comment` parents.
+fn collect_identifier_replacements<'a>(
+    node: tree_sitter::Node,
+    source: &str,
+    rename_map: &'a HashMap<String, String>,
+    out: &mut Vec<(usize, usize, &'a str)>,
+) {
+    // Skip entire subtrees that are strings or comments
+    if matches!(node.kind(), "string" | "comment") {
+        return;
+    }
+
+    if node.kind() == "identifier"
+        && let Ok(text) = node.utf8_text(source.as_bytes())
+        && let Some(new_name) = rename_map.get(text)
+    {
+        out.push((node.start_byte(), node.end_byte(), new_name.as_str()));
+        return;
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_identifier_replacements(child, source, rename_map, out);
+    }
+}
+
+// ── Override chain helpers ──────────────────────────────────────────────────
+
+/// Find all files that contain an override of `func_name` for classes that
+/// extend the class defined in `file`.
+fn find_override_files(
+    file: &Path,
+    func_name: &str,
+    inner_class: Option<&str>,
+    index: &crate::core::workspace_index::ProjectIndex,
+) -> Vec<PathBuf> {
+    // Don't propagate for inner classes (not supported for overrides)
+    if inner_class.is_some() {
+        return Vec::new();
+    }
+
+    // Determine the class_name of the file we're modifying
+    let target_class = index
+        .files()
+        .iter()
+        .find(|fs| fs.path == file)
+        .and_then(|fs| fs.class_name.as_deref());
+
+    let Some(target_class) = target_class else {
+        return Vec::new();
+    };
+
+    // Find all files whose extends chain includes target_class and that
+    // define a function with the same name (i.e., an override)
+    let mut results = Vec::new();
+    for fs in index.files() {
+        if fs.path == file {
+            continue; // Skip the file we're already modifying
+        }
+
+        // Check if this file extends the target class (directly or transitively)
+        let extends_target = if fs.extends.as_deref() == Some(target_class) {
+            true
+        } else if let Some(ref cn) = fs.class_name {
+            index.extends_chain(cn).contains(&target_class)
+        } else {
+            // File without class_name — check its extends field
+            fs.extends.as_deref().is_some_and(|ext| {
+                ext == target_class || index.extends_chain(ext).contains(&target_class)
+            })
+        };
+
+        if extends_target && fs.functions.iter().any(|f| f.name == func_name) {
+            results.push(fs.path.clone());
+        }
+    }
+
+    results
+}
+
+/// Apply the same signature change to an override method in a subclass file.
+fn apply_signature_to_override(
+    file: &Path,
+    func_name: &str,
+    new_param_str: &str,
+    rename_map: &HashMap<String, String>,
+) -> Result<()> {
+    let source =
+        std::fs::read_to_string(file).map_err(|e| miette::miette!("cannot read file: {e}"))?;
+    let tree = crate::core::parser::parse(&source)?;
+    let root = tree.root_node();
+
+    let func_def = find_declaration_by_name(root, &source, func_name)
+        .ok_or_else(|| miette::miette!("override '{func_name}' not found"))?;
+
+    if !matches!(
+        func_def.kind(),
+        "function_definition" | "constructor_definition"
+    ) {
+        return Err(miette::miette!("'{func_name}' is not a function"));
+    }
+
+    let mut new_source = source.clone();
+
+    // Update signature
+    if let Some(pn) = func_def.child_by_field_name("parameters") {
+        let new_params_text = format!("({new_param_str})");
+        new_source.replace_range(pn.start_byte()..pn.end_byte(), &new_params_text);
+    }
+
+    // Rename param usages in body (AST-aware)
+    if !rename_map.is_empty() {
+        let new_tree = crate::core::parser::parse(&new_source)?;
+        let new_root = new_tree.root_node();
+        if let Some(new_func) = find_declaration_by_name(new_root, &new_source, func_name)
+            && let Some(body) = new_func.child_by_field_name("body")
+        {
+            let body_start = body.start_byte();
+            let body_end = body.end_byte();
+            let body_text = new_source[body_start..body_end].to_string();
+            let renamed = rename_identifiers_ast(&body_text, rename_map);
+            new_source.replace_range(body_start..body_end, &renamed);
+        }
+    }
+
+    super::validate_no_new_errors(&source, &new_source)?;
+    std::fs::write(file, &new_source)
+        .map_err(|e| miette::miette!("cannot write file: {e}"))?;
+    Ok(())
+}
+
+// ── .tscn signal connection warnings ────────────────────────────────────────
+
+/// Scan `.tscn` files for `[connection ... method="name" ...]` and warn if
+/// the handler function's signature is being changed.
+fn check_tscn_connections(func_name: &str, project_root: &Path, warnings: &mut Vec<String>) {
+    let Ok(resource_files) = crate::core::fs::collect_resource_files(project_root) else {
+        return;
+    };
+
+    let pattern = format!("method=\"{func_name}\"");
+    let pattern_spaced = format!("method = \"{func_name}\"");
+
+    for res_path in &resource_files {
+        if !res_path
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("tscn"))
+        {
+            continue;
+        }
+        let Ok(content) = std::fs::read_to_string(res_path) else {
+            continue;
+        };
+        if !content.contains(&pattern) && !content.contains(&pattern_spaced) {
+            continue;
+        }
+        // Count matching connections
+        let count = content
+            .lines()
+            .filter(|line| {
+                line.starts_with("[connection")
+                    && (line.contains(&pattern) || line.contains(&pattern_spaced))
+            })
+            .count();
+        if count > 0 {
+            let rel = crate::core::fs::relative_slash(res_path, project_root);
+            warnings.push(format!(
+                "{count} signal connection{} in {rel} reference{} handler '{func_name}' \
+                 — verify binds and parameters match the new signature",
+                if count == 1 { "" } else { "s" },
+                if count == 1 { "s" } else { "" },
+            ));
+        }
+    }
 }
 
 /// Rewrite call arguments based on parameter changes.
@@ -689,5 +892,310 @@ mod tests {
             temp.path(),
         );
         assert!(result.is_err());
+    }
+
+    // ── Gap 1: Override chain propagation ────────────────────────────────
+
+    #[test]
+    fn change_sig_propagates_to_child_override() {
+        let temp = setup_project(&[
+            (
+                "parent.gd",
+                "class_name Parent\nextends Node\nfunc attack(damage):\n\tprint(damage)\n",
+            ),
+            (
+                "child.gd",
+                "class_name Child\nextends Parent\nfunc attack(damage):\n\tprint(damage * 2)\n",
+            ),
+        ]);
+        let result = change_signature(
+            &temp.path().join("parent.gd"),
+            "attack",
+            &["multiplier: float = 1.0".to_string()],
+            &[],
+            &[],
+            None,
+            None,
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        assert_eq!(result.overrides_updated, 1);
+        let child = fs::read_to_string(temp.path().join("child.gd")).unwrap();
+        assert!(
+            child.contains("func attack(damage, multiplier: float = 1.0)"),
+            "child override should get new param, got: {child}"
+        );
+    }
+
+    #[test]
+    fn change_sig_propagates_remove_to_child() {
+        let temp = setup_project(&[
+            (
+                "parent.gd",
+                "class_name Parent\nextends Node\nfunc attack(damage, crit):\n\tprint(damage)\n",
+            ),
+            (
+                "child.gd",
+                "class_name Child\nextends Parent\nfunc attack(damage, crit):\n\tprint(crit)\n",
+            ),
+        ]);
+        let result = change_signature(
+            &temp.path().join("parent.gd"),
+            "attack",
+            &[],
+            &["crit".to_string()],
+            &[],
+            None,
+            None,
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert_eq!(result.overrides_updated, 1);
+        let child = fs::read_to_string(temp.path().join("child.gd")).unwrap();
+        assert!(
+            child.contains("func attack(damage)"),
+            "child override should lose param, got: {child}"
+        );
+    }
+
+    #[test]
+    fn change_sig_propagates_rename_to_child_body() {
+        let temp = setup_project(&[
+            (
+                "parent.gd",
+                "class_name Parent\nextends Node\nfunc attack(victim_id):\n\tprint(victim_id)\n",
+            ),
+            (
+                "child.gd",
+                "class_name Child\nextends Parent\nfunc attack(victim_id):\n\tprint(victim_id)\n",
+            ),
+        ]);
+        let result = change_signature(
+            &temp.path().join("parent.gd"),
+            "attack",
+            &[],
+            &[],
+            &["victim_id=target_id".to_string()],
+            None,
+            None,
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert_eq!(result.overrides_updated, 1);
+        let child = fs::read_to_string(temp.path().join("child.gd")).unwrap();
+        assert!(
+            child.contains("func attack(target_id)"),
+            "child signature should be renamed, got: {child}"
+        );
+        assert!(
+            child.contains("print(target_id)"),
+            "child body should be renamed, got: {child}"
+        );
+        assert!(
+            !child.contains("victim_id"),
+            "old param name should not remain in child, got: {child}"
+        );
+    }
+
+    #[test]
+    fn change_sig_propagates_to_transitive_child() {
+        let temp = setup_project(&[
+            (
+                "base.gd",
+                "class_name Base\nextends Node\nfunc process(delta):\n\tpass\n",
+            ),
+            (
+                "middle.gd",
+                "class_name Middle\nextends Base\nfunc process(delta):\n\tpass\n",
+            ),
+            (
+                "leaf.gd",
+                "class_name Leaf\nextends Middle\nfunc process(delta):\n\tpass\n",
+            ),
+        ]);
+        let result = change_signature(
+            &temp.path().join("base.gd"),
+            "process",
+            &["weight: float = 1.0".to_string()],
+            &[],
+            &[],
+            None,
+            None,
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert_eq!(result.overrides_updated, 2);
+        let middle = fs::read_to_string(temp.path().join("middle.gd")).unwrap();
+        let leaf = fs::read_to_string(temp.path().join("leaf.gd")).unwrap();
+        assert!(
+            middle.contains("func process(delta, weight: float = 1.0)"),
+            "middle should be updated, got: {middle}"
+        );
+        assert!(
+            leaf.contains("func process(delta, weight: float = 1.0)"),
+            "leaf should be updated, got: {leaf}"
+        );
+    }
+
+    #[test]
+    fn change_sig_no_override_for_non_class_file() {
+        // File without class_name should not propagate overrides
+        let temp = setup_project(&[(
+            "script.gd",
+            "extends Node\nfunc attack(damage):\n\tprint(damage)\n",
+        )]);
+        let result = change_signature(
+            &temp.path().join("script.gd"),
+            "attack",
+            &["extra".to_string()],
+            &[],
+            &[],
+            None,
+            None,
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert_eq!(result.overrides_updated, 0);
+    }
+
+    // ── Gap 2: AST-aware body rename ────────────────────────────────────
+
+    #[test]
+    fn change_sig_rename_skips_string_literals() {
+        let temp = setup_project(&[(
+            "player.gd",
+            "func attack(victim_id):\n\tprint(\"victim_id is: \" + str(victim_id))\n",
+        )]);
+        let result = change_signature(
+            &temp.path().join("player.gd"),
+            "attack",
+            &[],
+            &[],
+            &["victim_id=target_id".to_string()],
+            None,
+            None,
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+        assert!(
+            content.contains("\"victim_id is: \""),
+            "string literal should NOT be renamed, got: {content}"
+        );
+        assert!(
+            content.contains("str(target_id)"),
+            "identifier usage should be renamed, got: {content}"
+        );
+    }
+
+    #[test]
+    fn change_sig_rename_skips_comments() {
+        let temp = setup_project(&[(
+            "player.gd",
+            "func attack(victim_id):\n\t# victim_id is the target\n\tprint(victim_id)\n",
+        )]);
+        let result = change_signature(
+            &temp.path().join("player.gd"),
+            "attack",
+            &[],
+            &[],
+            &["victim_id=target_id".to_string()],
+            None,
+            None,
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
+        assert!(
+            content.contains("# victim_id is the target"),
+            "comment should NOT be renamed, got: {content}"
+        );
+        assert!(
+            content.contains("print(target_id)"),
+            "identifier should be renamed, got: {content}"
+        );
+    }
+
+    // ── Gap 3: .tscn signal connection warnings ─────────────────────────
+
+    #[test]
+    fn change_sig_warns_about_tscn_connections() {
+        let temp = setup_project(&[
+            (
+                "player.gd",
+                "func _on_hit(damage):\n\tprint(damage)\n",
+            ),
+            (
+                "level.tscn",
+                "[gd_scene format=3]\n\n\
+                 [node name=\"Root\" type=\"Node2D\"]\n\n\
+                 [connection signal=\"body_entered\" from=\"Area\" to=\".\" method=\"_on_hit\"]\n",
+            ),
+        ]);
+        let result = change_signature(
+            &temp.path().join("player.gd"),
+            "_on_hit",
+            &["extra".to_string()],
+            &[],
+            &[],
+            None,
+            None,
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        let has_tscn_warning = result.warnings.iter().any(|w| {
+            w.contains("signal connection") && w.contains("_on_hit") && w.contains("level.tscn")
+        });
+        assert!(
+            has_tscn_warning,
+            "should warn about .tscn connection, got warnings: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn change_sig_no_tscn_warning_when_no_connections() {
+        let temp = setup_project(&[
+            (
+                "player.gd",
+                "func attack(damage):\n\tprint(damage)\n",
+            ),
+            (
+                "level.tscn",
+                "[gd_scene format=3]\n\n[node name=\"Root\" type=\"Node2D\"]\n",
+            ),
+        ]);
+        let result = change_signature(
+            &temp.path().join("player.gd"),
+            "attack",
+            &["extra".to_string()],
+            &[],
+            &[],
+            None,
+            None,
+            false,
+            temp.path(),
+        )
+        .unwrap();
+        let has_tscn_warning = result
+            .warnings
+            .iter()
+            .any(|w| w.contains("signal connection"));
+        assert!(
+            !has_tscn_warning,
+            "should NOT warn about .tscn when no connections match"
+        );
     }
 }

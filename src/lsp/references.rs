@@ -264,6 +264,14 @@ fn is_declaration(node: &tree_sitter::Node, source: &str, target_name: &str) -> 
     let Some(parent) = node.parent() else {
         return false;
     };
+
+    // Enum member declaration: `enumerator { left: (identifier) }`
+    if parent.kind() == "enumerator" {
+        return parent
+            .child_by_field_name("left")
+            .is_some_and(|left| left.id() == node.id());
+    }
+
     if !DECLARATION_KINDS.contains(&parent.kind()) {
         return false;
     }
@@ -945,6 +953,18 @@ pub fn find_references_by_name(
                 } else if let Some(class_node) = find_inner_class(root, &content, class_name) {
                     // Inner class — only search inside it
                     collect_references(class_node, &content, name, &uri, true, &mut locations);
+                } else if let Some(enum_node) = find_enum_definition(root, &content, class_name) {
+                    // Enum definition — search members inside it and also
+                    // qualified references (EnumName.MEMBER) throughout the file
+                    collect_references(enum_node, &content, name, &uri, true, &mut locations);
+                    collect_qualified_references(
+                        root,
+                        &content,
+                        class_name,
+                        name,
+                        &uri,
+                        &mut locations,
+                    );
                 } else {
                     // Search for ClassName.method() calls (autoload/singleton pattern)
                     collect_qualified_references(
@@ -977,6 +997,10 @@ pub fn find_references_by_name(
 /// Find references to `name` that are qualified with `class_name`, e.g.
 /// `GameManager.submit_vote()` when class_name="GameManager" and name="submit_vote".
 /// This covers the autoload/singleton calling pattern in Godot.
+///
+/// Also handles nested qualifications like `Types.State.IDLE` when
+/// class_name="State" and name="IDLE" — the qualifier can appear at any
+/// position in the attribute chain, not just the first.
 fn collect_qualified_references(
     node: tree_sitter::Node,
     source: &str,
@@ -1001,16 +1025,35 @@ fn collect_qualified_references(
     //     "."
     //     identifier "some_prop"
     //   }
+    //
+    // And `Types.State.IDLE` as a nested attribute chain:
+    //   attribute {
+    //     identifier "Types"
+    //     identifier "State"
+    //     identifier "IDLE"
+    //   }
     if node.kind() == "attribute" {
-        // Check if the first named child is an identifier matching class_name
-        if let Some(obj) = node.named_child(0)
-            && obj.kind() == "identifier"
-            && obj.utf8_text(source.as_bytes()).unwrap_or("") == class_name
-        {
-            // Look for the member name in attribute_call or as a direct identifier
+        let named_children: Vec<_> = {
             let mut cursor = node.walk();
-            for child in node.children(&mut cursor) {
-                if child.kind() == "attribute_call" {
+            node.named_children(&mut cursor).collect()
+        };
+
+        // Check if any identifier in the chain matches class_name, and the one
+        // immediately after it matches target_name. This handles both:
+        //   - `ClassName.member` (qualifier is first child)
+        //   - `Outer.ClassName.member` (qualifier is a middle child)
+        let mut found_qualifier = false;
+        for child in &named_children {
+            if found_qualifier {
+                // The child right after the qualifier — check if it matches target_name
+                if child.kind() == "identifier"
+                    && child.utf8_text(source.as_bytes()).unwrap_or("") == target_name
+                {
+                    locations.push(Location {
+                        uri: uri.clone(),
+                        range: node_range(child),
+                    });
+                } else if child.kind() == "attribute_call" {
                     // Method call: ClassName.method(args)
                     if let Some(name_node) = child.named_child(0)
                         && name_node.kind() == "identifier"
@@ -1021,16 +1064,13 @@ fn collect_qualified_references(
                             range: node_range(&name_node),
                         });
                     }
-                } else if child.kind() == "identifier"
-                    && child.utf8_text(source.as_bytes()).unwrap_or("") == target_name
-                    && child.start_byte() != node.start_byte()
-                {
-                    // Property access: ClassName.property (not the first identifier)
-                    locations.push(Location {
-                        uri: uri.clone(),
-                        range: node_range(&child),
-                    });
                 }
+                found_qualifier = false;
+            }
+            if child.kind() == "identifier"
+                && child.utf8_text(source.as_bytes()).unwrap_or("") == class_name
+            {
+                found_qualifier = true;
             }
         }
     }
@@ -1067,6 +1107,24 @@ fn find_inner_class<'a>(
     let mut cursor = root.walk();
     for child in root.children(&mut cursor) {
         if child.kind() == "class_definition"
+            && let Some(name_node) = child.child_by_field_name("name")
+            && name_node.utf8_text(source.as_bytes()).unwrap_or("") == target
+        {
+            return Some(child);
+        }
+    }
+    None
+}
+
+/// Find a top-level `enum_definition` matching `target`.
+fn find_enum_definition<'a>(
+    root: tree_sitter::Node<'a>,
+    source: &str,
+    target: &str,
+) -> Option<tree_sitter::Node<'a>> {
+    let mut cursor = root.walk();
+    for child in root.children(&mut cursor) {
+        if child.kind() == "enum_definition"
             && let Some(name_node) = child.child_by_field_name("name")
             && name_node.utf8_text(source.as_bytes()).unwrap_or("") == target
         {
@@ -1474,4 +1532,86 @@ static func other_caller():
         // All three: declaration + two calls
         assert_eq!(locs.len(), 3, "single-function case should find all refs");
     }
+
+    // ── Enum member tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn enum_member_declaration_detected() {
+        // Enum member definition should be recognized as a declaration so that
+        // include_declaration=false can exclude it.
+        let source = "\
+enum State { IDLE, RUNNING }
+
+func test():
+\tvar s = State.IDLE
+";
+        let uri = test_uri();
+        // Position on `IDLE` in the enum definition (line 0, col 13)
+        let with_decl = find_references(source, &uri, Position::new(0, 13), true);
+        let without_decl = find_references(source, &uri, Position::new(0, 13), false);
+        assert!(with_decl.is_some());
+        let with_locs = with_decl.unwrap();
+        // Declaration (IDLE in enum) + qualified reference (State.IDLE)
+        assert_eq!(with_locs.len(), 2, "include_declaration=true: decl + usage");
+
+        assert!(without_decl.is_some());
+        let without_locs = without_decl.unwrap();
+        // Only the qualified reference (State.IDLE), not the declaration
+        assert_eq!(
+            without_locs.len(),
+            1,
+            "include_declaration=false: only usage"
+        );
+        assert_eq!(
+            without_locs[0].range.start.line, 3,
+            "the single ref should be on the usage line"
+        );
+    }
+
+    #[test]
+    fn enum_member_qualified_and_bare_refs() {
+        // Both bare and qualified references to an enum member should be found.
+        let source = "\
+enum Direction { UP, DOWN }
+
+func test():
+\tvar x = Direction.UP
+\tvar y = UP
+\tmatch x:
+\t\tDirection.DOWN:
+\t\t\tpass
+";
+        let uri = test_uri();
+        // Position on `UP` in the enum definition (line 0, col 17)
+        let result = find_references(source, &uri, Position::new(0, 17), true);
+        assert!(result.is_some());
+        let locs = result.unwrap();
+        // Declaration (UP in enum) + Direction.UP + bare UP = 3
+        assert_eq!(
+            locs.len(),
+            3,
+            "should find enum member decl + qualified + bare, got {:?}",
+            locs.iter()
+                .map(|l| (l.range.start.line, l.range.start.character))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn enum_member_with_explicit_value() {
+        // Enum members with explicit integer values should also be found.
+        let source = "\
+enum Priority { LOW = 0, HIGH = 1 }
+
+func test():
+\tvar p = Priority.HIGH
+";
+        let uri = test_uri();
+        // Position on `HIGH` in the enum definition
+        let result = find_references(source, &uri, Position::new(0, 25), true);
+        assert!(result.is_some());
+        let locs = result.unwrap();
+        assert_eq!(locs.len(), 2, "should find decl + qualified usage");
+    }
+
 }
