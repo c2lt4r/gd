@@ -320,6 +320,22 @@ fn lint_file(
         all_diags.extend(diags);
     }
 
+    // Include compiler-level checks (gd check parity) as error-severity diagnostics
+    let structural =
+        crate::cli::check_cmd::check_classdb_errors(&tree.root_node(), &source, &symbols, project);
+    for err in structural {
+        all_diags.push(LintDiagnostic {
+            rule: "compiler-error",
+            message: err.message,
+            severity: Severity::Error,
+            line: err.line as usize,
+            column: err.column as usize,
+            end_column: None,
+            fix: None,
+            context_lines: None,
+        });
+    }
+
     // Apply severity overrides: category first, then per-rule (higher priority)
     for diag in &mut all_diags {
         // Category-level severity

@@ -168,7 +168,10 @@ fn build_from_node(root: Node, source: &str) -> SymbolTable {
                     && let Ok(name) = name_node.utf8_text(bytes)
                     && let Some(body) = child.child_by_field_name("body")
                 {
-                    let inner = build_from_node(body, source);
+                    let mut inner = build_from_node(body, source);
+                    if let Some(ext) = child.child_by_field_name("extends") {
+                        inner.extends = extract_extends(&ext, bytes);
+                    }
                     table.inner_classes.push((name.to_string(), inner));
                 }
             }
@@ -817,6 +820,24 @@ class InnerThing:
         assert_eq!(name, "InnerThing");
         assert_eq!(inner.variables.len(), 1);
         assert_eq!(inner.functions.len(), 1);
+    }
+
+    #[test]
+    fn inner_class_extends() {
+        let source = "\
+class A extends Node:
+\tpass
+class B extends A:
+\tpass
+";
+        let table = build_table(source);
+        assert_eq!(table.inner_classes.len(), 2);
+        let (name_a, inner_a) = &table.inner_classes[0];
+        assert_eq!(name_a, "A");
+        assert_eq!(inner_a.extends.as_deref(), Some("Node"));
+        let (name_b, inner_b) = &table.inner_classes[1];
+        assert_eq!(name_b, "B");
+        assert_eq!(inner_b.extends.as_deref(), Some("A"));
     }
 
     #[test]

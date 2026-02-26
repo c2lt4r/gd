@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.3.9] - 2026-02-26
+
+### Added
+- **`gd check` — 100% Godot compiler parity** across 115 mutation test cases (0 false negatives, 0 false positives). New checks include:
+  - **Name resolution** (A1–A4): undefined identifiers, method/property not found on self/builtin types, type not found in casts/annotations
+  - **Type mismatch** (B1–B6): assignment, return, argument, operator, and cast type checking with full type inference
+  - **Argument count** (B4): user functions, ClassDB methods, utility functions, constructors, and builtin type methods (e.g. `Vector2.lerp`)
+  - **Builtin type validation** (A2/A3): method and property existence checks for all 34 builtin types (Vector2, String, Array, etc.) using the generated API registry
+- **`gd lint` now includes compiler-level checks** — like `clippy` vs `cargo check`, `gd lint` is now a superset of `gd check`, surfacing compiler-parity errors as `error`-severity diagnostics alongside the 96 lint rules
+
 ## [0.3.8] - 2026-02-26
 
 ### Improved

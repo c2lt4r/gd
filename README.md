@@ -7,7 +7,7 @@ Built with [tree-sitter-gdscript](https://github.com/PrestonKnopp/tree-sitter-gd
 ## Features
 
 - **Format** GDScript files with an AST-based formatter aligned to the [GDScript style guide](https://docs.godotengine.org/en/stable/tutorials/scripting/gdscript/gdscript_styleguide.html)
-- **Lint** with 96 built-in rules (26 auto-fixable), SARIF output for CI
+- **Lint** with 96 built-in rules (26 auto-fixable) plus compiler-level checks, SARIF output for CI
 - **Run**, **build**, **test**, and **clean** your Godot project from the terminal
 - **Watch** for file changes and auto-lint/format on save
 - **Manage addons** from Git or the Godot Asset Library (with lockfile and update support)
@@ -65,7 +65,7 @@ gd run
 | `gd stop` | Stop the running Godot game |
 | `gd log` | View game output log via debug protocol ring buffer (`--tail N`, `--follow`, `--errors`, `--grep`, `--json`, `--clear`) |
 | `gd build` | Build/export the Godot project |
-| `gd check` | Check project for errors (parse, structural, semantic, `.tscn`/`.tres` validation) (`--format json`) |
+| `gd check` | Check project for errors with 100% Godot compiler parity (parse, structural, semantic, `.tscn`/`.tres` validation) (`--format json`) |
 | `gd clean` | Clean build artifacts |
 | `gd eval` | Evaluate GDScript expressions or scripts — live against a running game or offline headless |
 | `gd test` | Run GDScript tests with GUT, gdUnit4, or raw scripts (`--list`, `--name`, `--class`, `--junit`, `--filter`, `--runner`, `--format json`) |

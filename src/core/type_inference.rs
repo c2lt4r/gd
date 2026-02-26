@@ -527,12 +527,25 @@ fn infer_attribute(node: &Node, source: &str, symbols: &SymbolTable) -> Option<I
 
     // Infer the receiver type
     let receiver = node.named_child(0)?;
-    let receiver_type = infer_expression_type(&receiver, source, symbols)?;
+    let receiver_type = infer_expression_type(&receiver, source, symbols);
 
-    let class_name = match &receiver_type {
-        InferredType::Builtin(b) => *b,
-        InferredType::Class(c) => c.as_str(),
-        _ => return None,
+    // If receiver doesn't resolve, check if it's a class name (e.g., Node.new())
+    let receiver_class_name: Option<String>;
+    let class_name = if let Some(ref rt) = receiver_type {
+        match rt {
+            InferredType::Builtin(b) => *b,
+            InferredType::Class(c) => c.as_str(),
+            _ => return None,
+        }
+    } else {
+        // Check if receiver is a known class identifier
+        let name = receiver.utf8_text(source.as_bytes()).ok()?;
+        if receiver.kind() == "identifier" && class_db::class_exists(name) {
+            receiver_class_name = Some(name.to_string());
+            receiver_class_name.as_deref()?
+        } else {
+            return None;
+        }
     };
 
     if !has_call {
@@ -550,6 +563,11 @@ fn infer_attribute(node: &Node, source: &str, symbols: &SymbolTable) -> Option<I
     }
 
     let method = method_name?;
+
+    // ClassName.new() → returns ClassName
+    if method == "new" && class_db::class_exists(class_name) {
+        return Some(InferredType::Class(class_name.to_string()));
+    }
 
     // Look up the method in ClassDB
     if let Some(ret_type) = class_db::method_return_type(class_name, method) {
@@ -586,7 +604,7 @@ pub fn parse_class_db_type(raw: &str) -> InferredType {
 }
 
 /// Classify a type name from source code into an `InferredType`.
-fn classify_type_name(name: &str) -> InferredType {
+pub fn classify_type_name(name: &str) -> InferredType {
     // Handle Array[T] syntax
     if let Some(inner) = name
         .strip_prefix("Array[")
@@ -843,7 +861,7 @@ fn extract_negated_is_early_exit(if_stmt: &Node, var_name: &str, source: &[u8]) 
 /// Resolve property types for value-type builtins not covered by ClassDB.
 /// ClassDB tracks engine Object-derived classes; value types like Vector2, Color,
 /// etc. have members that only exist in the GDScript binding layer.
-fn builtin_member_type(class: &str, member: &str) -> Option<InferredType> {
+pub fn builtin_member_type(class: &str, member: &str) -> Option<InferredType> {
     match (class, member) {
         // Scalar float members
         ("Vector2" | "Vector2i", "x" | "y")
@@ -916,7 +934,7 @@ fn extract_string_arg(node: &Node, source: &str) -> Option<String> {
 }
 
 /// Check if a type name is a GDScript builtin type.
-fn is_builtin_type(name: &str) -> bool {
+pub fn is_builtin_type(name: &str) -> bool {
     matches!(
         name,
         "int"

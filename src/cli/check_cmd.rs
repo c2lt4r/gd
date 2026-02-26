@@ -7,12 +7,12 @@ use owo_colors::OwoColorize;
 use serde::Serialize;
 use tree_sitter::Node;
 
+use crate::core::symbol_table::SymbolTable;
 use crate::core::workspace_index::ProjectIndex;
 use crate::core::{
     config::Config, config::find_project_root, fs::collect_gdscript_files,
     fs::collect_resource_files, parser, resource_parser, scene, symbol_table, type_inference,
 };
-use crate::core::symbol_table::SymbolTable;
 use crate::lint::matches_ignore_pattern;
 use crate::lint::rules::LintRule;
 use crate::lint::rules::duplicate_function::DuplicateFunction;
@@ -82,14 +82,13 @@ pub fn exec(args: &CheckArgs) -> Result<()> {
                     let root_node = tree.root_node();
                     let has_parse_errors = root_node.has_error();
                     let symbols = symbol_table::build(&tree, &source);
-                    let structural = validate_structure(&root_node, &source, &symbols);
-                    let classdb = check_classdb_errors(
-                        &root_node, &source, &symbols, &project_index,
-                    );
+                    let structural =
+                        validate_structure(&root_node, &source, &symbols, Some(&ignore_base));
+                    let classdb =
+                        check_classdb_errors(&root_node, &source, &symbols, &project_index);
                     let duplicates = check_duplicates(&tree, &source);
                     let promoted = check_promoted_rules(&tree, &source, &symbols);
-                    let overrides =
-                        check_overrides(&tree, &source, &symbols, &project_index);
+                    let overrides = check_overrides(&tree, &source, &symbols, &project_index);
 
                     let has_errors = has_parse_errors
                         || !structural.is_empty()
@@ -242,14 +241,20 @@ pub fn exec(args: &CheckArgs) -> Result<()> {
 // Structural validation — catches patterns tree-sitter accepts but Godot rejects
 // ---------------------------------------------------------------------------
 
-struct StructuralError {
-    line: u32,
-    column: u32,
-    message: String,
+#[derive(Debug)]
+pub struct StructuralError {
+    pub line: u32,
+    pub column: u32,
+    pub message: String,
 }
 
 /// Run structural checks that go beyond tree-sitter error nodes.
-fn validate_structure(root: &Node, source: &str, symbols: &SymbolTable) -> Vec<StructuralError> {
+fn validate_structure(
+    root: &Node,
+    source: &str,
+    symbols: &SymbolTable,
+    project_root: Option<&Path>,
+) -> Vec<StructuralError> {
     let mut errors = Vec::new();
     check_top_level_statements(root, &mut errors);
     check_indentation_consistency(root, &mut errors);
@@ -257,7 +262,7 @@ fn validate_structure(root: &Node, source: &str, symbols: &SymbolTable) -> Vec<S
     check_variant_inference(root, source, &mut errors);
     check_declaration_constraints(root, source, symbols, &mut errors);
     check_semantic_errors(root, source, symbols, &mut errors);
-    check_preload_and_misc(root, source, &mut errors);
+    check_preload_and_misc(root, source, project_root, &mut errors);
     check_advanced_semantic(root, source, symbols, &mut errors);
     errors
 }
@@ -871,11 +876,8 @@ fn check_signal_defaults_in_node(node: Node, source: &str, errors: &mut Vec<Stru
     {
         let mut cursor = params.walk();
         for param in params.named_children(&mut cursor) {
-            if param.kind() == "default_parameter"
-                || param.kind() == "typed_default_parameter"
-            {
-                let param_name =
-                    first_identifier_text(&param, source.as_bytes()).unwrap_or("?");
+            if param.kind() == "default_parameter" || param.kind() == "typed_default_parameter" {
+                let param_name = first_identifier_text(&param, source.as_bytes()).unwrap_or("?");
                 let pos = param.start_position();
                 errors.push(StructuralError {
                     line: pos.row as u32 + 1,
@@ -1060,6 +1062,7 @@ fn check_semantic_errors(
     check_get_node_in_static(root, source, errors);
     check_export_constraints(symbols, errors);
     check_object_constructor(root, source, errors);
+    check_onready_non_node(symbols, errors);
 }
 
 /// C1: Static context violations — using instance vars, `self`, or instance methods
@@ -1109,16 +1112,13 @@ fn check_static_context_violations(
         };
 
         // Check if this function is static
-        let is_static = symbols
-            .functions
-            .iter()
-            .any(|f| {
-                f.is_static
-                    && func_node
-                        .child_by_field_name("name")
-                        .and_then(|n| n.utf8_text(bytes).ok())
-                        == Some(&f.name)
-            });
+        let is_static = symbols.functions.iter().any(|f| {
+            f.is_static
+                && func_node
+                    .child_by_field_name("name")
+                    .and_then(|n| n.utf8_text(bytes).ok())
+                    == Some(&f.name)
+        });
         if !is_static {
             continue;
         }
@@ -1158,14 +1158,12 @@ fn check_static_body(
     {
         if parent.kind() == "attribute" && parent.named_child(1) == Some(*node) {
             // This is obj.name — don't flag
-        } else if name == "self" {
+        } else if name == "self" || name == "super" {
             let pos = node.start_position();
             errors.push(StructuralError {
                 line: pos.row as u32 + 1,
                 column: pos.column as u32 + 1,
-                message: format!(
-                    "cannot use `self` in static function `{func_name}()`",
-                ),
+                message: format!("cannot use `{name}` in static function `{func_name}()`",),
             });
             return;
         } else if instance_vars.contains(name) {
@@ -1183,8 +1181,9 @@ fn check_static_body(
 
     // Check for bare function calls to instance methods
     if node.kind() == "call"
-        && let Some(func_node) =
-            node.child_by_field_name("function").or_else(|| node.named_child(0))
+        && let Some(func_node) = node
+            .child_by_field_name("function")
+            .or_else(|| node.named_child(0))
         && func_node.kind() == "identifier"
         && let Ok(callee) = func_node.utf8_text(source)
         && instance_funcs.contains(callee)
@@ -1251,7 +1250,9 @@ fn check_assign_to_const_in_node(
     // Assignments: assignment_statement/augmented_assignment_statement at top level,
     // or expression_statement > assignment/augmented_assignment inside function bodies
     let assign_node = match node.kind() {
-        "assignment_statement" | "augmented_assignment_statement" | "assignment"
+        "assignment_statement"
+        | "augmented_assignment_statement"
+        | "assignment"
         | "augmented_assignment" => Some(node),
         "expression_statement" => {
             let mut c = node.walk();
@@ -1264,22 +1265,36 @@ fn check_assign_to_const_in_node(
 
     if let Some(assign) = assign_node
         && let Some(lhs) = assign.named_child(0)
-        && lhs.kind() == "identifier"
-        && let Ok(name) = lhs.utf8_text(source)
     {
-        if constants.contains(name) {
+        if lhs.kind() == "identifier"
+            && let Ok(name) = lhs.utf8_text(source)
+        {
+            if constants.contains(name) {
+                let pos = lhs.start_position();
+                errors.push(StructuralError {
+                    line: pos.row as u32 + 1,
+                    column: pos.column as u32 + 1,
+                    message: format!("cannot assign to constant `{name}`"),
+                });
+            } else if enum_members.contains(name) {
+                let pos = lhs.start_position();
+                errors.push(StructuralError {
+                    line: pos.row as u32 + 1,
+                    column: pos.column as u32 + 1,
+                    message: format!("cannot assign to enum value `{name}`"),
+                });
+            }
+        } else if lhs.kind() == "attribute"
+            && let Some(rhs) = lhs.named_child(1)
+            && rhs.kind() == "identifier"
+            && let Ok(member) = rhs.utf8_text(source)
+            && enum_members.contains(member)
+        {
             let pos = lhs.start_position();
             errors.push(StructuralError {
                 line: pos.row as u32 + 1,
                 column: pos.column as u32 + 1,
-                message: format!("cannot assign to constant `{name}`"),
-            });
-        } else if enum_members.contains(name) {
-            let pos = lhs.start_position();
-            errors.push(StructuralError {
-                line: pos.row as u32 + 1,
-                column: pos.column as u32 + 1,
-                message: format!("cannot assign to enum value `{name}`"),
+                message: format!("cannot assign to enum value `{member}`"),
             });
         }
     }
@@ -1358,11 +1373,7 @@ fn check_void_func_returns(
     }
 }
 
-fn check_returns_in_body(
-    node: &Node,
-    func_name: &str,
-    errors: &mut Vec<StructuralError>,
-) {
+fn check_returns_in_body(node: &Node, func_name: &str, errors: &mut Vec<StructuralError>) {
     if node.kind() == "return_statement" {
         // Check if there's a value after `return`
         if node.named_child_count() > 0 {
@@ -1370,9 +1381,7 @@ fn check_returns_in_body(
             errors.push(StructuralError {
                 line: pos.row as u32 + 1,
                 column: pos.column as u32 + 1,
-                message: format!(
-                    "void function `{func_name}()` cannot return a value",
-                ),
+                message: format!("void function `{func_name}()` cannot return a value",),
             });
         }
         return;
@@ -1398,11 +1407,7 @@ fn check_returns_in_body(
 }
 
 /// H14: `$` / `%` get_node syntax in static function.
-fn check_get_node_in_static(
-    root: &Node,
-    source: &str,
-    errors: &mut Vec<StructuralError>,
-) {
+fn check_get_node_in_static(root: &Node, source: &str, errors: &mut Vec<StructuralError>) {
     let bytes = source.as_bytes();
     let mut cursor = root.walk();
     for child in root.children(&mut cursor) {
@@ -1452,19 +1457,13 @@ fn check_get_node_in_static(
     }
 }
 
-fn check_get_node_in_body(
-    node: &Node,
-    func_name: &str,
-    errors: &mut Vec<StructuralError>,
-) {
+fn check_get_node_in_body(node: &Node, func_name: &str, errors: &mut Vec<StructuralError>) {
     if node.kind() == "get_node" {
         let pos = node.start_position();
         errors.push(StructuralError {
             line: pos.row as u32 + 1,
             column: pos.column as u32 + 1,
-            message: format!(
-                "cannot use `$`/`%` get_node in static function `{func_name}()`",
-            ),
+            message: format!("cannot use `$`/`%` get_node in static function `{func_name}()`",),
         });
         return;
     }
@@ -1493,7 +1492,11 @@ fn check_get_node_in_body(
 /// E4: Duplicate `@export` annotation on same variable.
 fn check_export_constraints(symbols: &SymbolTable, errors: &mut Vec<StructuralError>) {
     for var in &symbols.variables {
-        let export_count = var.annotations.iter().filter(|a| a.as_str() == "export").count();
+        let export_count = var
+            .annotations
+            .iter()
+            .filter(|a| a.as_str() == "export")
+            .count();
         let has_export = export_count > 0;
 
         if has_export {
@@ -1502,10 +1505,7 @@ fn check_export_constraints(symbols: &SymbolTable, errors: &mut Vec<StructuralEr
                 errors.push(StructuralError {
                     line: var.line as u32 + 1,
                     column: 1,
-                    message: format!(
-                        "duplicate `@export` annotation on `{}`",
-                        var.name,
-                    ),
+                    message: format!("duplicate `@export` annotation on `{}`", var.name,),
                 });
             }
 
@@ -1514,10 +1514,7 @@ fn check_export_constraints(symbols: &SymbolTable, errors: &mut Vec<StructuralEr
                 errors.push(StructuralError {
                     line: var.line as u32 + 1,
                     column: 1,
-                    message: format!(
-                        "`@export` cannot be used on static variable `{}`",
-                        var.name,
-                    ),
+                    message: format!("`@export` cannot be used on static variable `{}`", var.name,),
                 });
             }
 
@@ -1541,16 +1538,42 @@ fn check_export_constraints(symbols: &SymbolTable, errors: &mut Vec<StructuralEr
     }
 }
 
+/// E5: `@onready` on a class that doesn't extend Node.
+fn check_onready_non_node(symbols: &SymbolTable, errors: &mut Vec<StructuralError>) {
+    let has_onready = symbols
+        .variables
+        .iter()
+        .any(|v| v.annotations.iter().any(|a| a == "onready"));
+    if !has_onready {
+        return;
+    }
+
+    // Check if extends chain reaches Node
+    let extends = symbols.extends.as_deref().unwrap_or("RefCounted");
+    if extends == "Node" || crate::class_db::inherits(extends, "Node") {
+        return;
+    }
+
+    // @onready is used but class doesn't extend Node
+    for var in &symbols.variables {
+        if var.annotations.iter().any(|a| a == "onready") {
+            errors.push(StructuralError {
+                line: var.line as u32 + 1,
+                column: 1,
+                message: format!(
+                    "`@onready` can only be used in classes that extend `Node` (class extends `{extends}`)",
+                ),
+            });
+        }
+    }
+}
+
 /// H17: `Object()` constructor must use `Object.new()` instead.
 fn check_object_constructor(root: &Node, source: &str, errors: &mut Vec<StructuralError>) {
     check_object_constructor_in_node(*root, source, errors);
 }
 
-fn check_object_constructor_in_node(
-    node: Node,
-    source: &str,
-    errors: &mut Vec<StructuralError>,
-) {
+fn check_object_constructor_in_node(node: Node, source: &str, errors: &mut Vec<StructuralError>) {
     if node.kind() == "call"
         && let Some(func) = node
             .child_by_field_name("function")
@@ -1585,19 +1608,31 @@ fn check_object_constructor_in_node(
 fn check_preload_and_misc(
     root: &Node,
     source: &str,
+    project_root: Option<&Path>,
     errors: &mut Vec<StructuralError>,
 ) {
-    check_preload_path(root, source, errors);
+    check_preload_path(root, source, project_root, errors);
     check_range_args(root, source, errors);
+    check_assert_message(root, source, errors);
 }
 
 /// F1: `preload()` path does not exist on disk.
 /// F2: `preload()` argument is not a constant string.
-fn check_preload_path(root: &Node, source: &str, errors: &mut Vec<StructuralError>) {
-    check_preload_in_node(*root, source, errors);
+fn check_preload_path(
+    root: &Node,
+    source: &str,
+    project_root: Option<&Path>,
+    errors: &mut Vec<StructuralError>,
+) {
+    check_preload_in_node(*root, source, project_root, errors);
 }
 
-fn check_preload_in_node(node: Node, source: &str, errors: &mut Vec<StructuralError>) {
+fn check_preload_in_node(
+    node: Node,
+    source: &str,
+    project_root: Option<&Path>,
+    errors: &mut Vec<StructuralError>,
+) {
     if node.kind() == "call"
         && let Some(func) = node
             .child_by_field_name("function")
@@ -1621,16 +1656,33 @@ fn check_preload_in_node(node: Node, source: &str, errors: &mut Vec<StructuralEr
             errors.push(StructuralError {
                 line: pos.row as u32 + 1,
                 column: pos.column as u32 + 1,
-                message: "`preload()` argument must be a constant string literal"
-                    .to_string(),
+                message: "`preload()` argument must be a constant string literal".to_string(),
             });
+        } else if let Some(arg) = args.named_child(0)
+            && arg.kind() == "string"
+            && let Ok(raw) = arg.utf8_text(source.as_bytes())
+            && let Some(project_root) = project_root
+        {
+            // Strip quotes from string literal
+            let path_str = raw.trim_matches('"').trim_matches('\'');
+            if let Some(rel) = path_str.strip_prefix("res://") {
+                let resolved = project_root.join(rel);
+                if !resolved.exists() {
+                    let pos = arg.start_position();
+                    errors.push(StructuralError {
+                        line: pos.row as u32 + 1,
+                        column: pos.column as u32 + 1,
+                        message: format!("preload file \"{path_str}\" does not exist",),
+                    });
+                }
+            }
         }
     }
 
     let mut cursor = node.walk();
     if cursor.goto_first_child() {
         loop {
-            check_preload_in_node(cursor.node(), source, errors);
+            check_preload_in_node(cursor.node(), source, project_root, errors);
             if !cursor.goto_next_sibling() {
                 break;
             }
@@ -1658,9 +1710,7 @@ fn check_range_in_node(node: Node, source: &str, errors: &mut Vec<StructuralErro
             errors.push(StructuralError {
                 line: pos.row as u32 + 1,
                 column: pos.column as u32 + 1,
-                message: format!(
-                    "`range()` accepts at most 3 arguments (got {arg_count})",
-                ),
+                message: format!("`range()` accepts at most 3 arguments (got {arg_count})",),
             });
         }
     }
@@ -1676,12 +1726,48 @@ fn check_range_in_node(node: Node, source: &str, errors: &mut Vec<StructuralErro
     }
 }
 
+/// H9: `assert()` second argument (message) must be a string literal.
+fn check_assert_message(root: &Node, source: &str, errors: &mut Vec<StructuralError>) {
+    check_assert_in_node(*root, source, errors);
+}
+
+fn check_assert_in_node(node: Node, source: &str, errors: &mut Vec<StructuralError>) {
+    if node.kind() == "call"
+        && let Some(func) = node
+            .child_by_field_name("function")
+            .or_else(|| node.named_child(0))
+        && func.kind() == "identifier"
+        && func.utf8_text(source.as_bytes()).ok() == Some("assert")
+        && let Some(args) = node.child_by_field_name("arguments")
+        && args.named_child_count() >= 2
+        && let Some(msg_arg) = args.named_child(1)
+        && msg_arg.kind() != "string"
+    {
+        let pos = msg_arg.start_position();
+        errors.push(StructuralError {
+            line: pos.row as u32 + 1,
+            column: pos.column as u32 + 1,
+            message: "expected string for assert error message".to_string(),
+        });
+    }
+
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            check_assert_in_node(cursor.node(), source, errors);
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Batch 5: ClassDB / signature lookup checks
 // ---------------------------------------------------------------------------
 
 /// Batch 5: Check type annotations, class_name shadowing, enum shadowing.
-fn check_classdb_errors(
+pub fn check_classdb_errors(
     root: &Node,
     source: &str,
     symbols: &SymbolTable,
@@ -1691,23 +1777,41 @@ fn check_classdb_errors(
     check_class_name_shadows_native(symbols, &mut errors);
     check_enum_shadows_builtin(symbols, &mut errors);
     check_type_annotations_resolve(root, source, symbols, project, &mut errors);
+    check_use_void_return(root, source, symbols, &mut errors);
+    check_instance_method_on_class(root, source, &mut errors);
+    check_virtual_override_signature(symbols, &mut errors);
+    check_cyclic_inner_class(symbols, &mut errors);
+    check_export_invalid_type(symbols, &mut errors);
+    check_rpc_args(root, source, &mut errors);
+    check_export_node_path_type(root, source, &mut errors);
+    check_lambda_super(root, source, &mut errors);
+    check_typed_array_wrong_element(root, source, symbols, &mut errors);
+    check_callable_direct_call(root, source, symbols, &mut errors);
+    check_for_on_non_iterable(root, source, symbols, &mut errors);
+    check_arg_count(root, source, symbols, &mut errors);
+    check_arg_type_mismatch(root, source, symbols, &mut errors);
+    check_assign_type_mismatch(root, source, symbols, &mut errors);
+    check_return_type_mismatch(root, source, symbols, &mut errors);
+    check_invalid_operators(root, source, symbols, &mut errors);
+    check_invalid_cast(root, source, symbols, &mut errors);
+    check_type_not_found(root, source, symbols, project, &mut errors);
+    check_method_not_found(root, source, symbols, &mut errors);
+    check_super_method_not_found(root, source, symbols, &mut errors);
+    check_undefined_identifiers(root, source, symbols, project, &mut errors);
+    check_builtin_method_not_found(root, source, symbols, &mut errors);
+    check_builtin_property_not_found(root, source, symbols, &mut errors);
     errors
 }
 
 /// H5: `class_name` shadows a native Godot class.
-fn check_class_name_shadows_native(
-    symbols: &SymbolTable,
-    errors: &mut Vec<StructuralError>,
-) {
+fn check_class_name_shadows_native(symbols: &SymbolTable, errors: &mut Vec<StructuralError>) {
     if let Some(ref name) = symbols.class_name
         && crate::class_db::class_exists(name)
     {
         errors.push(StructuralError {
             line: 1,
             column: 1,
-            message: format!(
-                "`class_name {name}` shadows the native Godot class `{name}`",
-            ),
+            message: format!("`class_name {name}` shadows the native Godot class `{name}`",),
         });
     }
     for (inner_name, inner) in &symbols.inner_classes {
@@ -1727,14 +1831,45 @@ fn check_class_name_shadows_native(
 /// G5: Enum name or member name shadows a builtin type.
 fn check_enum_shadows_builtin(symbols: &SymbolTable, errors: &mut Vec<StructuralError>) {
     let builtin_types = [
-        "bool", "int", "float", "String", "Vector2", "Vector2i", "Vector3", "Vector3i",
-        "Vector4", "Vector4i", "Rect2", "Rect2i", "Transform2D", "Transform3D",
-        "Plane", "Quaternion", "AABB", "Basis", "Projection", "Color",
-        "NodePath", "StringName", "RID", "Callable", "Signal",
-        "Dictionary", "Array", "PackedByteArray", "PackedInt32Array",
-        "PackedInt64Array", "PackedFloat32Array", "PackedFloat64Array",
-        "PackedStringArray", "PackedVector2Array", "PackedVector3Array",
-        "PackedColorArray", "PackedVector4Array", "Nil", "Object",
+        "bool",
+        "int",
+        "float",
+        "String",
+        "Vector2",
+        "Vector2i",
+        "Vector3",
+        "Vector3i",
+        "Vector4",
+        "Vector4i",
+        "Rect2",
+        "Rect2i",
+        "Transform2D",
+        "Transform3D",
+        "Plane",
+        "Quaternion",
+        "AABB",
+        "Basis",
+        "Projection",
+        "Color",
+        "NodePath",
+        "StringName",
+        "RID",
+        "Callable",
+        "Signal",
+        "Dictionary",
+        "Array",
+        "PackedByteArray",
+        "PackedInt32Array",
+        "PackedInt64Array",
+        "PackedFloat32Array",
+        "PackedFloat64Array",
+        "PackedStringArray",
+        "PackedVector2Array",
+        "PackedVector3Array",
+        "PackedColorArray",
+        "PackedVector4Array",
+        "Nil",
+        "Object",
     ];
     for e in &symbols.enums {
         if !e.name.is_empty() && builtin_types.contains(&e.name.as_str()) {
@@ -1775,11 +1910,11 @@ fn check_type_annotations_in_node(
 
     // Check typed parameters, typed variables, return types
     let type_node = match node.kind() {
-        "typed_parameter" | "typed_default_parameter" | "variable_statement"
+        "typed_parameter"
+        | "typed_default_parameter"
+        | "variable_statement"
         | "const_statement" => node.child_by_field_name("type"),
-        "function_definition" | "constructor_definition" => {
-            node.child_by_field_name("return_type")
-        }
+        "function_definition" | "constructor_definition" => node.child_by_field_name("return_type"),
         _ => None,
     };
 
@@ -1819,15 +1954,46 @@ fn check_type_annotations_in_node(
 fn is_known_type(name: &str, symbols: &SymbolTable, project: &ProjectIndex) -> bool {
     // GDScript built-in types
     let builtins = [
-        "void", "bool", "int", "float", "String", "Variant",
-        "Vector2", "Vector2i", "Vector3", "Vector3i", "Vector4", "Vector4i",
-        "Rect2", "Rect2i", "Transform2D", "Transform3D",
-        "Plane", "Quaternion", "AABB", "Basis", "Projection", "Color",
-        "NodePath", "StringName", "RID", "Callable", "Signal",
-        "Dictionary", "Array", "PackedByteArray", "PackedInt32Array",
-        "PackedInt64Array", "PackedFloat32Array", "PackedFloat64Array",
-        "PackedStringArray", "PackedVector2Array", "PackedVector3Array",
-        "PackedColorArray", "PackedVector4Array", "Object",
+        "void",
+        "bool",
+        "int",
+        "float",
+        "String",
+        "Variant",
+        "Vector2",
+        "Vector2i",
+        "Vector3",
+        "Vector3i",
+        "Vector4",
+        "Vector4i",
+        "Rect2",
+        "Rect2i",
+        "Transform2D",
+        "Transform3D",
+        "Plane",
+        "Quaternion",
+        "AABB",
+        "Basis",
+        "Projection",
+        "Color",
+        "NodePath",
+        "StringName",
+        "RID",
+        "Callable",
+        "Signal",
+        "Dictionary",
+        "Array",
+        "PackedByteArray",
+        "PackedInt32Array",
+        "PackedInt64Array",
+        "PackedFloat32Array",
+        "PackedFloat64Array",
+        "PackedStringArray",
+        "PackedVector2Array",
+        "PackedVector3Array",
+        "PackedColorArray",
+        "PackedVector4Array",
+        "Object",
     ];
     if builtins.contains(&name) {
         return true;
@@ -1849,11 +2015,7 @@ fn is_known_type(name: &str, symbols: &SymbolTable, project: &ProjectIndex) -> b
     }
 
     // Same-file enums
-    if symbols
-        .enums
-        .iter()
-        .any(|e| e.name == name)
-    {
+    if symbols.enums.iter().any(|e| e.name == name) {
         return true;
     }
 
@@ -1877,7 +2039,7 @@ fn check_advanced_semantic(
 ) {
     check_missing_return(root, source, symbols, errors);
     check_const_expression_required(root, source, errors);
-    check_getter_setter_signature(root, errors);
+    check_getter_setter_signature(root, source, symbols, errors);
 }
 
 /// C4: Not all code paths return a value.
@@ -2024,16 +2186,13 @@ fn statement_always_returns(node: &Node, source: &[u8]) -> bool {
                                     let mut inner = p.walk();
                                     for pat_child in p.children(&mut inner) {
                                         if pat_child.kind() == "identifier"
-                                            && pat_child.utf8_text(source).ok()
-                                                == Some("_")
+                                            && pat_child.utf8_text(source).ok() == Some("_")
                                         {
                                             has_catchall = true;
                                         }
                                     }
                                 }
-                                if p.kind() == "body"
-                                    && !body_always_returns(&p, source)
-                                {
+                                if p.kind() == "body" && !body_always_returns(&p, source) {
                                     all_arms_return = false;
                                 }
                             }
@@ -2048,11 +2207,7 @@ fn statement_always_returns(node: &Node, source: &[u8]) -> bool {
 }
 
 /// F3: Constant expression required — const and enum values must be compile-time constants.
-fn check_const_expression_required(
-    root: &Node,
-    source: &str,
-    errors: &mut Vec<StructuralError>,
-) {
+fn check_const_expression_required(root: &Node, source: &str, errors: &mut Vec<StructuralError>) {
     check_const_expr_in_node(*root, source, errors);
 }
 
@@ -2072,10 +2227,28 @@ fn check_const_expr_in_node(node: Node, source: &str, errors: &mut Vec<Structura
         errors.push(StructuralError {
             line: pos.row as u32 + 1,
             column: pos.column as u32 + 1,
-            message: format!(
-                "constant `{name}` requires a compile-time constant expression",
-            ),
+            message: format!("constant `{name}` requires a compile-time constant expression",),
         });
+    }
+
+    // Check enum member values: must also be constant expressions
+    if node.kind() == "enum_definition"
+        && let Some(body) = node.child_by_field_name("body")
+    {
+        let mut cursor2 = body.walk();
+        for child in body.children(&mut cursor2) {
+            if child.kind() == "enumerator"
+                && let Some(value) = child.child_by_field_name("right")
+                && !is_const_expression(&value, bytes)
+            {
+                let pos = value.start_position();
+                errors.push(StructuralError {
+                    line: pos.row as u32 + 1,
+                    column: pos.column as u32 + 1,
+                    message: "enum values must be constant expressions".to_string(),
+                });
+            }
+        }
     }
 
     let mut cursor = node.walk();
@@ -2095,19 +2268,15 @@ fn is_const_expression(node: &Node, source: &[u8]) -> bool {
         // Literals are always constant
         "integer" | "float" | "string" | "true" | "false" | "null" | "string_name" => true,
         // Negative literal: unary_operator with -
-        "unary_operator" => {
-            node.named_child(0)
-                .is_some_and(|c| is_const_expression(&c, source))
-        }
+        "unary_operator" => node
+            .named_child(0)
+            .is_some_and(|c| is_const_expression(&c, source)),
         // Constant identifier references (UPPER_CASE or known builtins)
         "identifier" => {
             let text = node.utf8_text(source).unwrap_or("");
             // Allow references to other constants (UPPER_CASE) or preload/INF/NAN/PI/TAU
             is_upper_snake_case(text)
-                || matches!(
-                    text,
-                    "INF" | "NAN" | "PI" | "TAU" | "INFINITY" | "preload"
-                )
+                || matches!(text, "INF" | "NAN" | "PI" | "TAU" | "INFINITY" | "preload")
         }
         // Array/dictionary literals with all-constant elements
         "array" => {
@@ -2170,44 +2339,403 @@ fn is_const_expression(node: &Node, source: &[u8]) -> bool {
 /// H1: Getter/setter signature mismatch.
 /// A property's `set(value)` function must have exactly 1 parameter.
 /// A property's `get()` function must have 0 parameters and match the property type.
-fn check_getter_setter_signature(root: &Node, errors: &mut Vec<StructuralError>) {
-    check_getset_in_node(*root, errors);
+fn check_getter_setter_signature(
+    root: &Node,
+    source: &str,
+    symbols: &SymbolTable,
+    errors: &mut Vec<StructuralError>,
+) {
+    check_getset_in_node(*root, source.as_bytes(), symbols, errors);
 }
 
-fn check_getset_in_node(node: Node, errors: &mut Vec<StructuralError>) {
-    if node.kind() == "variable_statement" || node.kind() == "setget" {
-        // Look for `set(` and `get(` children or property_body
+fn check_getset_in_node(
+    node: Node,
+    source: &[u8],
+    symbols: &SymbolTable,
+    errors: &mut Vec<StructuralError>,
+) {
+    // Handle inline getter/setter nodes (direct set(v):/get(): syntax)
+    if node.kind() == "setter"
+        && let Some(params) = node.child_by_field_name("parameters")
+    {
+        let param_count = params.named_child_count();
+        if param_count != 1 {
+            let pos = node.start_position();
+            errors.push(StructuralError {
+                line: pos.row as u32 + 1,
+                column: pos.column as u32 + 1,
+                message: format!(
+                    "property setter must have exactly 1 parameter (got {param_count})",
+                ),
+            });
+        }
+    }
+    if node.kind() == "getter"
+        && let Some(params) = node.child_by_field_name("parameters")
+        && params.named_child_count() > 0
+    {
+        let pos = node.start_position();
+        errors.push(StructuralError {
+            line: pos.row as u32 + 1,
+            column: pos.column as u32 + 1,
+            message: "property getter cannot have parameters".to_string(),
+        });
+    }
+
+    // Handle named getter/setter in setget node: `get = _func_name` / `set = _func_name`
+    // The tree-sitter AST has: setget > [get "=" getter="_func_name"] or [set "=" setter="_func_name"]
+    if node.kind() == "setget" {
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
-            // GDScript 4 inline property syntax: var x: int: set(v), get()
-            // tree-sitter may represent this as property_body / setter / getter
-            if child.kind() == "setter" {
-                // Setter should have exactly 1 parameter
-                if let Some(params) = child.child_by_field_name("parameters") {
-                    let param_count = params.named_child_count();
-                    if param_count != 1 {
-                        let pos = child.start_position();
-                        errors.push(StructuralError {
-                            line: pos.row as u32 + 1,
-                            column: pos.column as u32 + 1,
-                            message: format!(
-                                "property setter must have exactly 1 parameter (got {param_count})",
-                            ),
-                        });
+            // Unnamed "getter" node contains the function name for `get = func`
+            if child.kind() == "getter"
+                && let Ok(func_name) = child.utf8_text(source)
+                && !func_name.is_empty()
+                && let Some(func) = symbols.functions.iter().find(|f| f.name == func_name)
+                && !func.params.is_empty()
+            {
+                let pos = child.start_position();
+                errors.push(StructuralError {
+                    line: pos.row as u32 + 1,
+                    column: pos.column as u32 + 1,
+                    message: format!(
+                        "function `{func_name}` cannot be used as getter because of its signature",
+                    ),
+                });
+            }
+            // Unnamed "setter" node contains the function name for `set = func`
+            if child.kind() == "setter"
+                && let Ok(func_name) = child.utf8_text(source)
+                && !func_name.is_empty()
+                && let Some(func) = symbols.functions.iter().find(|f| f.name == func_name)
+                && func.params.len() != 1
+            {
+                let pos = child.start_position();
+                errors.push(StructuralError {
+                    line: pos.row as u32 + 1,
+                    column: pos.column as u32 + 1,
+                    message: format!(
+                        "function `{func_name}` cannot be used as setter because of its signature",
+                    ),
+                });
+            }
+        }
+    }
+
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            check_getset_in_node(cursor.node(), source, symbols, errors);
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Round 2: New ClassDB / semantic checks
+// ---------------------------------------------------------------------------
+
+/// C3 (extended): Using the return value of a void function.
+fn check_use_void_return(
+    root: &Node,
+    source: &str,
+    symbols: &SymbolTable,
+    errors: &mut Vec<StructuralError>,
+) {
+    check_use_void_in_node(*root, source, symbols, errors);
+}
+
+fn check_use_void_in_node(
+    node: Node,
+    source: &str,
+    symbols: &SymbolTable,
+    errors: &mut Vec<StructuralError>,
+) {
+    let bytes = source.as_bytes();
+
+    // Check: var x = void_func()
+    if node.kind() == "variable_statement"
+        && let Some(value) = node.child_by_field_name("value")
+        && value.kind() == "call"
+        && let Some(func) = value
+            .child_by_field_name("function")
+            .or_else(|| value.named_child(0))
+        && func.kind() == "identifier"
+        && let Ok(func_name) = func.utf8_text(bytes)
+    {
+        // Check user-defined functions
+        let is_void = symbols.functions.iter().any(|f| {
+            f.name == func_name && f.return_type.as_ref().is_some_and(|r| r.name == "void")
+        });
+        // Check ClassDB methods (bare call = self method)
+        let extends = symbols.extends.as_deref().unwrap_or("RefCounted");
+        let is_classdb_void =
+            !is_void && crate::class_db::method_return_type(extends, func_name) == Some("void");
+
+        if is_void || is_classdb_void {
+            let pos = value.start_position();
+            errors.push(StructuralError {
+                line: pos.row as u32 + 1,
+                column: pos.column as u32 + 1,
+                message: format!(
+                    "cannot use return value of `{func_name}()` because it returns void",
+                ),
+            });
+        }
+    }
+
+    // Don't recurse into function definitions
+    if node.kind() == "function_definition"
+        || node.kind() == "constructor_definition"
+        || node.kind() == "lambda"
+    {
+        // Still need to recurse into body
+        if let Some(body) = node.child_by_field_name("body") {
+            let mut cursor = body.walk();
+            if cursor.goto_first_child() {
+                loop {
+                    check_use_void_in_node(cursor.node(), source, symbols, errors);
+                    if !cursor.goto_next_sibling() {
+                        break;
                     }
                 }
             }
-            if child.kind() == "getter" {
-                // Getter should have 0 parameters
-                if let Some(params) = child.child_by_field_name("parameters")
-                    && params.named_child_count() > 0
-                {
-                    let pos = child.start_position();
+        }
+        return;
+    }
+
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            check_use_void_in_node(cursor.node(), source, symbols, errors);
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+    }
+}
+
+/// C7: Calling a non-static method on a class name (e.g., `Node.get_children()`).
+fn check_instance_method_on_class(root: &Node, source: &str, errors: &mut Vec<StructuralError>) {
+    check_instance_method_in_node(*root, source, errors);
+}
+
+fn check_instance_method_in_node(node: Node, source: &str, errors: &mut Vec<StructuralError>) {
+    let bytes = source.as_bytes();
+
+    // Pattern: attribute > identifier(ClassName) + attribute_call > identifier(method_name)
+    if node.kind() == "attribute"
+        && let Some(lhs) = node.named_child(0)
+        && lhs.kind() == "identifier"
+        && let Ok(class_name) = lhs.utf8_text(bytes)
+        && crate::class_db::class_exists(class_name)
+    {
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            if child.kind() == "attribute_call"
+                && let Some(name_node) = child.named_child(0)
+                && let Ok(method_name) = name_node.utf8_text(bytes)
+                && method_name != "new"
+                && crate::class_db::method_exists(class_name, method_name)
+            {
+                // ClassDB methods called on a class name are instance methods
+                // (static methods in Godot are rare — new() is excluded above)
+                let pos = node.start_position();
+                errors.push(StructuralError {
+                    line: pos.row as u32 + 1,
+                    column: pos.column as u32 + 1,
+                    message: format!(
+                        "cannot call non-static method `{method_name}()` on class `{class_name}` — use an instance instead",
+                    ),
+                });
+            }
+        }
+    }
+
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            check_instance_method_in_node(cursor.node(), source, errors);
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+    }
+}
+
+/// Well-known virtual method signatures not in ClassDB (they are part of the
+/// Godot core but not in extension_api.json).
+fn known_virtual_signature(name: &str) -> Option<(&'static str, u8)> {
+    // (return_type, param_count)
+    match name {
+        "_to_string" => Some(("String", 0)),
+        "_init" => Some(("void", 0)), // already checked by G4, but included for completeness
+        "_notification" => Some(("void", 1)), // what: int
+        "_get" | "_property_get_revert" => Some(("Variant", 1)),
+        "_set" => Some(("bool", 2)),
+        "_get_property_list" => Some(("Array", 0)),
+        "_property_can_revert" => Some(("bool", 1)),
+        _ => None,
+    }
+}
+
+/// D1/D2: Virtual override signature checks — wrong return type or wrong param count.
+fn check_virtual_override_signature(symbols: &SymbolTable, errors: &mut Vec<StructuralError>) {
+    let extends = symbols.extends.as_deref().unwrap_or("RefCounted");
+    for func in &symbols.functions {
+        // Only check virtual overrides (functions starting with _)
+        if !func.name.starts_with('_') {
+            continue;
+        }
+
+        // Try ClassDB first, fall back to well-known virtuals
+        let (ret_type, total) =
+            if let Some(sig) = crate::class_db::method_signature(extends, &func.name) {
+                (sig.return_type, sig.total_params as usize)
+            } else if let Some((ret, params)) = known_virtual_signature(&func.name) {
+                (ret, params as usize)
+            } else {
+                continue;
+            };
+
+        // D1: Wrong return type
+        if let Some(ref ret) = func.return_type
+            && !ret.name.is_empty()
+            && ret.name != "void"
+            && ret_type != "Variant"
+            && ret.name != ret_type
+        {
+            errors.push(StructuralError {
+                line: func.line as u32 + 1,
+                column: 1,
+                message: format!(
+                    "override `{}()` has return type `{}` but parent expects `{}`",
+                    func.name, ret.name, ret_type,
+                ),
+            });
+        }
+
+        // D2: Wrong param count
+        let user_count = func.params.len();
+        if user_count != total {
+            errors.push(StructuralError {
+                line: func.line as u32 + 1,
+                column: 1,
+                message: format!(
+                    "override `{}()` has {} parameter(s) but parent expects {}",
+                    func.name, user_count, total,
+                ),
+            });
+        }
+    }
+    for (_, inner) in &symbols.inner_classes {
+        check_virtual_override_signature(inner, errors);
+    }
+}
+
+/// D3: Cyclic inner class inheritance.
+fn check_cyclic_inner_class(symbols: &SymbolTable, errors: &mut Vec<StructuralError>) {
+    // Build a map of inner class name -> extends
+    let extends_map: std::collections::HashMap<&str, &str> = symbols
+        .inner_classes
+        .iter()
+        .filter_map(|(n, s)| s.extends.as_deref().map(|e| (n.as_str(), e)))
+        .collect();
+
+    // Check for cycles: walk the extends chain, detect if we revisit a class
+    let mut reported = std::collections::HashSet::new();
+    for (name, _) in &symbols.inner_classes {
+        let mut visited = std::collections::HashSet::new();
+        let mut current = name.as_str();
+        while let Some(&parent) = extends_map.get(current) {
+            if !visited.insert(parent) || parent == name {
+                // Cycle detected — report only once
+                if reported.insert(name.as_str()) {
                     errors.push(StructuralError {
-                        line: pos.row as u32 + 1,
-                        column: pos.column as u32 + 1,
-                        message: "property getter cannot have parameters".to_string(),
+                        line: 1,
+                        column: 1,
+                        message: format!(
+                            "cyclic inheritance: inner class `{name}` is involved in an inheritance cycle",
+                        ),
                     });
+                }
+                break;
+            }
+            current = parent;
+        }
+    }
+}
+
+/// E2: `@export` with an invalid type (Object is not exportable).
+fn check_export_invalid_type(symbols: &SymbolTable, errors: &mut Vec<StructuralError>) {
+    for var in &symbols.variables {
+        let has_export = var.annotations.iter().any(|a| a == "export");
+        if !has_export {
+            continue;
+        }
+        if let Some(ref type_ann) = var.type_ann
+            && type_ann.name == "Object"
+        {
+            errors.push(StructuralError {
+                line: var.line as u32 + 1,
+                column: 1,
+                message: format!(
+                    "`@export` type `Object` is not a valid export type for variable `{}`",
+                    var.name,
+                ),
+            });
+        }
+    }
+    for (_, inner) in &symbols.inner_classes {
+        check_export_invalid_type(inner, errors);
+    }
+}
+
+/// E9: `@rpc` annotation with invalid arguments.
+fn check_rpc_args(root: &Node, source: &str, errors: &mut Vec<StructuralError>) {
+    check_rpc_in_node(*root, source, errors);
+}
+
+fn check_rpc_in_node(node: Node, source: &str, errors: &mut Vec<StructuralError>) {
+    let bytes = source.as_bytes();
+    let valid_rpc_args = [
+        "call_local",
+        "call_remote",
+        "any_peer",
+        "authority",
+        "reliable",
+        "unreliable",
+        "unreliable_ordered",
+    ];
+
+    if node.kind() == "annotation"
+        && let Some(id) = find_annotation_name(&node, source)
+        && id == "rpc"
+    {
+        // Check all string arguments
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            if child.kind() == "arguments" {
+                let mut ac = child.walk();
+                for arg in child.named_children(&mut ac) {
+                    if arg.kind() == "string"
+                        && let Ok(raw) = arg.utf8_text(bytes)
+                    {
+                        let val = raw.trim_matches('"').trim_matches('\'');
+                        if !valid_rpc_args.contains(&val) {
+                            let pos = arg.start_position();
+                            errors.push(StructuralError {
+                                line: pos.row as u32 + 1,
+                                column: pos.column as u32 + 1,
+                                message: format!(
+                                    "invalid `@rpc` argument `\"{val}\"` — expected one of: {}",
+                                    valid_rpc_args.join(", "),
+                                ),
+                            });
+                        }
+                    }
                 }
             }
         }
@@ -2216,11 +2744,1396 @@ fn check_getset_in_node(node: Node, errors: &mut Vec<StructuralError>) {
     let mut cursor = node.walk();
     if cursor.goto_first_child() {
         loop {
-            check_getset_in_node(cursor.node(), errors);
+            check_rpc_in_node(cursor.node(), source, errors);
             if !cursor.goto_next_sibling() {
                 break;
             }
         }
+    }
+}
+
+/// E10: `@export_node_path` with a type that doesn't extend Node.
+fn check_export_node_path_type(root: &Node, source: &str, errors: &mut Vec<StructuralError>) {
+    check_export_node_path_in_node(*root, source, errors);
+}
+
+fn check_export_node_path_in_node(node: Node, source: &str, errors: &mut Vec<StructuralError>) {
+    let bytes = source.as_bytes();
+
+    if node.kind() == "annotation"
+        && let Some(id) = find_annotation_name(&node, source)
+        && id == "export_node_path"
+    {
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            if child.kind() == "arguments" {
+                let mut ac = child.walk();
+                for arg in child.named_children(&mut ac) {
+                    if arg.kind() == "string"
+                        && let Ok(raw) = arg.utf8_text(bytes)
+                    {
+                        let type_name = raw.trim_matches('"').trim_matches('\'');
+                        if !type_name.is_empty()
+                            && !crate::class_db::inherits(type_name, "Node")
+                            && type_name != "Node"
+                        {
+                            let pos = arg.start_position();
+                            errors.push(StructuralError {
+                                line: pos.row as u32 + 1,
+                                column: pos.column as u32 + 1,
+                                message: format!(
+                                    "`@export_node_path` type `{type_name}` does not extend Node",
+                                ),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            check_export_node_path_in_node(cursor.node(), source, errors);
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Round 3: Medium checks
+// ---------------------------------------------------------------------------
+
+/// H3: `super` is not allowed inside lambda bodies.
+fn check_lambda_super(root: &Node, source: &str, errors: &mut Vec<StructuralError>) {
+    check_lambda_super_in_node(root, source, errors, false);
+}
+
+fn check_lambda_super_in_node(
+    node: &Node,
+    source: &str,
+    errors: &mut Vec<StructuralError>,
+    in_lambda: bool,
+) {
+    if node.kind() == "lambda" {
+        // Recurse into the lambda body with in_lambda=true
+        let mut cursor = node.walk();
+        if cursor.goto_first_child() {
+            loop {
+                check_lambda_super_in_node(&cursor.node(), source, errors, true);
+                if !cursor.goto_next_sibling() {
+                    break;
+                }
+            }
+        }
+        return;
+    }
+
+    if in_lambda
+        && node.kind() == "identifier"
+        && let Ok(name) = node.utf8_text(source.as_bytes())
+        && name == "super"
+    {
+        errors.push(StructuralError {
+            line: node.start_position().row as u32 + 1,
+            column: node.start_position().column as u32 + 1,
+            message: "cannot use `super` inside a lambda".to_string(),
+        });
+    }
+
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            check_lambda_super_in_node(&cursor.node(), source, errors, in_lambda);
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+    }
+}
+
+/// H6: Typed array literal with wrong element types.
+/// e.g., `var arr: Array[int] = ["string"]`
+fn check_typed_array_wrong_element(
+    root: &Node,
+    source: &str,
+    symbols: &SymbolTable,
+    errors: &mut Vec<StructuralError>,
+) {
+    check_typed_array_in_node(root, source, symbols, errors);
+}
+
+fn check_typed_array_in_node(
+    node: &Node,
+    source: &str,
+    symbols: &SymbolTable,
+    errors: &mut Vec<StructuralError>,
+) {
+    // Look for variable declarations with typed array annotation and array literal initializer
+    if node.kind() == "variable_statement"
+        && let Some(type_node) = node.child_by_field_name("type")
+        && let Ok(type_text) = type_node.utf8_text(source.as_bytes())
+        && let Some(element_type) = type_text
+            .strip_prefix("Array[")
+            .and_then(|s| s.strip_suffix(']'))
+        && let Some(value_node) = node.child_by_field_name("value")
+        && value_node.kind() == "array"
+    {
+        check_array_elements(&value_node, source, symbols, element_type, errors);
+    }
+
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            check_typed_array_in_node(&cursor.node(), source, symbols, errors);
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+    }
+}
+
+fn check_array_elements(
+    array_node: &Node,
+    source: &str,
+    symbols: &SymbolTable,
+    expected_type: &str,
+    errors: &mut Vec<StructuralError>,
+) {
+    let mut cursor = array_node.walk();
+    for child in array_node.children(&mut cursor) {
+        if !child.is_named() {
+            continue;
+        }
+        let Some(actual) = type_inference::infer_expression_type(&child, source, symbols) else {
+            continue;
+        };
+        let actual_name = match &actual {
+            type_inference::InferredType::Builtin(b) => *b,
+            type_inference::InferredType::Class(c) => c.as_str(),
+            _ => continue,
+        };
+        if !types_assignable(expected_type, actual_name) {
+            errors.push(StructuralError {
+                line: child.start_position().row as u32 + 1,
+                column: child.start_position().column as u32 + 1,
+                message: format!(
+                    "cannot include a value of type \"{actual_name}\" in Array[{expected_type}]",
+                ),
+            });
+        }
+    }
+}
+
+/// Check if a value type is assignable to a declared type.
+fn types_assignable(declared: &str, actual: &str) -> bool {
+    if declared == actual || declared == "Variant" || actual == "Variant" {
+        return true;
+    }
+    // Numeric widening: int → float
+    if declared == "float" && actual == "int" {
+        return true;
+    }
+    // Class inheritance: allow both upcast and downcast (Godot defers to runtime)
+    if crate::class_db::class_exists(declared) && crate::class_db::class_exists(actual) {
+        return crate::class_db::inherits(actual, declared)
+            || crate::class_db::inherits(declared, actual);
+    }
+    false
+}
+
+/// H16: Cannot call a variable directly — e.g. `f()` where `f: Callable`.
+/// Godot requires `.call()` syntax for Callable-typed variables.
+fn check_callable_direct_call(
+    root: &Node,
+    source: &str,
+    symbols: &SymbolTable,
+    errors: &mut Vec<StructuralError>,
+) {
+    // Collect class-level Callable variables
+    let mut callable_names: Vec<String> = symbols
+        .variables
+        .iter()
+        .filter(|v| v.type_ann.as_ref().is_some_and(|t| t.name == "Callable"))
+        .map(|v| v.name.clone())
+        .collect();
+    check_callable_in_node(root, source, symbols, &mut callable_names, errors);
+}
+
+fn check_callable_in_node(
+    node: &Node,
+    source: &str,
+    symbols: &SymbolTable,
+    callable_names: &mut Vec<String>,
+    errors: &mut Vec<StructuralError>,
+) {
+    // Track local variable declarations with type Callable
+    if node.kind() == "variable_statement"
+        && let Some(name_node) = node.child_by_field_name("name")
+        && let Ok(var_name) = name_node.utf8_text(source.as_bytes())
+        && let Some(type_node) = node.child_by_field_name("type")
+        && let Ok(type_text) = type_node.utf8_text(source.as_bytes())
+        && type_text == "Callable"
+    {
+        callable_names.push(var_name.to_string());
+    }
+
+    // Check call expressions — the callee is the first named child (no field name)
+    if node.kind() == "call"
+        && let Some(func_node) = node.named_child(0)
+        && func_node.kind() == "identifier"
+        && let Ok(name) = func_node.utf8_text(source.as_bytes())
+        && !symbols.functions.iter().any(|f| f.name == name)
+        && callable_names.iter().any(|cn| cn == name)
+    {
+        errors.push(StructuralError {
+            line: node.start_position().row as u32 + 1,
+            column: node.start_position().column as u32 + 1,
+            message: format!(
+                "function \"{name}()\" not found in base self — use `{name}.call()` for Callable variables",
+            ),
+        });
+    }
+
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            check_callable_in_node(&cursor.node(), source, symbols, callable_names, errors);
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+    }
+}
+
+/// B7: For-loop on a non-iterable type (e.g., `for i in true:`).
+fn check_for_on_non_iterable(
+    root: &Node,
+    source: &str,
+    symbols: &SymbolTable,
+    errors: &mut Vec<StructuralError>,
+) {
+    check_for_iterable_in_node(root, source, symbols, errors);
+}
+
+fn check_for_iterable_in_node(
+    node: &Node,
+    source: &str,
+    symbols: &SymbolTable,
+    errors: &mut Vec<StructuralError>,
+) {
+    if node.kind() == "for_statement"
+        && let Some(iter_node) = node.child_by_field_name("right")
+        && let Some(ty) = type_inference::infer_expression_type(&iter_node, source, symbols)
+        && !is_iterable_type(&ty)
+    {
+        let ty_name = match &ty {
+            type_inference::InferredType::Builtin(b) => (*b).to_string(),
+            type_inference::InferredType::Class(c) | type_inference::InferredType::Enum(c) => {
+                c.clone()
+            }
+            type_inference::InferredType::Void => "void".to_string(),
+            _ => return,
+        };
+        errors.push(StructuralError {
+            line: iter_node.start_position().row as u32 + 1,
+            column: iter_node.start_position().column as u32 + 1,
+            message: format!("unable to iterate on value of type \"{ty_name}\""),
+        });
+    }
+
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            check_for_iterable_in_node(&cursor.node(), source, symbols, errors);
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+    }
+}
+
+/// Check if a type is iterable in GDScript.
+fn is_iterable_type(ty: &type_inference::InferredType) -> bool {
+    match ty {
+        type_inference::InferredType::Builtin(b) => matches!(
+            *b,
+            "int"
+                | "float"
+                | "String"
+                | "Array"
+                | "Dictionary"
+                | "PackedByteArray"
+                | "PackedInt32Array"
+                | "PackedInt64Array"
+                | "PackedFloat32Array"
+                | "PackedFloat64Array"
+                | "PackedStringArray"
+                | "PackedVector2Array"
+                | "PackedVector3Array"
+                | "PackedColorArray"
+                | "PackedVector4Array"
+                | "Vector2"
+                | "Vector2i"
+                | "Vector3"
+                | "Vector3i"
+                | "Vector4"
+                | "Vector4i"
+        ),
+        type_inference::InferredType::TypedArray(_) | type_inference::InferredType::Variant => true,
+        _ => false,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Round 4: B4 — Argument count mismatch
+// ---------------------------------------------------------------------------
+
+/// Try to infer a local variable's type by finding its declaration in the enclosing scope.
+/// This handles `var v := Vector2()` patterns where `v` has an inferred type.
+fn infer_local_var_type(
+    ident_node: &Node,
+    source: &str,
+    symbols: &SymbolTable,
+) -> Option<type_inference::InferredType> {
+    if ident_node.kind() != "identifier" {
+        return None;
+    }
+    let name = ident_node.utf8_text(source.as_bytes()).ok()?;
+
+    // Walk up to find the enclosing block/body, then scan its children for a var decl
+    let mut current = ident_node.parent()?;
+    loop {
+        if matches!(current.kind(), "body" | "class_body" | "source") {
+            break;
+        }
+        current = current.parent()?;
+    }
+
+    let mut cursor = current.walk();
+    for child in current.children(&mut cursor) {
+        if child.kind() == "variable_statement"
+            && child.start_position().row < ident_node.start_position().row
+            && let Some(name_node) = child.child_by_field_name("name")
+            && let Ok(var_name) = name_node.utf8_text(source.as_bytes())
+            && var_name == name
+        {
+            // Try explicit type annotation first
+            if let Some(type_node) = child.child_by_field_name("type")
+                && type_node.kind() != "inferred_type"
+                && let Ok(type_text) = type_node.utf8_text(source.as_bytes())
+            {
+                return Some(type_inference::classify_type_name(type_text));
+            }
+            // Then infer from the initializer value
+            if let Some(value) = child.child_by_field_name("value") {
+                return type_inference::infer_expression_type(&value, source, symbols);
+            }
+        }
+    }
+    None
+}
+
+// ---------------------------------------------------------------------------
+// Round 5: B1/B2/B5/B6 — Type mismatch checks
+// ---------------------------------------------------------------------------
+
+/// B1: Assignment type mismatch — `var x: int = "hello"` or `x = "hello"` where x is typed.
+fn check_assign_type_mismatch(
+    root: &Node,
+    source: &str,
+    symbols: &SymbolTable,
+    errors: &mut Vec<StructuralError>,
+) {
+    check_assign_type_in_node(root, source, symbols, errors);
+}
+
+fn check_assign_type_in_node(
+    node: &Node,
+    source: &str,
+    symbols: &SymbolTable,
+    errors: &mut Vec<StructuralError>,
+) {
+    // Check variable declarations with explicit type and initializer
+    if node.kind() == "variable_statement"
+        && let Some(type_node) = node.child_by_field_name("type")
+        && type_node.kind() != "inferred_type"
+        && let Ok(declared_type) = type_node.utf8_text(source.as_bytes())
+        && !declared_type.starts_with("Array[") // typed arrays handled separately
+        && let Some(value) = node.child_by_field_name("value")
+        && let Some(actual) = type_inference::infer_expression_type(&value, source, symbols)
+        && let Some(actual_name) = inferred_type_name(&actual)
+        && !types_assignable(declared_type, actual_name)
+    {
+        errors.push(StructuralError {
+            line: value.start_position().row as u32 + 1,
+            column: value.start_position().column as u32 + 1,
+            message: format!(
+                "cannot assign a value of type \"{actual_name}\" to variable of type \"{declared_type}\"",
+            ),
+        });
+    }
+
+    // Check reassignment: x = "string" where x is typed as int
+    if node.kind() == "assignment"
+        && let Some(lhs) = node.child_by_field_name("left")
+        && lhs.kind() == "identifier"
+        && let Ok(var_name) = lhs.utf8_text(source.as_bytes())
+        && let Some(rhs) = node.child_by_field_name("right")
+    {
+        // Check class-level variables first, then local variables
+        let class_var_type = symbols
+            .variables
+            .iter()
+            .find(|v| v.name == var_name)
+            .and_then(|v| v.type_ann.as_ref())
+            .filter(|t| !t.is_inferred && !t.name.is_empty())
+            .map(|t| t.name.clone());
+        let local_var_type = if class_var_type.is_none() {
+            infer_local_var_type(&lhs, source, symbols)
+                .and_then(|ty| inferred_type_name(&ty).map(String::from))
+        } else {
+            None
+        };
+        let declared_type = class_var_type.as_deref().or(local_var_type.as_deref());
+        if let Some(declared_type) = declared_type
+            && let Some(actual) = type_inference::infer_expression_type(&rhs, source, symbols)
+            && let Some(actual_name) = inferred_type_name(&actual)
+            && !types_assignable(declared_type, actual_name)
+        {
+            errors.push(StructuralError {
+                line: rhs.start_position().row as u32 + 1,
+                column: rhs.start_position().column as u32 + 1,
+                message: format!(
+                    "cannot assign a value of type \"{actual_name}\" to variable of type \"{declared_type}\"",
+                ),
+            });
+        }
+    }
+
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            check_assign_type_in_node(&cursor.node(), source, symbols, errors);
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+    }
+}
+
+/// B2: Return type mismatch — `func f() -> int: return "hello"`.
+fn check_return_type_mismatch(
+    root: &Node,
+    source: &str,
+    symbols: &SymbolTable,
+    errors: &mut Vec<StructuralError>,
+) {
+    for func in &symbols.functions {
+        let Some(ref ret_ann) = func.return_type else {
+            continue;
+        };
+        if ret_ann.is_inferred
+            || ret_ann.name.is_empty()
+            || ret_ann.name == "Variant"
+            || ret_ann.name == "void"
+        {
+            continue;
+        }
+        // Find the function definition node and check return statements
+        check_return_in_func(root, source, symbols, func, &ret_ann.name, errors);
+    }
+}
+
+fn check_return_in_func(
+    root: &Node,
+    source: &str,
+    symbols: &SymbolTable,
+    func: &symbol_table::FuncDecl,
+    ret_type: &str,
+    errors: &mut Vec<StructuralError>,
+) {
+    // Find the function_definition node for this function
+    let mut cursor = root.walk();
+    for child in root.children(&mut cursor) {
+        if child.kind() == "function_definition"
+            && let Some(name_node) = child.child_by_field_name("name")
+            && let Ok(name) = name_node.utf8_text(source.as_bytes())
+            && name == func.name
+        {
+            check_return_type_in_body(&child, source, symbols, ret_type, errors);
+        }
+    }
+}
+
+fn check_return_type_in_body(
+    node: &Node,
+    source: &str,
+    symbols: &SymbolTable,
+    ret_type: &str,
+    errors: &mut Vec<StructuralError>,
+) {
+    if node.kind() == "return_statement"
+        && let Some(expr) = node.named_child(0)
+        && let Some(actual) = type_inference::infer_expression_type(&expr, source, symbols)
+        && let Some(actual_name) = inferred_type_name(&actual)
+        && !types_assignable(ret_type, actual_name)
+    {
+        errors.push(StructuralError {
+            line: expr.start_position().row as u32 + 1,
+            column: expr.start_position().column as u32 + 1,
+            message: format!(
+                "cannot return a value of type \"{actual_name}\" from function with return type \"{ret_type}\"",
+            ),
+        });
+    }
+
+    // Don't recurse into nested function definitions or lambdas
+    if matches!(node.kind(), "function_definition" | "lambda")
+        && node.parent().is_some_and(|p| p.kind() != "source")
+    {
+        return;
+    }
+
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            check_return_type_in_body(&cursor.node(), source, symbols, ret_type, errors);
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+    }
+}
+
+/// B5: Invalid binary operators — `"hello" + 5`, `true * false`, etc.
+fn check_invalid_operators(
+    root: &Node,
+    source: &str,
+    symbols: &SymbolTable,
+    errors: &mut Vec<StructuralError>,
+) {
+    check_operators_in_node(root, source, symbols, errors);
+}
+
+fn check_operators_in_node(
+    node: &Node,
+    source: &str,
+    symbols: &SymbolTable,
+    errors: &mut Vec<StructuralError>,
+) {
+    if node.kind() == "binary_operator"
+        && let Some(left) = node.child_by_field_name("left")
+        && let Some(right) = node.child_by_field_name("right")
+        && let Some(op_node) = node.child_by_field_name("op")
+        && let Ok(op) = op_node.utf8_text(source.as_bytes())
+        && let Some(left_ty) = type_inference::infer_expression_type(&left, source, symbols)
+        && let Some(right_ty) = type_inference::infer_expression_type(&right, source, symbols)
+        && let Some(lt) = inferred_type_name(&left_ty)
+        && let Some(rt) = inferred_type_name(&right_ty)
+        && !operator_valid(op, lt, rt)
+    {
+        errors.push(StructuralError {
+            line: node.start_position().row as u32 + 1,
+            column: node.start_position().column as u32 + 1,
+            message: format!("invalid operands \"{lt}\" and \"{rt}\" for operator \"{op}\"",),
+        });
+    }
+
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            check_operators_in_node(&cursor.node(), source, symbols, errors);
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+    }
+}
+
+/// Check if a binary operator is valid for the given operand types.
+fn operator_valid(op: &str, left: &str, right: &str) -> bool {
+    // Variant is always compatible
+    if left == "Variant" || right == "Variant" {
+        return true;
+    }
+    match op {
+        "+" | "-" => {
+            // Numeric: int+int, int+float, float+float, float+int
+            if is_numeric_type(left) && is_numeric_type(right) {
+                return true;
+            }
+            // String + String
+            if left == "String" && right == "String" {
+                return true;
+            }
+            // Vector arithmetic
+            if left == right && is_vector_type(left) {
+                return true;
+            }
+            // Array + Array
+            if left == "Array" && right == "Array" {
+                return true;
+            }
+            false
+        }
+        "*" | "/" => {
+            if is_numeric_type(left) && is_numeric_type(right) {
+                return true;
+            }
+            // Vector * scalar, scalar * Vector
+            if is_vector_type(left) && is_numeric_type(right) {
+                return true;
+            }
+            if is_numeric_type(left) && is_vector_type(right) {
+                return true;
+            }
+            // Vector * Vector (element-wise)
+            if left == right && is_vector_type(left) {
+                return true;
+            }
+            // String * int (repeat)
+            if op == "*" && left == "String" && right == "int" {
+                return true;
+            }
+            false
+        }
+        "%" => is_numeric_type(left) && is_numeric_type(right),
+        "<" | ">" | "<=" | ">=" => {
+            if is_numeric_type(left) && is_numeric_type(right) {
+                return true;
+            }
+            if left == "String" && right == "String" {
+                return true;
+            }
+            false
+        }
+        // ==, !=, and/or/&&/||, and unknown ops: always valid
+        _ => true,
+    }
+}
+
+fn is_numeric_type(ty: &str) -> bool {
+    matches!(ty, "int" | "float")
+}
+
+fn is_vector_type(ty: &str) -> bool {
+    matches!(
+        ty,
+        "Vector2" | "Vector2i" | "Vector3" | "Vector3i" | "Vector4" | "Vector4i" | "Color"
+    )
+}
+
+/// B6: Invalid cast — `x as Node` where x: int.
+fn check_invalid_cast(
+    root: &Node,
+    source: &str,
+    symbols: &SymbolTable,
+    errors: &mut Vec<StructuralError>,
+) {
+    check_cast_in_node(root, source, symbols, errors);
+}
+
+fn check_cast_in_node(
+    node: &Node,
+    source: &str,
+    symbols: &SymbolTable,
+    errors: &mut Vec<StructuralError>,
+) {
+    // `as` cast: can appear as `as_pattern`, `cast`, or `binary_operator` with op "as"
+    let cast_parts: Option<(tree_sitter::Node, tree_sitter::Node)> =
+        if matches!(node.kind(), "as_pattern" | "cast") {
+            node.named_child(0)
+                .and_then(|expr| node.named_child(1).map(|ty| (expr, ty)))
+        } else if node.kind() == "binary_operator"
+            && node
+                .child_by_field_name("op")
+                .and_then(|op| op.utf8_text(source.as_bytes()).ok())
+                .is_some_and(|op| op == "as")
+        {
+            node.child_by_field_name("left")
+                .and_then(|l| node.child_by_field_name("right").map(|r| (l, r)))
+        } else {
+            None
+        };
+
+    if let Some((expr, type_node)) = cast_parts
+        && let Ok(target_type) = type_node.utf8_text(source.as_bytes())
+        && let Some(expr_ty) = type_inference::infer_expression_type(&expr, source, symbols)
+            .or_else(|| infer_local_var_type(&expr, source, symbols))
+        && let Some(actual_name) = inferred_type_name(&expr_ty)
+        && is_primitive_type(actual_name)
+        && crate::class_db::class_exists(target_type)
+        && !is_primitive_type(target_type)
+    {
+        errors.push(StructuralError {
+            line: node.start_position().row as u32 + 1,
+            column: node.start_position().column as u32 + 1,
+            message: format!("invalid cast: cannot cast \"{actual_name}\" to \"{target_type}\"",),
+        });
+    }
+
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            check_cast_in_node(&cursor.node(), source, symbols, errors);
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+    }
+}
+
+fn is_primitive_type(ty: &str) -> bool {
+    matches!(ty, "int" | "float" | "bool" | "String")
+}
+
+/// Extract a human-readable type name from an `InferredType`.
+fn inferred_type_name(ty: &type_inference::InferredType) -> Option<&str> {
+    match ty {
+        type_inference::InferredType::Builtin(b) => Some(b),
+        type_inference::InferredType::Class(c) => Some(c.as_str()),
+        type_inference::InferredType::Enum(e) => Some(e.as_str()),
+        type_inference::InferredType::Void => Some("void"),
+        _ => None,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Round 5 continued: B3 — Argument type mismatch
+// ---------------------------------------------------------------------------
+
+/// B3: Argument type mismatch — wrong types passed to functions/methods/constructors.
+fn check_arg_type_mismatch(
+    root: &Node,
+    source: &str,
+    symbols: &SymbolTable,
+    errors: &mut Vec<StructuralError>,
+) {
+    check_arg_types_in_node(root, source, symbols, errors);
+}
+
+fn check_arg_types_in_node(
+    node: &Node,
+    source: &str,
+    symbols: &SymbolTable,
+    errors: &mut Vec<StructuralError>,
+) {
+    // Identifier calls: user functions, self methods, constructors
+    if node.kind() == "call"
+        && let Some(callee) = node.named_child(0)
+        && let Ok(func_name) = callee.utf8_text(source.as_bytes())
+        && let Some(args_node) = node.child_by_field_name("arguments")
+    {
+        // User-defined functions — check param types from SymbolTable
+        if let Some(func) = symbols.functions.iter().find(|f| f.name == func_name) {
+            check_call_arg_types_user(func_name, &func.params, &args_node, source, symbols, errors);
+        }
+        // Self methods via ClassDB (extends chain)
+        else if let Some(extends) = &symbols.extends {
+            check_call_arg_types_classdb(func_name, extends, &args_node, source, symbols, errors);
+        }
+        // Constructor: Vector2("bad", "args") or builtin conversion: int([])
+        if callee.kind() == "identifier"
+            && (crate::class_db::class_exists(func_name)
+                || is_builtin_convertible(func_name)
+                || constructor_param_counts(func_name).is_some())
+        {
+            check_constructor_arg_types(func_name, &args_node, source, symbols, errors);
+        }
+    }
+
+    // attribute_call: obj.method(args)
+    if node.kind() == "attribute" {
+        let mut cursor2 = node.walk();
+        for child in node.children(&mut cursor2) {
+            if child.kind() == "attribute_call"
+                && let Some(method_node) = child.named_child(0)
+                && let Ok(method_name) = method_node.utf8_text(source.as_bytes())
+                && let Some(args_node) = child.child_by_field_name("arguments")
+            {
+                // Infer receiver type
+                if let Some(receiver) = node.named_child(0) {
+                    let receiver_type =
+                        type_inference::infer_expression_type(&receiver, source, symbols);
+                    let class = receiver_type
+                        .as_ref()
+                        .and_then(|t| match t {
+                            type_inference::InferredType::Class(c) => Some(c.as_str()),
+                            type_inference::InferredType::Builtin(b) => Some(*b),
+                            _ => None,
+                        })
+                        .or_else(|| {
+                            let name = receiver.utf8_text(source.as_bytes()).ok()?;
+                            if receiver.kind() == "identifier"
+                                && crate::class_db::class_exists(name)
+                            {
+                                Some(name)
+                            } else {
+                                None
+                            }
+                        });
+                    if let Some(class_name) = class {
+                        check_call_arg_types_classdb(
+                            method_name,
+                            class_name,
+                            &args_node,
+                            source,
+                            symbols,
+                            errors,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            check_arg_types_in_node(&cursor.node(), source, symbols, errors);
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+    }
+}
+
+/// Check user-defined function argument types.
+fn check_call_arg_types_user(
+    func_name: &str,
+    params: &[symbol_table::ParamDecl],
+    args_node: &Node,
+    source: &str,
+    symbols: &SymbolTable,
+    errors: &mut Vec<StructuralError>,
+) {
+    let mut cursor = args_node.walk();
+    let args: Vec<_> = args_node.named_children(&mut cursor).collect();
+    for (i, arg) in args.iter().enumerate() {
+        if let Some(param) = params.get(i)
+            && let Some(ref type_ann) = param.type_ann
+            && !type_ann.is_inferred
+            && !type_ann.name.is_empty()
+            && type_ann.name != "Variant"
+            && let Some(actual) = type_inference::infer_expression_type(arg, source, symbols)
+            && let Some(actual_name) = inferred_type_name(&actual)
+            && !types_assignable(&type_ann.name, actual_name)
+        {
+            errors.push(StructuralError {
+                line: arg.start_position().row as u32 + 1,
+                column: arg.start_position().column as u32 + 1,
+                message: format!(
+                    "invalid argument for \"{func_name}()\": argument {} should be \"{}\" but is \"{actual_name}\"",
+                    i + 1,
+                    type_ann.name,
+                ),
+            });
+        }
+    }
+}
+
+/// Check ClassDB method argument types.
+fn check_call_arg_types_classdb(
+    method_name: &str,
+    class_name: &str,
+    args_node: &Node,
+    source: &str,
+    symbols: &SymbolTable,
+    errors: &mut Vec<StructuralError>,
+) {
+    let Some(sig) = crate::class_db::method_signature(class_name, method_name) else {
+        return;
+    };
+    if sig.param_types.is_empty() {
+        return;
+    }
+    let param_types: Vec<&str> = sig.param_types.split(',').map(str::trim).collect();
+    let mut cursor = args_node.walk();
+    let args: Vec<_> = args_node.named_children(&mut cursor).collect();
+    for (i, arg) in args.iter().enumerate() {
+        if let Some(&expected) = param_types.get(i)
+            && !expected.is_empty()
+            && expected != "Variant"
+            && let Some(actual) = type_inference::infer_expression_type(arg, source, symbols)
+            && let Some(actual_name) = inferred_type_name(&actual)
+            && !types_assignable_classdb(expected, actual_name)
+        {
+            errors.push(StructuralError {
+                line: arg.start_position().row as u32 + 1,
+                column: arg.start_position().column as u32 + 1,
+                message: format!(
+                    "invalid argument for \"{method_name}()\": argument {} should be \"{expected}\" but is \"{actual_name}\"",
+                    i + 1,
+                ),
+            });
+        }
+    }
+}
+
+fn is_builtin_convertible(name: &str) -> bool {
+    matches!(name, "int" | "float" | "bool" | "String" | "str")
+}
+
+/// Check constructor argument types (e.g., `Vector2("bad", "args")` or `int([])`).
+fn check_constructor_arg_types(
+    type_name: &str,
+    args_node: &Node,
+    source: &str,
+    symbols: &SymbolTable,
+    errors: &mut Vec<StructuralError>,
+) {
+    let expected_types: Option<&[&str]> = match type_name {
+        "Vector2" | "Vector2i" => Some(&["float", "float"]),
+        "Vector3" | "Vector3i" => Some(&["float", "float", "float"]),
+        "Vector4" | "Vector4i" => Some(&["float", "float", "float", "float"]),
+        // Builtin conversions: int(x), float(x), bool(x) — x must be numeric, String, or bool
+        "int" | "float" | "bool" => {
+            let mut cursor = args_node.walk();
+            let args: Vec<_> = args_node.named_children(&mut cursor).collect();
+            if args.len() == 1
+                && let Some(actual) =
+                    type_inference::infer_expression_type(&args[0], source, symbols)
+                && let Some(actual_name) = inferred_type_name(&actual)
+                && !matches!(actual_name, "int" | "float" | "bool" | "String" | "Variant")
+            {
+                errors.push(StructuralError {
+                    line: args[0].start_position().row as u32 + 1,
+                    column: args[0].start_position().column as u32 + 1,
+                    message: format!(
+                        "no constructor of \"{type_name}\" matches the signature \"{type_name}({actual_name})\"",
+                    ),
+                });
+            }
+            return;
+        }
+        _ => None,
+    };
+
+    let Some(expected) = expected_types else {
+        return;
+    };
+
+    let mut cursor = args_node.walk();
+    let args: Vec<_> = args_node.named_children(&mut cursor).collect();
+
+    // Only check when arg count matches this constructor variant
+    if args.len() != expected.len() {
+        return;
+    }
+
+    for (i, arg) in args.iter().enumerate() {
+        if let Some(&expected_type) = expected.get(i)
+            && let Some(actual) = type_inference::infer_expression_type(arg, source, symbols)
+            && let Some(actual_name) = inferred_type_name(&actual)
+            && !types_assignable(expected_type, actual_name)
+        {
+            errors.push(StructuralError {
+                line: arg.start_position().row as u32 + 1,
+                column: arg.start_position().column as u32 + 1,
+                message: format!(
+                    "no constructor of \"{type_name}\" matches: argument {} should be \"{expected_type}\" but is \"{actual_name}\"",
+                    i + 1,
+                ),
+            });
+            return; // Report once per constructor
+        }
+    }
+}
+
+/// ClassDB-aware type assignability check.
+fn types_assignable_classdb(expected: &str, actual: &str) -> bool {
+    let expected_clean = expected.strip_prefix("enum::").unwrap_or(expected);
+    types_assignable(expected_clean, actual)
+}
+
+// ---------------------------------------------------------------------------
+// Round 4: B4 — Argument count mismatch
+// ---------------------------------------------------------------------------
+
+/// Parse a utility function signature to extract param count.
+/// E.g., "lerp(from: Variant, to: Variant, weight: Variant) -> Variant" → (3, 3)
+fn parse_utility_param_count(sig: &str) -> (u8, u8) {
+    let Some(paren_start) = sig.find('(') else {
+        return (0, 0);
+    };
+    let Some(paren_end) = sig.find(')') else {
+        return (0, 0);
+    };
+    let params = &sig[paren_start + 1..paren_end];
+    if params.trim().is_empty() {
+        return (0, 0);
+    }
+    // Handle vararg: `...` at end
+    if params.contains("...") {
+        return (0, 255);
+    }
+    let total = params.split(',').count() as u8;
+    // Count params with default values
+    let with_defaults = params.split(',').filter(|p| p.contains('=')).count() as u8;
+    let required = total - with_defaults;
+    (required, total)
+}
+
+/// Known constructor variants for builtin types. Returns list of valid param counts.
+fn constructor_param_counts(type_name: &str) -> Option<&'static [u8]> {
+    match type_name {
+        "Color" => Some(&[0, 3, 4]),
+        "Vector2" | "Vector2i" | "Transform3D" | "AABB" => Some(&[0, 2]),
+        "Vector3" | "Vector3i" | "Basis" => Some(&[0, 3]),
+        "Vector4" | "Vector4i" => Some(&[0, 4]),
+        "Rect2" | "Rect2i" | "Quaternion" => Some(&[0, 2, 4]),
+        "Transform2D" => Some(&[0, 2, 3]),
+        "Plane" => Some(&[0, 1, 2, 3, 4]),
+        "Projection" => Some(&[0, 1, 4]),
+        _ => None,
+    }
+}
+
+/// B4: Argument count mismatch for function/method calls.
+fn check_arg_count(
+    root: &Node,
+    source: &str,
+    symbols: &SymbolTable,
+    errors: &mut Vec<StructuralError>,
+) {
+    check_arg_count_in_node(root, source, symbols, errors);
+}
+
+fn count_call_args(node: &Node) -> usize {
+    // Find the arguments node — try field name first, then search named children
+    let args_node = node.child_by_field_name("arguments").or_else(|| {
+        (0..node.named_child_count())
+            .filter_map(|i| node.named_child(i))
+            .find(|c| c.kind() == "arguments")
+    });
+    let Some(args) = args_node else { return 0 };
+    let mut count = 0;
+    let mut cursor = args.walk();
+    for child in args.children(&mut cursor) {
+        if child.is_named() {
+            count += 1;
+        }
+    }
+    count
+}
+
+fn check_arg_count_in_node(
+    node: &Node,
+    source: &str,
+    symbols: &SymbolTable,
+    errors: &mut Vec<StructuralError>,
+) {
+    if node.kind() == "call"
+        && let Some(func_node) = node.named_child(0)
+    {
+        let arg_count = count_call_args(node);
+
+        if func_node.kind() == "identifier"
+            && let Ok(name) = func_node.utf8_text(source.as_bytes())
+        {
+            // 1. Check user-defined functions
+            if let Some(func) = symbols.functions.iter().find(|f| f.name == name) {
+                let required = func.params.iter().filter(|p| !p.has_default).count();
+                let total = func.params.len();
+                check_param_bounds(name, arg_count, required, total, node, errors);
+            }
+            // 2. Check utility/builtin functions
+            else if let Some(uf) = crate::class_db::utility_function(name) {
+                let (required, total) = parse_utility_param_count(uf.signature);
+                if total < 255 {
+                    check_param_bounds(
+                        name,
+                        arg_count,
+                        required as usize,
+                        total as usize,
+                        node,
+                        errors,
+                    );
+                }
+            }
+            // 3. Check builtin constructors (e.g., Color(0.5))
+            else if let Some(valid_counts) = constructor_param_counts(name)
+                && !valid_counts.contains(&(arg_count as u8))
+            {
+                errors.push(StructuralError {
+                    line: node.start_position().row as u32 + 1,
+                    column: node.start_position().column as u32 + 1,
+                    message: format!(
+                        "no constructor of \"{name}\" matches the given arguments ({arg_count} arguments)",
+                    ),
+                });
+            }
+        } else if func_node.kind() == "attribute"
+            && let Some(receiver) = func_node.named_child(0)
+            && let Some(method_node) = func_node.named_child(1)
+            && method_node.kind() == "identifier"
+            && let Ok(method_name) = method_node.utf8_text(source.as_bytes())
+        {
+            // Try standard type inference first, then fall back to local var lookup
+            let ty = type_inference::infer_expression_type(&receiver, source, symbols)
+                .or_else(|| infer_local_var_type(&receiver, source, symbols));
+            let class_name = ty.as_ref().and_then(|t| match t {
+                type_inference::InferredType::Builtin(b) => Some(*b),
+                type_inference::InferredType::Class(c) => Some(c.as_str()),
+                _ => None,
+            });
+            if let Some(class_name) = class_name {
+                if let Some(sig) = crate::class_db::method_signature(class_name, method_name) {
+                    check_param_bounds(
+                        method_name,
+                        arg_count,
+                        sig.required_params as usize,
+                        sig.total_params as usize,
+                        node,
+                        errors,
+                    );
+                } else if let Some(member) =
+                    crate::lsp::builtins::lookup_member_for(class_name, method_name)
+                    && member.kind == crate::lsp::builtins::MemberKind::Method
+                {
+                    let (required, total) = parse_utility_param_count(member.brief);
+                    if total < 255 {
+                        check_param_bounds(
+                            method_name,
+                            arg_count,
+                            required as usize,
+                            total as usize,
+                            node,
+                            errors,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    // Handle method calls via `attribute` + `attribute_call` pattern:
+    // `v.lerp(args)` is parsed as: attribute { identifier("v"), attribute_call { ... } }
+    if node.kind() == "attribute" {
+        check_attribute_call_args(node, source, symbols, errors);
+    }
+
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            check_arg_count_in_node(&cursor.node(), source, symbols, errors);
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+    }
+}
+
+fn check_attribute_call_args(
+    node: &Node,
+    source: &str,
+    symbols: &SymbolTable,
+    errors: &mut Vec<StructuralError>,
+) {
+    let Some(attr_call) = (0..node.named_child_count())
+        .filter_map(|i| node.named_child(i))
+        .find(|c| c.kind() == "attribute_call")
+    else {
+        return;
+    };
+    if let Some(receiver) = node.named_child(0)
+        && receiver.kind() == "identifier"
+        && let Some(method_ident) = attr_call.named_child(0)
+        && method_ident.kind() == "identifier"
+        && let Ok(method_name) = method_ident.utf8_text(source.as_bytes())
+    {
+        let arg_count = count_call_args(&attr_call);
+        let ty = type_inference::infer_expression_type(&receiver, source, symbols)
+            .or_else(|| infer_local_var_type(&receiver, source, symbols));
+        let class_name = ty.as_ref().and_then(|t| match t {
+            type_inference::InferredType::Builtin(b) => Some(*b),
+            type_inference::InferredType::Class(c) => Some(c.as_str()),
+            _ => None,
+        });
+        if let Some(class_name) = class_name {
+            if let Some(sig) = crate::class_db::method_signature(class_name, method_name) {
+                check_param_bounds(
+                    method_name,
+                    arg_count,
+                    sig.required_params as usize,
+                    sig.total_params as usize,
+                    node,
+                    errors,
+                );
+            } else if let Some(member) =
+                crate::lsp::builtins::lookup_member_for(class_name, method_name)
+                && member.kind == crate::lsp::builtins::MemberKind::Method
+            {
+                let (required, total) = parse_utility_param_count(member.brief);
+                if total < 255 {
+                    check_param_bounds(
+                        method_name,
+                        arg_count,
+                        required as usize,
+                        total as usize,
+                        node,
+                        errors,
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Resolve the builtin type name from an InferredType, treating TypedArray as "Array".
+fn resolve_builtin_type_name(ty: &type_inference::InferredType) -> Option<&str> {
+    match ty {
+        type_inference::InferredType::Builtin(b) => Some(b),
+        type_inference::InferredType::Class(c) => Some(c.as_str()),
+        type_inference::InferredType::TypedArray(_) => Some("Array"),
+        _ => None,
+    }
+}
+
+/// A2: Method not found on builtin type — `v.nonexistent()` where v: Vector2.
+fn check_builtin_method_not_found(
+    root: &Node,
+    source: &str,
+    symbols: &SymbolTable,
+    errors: &mut Vec<StructuralError>,
+) {
+    check_builtin_method_in_node(root, source, symbols, errors);
+}
+
+fn check_builtin_method_in_node(
+    node: &Node,
+    source: &str,
+    symbols: &SymbolTable,
+    errors: &mut Vec<StructuralError>,
+) {
+    // Pattern: attribute { identifier(receiver), attribute_call { identifier(method), arguments } }
+    if node.kind() == "attribute"
+        && let Some(receiver) = node.named_child(0)
+        && receiver.kind() == "identifier"
+        && let Some(attr_call) = (0..node.named_child_count())
+            .filter_map(|i| node.named_child(i))
+            .find(|c| c.kind() == "attribute_call")
+        && let Some(method_ident) = attr_call.named_child(0)
+        && method_ident.kind() == "identifier"
+        && let Ok(method_name) = method_ident.utf8_text(source.as_bytes())
+    {
+        let ty = type_inference::infer_expression_type(&receiver, source, symbols)
+            .or_else(|| infer_local_var_type(&receiver, source, symbols));
+        if let Some(ref ty) = ty
+            && let Some(type_name) = resolve_builtin_type_name(ty)
+            && type_inference::is_builtin_type(type_name)
+            && !method_name.starts_with('_')
+        {
+            let exists = crate::lsp::builtins::lookup_member_for(type_name, method_name)
+                .is_some_and(|m| m.kind == crate::lsp::builtins::MemberKind::Method);
+            if !exists {
+                errors.push(StructuralError {
+                    line: method_ident.start_position().row as u32 + 1,
+                    column: method_ident.start_position().column as u32 + 1,
+                    message: format!(
+                        "method \"{method_name}()\" not found on type \"{type_name}\"",
+                    ),
+                });
+            }
+        }
+    }
+
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            check_builtin_method_in_node(&cursor.node(), source, symbols, errors);
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+    }
+}
+
+/// A3: Property not found on builtin type — `v.zz` where v: Vector2.
+fn check_builtin_property_not_found(
+    root: &Node,
+    source: &str,
+    symbols: &SymbolTable,
+    errors: &mut Vec<StructuralError>,
+) {
+    check_builtin_property_in_node(root, source, symbols, errors);
+}
+
+fn check_builtin_property_in_node(
+    node: &Node,
+    source: &str,
+    symbols: &SymbolTable,
+    errors: &mut Vec<StructuralError>,
+) {
+    // Pattern: attribute { identifier(receiver), identifier(member) } — no attribute_call
+    if node.kind() == "attribute"
+        && let Some(receiver) = node.named_child(0)
+        && receiver.kind() == "identifier"
+        && let Some(member) = node.named_child(1)
+        && member.kind() == "identifier"
+        && !(0..node.named_child_count())
+            .filter_map(|i| node.named_child(i))
+            .any(|c| c.kind() == "attribute_call")
+        && let Ok(member_name) = member.utf8_text(source.as_bytes())
+    {
+        let ty = type_inference::infer_expression_type(&receiver, source, symbols)
+            .or_else(|| infer_local_var_type(&receiver, source, symbols));
+        if let Some(ref ty) = ty
+            && let Some(type_name) = resolve_builtin_type_name(ty)
+            && type_inference::is_builtin_type(type_name)
+            && !member_name.starts_with('_')
+        {
+            let exists = crate::lsp::builtins::lookup_member_for(type_name, member_name).is_some();
+            let hardcoded = type_inference::builtin_member_type(type_name, member_name).is_some();
+            if !exists && !hardcoded {
+                errors.push(StructuralError {
+                    line: member.start_position().row as u32 + 1,
+                    column: member.start_position().column as u32 + 1,
+                    message: format!("member \"{member_name}\" not found on type \"{type_name}\"",),
+                });
+            }
+        }
+    }
+
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            check_builtin_property_in_node(&cursor.node(), source, symbols, errors);
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+    }
+}
+
+fn check_param_bounds(
+    name: &str,
+    arg_count: usize,
+    required: usize,
+    total: usize,
+    node: &Node,
+    errors: &mut Vec<StructuralError>,
+) {
+    if arg_count < required {
+        errors.push(StructuralError {
+            line: node.start_position().row as u32 + 1,
+            column: node.start_position().column as u32 + 1,
+            message: format!(
+                "too few arguments for \"{name}()\" call — expected at least {required} but received {arg_count}",
+            ),
+        });
+    } else if arg_count > total {
+        errors.push(StructuralError {
+            line: node.start_position().row as u32 + 1,
+            column: node.start_position().column as u32 + 1,
+            message: format!(
+                "too many arguments for \"{name}()\" call — expected at most {total} but received {arg_count}",
+            ),
+        });
     }
 }
 
@@ -2462,6 +4375,454 @@ fn collect_errors(
     }
 }
 
+// ---------------------------------------------------------------------------
+// Round 6: A1-A4 — Name resolution
+// ---------------------------------------------------------------------------
+
+/// A4: Type not found in `as`/`is` expressions.
+fn check_type_not_found(
+    root: &Node,
+    source: &str,
+    symbols: &SymbolTable,
+    project: &ProjectIndex,
+    errors: &mut Vec<StructuralError>,
+) {
+    check_type_not_found_in_node(root, source, symbols, project, errors);
+}
+
+fn check_type_not_found_in_node(
+    node: &Node,
+    source: &str,
+    symbols: &SymbolTable,
+    project: &ProjectIndex,
+    errors: &mut Vec<StructuralError>,
+) {
+    // `binary_operator` with op "as" or "is"
+    if node.kind() == "binary_operator"
+        && let Some(op_node) = node.child_by_field_name("op")
+        && let Ok(op) = op_node.utf8_text(source.as_bytes())
+        && matches!(op, "as" | "is")
+        && let Some(type_node) = node.child_by_field_name("right")
+        && type_node.kind() == "identifier"
+        && let Ok(type_name) = type_node.utf8_text(source.as_bytes())
+        && !is_known_type(type_name, symbols, project)
+    {
+        errors.push(StructuralError {
+            line: type_node.start_position().row as u32 + 1,
+            column: type_node.start_position().column as u32 + 1,
+            message: format!("could not find type \"{type_name}\" in the current scope",),
+        });
+    }
+
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            check_type_not_found_in_node(&cursor.node(), source, symbols, project, errors);
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+    }
+}
+
+/// A2: Method not found — `get_chlidren()` on self, `s.nonexistent()` on typed variable.
+fn check_method_not_found(
+    root: &Node,
+    source: &str,
+    symbols: &SymbolTable,
+    errors: &mut Vec<StructuralError>,
+) {
+    check_method_not_found_in_node(root, source, symbols, errors);
+}
+
+fn check_method_not_found_in_node(
+    node: &Node,
+    source: &str,
+    symbols: &SymbolTable,
+    errors: &mut Vec<StructuralError>,
+) {
+    // Self method calls: `call` node with identifier callee
+    if node.kind() == "call"
+        && let Some(callee) = node.named_child(0)
+        && callee.kind() == "identifier"
+        && let Ok(func_name) = callee.utf8_text(source.as_bytes())
+    {
+        // Skip known identifiers: user functions, utility functions, constructors, etc.
+        let is_known = symbols.functions.iter().any(|f| f.name == func_name)
+            || crate::class_db::utility_function(func_name).is_some()
+            || crate::class_db::class_exists(func_name)
+            || is_builtin_convertible(func_name)
+            || constructor_param_counts(func_name).is_some()
+            || matches!(
+                func_name,
+                "preload"
+                    | "load"
+                    | "print"
+                    | "push_error"
+                    | "push_warning"
+                    | "range"
+                    | "str"
+                    | "typeof"
+                    | "len"
+                    | "assert"
+                    | "super"
+            )
+            || func_name.starts_with('_'); // Virtual callbacks
+        if !is_known {
+            // Check ClassDB via extends chain
+            let found_in_classdb = symbols
+                .extends
+                .as_ref()
+                .is_some_and(|ext| crate::class_db::method_exists(ext, func_name));
+            if !found_in_classdb {
+                errors.push(StructuralError {
+                    line: callee.start_position().row as u32 + 1,
+                    column: callee.start_position().column as u32 + 1,
+                    message: format!(
+                        "function \"{func_name}()\" not found in base {}",
+                        symbols.extends.as_deref().unwrap_or("self"),
+                    ),
+                });
+            }
+        }
+    }
+
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            check_method_not_found_in_node(&cursor.node(), source, symbols, errors);
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+    }
+}
+
+/// A1: Undefined identifier — `nonexistent_variable` not declared.
+fn check_undefined_identifiers(
+    root: &Node,
+    source: &str,
+    symbols: &SymbolTable,
+    project: &ProjectIndex,
+    errors: &mut Vec<StructuralError>,
+) {
+    // Build set of known names: class variables, functions, enums, inner classes, params
+    let mut known: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    // Class-level variables
+    for v in &symbols.variables {
+        known.insert(v.name.clone());
+    }
+    // Functions
+    for f in &symbols.functions {
+        known.insert(f.name.clone());
+    }
+    // Enums and their members
+    for e in &symbols.enums {
+        known.insert(e.name.clone());
+        for member in &e.members {
+            known.insert(member.clone());
+        }
+    }
+    // Inner classes
+    for (name, _) in &symbols.inner_classes {
+        known.insert(name.clone());
+    }
+    // Signals
+    for s in &symbols.signals {
+        known.insert(s.name.clone());
+    }
+
+    // Walk function bodies looking for undefined identifiers
+    let mut cursor = root.walk();
+    for child in root.children(&mut cursor) {
+        if child.kind() == "function_definition"
+            && let Some(body) = child.child_by_field_name("body")
+        {
+            // Collect function params (no `name` field — first named child is the identifier)
+            let mut func_known = known.clone();
+            if let Some(params) = child.child_by_field_name("parameters") {
+                let mut pc = params.walk();
+                for param in params.named_children(&mut pc) {
+                    if let Some(name_node) = param.named_child(0)
+                        && name_node.kind() == "identifier"
+                        && let Ok(name) = name_node.utf8_text(source.as_bytes())
+                    {
+                        func_known.insert(name.to_string());
+                    }
+                }
+            }
+            // Also add function name itself to known
+            if let Some(name_node) = child.child_by_field_name("name")
+                && let Ok(fname) = name_node.utf8_text(source.as_bytes())
+            {
+                func_known.insert(fname.to_string());
+            }
+            check_undefined_in_body(&body, source, symbols, project, &mut func_known, errors);
+        }
+    }
+}
+
+fn check_undefined_in_body(
+    node: &Node,
+    source: &str,
+    symbols: &SymbolTable,
+    project: &ProjectIndex,
+    known: &mut std::collections::HashSet<String>,
+    errors: &mut Vec<StructuralError>,
+) {
+    // Track local variable declarations
+    if node.kind() == "variable_statement"
+        && let Some(name_node) = node.child_by_field_name("name")
+        && let Ok(name) = name_node.utf8_text(source.as_bytes())
+    {
+        known.insert(name.to_string());
+    }
+
+    // Track for-loop iterator variable
+    if node.kind() == "for_statement"
+        && let Some(iter_node) = node.child_by_field_name("left")
+        && let Ok(iter_name) = iter_node.utf8_text(source.as_bytes())
+    {
+        known.insert(iter_name.to_string());
+    }
+
+    // Check identifier usage
+    if node.kind() == "identifier"
+        && let Ok(name) = node.utf8_text(source.as_bytes())
+        && !known.contains(name)
+        && !is_identifier_context_ok(node, name, source, symbols, project)
+    {
+        errors.push(StructuralError {
+            line: node.start_position().row as u32 + 1,
+            column: node.start_position().column as u32 + 1,
+            message: format!("identifier \"{name}\" not declared in the current scope",),
+        });
+    }
+
+    // Don't recurse into nested function definitions (they have own scope)
+    if matches!(node.kind(), "function_definition" | "lambda") {
+        return;
+    }
+
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            check_undefined_in_body(&cursor.node(), source, symbols, project, known, errors);
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+    }
+}
+
+/// Check if an identifier node is the name part of a declaration, type annotation,
+/// attribute member, or other non-reference context.
+fn is_identifier_in_declaration_context(node: &Node, source: &str) -> bool {
+    let Some(parent) = node.parent() else {
+        return false;
+    };
+    // Variable/function/signal/class declaration name
+    if parent
+        .child_by_field_name("name")
+        .is_some_and(|n| n.id() == node.id())
+    {
+        return true;
+    }
+    // Type annotation context
+    if parent
+        .child_by_field_name("type")
+        .is_some_and(|t| t.id() == node.id())
+    {
+        return true;
+    }
+    // Return type
+    if parent
+        .child_by_field_name("return_type")
+        .is_some_and(|t| t.id() == node.id())
+    {
+        return true;
+    }
+    // Method name inside attribute_call: always a member, not a receiver
+    if parent.kind() == "attribute_call" {
+        return true;
+    }
+    // Attribute access: non-first child is a member, not a receiver
+    if parent.kind() == "attribute"
+        && parent
+            .named_child(0)
+            .is_some_and(|first| first.id() != node.id())
+    {
+        return true;
+    }
+    // `as`/`is` type operand — already checked by A4
+    if parent.kind() == "binary_operator"
+        && parent
+            .child_by_field_name("right")
+            .is_some_and(|r| r.id() == node.id())
+        && parent
+            .child_by_field_name("op")
+            .and_then(|op| op.utf8_text(source.as_bytes()).ok())
+            .is_some_and(|op| matches!(op, "as" | "is"))
+    {
+        return true;
+    }
+    false
+}
+
+/// Check if an identifier is in a context where it doesn't need to be declared.
+fn is_identifier_context_ok(
+    node: &Node,
+    name: &str,
+    source: &str,
+    symbols: &SymbolTable,
+    project: &ProjectIndex,
+) -> bool {
+    // Skip builtins and well-known names
+    if matches!(
+        name,
+        "self"
+            | "super"
+            | "true"
+            | "false"
+            | "null"
+            | "PI"
+            | "TAU"
+            | "INF"
+            | "NAN"
+            | "OK"
+            | "FAILED"
+            | "ERR_UNAVAILABLE"
+    ) {
+        return true;
+    }
+
+    // Known type names (reuses existing comprehensive check)
+    if is_known_type(name, symbols, project) {
+        return true;
+    }
+
+    // Utility functions
+    if crate::class_db::utility_function(name).is_some() {
+        return true;
+    }
+
+    // Builtin convertible types used as constructors
+    if is_builtin_convertible(name) || constructor_param_counts(name).is_some() {
+        return true;
+    }
+
+    // Check parent context: is this identifier the NAME of a declaration?
+    if is_identifier_in_declaration_context(node, source) {
+        return true;
+    }
+
+    // Virtual callback names or underscore-prefixed
+    if name.starts_with('_') {
+        return true;
+    }
+
+    // ClassDB: extends chain for properties and methods
+    if let Some(ext) = &symbols.extends
+        && (crate::class_db::property_exists(ext, name)
+            || crate::class_db::method_exists(ext, name))
+    {
+        return true;
+    }
+
+    // Known GDScript global functions/constants
+    matches!(
+        name,
+        "print"
+            | "push_error"
+            | "push_warning"
+            | "printerr"
+            | "prints"
+            | "printraw"
+            | "print_rich"
+            | "str"
+            | "len"
+            | "range"
+            | "typeof"
+            | "assert"
+            | "preload"
+            | "load"
+            | "is_instance_valid"
+            | "weakref"
+            | "TYPE_NIL"
+            | "TYPE_BOOL"
+            | "TYPE_INT"
+            | "TYPE_FLOAT"
+            | "TYPE_STRING"
+            | "TYPE_VECTOR2"
+            | "TYPE_VECTOR3"
+            | "TYPE_DICTIONARY"
+            | "TYPE_ARRAY"
+            | "PROPERTY_HINT_NONE"
+            | "PROPERTY_USAGE_DEFAULT"
+            | "CONNECT_DEFERRED"
+            | "CONNECT_ONE_SHOT"
+    )
+}
+
+/// A1 special: `super.nonexistent_parent_method()` — check method exists in parent class.
+fn check_super_method_not_found(
+    root: &Node,
+    source: &str,
+    symbols: &SymbolTable,
+    errors: &mut Vec<StructuralError>,
+) {
+    check_super_method_in_node(root, source, symbols, errors);
+}
+
+fn check_super_method_in_node(
+    node: &Node,
+    source: &str,
+    symbols: &SymbolTable,
+    errors: &mut Vec<StructuralError>,
+) {
+    // Pattern: `super.method()` → attribute { identifier("super"), attribute_call { identifier("method"), arguments } }
+    if node.kind() == "attribute"
+        && let Some(receiver) = node.named_child(0)
+        && receiver.kind() == "identifier"
+        && let Ok(recv_name) = receiver.utf8_text(source.as_bytes())
+        && recv_name == "super"
+    {
+        let mut cursor2 = node.walk();
+        for child in node.children(&mut cursor2) {
+            if child.kind() == "attribute_call"
+                && let Some(method_node) = child.named_child(0)
+                && let Ok(method_name) = method_node.utf8_text(source.as_bytes())
+            {
+                let found = symbols
+                    .extends
+                    .as_ref()
+                    .is_some_and(|ext| crate::class_db::method_exists(ext, method_name));
+                if !found {
+                    errors.push(StructuralError {
+                        line: method_node.start_position().row as u32 + 1,
+                        column: method_node.start_position().column as u32 + 1,
+                        message: format!(
+                            "function \"{method_name}()\" not found in base {}",
+                            symbols.extends.as_deref().unwrap_or("Node"),
+                        ),
+                    });
+                }
+            }
+        }
+    }
+
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            check_super_method_in_node(&cursor.node(), source, symbols, errors);
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::core::parser;
@@ -2471,7 +4832,7 @@ mod tests {
     fn structural_errors(source: &str) -> Vec<StructuralError> {
         let tree = parser::parse(source).unwrap();
         let symbols = symbol_table::build(&tree, source);
-        validate_structure(&tree.root_node(), source, &symbols)
+        validate_structure(&tree.root_node(), source, &symbols, None)
     }
 
     // -- Top-level statement checks --
@@ -2982,7 +5343,10 @@ func f(obj):
     fn mandatory_after_optional() {
         let source = "func f(a: int = 1, b: int):\n\tpass\n";
         let errs = structural_errors(source);
-        assert!(errs.iter().any(|e| e.message.contains("required parameter")));
+        assert!(
+            errs.iter()
+                .any(|e| e.message.contains("required parameter"))
+        );
     }
 
     #[test]
@@ -3018,14 +5382,20 @@ func f(obj):
     fn duplicate_class_name() {
         let source = "class_name Foo\nclass_name Bar\n";
         let errs = structural_errors(source);
-        assert!(errs.iter().any(|e| e.message.contains("duplicate `class_name`")));
+        assert!(
+            errs.iter()
+                .any(|e| e.message.contains("duplicate `class_name`"))
+        );
     }
 
     #[test]
     fn duplicate_extends() {
         let source = "extends Node\nextends Node2D\n";
         let errs = structural_errors(source);
-        assert!(errs.iter().any(|e| e.message.contains("duplicate `extends`")));
+        assert!(
+            errs.iter()
+                .any(|e| e.message.contains("duplicate `extends`"))
+        );
     }
 
     #[test]
@@ -3040,7 +5410,10 @@ func f(obj):
     fn duplicate_param_name() {
         let source = "func f(a: int, a: int):\n\tpass\n";
         let errs = structural_errors(source);
-        assert!(errs.iter().any(|e| e.message.contains("duplicate parameter")));
+        assert!(
+            errs.iter()
+                .any(|e| e.message.contains("duplicate parameter"))
+        );
     }
 
     #[test]
@@ -3102,7 +5475,10 @@ static func foo():
 \tprint(self)
 ";
         let errs = structural_errors(source);
-        assert!(errs.iter().any(|e| e.message.contains("self") && e.message.contains("static")));
+        assert!(
+            errs.iter()
+                .any(|e| e.message.contains("self") && e.message.contains("static"))
+        );
     }
 
     #[test]
@@ -3114,7 +5490,10 @@ static func foo():
 \tprint(health)
 ";
         let errs = structural_errors(source);
-        assert!(errs.iter().any(|e| e.message.contains("health") && e.message.contains("static")));
+        assert!(
+            errs.iter()
+                .any(|e| e.message.contains("health") && e.message.contains("static"))
+        );
     }
 
     #[test]
@@ -3127,7 +5506,10 @@ static func foo():
 \tbar()
 ";
         let errs = structural_errors(source);
-        assert!(errs.iter().any(|e| e.message.contains("bar") && e.message.contains("static")));
+        assert!(
+            errs.iter()
+                .any(|e| e.message.contains("bar") && e.message.contains("static"))
+        );
     }
 
     #[test]
@@ -3150,7 +5532,10 @@ func f():
 \tMAX = 200
 ";
         let errs = structural_errors(source);
-        assert!(errs.iter().any(|e| e.message.contains("constant") && e.message.contains("MAX")));
+        assert!(
+            errs.iter()
+                .any(|e| e.message.contains("constant") && e.message.contains("MAX"))
+        );
     }
 
     #[test]
@@ -3161,7 +5546,10 @@ func f():
 \tIDLE = 5
 ";
         let errs = structural_errors(source);
-        assert!(errs.iter().any(|e| e.message.contains("enum value") && e.message.contains("IDLE")));
+        assert!(
+            errs.iter()
+                .any(|e| e.message.contains("enum value") && e.message.contains("IDLE"))
+        );
     }
 
     #[test]
@@ -3180,7 +5568,10 @@ func f():
     fn void_func_returns_value() {
         let source = "func f() -> void:\n\treturn 42\n";
         let errs = structural_errors(source);
-        assert!(errs.iter().any(|e| e.message.contains("void") && e.message.contains("return")));
+        assert!(
+            errs.iter()
+                .any(|e| e.message.contains("void") && e.message.contains("return"))
+        );
     }
 
     #[test]
@@ -3201,7 +5592,10 @@ func f():
     fn get_node_in_static_func() {
         let source = "static func f():\n\tvar x = $Sprite2D\n";
         let errs = structural_errors(source);
-        assert!(errs.iter().any(|e| e.message.contains("get_node") && e.message.contains("static")));
+        assert!(
+            errs.iter()
+                .any(|e| e.message.contains("get_node") && e.message.contains("static"))
+        );
     }
 
     #[test]
@@ -3216,7 +5610,10 @@ func f():
     fn export_without_type_or_default() {
         let source = "@export var x\n";
         let errs = structural_errors(source);
-        assert!(errs.iter().any(|e| e.message.contains("export") && e.message.contains("no type")));
+        assert!(
+            errs.iter()
+                .any(|e| e.message.contains("export") && e.message.contains("no type"))
+        );
     }
 
     #[test]
@@ -3237,7 +5634,10 @@ func f():
     fn export_on_static() {
         let source = "@export\nstatic var x: int = 0\n";
         let errs = structural_errors(source);
-        assert!(errs.iter().any(|e| e.message.contains("export") && e.message.contains("static")));
+        assert!(
+            errs.iter()
+                .any(|e| e.message.contains("export") && e.message.contains("static"))
+        );
     }
 
     // -- E4: Duplicate @export --
@@ -3246,7 +5646,10 @@ func f():
     fn duplicate_export() {
         let source = "@export\n@export\nvar x: int = 0\n";
         let errs = structural_errors(source);
-        assert!(errs.iter().any(|e| e.message.contains("duplicate") && e.message.contains("export")));
+        assert!(
+            errs.iter()
+                .any(|e| e.message.contains("duplicate") && e.message.contains("export"))
+        );
     }
 
     // -- H17: Object() constructor --
@@ -3255,7 +5658,10 @@ func f():
     fn object_direct_constructor() {
         let source = "func f():\n\tvar o = Object()\n";
         let errs = structural_errors(source);
-        assert!(errs.iter().any(|e| e.message.contains("Object()") && e.message.contains("Object.new()")));
+        assert!(
+            errs.iter()
+                .any(|e| e.message.contains("Object()") && e.message.contains("Object.new()"))
+        );
     }
 
     #[test]
@@ -3274,7 +5680,10 @@ func f():
     fn preload_non_string_arg() {
         let source = "func f():\n\tvar path = \"res://foo.gd\"\n\tvar x = preload(path)\n";
         let errs = structural_errors(source);
-        assert!(errs.iter().any(|e| e.message.contains("preload") && e.message.contains("constant string")));
+        assert!(
+            errs.iter()
+                .any(|e| e.message.contains("preload") && e.message.contains("constant string"))
+        );
     }
 
     #[test]
@@ -3289,7 +5698,10 @@ func f():
     fn range_too_many_args() {
         let source = "func f():\n\tfor i in range(1, 2, 3, 4):\n\t\tpass\n";
         let errs = structural_errors(source);
-        assert!(errs.iter().any(|e| e.message.contains("range") && e.message.contains("at most 3")));
+        assert!(
+            errs.iter()
+                .any(|e| e.message.contains("range") && e.message.contains("at most 3"))
+        );
     }
 
     #[test]
@@ -3330,7 +5742,10 @@ func f():
     fn enum_shadows_builtin() {
         let source = "enum int { A, B, C }\n";
         let errs = classdb_errors(source);
-        assert!(errs.iter().any(|e| e.message.contains("shadows") && e.message.contains("int")));
+        assert!(
+            errs.iter()
+                .any(|e| e.message.contains("shadows") && e.message.contains("int"))
+        );
     }
 
     #[test]
@@ -3364,5 +5779,111 @@ func f():
     fn same_file_enum_type_ok() {
         let source = "enum State { A, B }\nvar x: State\n";
         assert!(classdb_errors(source).is_empty());
+    }
+
+    #[test]
+    fn h16_callable_direct_call() {
+        let source = "extends Node\nfunc _ready():\n\tvar f: Callable = func(): pass\n\tf()\n";
+        let errs = classdb_errors(source);
+        assert!(
+            !errs.is_empty(),
+            "expected callable direct call error, got none"
+        );
+        assert!(
+            errs[0].message.contains("not found"),
+            "msg: {}",
+            errs[0].message
+        );
+    }
+
+    #[test]
+    fn b4_too_few_user_func() {
+        let source = "extends Node\nfunc my_func(a: int, b: int, c: int) -> int:\n\treturn a + b + c\nfunc _ready():\n\tmy_func(1)\n";
+        let errs = classdb_errors(source);
+        assert!(errs.iter().any(|e| e.message.contains("too few")));
+    }
+
+    #[test]
+    fn b4_too_many_user_func() {
+        let source = "extends Node\nfunc my_func(a: int) -> int:\n\treturn a\nfunc _ready():\n\tmy_func(1, 2, 3)\n";
+        let errs = classdb_errors(source);
+        assert!(errs.iter().any(|e| e.message.contains("too many")));
+    }
+
+    #[test]
+    fn b4_too_few_builtin() {
+        let source = "extends Node\nfunc _ready():\n\tlerp(1.0, 2.0)\n";
+        let errs = classdb_errors(source);
+        assert!(errs.iter().any(|e| e.message.contains("too few")));
+    }
+
+    #[test]
+    fn b5_bool_multiply() {
+        let source = "extends Node\nfunc _ready():\n\tvar x = true * false\n";
+        let errs = classdb_errors(source);
+        assert!(
+            errs.iter().any(|e| e.message.contains("invalid operands")),
+            "expected operator error, got: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn b5_array_minus_int() {
+        let source = "extends Node\nfunc _ready():\n\tvar x = [] - 5\n";
+        let errs = classdb_errors(source);
+        assert!(
+            errs.iter().any(|e| e.message.contains("invalid operands")),
+            "expected operator error, got: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn b1_assign_type_mismatch() {
+        let source = "extends Node\nvar health: int = \"hello\"\n";
+        let errs = classdb_errors(source);
+        assert!(
+            errs.iter().any(|e| e.message.contains("cannot assign")),
+            "expected type mismatch, got: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn b2_return_type_mismatch() {
+        let source = "extends Node\nfunc f() -> int:\n\treturn \"hello\"\n";
+        let errs = classdb_errors(source);
+        assert!(
+            errs.iter().any(|e| e.message.contains("cannot return")),
+            "expected return type error, got: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn b6_invalid_cast_int_to_node() {
+        let source = "extends Node\nfunc _ready():\n\tvar x: int = 42\n\tvar n := x as Node\n";
+        let errs = classdb_errors(source);
+        assert!(
+            errs.iter().any(|e| e.message.contains("invalid cast")),
+            "expected cast error, got: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn b1_reassign_local_wrong_type() {
+        let source = "extends Node\nfunc _ready():\n\tvar x: int = 10\n\tx = \"now a string\"\n";
+        let errs = classdb_errors(source);
+        assert!(
+            errs.iter().any(|e| e.message.contains("cannot assign")),
+            "expected type mismatch, got: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn b2_return_node_as_string() {
+        let source = "extends Node\nfunc get_name_str() -> String:\n\treturn Node.new()\n";
+        let errs = classdb_errors(source);
+        assert!(
+            errs.iter().any(|e| e.message.contains("cannot return")),
+            "expected return type error, got: {errs:?}"
+        );
     }
 }
