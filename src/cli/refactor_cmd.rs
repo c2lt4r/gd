@@ -690,6 +690,9 @@ fn print_inline_method_human(r: &crate::lsp::refactor::InlineMethodOutput) {
         if r.inlined_lines == 1 { "" } else { "s" },
         dry_run_suffix(r.applied),
     );
+    if let Some(ref src) = r.source_file {
+        cprintln!("  source: {}", src.cyan());
+    }
     if r.function_deleted {
         cprintln!("  function definition removed");
     }
