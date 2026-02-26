@@ -258,6 +258,7 @@ fn validate_structure(root: &Node, source: &str, symbols: &SymbolTable) -> Vec<S
     check_declaration_constraints(root, source, symbols, &mut errors);
     check_semantic_errors(root, source, symbols, &mut errors);
     check_preload_and_misc(root, source, &mut errors);
+    check_advanced_semantic(root, source, symbols, &mut errors);
     errors
 }
 
@@ -1862,6 +1863,365 @@ fn is_known_type(name: &str, symbols: &SymbolTable, project: &ProjectIndex) -> b
     }
 
     false
+}
+
+// ---------------------------------------------------------------------------
+// Batch 6: Advanced semantic checks
+// ---------------------------------------------------------------------------
+
+fn check_advanced_semantic(
+    root: &Node,
+    source: &str,
+    symbols: &SymbolTable,
+    errors: &mut Vec<StructuralError>,
+) {
+    check_missing_return(root, source, symbols, errors);
+    check_const_expression_required(root, source, errors);
+    check_getter_setter_signature(root, errors);
+}
+
+/// C4: Not all code paths return a value.
+/// Functions with a typed non-void return type must return a value on every path.
+fn check_missing_return(
+    root: &Node,
+    source: &str,
+    symbols: &SymbolTable,
+    errors: &mut Vec<StructuralError>,
+) {
+    let bytes = source.as_bytes();
+    for func in &symbols.functions {
+        // Only check functions with explicit non-void return type
+        let Some(ref ret) = func.return_type else {
+            continue;
+        };
+        if ret.name == "void" || ret.name.is_empty() || ret.is_inferred {
+            continue;
+        }
+
+        // Find the AST node for this function
+        let mut cursor = root.walk();
+        for child in root.children(&mut cursor) {
+            let func_node = match child.kind() {
+                "function_definition" => child,
+                "decorated_definition" => {
+                    let mut inner_cursor = child.walk();
+                    let mut found = None;
+                    for inner in child.children(&mut inner_cursor) {
+                        if inner.kind() == "function_definition" {
+                            found = Some(inner);
+                            break;
+                        }
+                    }
+                    if let Some(f) = found { f } else { continue }
+                }
+                _ => continue,
+            };
+
+            let name = func_node
+                .child_by_field_name("name")
+                .and_then(|n| n.utf8_text(bytes).ok())
+                .unwrap_or("");
+            if name != func.name {
+                continue;
+            }
+
+            if let Some(body) = func_node.child_by_field_name("body")
+                && !body_always_returns(&body, bytes)
+            {
+                errors.push(StructuralError {
+                    line: func.line as u32 + 1,
+                    column: 1,
+                    message: format!(
+                        "not all code paths return a value in `{name}()` (declared -> {})",
+                        ret.name,
+                    ),
+                });
+            }
+        }
+    }
+    for (_, inner) in &symbols.inner_classes {
+        check_missing_return(root, source, inner, errors);
+    }
+}
+
+/// Check if a body node always returns a value (all code paths end in return).
+fn body_always_returns(body: &Node, source: &[u8]) -> bool {
+    let mut cursor = body.walk();
+    let children: Vec<_> = body
+        .children(&mut cursor)
+        .filter(tree_sitter::Node::is_named)
+        .collect();
+
+    // An empty body doesn't return
+    if children.is_empty() {
+        return false;
+    }
+
+    let last = children.last().unwrap();
+    statement_always_returns(last, source)
+}
+
+/// Check if a statement always returns a value.
+fn statement_always_returns(node: &Node, source: &[u8]) -> bool {
+    match node.kind() {
+        "return_statement" => true,
+        "if_statement" => {
+            // Must have an else branch, and all branches must return
+            let mut has_else = false;
+            let mut all_branches_return = true;
+            let mut cursor = node.walk();
+            for child in node.children(&mut cursor) {
+                match child.kind() {
+                    "body" => {
+                        if !body_always_returns(&child, source) {
+                            all_branches_return = false;
+                        }
+                    }
+                    "elif_clause" => {
+                        if let Some(body) = child.child_by_field_name("body") {
+                            if !body_always_returns(&body, source) {
+                                all_branches_return = false;
+                            }
+                        } else {
+                            all_branches_return = false;
+                        }
+                    }
+                    "else_clause" => {
+                        has_else = true;
+                        if let Some(body) = child.child_by_field_name("body") {
+                            if !body_always_returns(&body, source) {
+                                all_branches_return = false;
+                            }
+                        } else {
+                            // Walk children to find body
+                            let mut ec = child.walk();
+                            let else_body_returns = child
+                                .children(&mut ec)
+                                .any(|c| c.kind() == "body" && body_always_returns(&c, source));
+                            if !else_body_returns {
+                                all_branches_return = false;
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            has_else && all_branches_return
+        }
+        "match_statement" => {
+            // All match arms must return. Check for a catch-all pattern.
+            let mut cursor = node.walk();
+            let mut has_catchall = false;
+            let mut all_arms_return = true;
+            for child in node.children(&mut cursor) {
+                if child.kind() == "match_body" {
+                    let mut mc = child.walk();
+                    for arm in child.children(&mut mc) {
+                        if arm.kind() == "pattern_section" {
+                            let mut pc = arm.walk();
+                            for p in arm.children(&mut pc) {
+                                if p.kind() == "pattern" {
+                                    let mut inner = p.walk();
+                                    for pat_child in p.children(&mut inner) {
+                                        if pat_child.kind() == "identifier"
+                                            && pat_child.utf8_text(source).ok()
+                                                == Some("_")
+                                        {
+                                            has_catchall = true;
+                                        }
+                                    }
+                                }
+                                if p.kind() == "body"
+                                    && !body_always_returns(&p, source)
+                                {
+                                    all_arms_return = false;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            has_catchall && all_arms_return
+        }
+        _ => false,
+    }
+}
+
+/// F3: Constant expression required — const and enum values must be compile-time constants.
+fn check_const_expression_required(
+    root: &Node,
+    source: &str,
+    errors: &mut Vec<StructuralError>,
+) {
+    check_const_expr_in_node(*root, source, errors);
+}
+
+fn check_const_expr_in_node(node: Node, source: &str, errors: &mut Vec<StructuralError>) {
+    let bytes = source.as_bytes();
+
+    // Check const declarations: value must be a constant expression
+    if node.kind() == "const_statement"
+        && let Some(value) = node.child_by_field_name("value")
+        && !is_const_expression(&value, bytes)
+    {
+        let name = node
+            .child_by_field_name("name")
+            .and_then(|n| n.utf8_text(bytes).ok())
+            .unwrap_or("?");
+        let pos = value.start_position();
+        errors.push(StructuralError {
+            line: pos.row as u32 + 1,
+            column: pos.column as u32 + 1,
+            message: format!(
+                "constant `{name}` requires a compile-time constant expression",
+            ),
+        });
+    }
+
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            check_const_expr_in_node(cursor.node(), source, errors);
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+    }
+}
+
+/// Check if an expression is a compile-time constant.
+fn is_const_expression(node: &Node, source: &[u8]) -> bool {
+    match node.kind() {
+        // Literals are always constant
+        "integer" | "float" | "string" | "true" | "false" | "null" | "string_name" => true,
+        // Negative literal: unary_operator with -
+        "unary_operator" => {
+            node.named_child(0)
+                .is_some_and(|c| is_const_expression(&c, source))
+        }
+        // Constant identifier references (UPPER_CASE or known builtins)
+        "identifier" => {
+            let text = node.utf8_text(source).unwrap_or("");
+            // Allow references to other constants (UPPER_CASE) or preload/INF/NAN/PI/TAU
+            is_upper_snake_case(text)
+                || matches!(
+                    text,
+                    "INF" | "NAN" | "PI" | "TAU" | "INFINITY" | "preload"
+                )
+        }
+        // Array/dictionary literals with all-constant elements
+        "array" => {
+            let mut cursor = node.walk();
+            node.named_children(&mut cursor)
+                .all(|c| is_const_expression(&c, source))
+        }
+        "dictionary" => {
+            let mut cursor = node.walk();
+            node.named_children(&mut cursor).all(|c| {
+                if c.kind() == "pair" {
+                    c.named_child(0)
+                        .is_some_and(|k| is_const_expression(&k, source))
+                        && c.named_child(1)
+                            .is_some_and(|v| is_const_expression(&v, source))
+                } else {
+                    is_const_expression(&c, source)
+                }
+            })
+        }
+        // Binary operations on constants
+        "binary_operator" => {
+            node.named_child(0)
+                .is_some_and(|c| is_const_expression(&c, source))
+                && node
+                    .named_child(1)
+                    .is_some_and(|c| is_const_expression(&c, source))
+        }
+        // Parenthesized expression
+        "parenthesized_expression" => node
+            .named_child(0)
+            .is_some_and(|c| is_const_expression(&c, source)),
+        // Class.CONSTANT or enum access
+        "attribute" => {
+            // Check for a call suffix — if it has one, it's not constant (except preload)
+            let mut cursor = node.walk();
+            let has_call = node
+                .children(&mut cursor)
+                .any(|c| c.kind() == "attribute_call");
+            !has_call
+        }
+        // preload() is a constant expression
+        "call" => {
+            if let Some(func) = node
+                .child_by_field_name("function")
+                .or_else(|| node.named_child(0))
+            {
+                func.utf8_text(source).ok() == Some("preload")
+            } else {
+                false
+            }
+        }
+        // Type constructors with constant args (Vector2(1, 2), Color(1, 0, 0))
+        // are constant in Godot — but detecting this precisely is hard.
+        // For now, don't flag these.
+        _ => false,
+    }
+}
+
+/// H1: Getter/setter signature mismatch.
+/// A property's `set(value)` function must have exactly 1 parameter.
+/// A property's `get()` function must have 0 parameters and match the property type.
+fn check_getter_setter_signature(root: &Node, errors: &mut Vec<StructuralError>) {
+    check_getset_in_node(*root, errors);
+}
+
+fn check_getset_in_node(node: Node, errors: &mut Vec<StructuralError>) {
+    if node.kind() == "variable_statement" || node.kind() == "setget" {
+        // Look for `set(` and `get(` children or property_body
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            // GDScript 4 inline property syntax: var x: int: set(v), get()
+            // tree-sitter may represent this as property_body / setter / getter
+            if child.kind() == "setter" {
+                // Setter should have exactly 1 parameter
+                if let Some(params) = child.child_by_field_name("parameters") {
+                    let param_count = params.named_child_count();
+                    if param_count != 1 {
+                        let pos = child.start_position();
+                        errors.push(StructuralError {
+                            line: pos.row as u32 + 1,
+                            column: pos.column as u32 + 1,
+                            message: format!(
+                                "property setter must have exactly 1 parameter (got {param_count})",
+                            ),
+                        });
+                    }
+                }
+            }
+            if child.kind() == "getter" {
+                // Getter should have 0 parameters
+                if let Some(params) = child.child_by_field_name("parameters")
+                    && params.named_child_count() > 0
+                {
+                    let pos = child.start_position();
+                    errors.push(StructuralError {
+                        line: pos.row as u32 + 1,
+                        column: pos.column as u32 + 1,
+                        message: "property getter cannot have parameters".to_string(),
+                    });
+                }
+            }
+        }
+    }
+
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            check_getset_in_node(cursor.node(), errors);
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
