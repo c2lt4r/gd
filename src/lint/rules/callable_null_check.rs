@@ -1,6 +1,5 @@
 use std::collections::HashSet;
-use tree_sitter::Node;
-use crate::core::gd_ast::{self, GdDecl, GdFile};
+use crate::core::gd_ast::{self, GdDecl, GdExpr, GdFile, GdStmt};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -16,267 +15,115 @@ impl LintRule for CallableNullCheck {
         LintCategory::Godot
     }
 
-    fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, file: &GdFile<'_>, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        let src = source.as_bytes();
         gd_ast::visit_decls(file, &mut |decl| {
             if let GdDecl::Func(func) = decl {
-                check_function_body(func.node, src, &mut diags);
+                check_function_body(&func.body, &mut diags);
             }
         });
         diags
     }
 }
 
-fn check_function_body(func: Node, src: &[u8], diags: &mut Vec<LintDiagnostic>) {
-    let Some(body) = func.child_by_field_name("body") else {
-        return;
-    };
-
-    // First pass: collect identifiers that have .is_valid() checks
-    let mut validated: HashSet<String> = HashSet::new();
-    collect_validated(body, src, &mut validated);
-
-    // Second pass: find .call() / .call_deferred() / .callv() without validation
-    find_unvalidated_calls(body, src, &validated, diags);
-}
-
-/// Collect identifiers that appear as `foo.is_valid()` or `foo != null` or `foo == null`.
-fn collect_validated(node: Node, src: &[u8], validated: &mut HashSet<String>) {
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            let child = cursor.node();
-
-            // Pattern: foo.is_valid() → attribute > [identifier "foo", attribute_call > identifier "is_valid"]
-            if child.kind() == "attribute" {
-                check_is_valid(child, src, validated);
-            }
-
-            // Pattern: foo != null / foo == null → binary_operator
-            if child.kind() == "binary_operator" {
-                check_null_compare(child, src, validated);
-            }
-
-            // Pattern: if foo: (truthiness check on the callable)
-            if child.kind() == "if_statement" {
-                check_truthiness(child, src, validated);
-            }
-
-            collect_validated(child, src, validated);
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
-    }
-}
-
-/// Recursively collect all identifiers within a node.
-fn collect_all_identifiers<'a>(node: Node<'a>, src: &[u8], out: &mut Vec<(String, Node<'a>)>) {
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            let child = cursor.node();
-            if child.kind() == "identifier"
-                && let Ok(text) = child.utf8_text(src)
-            {
-                out.push((text.to_string(), child));
-            } else if child.kind() != "attribute_call" {
-                // Recurse into everything except attribute_call (don't collect method name)
-                collect_all_identifiers(child, src, out);
-            }
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
-    }
-}
-
-fn check_is_valid(node: Node, src: &[u8], validated: &mut HashSet<String>) {
-    let mut cursor = node.walk();
-    if !cursor.goto_first_child() {
-        return;
-    }
-
-    let mut has_is_valid = false;
-
-    loop {
-        let child = cursor.node();
-
-        if child.kind() == "attribute_call"
-            && let Some(method) = child
-                .children(&mut child.walk())
-                .find(|c| c.kind() == "identifier")
-            && let Ok(name) = method.utf8_text(src)
-            && (name == "is_valid" || name == "is_null")
+fn check_function_body(body: &[GdStmt], diags: &mut Vec<LintDiagnostic>) {
+    // Pass 1: collect identifiers with .is_valid()/.is_null()/null checks/truthiness guards
+    let mut validated: HashSet<&str> = HashSet::new();
+    gd_ast::visit_body_exprs(body, &mut |expr| {
+        collect_validated(expr, &mut validated);
+    });
+    // Also check if-statement conditions for truthiness guards
+    gd_ast::visit_body_stmts(body, &mut |stmt| {
+        if let GdStmt::If(if_stmt) = stmt
+            && let GdExpr::Ident { name, .. } = &if_stmt.condition
         {
-            has_is_valid = true;
+            validated.insert(name);
         }
+    });
 
-        if !cursor.goto_next_sibling() {
-            break;
-        }
-    }
-
-    if has_is_valid {
-        let mut ids = Vec::new();
-        collect_all_identifiers(node, src, &mut ids);
-        if let Some((name, _)) = ids.last() {
-            validated.insert(name.clone());
-        }
-    }
+    // Pass 2: find .call()/.call_deferred()/.callv() on unvalidated identifiers
+    gd_ast::visit_body_exprs(body, &mut |expr| {
+        check_callable_call(expr, &validated, diags);
+    });
 }
 
-fn check_null_compare(node: Node, src: &[u8], validated: &mut HashSet<String>) {
-    // binary_operator: left op right
-    // Look for `foo != null` or `foo == null`
-    let child_count = node.child_count();
-    if child_count < 3 {
-        return;
-    }
-
-    let op = node
-        .child_by_field_name("op")
-        .and_then(|n| n.utf8_text(src).ok())
-        .unwrap_or("");
-
-    if op != "!=" && op != "==" {
-        return;
-    }
-
-    let left = node.child(0);
-    let right = node.child(child_count - 1);
-
-    if let (Some(left), Some(right)) = (left, right) {
-        let left_text = left.utf8_text(src).unwrap_or("");
-        let right_text = right.utf8_text(src).unwrap_or("");
-
-        if right_text == "null" && left.kind() == "identifier" {
-            validated.insert(left_text.to_string());
-        } else if left_text == "null" && right.kind() == "identifier" {
-            validated.insert(right_text.to_string());
+/// Collect identifiers that have been validated via .is_valid()/.is_null() or null comparison.
+fn collect_validated<'a>(expr: &GdExpr<'a>, validated: &mut HashSet<&'a str>) {
+    match expr {
+        // foo.is_valid() or foo.is_null()
+        GdExpr::MethodCall { receiver, method, .. }
+            if matches!(*method, "is_valid" | "is_null") =>
+        {
+            if let Some(name) = terminal_name(receiver) {
+                validated.insert(name);
+            }
         }
-    }
-}
-
-fn check_truthiness(node: Node, src: &[u8], validated: &mut HashSet<String>) {
-    // if_statement > condition (first named child after "if")
-    // If the condition is just an identifier, it's a truthiness check
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            let child = cursor.node();
-            if child.kind() == "identifier"
-                && child.start_position().row == node.start_position().row
-                && let Ok(name) = child.utf8_text(src)
+        // foo != null / foo == null / null != foo / null == foo
+        GdExpr::BinOp { left, op, right, .. }
+            if matches!(*op, "!=" | "==") =>
+        {
+            if matches!(right.as_ref(), GdExpr::Null { .. })
+                && let GdExpr::Ident { name, .. } = left.as_ref()
             {
-                validated.insert(name.to_string());
-            }
-            if !cursor.goto_next_sibling() {
-                break;
+                validated.insert(name);
+            } else if matches!(left.as_ref(), GdExpr::Null { .. })
+                && let GdExpr::Ident { name, .. } = right.as_ref()
+            {
+                validated.insert(name);
             }
         }
+        _ => {}
     }
 }
 
-/// Find .call() / .call_deferred() / .callv() on identifiers not in the validated set.
-fn find_unvalidated_calls(
-    node: Node,
-    src: &[u8],
-    validated: &HashSet<String>,
-    diags: &mut Vec<LintDiagnostic>,
-) {
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            let child = cursor.node();
-
-            if child.kind() == "attribute" {
-                check_callable_call(child, src, validated, diags);
-            }
-
-            find_unvalidated_calls(child, src, validated, diags);
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
-    }
-}
-
+/// Check for .call()/.call_deferred()/.callv() on unvalidated callable identifiers.
 fn check_callable_call(
-    node: Node,
-    src: &[u8],
-    validated: &HashSet<String>,
+    expr: &GdExpr,
+    validated: &HashSet<&str>,
     diags: &mut Vec<LintDiagnostic>,
 ) {
-    let mut cursor = node.walk();
-    if !cursor.goto_first_child() {
+    let GdExpr::MethodCall { receiver, method, args, .. } = expr else { return };
+    if !matches!(*method, "call" | "call_deferred" | "callv") {
         return;
     }
 
-    let mut call_method = None;
-
-    loop {
-        let child = cursor.node();
-
-        if child.kind() == "attribute_call"
-            && let Some(method) = child
-                .children(&mut child.walk())
-                .find(|c| c.kind() == "identifier")
-            && let Ok(name) = method.utf8_text(src)
-            && matches!(name, "call" | "call_deferred" | "callv")
-        {
-            // `obj.call_deferred("method_name")` is Object.call_deferred,
-            // not Callable.call_deferred. Skip when first arg is a string literal.
-            if name == "call_deferred" && has_string_first_arg(&child) {
-                return;
-            }
-            call_method = Some(name.to_string());
-        }
-
-        if !cursor.goto_next_sibling() {
-            break;
-        }
+    // `obj.call_deferred("method_name")` is Object.call_deferred, not Callable
+    if *method == "call_deferred"
+        && matches!(args.first(), Some(GdExpr::StringLiteral { .. }))
+    {
+        return;
     }
 
-    if let Some(method) = call_method {
-        let mut ids = Vec::new();
-        collect_all_identifiers(node, src, &mut ids);
-        if let Some((obj_name, obj_node)) = ids.last()
-            && obj_name != "self"
-            && !validated.contains(obj_name)
-        {
-            diags.push(LintDiagnostic {
-                rule: "callable-null-check",
-                message: format!(
-                    "`{obj_name}.{method}()` called without `{obj_name}.is_valid()` check"
-                ),
-                severity: Severity::Warning,
-                line: obj_node.start_position().row,
-                column: obj_name.starts_with('.').into(),
-                end_column: None,
-                fix: None,
-                context_lines: None,
-            });
-        }
+    let Some(obj_name) = terminal_name(receiver) else { return };
+    if obj_name == "self" || validated.contains(obj_name) {
+        return;
     }
+
+    diags.push(LintDiagnostic {
+        rule: "callable-null-check",
+        message: format!(
+            "`{obj_name}.{method}()` called without `{obj_name}.is_valid()` check"
+        ),
+        severity: Severity::Warning,
+        line: expr.line(),
+        column: expr.column(),
+        end_column: None,
+        fix: None,
+        context_lines: None,
+    });
 }
 
-/// Check if an `attribute_call` node has a string literal as its first argument.
-/// Used to distinguish `Object.call_deferred("method")` from `Callable.call_deferred()`.
-fn has_string_first_arg(attribute_call: &Node) -> bool {
-    let mut cursor = attribute_call.walk();
-    for child in attribute_call.children(&mut cursor) {
-        if child.kind() == "arguments" {
-            if let Some(first_arg) = child.named_child(0)
-                && first_arg.kind() == "string"
-            {
-                return true;
-            }
-            return false;
-        }
+/// Get the terminal identifier name from an expression chain.
+/// `Ident("foo")` → "foo", `PropertyAccess { property: "bar" }` → "bar"
+/// Also handles tree-sitter precedence quirk where `x and y.prop` parses as
+/// `BinOp { left: x, right: PropertyAccess { prop } }` inside an attribute chain.
+fn terminal_name<'a>(expr: &GdExpr<'a>) -> Option<&'a str> {
+    match expr {
+        GdExpr::Ident { name, .. } => Some(name),
+        GdExpr::PropertyAccess { property, .. } => Some(property),
+        GdExpr::BinOp { right, .. } => terminal_name(right),
+        _ => None,
     }
-    false
 }
 
 #[cfg(test)]

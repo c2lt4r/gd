@@ -333,6 +333,20 @@ pub fn visit_decls<'a>(file: &GdFile<'a>, f: &mut impl FnMut(&GdDecl<'a>)) {
     }
 }
 
+/// Visit all expressions within a statement body (e.g., a function body).
+pub fn visit_body_exprs<'a>(stmts: &[GdStmt<'a>], f: &mut impl FnMut(&GdExpr<'a>)) {
+    for stmt in stmts {
+        visit_stmt_exprs(stmt, f);
+    }
+}
+
+/// Visit all statements within a statement body (pre-order, recursive).
+pub fn visit_body_stmts<'a>(stmts: &[GdStmt<'a>], f: &mut impl FnMut(&GdStmt<'a>)) {
+    for stmt in stmts {
+        visit_stmt(stmt, f);
+    }
+}
+
 // ── Declaration visitors ────────────────────────────────────────────
 
 fn visit_decl<'a>(decl: &GdDecl<'a>, f: &mut impl FnMut(&GdDecl<'a>)) {

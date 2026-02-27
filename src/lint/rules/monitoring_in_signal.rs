@@ -1,6 +1,5 @@
 use std::collections::HashSet;
-use tree_sitter::Node;
-use crate::core::gd_ast::{self, GdDecl, GdFile};
+use crate::core::gd_ast::{self, GdDecl, GdExpr, GdFile, GdStmt};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -32,28 +31,22 @@ impl LintRule for MonitoringInSignal {
         LintCategory::Godot
     }
 
-    fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, file: &GdFile<'_>, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
 
         // 1. Collect callback function names connected to area signals
-        let mut signal_callbacks: HashSet<String> = HashSet::new();
-        collect_signal_callbacks(file.node, source, &mut signal_callbacks);
+        let mut signal_callbacks: HashSet<&str> = HashSet::new();
+        gd_ast::visit_exprs(file, &mut |expr| {
+            collect_signal_connect(expr, &mut signal_callbacks);
+        });
 
-        // 2. Also check functions whose name matches the Godot auto-connect pattern:
-        //    _on_<NodeName>_<signal> e.g. _on_Area2D_body_entered
-        // We don't add these to signal_callbacks because we check them below.
-
-        // 3. Check each matching function body for direct monitoring/monitorable assignment
+        // 2. Check each matching function body for direct monitoring/monitorable assignment
         gd_ast::visit_decls(file, &mut |decl| {
-            if let GdDecl::Func(func) = decl {
-                let is_connected = signal_callbacks.contains(func.name);
-                let is_auto = is_auto_connected_signal_handler(func.name);
-
-                if (is_connected || is_auto)
-                    && let Some(body) = func.node.child_by_field_name("body")
-                {
-                    check_body_for_monitoring(body, source, func.name, &mut diags);
-                }
+            if let GdDecl::Func(func) = decl
+                && (signal_callbacks.contains(func.name)
+                    || is_auto_connected_signal_handler(func.name))
+            {
+                check_body_for_monitoring(&func.body, func.name, &mut diags);
             }
         });
 
@@ -61,77 +54,34 @@ impl LintRule for MonitoringInSignal {
     }
 }
 
-/// Find `signal.connect(callback)` patterns and collect callback names.
-fn collect_signal_callbacks(node: Node, source: &str, callbacks: &mut HashSet<String>) {
-    // Walk all expression_statement nodes looking for signal.connect(func_name)
-    if (node.kind() == "expression_statement" || node.kind() == "attribute")
-        && let Some(cb) = extract_signal_connect(&node, source)
-    {
-        callbacks.insert(cb);
+/// Find `signal.connect(callback)` where signal is an area signal, collect callback name.
+fn collect_signal_connect<'a>(expr: &GdExpr<'a>, callbacks: &mut HashSet<&'a str>) {
+    // Pattern: signal_name.connect(callback_name)
+    let GdExpr::MethodCall { receiver, method, args, .. } = expr else { return };
+    if *method != "connect" {
+        return;
     }
 
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            collect_signal_callbacks(cursor.node(), source, callbacks);
-            if !cursor.goto_next_sibling() {
-                break;
-            }
+    // Receiver should be an identifier matching an area signal
+    let signal_name = match receiver.as_ref() {
+        GdExpr::Ident { name, .. } => *name,
+        // self.signal_name.connect(...)
+        GdExpr::PropertyAccess { property, receiver: inner, .. }
+            if matches!(inner.as_ref(), GdExpr::Ident { name: "self", .. }) =>
+        {
+            *property
         }
-    }
-}
-
-/// Try to extract a callback name from `signal.connect(callback)`.
-/// Pattern: attribute > [identifier(signal_name), ".", attribute_call > [identifier("connect"), arguments > [identifier(callback)]]]
-fn extract_signal_connect(node: &Node, source: &str) -> Option<String> {
-    let attr = if node.kind() == "attribute" {
-        *node
-    } else {
-        // expression_statement may wrap an attribute
-        let mut cursor = node.walk();
-        let mut found = None;
-        for child in node.children(&mut cursor) {
-            if child.kind() == "attribute" {
-                found = Some(child);
-                break;
-            }
-        }
-        found?
+        _ => return,
     };
 
-    // First named child should be the signal name
-    let signal_id = attr.named_child(0)?;
-    if signal_id.kind() != "identifier" {
-        return None;
-    }
-    let signal_name = signal_id.utf8_text(source.as_bytes()).ok()?;
-
     if !AREA_SIGNALS.contains(&signal_name) {
-        return None;
+        return;
     }
 
-    // Find attribute_call with "connect"
-    let mut cursor = attr.walk();
-    for child in attr.children(&mut cursor) {
-        if child.kind() == "attribute_call" {
-            let method_name = child.named_child(0)?;
-            if method_name.utf8_text(source.as_bytes()).ok()? != "connect" {
-                return None;
-            }
-            // Get first argument (the callback)
-            let mut inner = child.walk();
-            for inner_child in child.children(&mut inner) {
-                if inner_child.kind() == "arguments" {
-                    let arg = inner_child.named_child(0)?;
-                    if arg.kind() == "identifier" {
-                        return arg.utf8_text(source.as_bytes()).ok().map(String::from);
-                    }
-                }
-            }
-        }
+    // First argument should be an identifier (the callback name)
+    if let Some(GdExpr::Ident { name, .. }) = args.first() {
+        callbacks.insert(name);
     }
-
-    None
 }
 
 /// Check if function name matches Godot auto-connect pattern: _on_*_<signal>
@@ -140,7 +90,6 @@ fn is_auto_connected_signal_handler(name: &str) -> bool {
         return false;
     }
     let suffix = &name[4..]; // strip "_on_"
-    // Check if it ends with an area signal name after a separator
     for signal in AREA_SIGNALS {
         // _on_Area2D_body_entered or _on_body_entered
         if suffix.ends_with(signal)
@@ -155,115 +104,45 @@ fn is_auto_connected_signal_handler(name: &str) -> bool {
 
 /// Scan a function body for `monitoring = ...` or `monitorable = ...` direct assignments.
 fn check_body_for_monitoring(
-    body: Node,
-    source: &str,
+    stmts: &[GdStmt],
     func_name: &str,
     diags: &mut Vec<LintDiagnostic>,
 ) {
-    let mut cursor = body.walk();
-    for child in body.children(&mut cursor) {
-        check_statement_for_monitoring(&child, source, func_name, diags);
-    }
-}
-
-fn check_statement_for_monitoring(
-    node: &Node,
-    source: &str,
-    func_name: &str,
-    diags: &mut Vec<LintDiagnostic>,
-) {
-    // expression_statement wraps assignment: expression_statement > assignment > [lhs, =, rhs]
-    if node.kind() == "expression_statement" {
-        let mut inner = node.walk();
-        for child in node.children(&mut inner) {
-            if child.kind() == "assignment" {
-                emit_if_monitoring(&child, source, func_name, diags);
-            }
+    gd_ast::visit_body_stmts(stmts, &mut |stmt| {
+        if let GdStmt::Assign { target, node, .. } = stmt
+            && let Some(prop) = extract_dangerous_prop(target)
+        {
+            diags.push(LintDiagnostic {
+                rule: "monitoring-in-signal",
+                message: format!(
+                    "direct assignment to `{prop}` in signal callback `{func_name}()`; \
+                     use `set_deferred(\"{prop}\", value)` instead"
+                ),
+                severity: Severity::Warning,
+                line: node.start_position().row,
+                column: node.start_position().column,
+                end_column: Some(node.end_position().column),
+                fix: None,
+                context_lines: None,
+            });
         }
-    }
-
-    // Recurse into control flow
-    match node.kind() {
-        "if_statement" | "for_statement" | "while_statement" | "match_statement" => {
-            let mut cursor = node.walk();
-            for child in node.children(&mut cursor) {
-                if child.kind() == "body" || child.kind() == "match_body" {
-                    check_body_for_monitoring(child, source, func_name, diags);
-                }
-                if (child.kind() == "elif_branch" || child.kind() == "else_branch")
-                    && let Some(body) = child.child_by_field_name("body")
-                {
-                    check_body_for_monitoring(body, source, func_name, diags);
-                }
-            }
-        }
-        _ => {}
-    }
+    });
 }
 
-fn emit_if_monitoring(
-    assignment: &Node,
-    source: &str,
-    func_name: &str,
-    diags: &mut Vec<LintDiagnostic>,
-) {
-    if let Some((prop, prop_node)) = extract_monitoring_assignment(assignment, source) {
-        diags.push(LintDiagnostic {
-            rule: "monitoring-in-signal",
-            message: format!(
-                "direct assignment to `{prop}` in signal callback `{func_name}()`; \
-                 use `set_deferred(\"{prop}\", value)` instead"
-            ),
-            severity: Severity::Warning,
-            line: prop_node.start_position().row,
-            column: prop_node.start_position().column,
-            end_column: Some(prop_node.end_position().column),
-            fix: None,
-            context_lines: None,
-        });
-    }
-}
-
-/// Extract property name from `monitoring = X`, `self.monitoring = X`, etc.
-/// Returns (property_name, assignment_node) if it's a dangerous prop.
-fn extract_monitoring_assignment<'a>(
-    node: &'a Node<'a>,
-    source: &str,
-) -> Option<(String, Node<'a>)> {
-    // assignment: LHS = RHS
-    if node.kind() != "assignment" {
-        return None;
-    }
-
-    let lhs = node.named_child(0)?;
-    let prop_name = match lhs.kind() {
-        "identifier" => lhs.utf8_text(source.as_bytes()).ok()?,
-        // self.monitoring
-        "attribute" => {
-            let first = lhs.named_child(0)?;
-            if first.kind() != "identifier" {
-                return None;
-            }
-            let obj = first.utf8_text(source.as_bytes()).ok()?;
-            if obj != "self" {
-                return None;
-            }
-            // Get the property name after the dot
-            let mut cursor = lhs.walk();
-            let mut prop = None;
-            for child in lhs.children(&mut cursor) {
-                // The property is the second identifier (after self and .)
-                if child.kind() == "identifier" && child != first {
-                    prop = child.utf8_text(source.as_bytes()).ok();
-                }
-            }
-            prop?
+/// Extract a dangerous property name from an assignment target.
+/// Matches: `monitoring`, `self.monitoring`, `monitorable`, `self.monitorable`
+fn extract_dangerous_prop<'a>(target: &GdExpr<'a>) -> Option<&'a str> {
+    let name = match target {
+        GdExpr::Ident { name, .. } => *name,
+        GdExpr::PropertyAccess { receiver, property, .. }
+            if matches!(receiver.as_ref(), GdExpr::Ident { name: "self", .. }) =>
+        {
+            *property
         }
         _ => return None,
     };
-
-    if DANGEROUS_PROPS.contains(&prop_name) {
-        Some((prop_name.to_string(), *node))
+    if DANGEROUS_PROPS.contains(&name) {
+        Some(name)
     } else {
         None
     }
