@@ -1941,12 +1941,59 @@ fn check_type_annotations_in_node(
         && type_node.kind() != "inferred_type"
         && let Ok(type_name) = type_node.utf8_text(bytes)
     {
-        // Strip Array[...] wrapper
-        let base_type = if let Some(inner) = type_name.strip_prefix("Array[") {
-            inner.strip_suffix(']').unwrap_or(type_name)
-        } else {
-            type_name
-        };
+        // Strip Array[T] / Dictionary[K, V] wrappers — check each element type
+        if let Some(inner) = type_name
+            .strip_prefix("Array[")
+            .and_then(|s| s.strip_suffix(']'))
+        {
+            if !inner.is_empty() && !is_known_type(inner, symbols, project) {
+                let pos = type_node.start_position();
+                errors.push(StructuralError {
+                    line: pos.row as u32 + 1,
+                    column: pos.column as u32 + 1,
+                    message: format!("unknown type `{inner}` in type annotation"),
+                });
+            }
+            // Walk children for further nested annotations
+            let mut cursor = node.walk();
+            if cursor.goto_first_child() {
+                loop {
+                    check_type_annotations_in_node(cursor.node(), source, symbols, project, errors);
+                    if !cursor.goto_next_sibling() {
+                        break;
+                    }
+                }
+            }
+            return;
+        }
+        if let Some(inner) = type_name
+            .strip_prefix("Dictionary[")
+            .and_then(|s| s.strip_suffix(']'))
+        {
+            // Check each type in "K, V"
+            for part in inner.split(',') {
+                let part = part.trim();
+                if !part.is_empty() && !is_known_type(part, symbols, project) {
+                    let pos = type_node.start_position();
+                    errors.push(StructuralError {
+                        line: pos.row as u32 + 1,
+                        column: pos.column as u32 + 1,
+                        message: format!("unknown type `{part}` in type annotation"),
+                    });
+                }
+            }
+            let mut cursor = node.walk();
+            if cursor.goto_first_child() {
+                loop {
+                    check_type_annotations_in_node(cursor.node(), source, symbols, project, errors);
+                    if !cursor.goto_next_sibling() {
+                        break;
+                    }
+                }
+            }
+            return;
+        }
+        let base_type = type_name;
 
         if !base_type.is_empty() && !is_known_type(base_type, symbols, project) {
             let pos = type_node.start_position();
@@ -2041,6 +2088,26 @@ fn is_known_type(name: &str, symbols: &SymbolTable, project: &ProjectIndex) -> b
     // Inner classes
     if symbols.inner_classes.iter().any(|(n, _)| n == name) {
         return true;
+    }
+
+    // @GlobalScope enum types (Error, Corner, EulerOrder, PropertyHint, etc.)
+    if crate::class_db::enum_type_exists("@GlobalScope", name) {
+        return true;
+    }
+
+    // Dotted type: Class.EnumType or Class.InnerClass (e.g., BaseMaterial3D.BillboardMode)
+    if let Some((class, member)) = name.split_once('.') {
+        // ClassDB class with enum type
+        if crate::class_db::class_exists(class) && crate::class_db::enum_type_exists(class, member)
+        {
+            return true;
+        }
+        // Project class with enum
+        if let Some(file_syms) = project.lookup_class(class)
+            && file_syms.enums.iter().any(|e| e == member)
+        {
+            return true;
+        }
     }
 
     false
@@ -2636,9 +2703,9 @@ fn check_virtual_override_signature(symbols: &SymbolTable, errors: &mut Vec<Stru
             });
         }
 
-        // D2: Wrong param count
+        // D2: Wrong param count (skip _init — constructors can have their own signatures)
         let user_count = func.params.len();
-        if user_count != total {
+        if func.name != "_init" && user_count != total {
             errors.push(StructuralError {
                 line: func.line as u32 + 1,
                 column: 1,
@@ -3393,12 +3460,16 @@ fn operator_valid(op: &str, left: &str, right: &str) -> bool {
             if left == "String" && right == "String" {
                 return true;
             }
-            // Vector arithmetic
+            // Vector arithmetic (same type)
             if left == right && is_vector_type(left) {
                 return true;
             }
             // Array + Array
             if left == "Array" && right == "Array" {
+                return true;
+            }
+            // PackedByteArray + PackedByteArray (and other packed arrays)
+            if left == right && left.starts_with("Packed") {
                 return true;
             }
             false
@@ -3416,6 +3487,21 @@ fn operator_valid(op: &str, left: &str, right: &str) -> bool {
             }
             // Vector * Vector (element-wise)
             if left == right && is_vector_type(left) {
+                return true;
+            }
+            // Transform multiplication and composition
+            if is_transform_type(left) && is_transform_type(right) {
+                return true;
+            }
+            // Transform * Vector (apply transform)
+            if is_transform_type(left) && is_vector_type(right) {
+                return true;
+            }
+            if is_vector_type(left) && is_transform_type(right) {
+                return true;
+            }
+            // Basis * Basis, Basis * Vector3
+            if left == "Basis" || right == "Basis" {
                 return true;
             }
             // String * int (repeat)
@@ -3459,6 +3545,10 @@ fn is_vector_type(ty: &str) -> bool {
         ty,
         "Vector2" | "Vector2i" | "Vector3" | "Vector3i" | "Vector4" | "Vector4i" | "Color"
     )
+}
+
+fn is_transform_type(ty: &str) -> bool {
+    matches!(ty, "Transform2D" | "Transform3D" | "Projection")
 }
 
 /// B6: Invalid cast — `x as Node` where x: int.
@@ -4008,7 +4098,51 @@ fn check_attribute_call_args(
             type_inference::InferredType::Class(c) => Some(c.as_str()),
             _ => None,
         });
-        if let Some(class_name) = class_name {
+
+        // Resolve through intermediate property accesses (e.g., `_timer.timeout.connect()`).
+        // Collect identifiers between receiver and attribute_call — the last one is the
+        // property whose type determines the actual receiver of the method call.
+        let resolved_class = if let Some(base) = class_name {
+            let mut intermediates = Vec::new();
+            for i in 1..node.named_child_count() {
+                if let Some(c) = node.named_child(i)
+                    && c.kind() == "identifier"
+                {
+                    intermediates.push(c);
+                }
+            }
+            if intermediates.is_empty() {
+                // No intermediate properties — method called directly on receiver
+                Some(base.to_string())
+            } else {
+                // Walk the property chain: resolve each intermediate on the current type
+                let mut current_type = base.to_string();
+                for prop_node in &intermediates {
+                    let Ok(prop_name) = prop_node.utf8_text(source.as_bytes()) else {
+                        break;
+                    };
+                    // Check if the property is a signal on the current type
+                    if crate::class_db::signal_exists(&current_type, prop_name) {
+                        current_type = "Signal".to_string();
+                        continue;
+                    }
+                    // Check if it's a known property with a type in ClassDB
+                    if let Some(prop_type) =
+                        crate::class_db::property_type(&current_type, prop_name)
+                    {
+                        current_type = prop_type.to_string();
+                        continue;
+                    }
+                    // Can't resolve further — bail out
+                    return;
+                }
+                Some(current_type)
+            }
+        } else {
+            None
+        };
+
+        if let Some(class_name) = resolved_class.as_deref() {
             if let Some(sig) = crate::class_db::method_signature(class_name, method_name) {
                 check_param_bounds(
                     method_name,

@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.3.13] - 2026-02-27
+
+### Improved
+- **`gd check` — further 8% FP reduction on real projects** (5,063 → 4,492 across 5 projects, 81.7% total reduction from v0.3.9 baseline):
+  - **Signal chained access**: `obj.signal_name.connect(fn)` no longer falsely flagged as too-few-args — property chain resolved through ClassDB signals
+  - **Global scope enums**: `Error`, `Corner`, `EulerOrder` and other `@GlobalScope` enum types now recognized in type annotations
+  - **Typed Dictionary**: `Dictionary[String, int]` syntax now validated (each element type checked independently)
+  - **Dotted type annotations**: `BaseMaterial3D.BillboardMode` and other `Class.EnumType` patterns now recognized
+  - **Constructor override**: `_init()` param count no longer checked against parent — GDScript constructors have independent signatures
+  - **Transform operators**: `Transform3D * Transform3D`, `Transform * Vector`, `Basis` operations now valid
+
 ## [0.3.12] - 2026-02-27
 
 ### Improved
