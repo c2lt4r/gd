@@ -130,6 +130,7 @@ pub struct GdEnumMember<'a> {
 pub struct GdClass<'a> {
     pub node: Node<'a>,
     pub name: &'a str,
+    pub name_node: Option<Node<'a>>,
     pub extends: Option<GdExtends<'a>>,
     pub declarations: Vec<GdDecl<'a>>,
 }
@@ -935,8 +936,8 @@ fn convert_enum<'a>(node: Node<'a>, source: &'a str) -> GdEnum<'a> {
 
 fn convert_class<'a>(node: Node<'a>, source: &'a str) -> GdClass<'a> {
     let bytes = source.as_bytes();
-    let name = node
-        .child_by_field_name("name")
+    let name_node = node.child_by_field_name("name");
+    let name = name_node
         .and_then(|n| n.utf8_text(bytes).ok())
         .unwrap_or("");
 
@@ -971,7 +972,7 @@ fn convert_class<'a>(node: Node<'a>, source: &'a str) -> GdClass<'a> {
         }
     }
 
-    GdClass { node, name, extends, declarations }
+    GdClass { node, name, name_node, extends, declarations }
 }
 
 // ═══════════════════════════════════════════════════════════════════════

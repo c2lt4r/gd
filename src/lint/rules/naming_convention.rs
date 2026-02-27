@@ -89,8 +89,7 @@ fn check_decl(decl: &GdDecl<'_>, diags: &mut Vec<LintDiagnostic>) {
         GdDecl::Class(class) => {
             if !is_pascal_case(class.name) {
                 let fixed = to_pascal_case(class.name);
-                let name_node = class.node.child_by_field_name("name");
-                let (line, col, end_col, fix) = name_fix(name_node, class.node, &fixed);
+                let (line, col, end_col, fix) = name_fix(class.name_node, class.node, &fixed);
                 diags.push(LintDiagnostic {
                     rule: "naming-convention",
                     message: format!("class `{}` should use PascalCase: `{fixed}`", class.name),
