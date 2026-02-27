@@ -1,5 +1,4 @@
-use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{GdDecl, GdFile, GdStmt};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -15,52 +14,32 @@ impl LintRule for ReturnTypeMismatch {
         LintCategory::Correctness
     }
 
-    fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, file: &GdFile<'_>, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        let root = file.node;
-        check_node(root, source, &mut diags);
+        check_decls(&file.declarations, &mut diags);
         diags
     }
 }
 
-fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    if node.kind() == "function_definition"
-        && let Some(return_type_node) = node.child_by_field_name("return_type")
-    {
-        let return_type = &source[return_type_node.byte_range()];
-
-        if let Some(body) = node.child_by_field_name("body") {
-            if return_type == "void" {
-                // void function should not return a value
-                check_void_returns(body, source, diags);
-            } else {
-                // non-void function should not have bare returns
-                check_bare_returns(body, source, diags);
-            }
+fn check_decls(decls: &[GdDecl<'_>], diags: &mut Vec<LintDiagnostic>) {
+    for decl in decls {
+        if let GdDecl::Func(func) = decl {
+            let Some(ret_type) = &func.return_type else {
+                continue;
+            };
+            let is_void = ret_type.name == "void";
+            check_returns(&func.body, is_void, diags);
         }
-    }
-
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            check_node(cursor.node(), source, diags);
-            if !cursor.goto_next_sibling() {
-                break;
-            }
+        if let GdDecl::Class(class) = decl {
+            check_decls(&class.declarations, diags);
         }
     }
 }
 
-#[allow(clippy::only_used_in_recursion)]
-fn check_void_returns(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    if node.kind() == "return_statement" {
-        // Check if return statement has a child (return value)
-        let mut cursor = node.walk();
-        if cursor.goto_first_child() {
-            // Skip the "return" keyword itself
-            let child = cursor.node();
-            if child.is_named() {
-                // Has a return value
+fn check_returns(stmts: &[GdStmt<'_>], is_void: bool, diags: &mut Vec<LintDiagnostic>) {
+    for stmt in stmts {
+        if let GdStmt::Return { node, value } = stmt {
+            if is_void && value.is_some() {
                 diags.push(LintDiagnostic {
                     rule: "return-type-mismatch",
                     message: "function declares -> void but returns a value".to_string(),
@@ -71,60 +50,40 @@ fn check_void_returns(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>)
                     end_column: None,
                     context_lines: None,
                 });
+            } else if !is_void && value.is_none() {
+                diags.push(LintDiagnostic {
+                    rule: "return-type-mismatch",
+                    message: "function declares return type but has bare return".to_string(),
+                    severity: Severity::Warning,
+                    line: node.start_position().row,
+                    column: node.start_position().column,
+                    fix: None,
+                    end_column: None,
+                    context_lines: None,
+                });
             }
         }
-    }
 
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            check_void_returns(cursor.node(), source, diags);
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
-    }
-}
-
-#[allow(clippy::only_used_in_recursion)]
-fn check_bare_returns(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    if node.kind() == "return_statement" {
-        // Check if return statement has no named children (bare return)
-        let mut has_value = false;
-        let mut cursor = node.walk();
-        if cursor.goto_first_child() {
-            loop {
-                if cursor.node().is_named() {
-                    has_value = true;
-                    break;
+        // Recurse into nested blocks
+        match stmt {
+            GdStmt::If(gif) => {
+                check_returns(&gif.body, is_void, diags);
+                for (_, branch) in &gif.elif_branches {
+                    check_returns(branch, is_void, diags);
                 }
-                if !cursor.goto_next_sibling() {
-                    break;
+                if let Some(else_body) = &gif.else_body {
+                    check_returns(else_body, is_void, diags);
                 }
             }
-        }
-
-        if !has_value {
-            diags.push(LintDiagnostic {
-                rule: "return-type-mismatch",
-                message: "function declares return type but has bare return".to_string(),
-                severity: Severity::Warning,
-                line: node.start_position().row,
-                column: node.start_position().column,
-                fix: None,
-                end_column: None,
-                context_lines: None,
-            });
-        }
-    }
-
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            check_bare_returns(cursor.node(), source, diags);
-            if !cursor.goto_next_sibling() {
-                break;
+            GdStmt::For { body, .. } | GdStmt::While { body, .. } => {
+                check_returns(body, is_void, diags);
             }
+            GdStmt::Match { arms, .. } => {
+                for arm in arms {
+                    check_returns(&arm.body, is_void, diags);
+                }
+            }
+            _ => {}
         }
     }
 }

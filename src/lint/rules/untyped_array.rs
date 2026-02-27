@@ -1,5 +1,4 @@
-use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{self, GdDecl, GdExpr, GdFile, GdStmt, GdVar};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -15,67 +14,51 @@ impl LintRule for UntypedArray {
         LintCategory::TypeSafety
     }
 
-    fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, file: &GdFile<'_>, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        let root = file.node;
-        check_node(root, source, &mut diags);
+        gd_ast::visit_decls(file, &mut |decl| {
+            if let GdDecl::Var(var) = decl {
+                check_var(var, &mut diags);
+            }
+        });
+        gd_ast::visit_stmts(file, &mut |stmt| {
+            if let GdStmt::Var(var) = stmt {
+                check_var(var, &mut diags);
+            }
+        });
         diags
     }
 }
 
-fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    if node.kind() == "variable_statement" {
-        // Check if this is a const (skip constants)
-        if let Some(first_child) = node.named_child(0) {
-            let text = &source[first_child.byte_range()];
-            if text == "const" {
-                // Skip constants
-                let mut cursor = node.walk();
-                if cursor.goto_first_child() {
-                    loop {
-                        check_node(cursor.node(), source, diags);
-                        if !cursor.goto_next_sibling() {
-                            break;
-                        }
-                    }
-                }
-                return;
-            }
-        }
-
-        // Check if value is an array
-        let has_array_value = node
-            .child_by_field_name("value")
-            .is_some_and(|n| n.kind() == "array");
-
-        // Check if there's a type annotation
-        let has_type = node.child_by_field_name("type").is_some();
-
-        if has_array_value
-            && !has_type
-            && let Some(name_node) = node.child_by_field_name("name")
-        {
-            diags.push(LintDiagnostic {
-                rule: "untyped-array",
-                message: "array variable has no type annotation; consider `Array[Type]`"
-                    .to_string(),
-                severity: Severity::Warning,
-                line: name_node.start_position().row,
-                column: name_node.start_position().column,
-                fix: None,
-                end_column: None,
-                context_lines: None,
-            });
-        }
+fn check_var(var: &GdVar<'_>, diags: &mut Vec<LintDiagnostic>) {
+    // Skip constants
+    if var.is_const {
+        return;
+    }
+    // Skip if already has a type annotation (explicit or inferred via :=)
+    if var.type_ann.is_some() {
+        return;
+    }
+    // Value must be an array literal
+    if !matches!(&var.value, Some(GdExpr::Array { .. })) {
+        return;
     }
 
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            check_node(cursor.node(), source, diags);
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
-    }
+    let col = var
+        .node
+        .child_by_field_name("name")
+        .map_or(var.node.start_position().column, |n| {
+            n.start_position().column
+        });
+
+    diags.push(LintDiagnostic {
+        rule: "untyped-array",
+        message: "array variable has no type annotation; consider `Array[Type]`".to_string(),
+        severity: Severity::Warning,
+        line: var.node.start_position().row,
+        column: col,
+        fix: None,
+        end_column: None,
+        context_lines: None,
+    });
 }

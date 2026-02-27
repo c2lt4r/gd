@@ -1,5 +1,4 @@
-use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{self, GdDecl, GdFile, GdStmt, GdVar};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -29,60 +28,70 @@ impl LintRule for StaticTypeInference {
         symbols: &SymbolTable,
     ) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        let root = file.node;
-        check_node(root, source, symbols, &mut diags);
+        gd_ast::visit_decls(file, &mut |decl| {
+            if let GdDecl::Var(var) = decl {
+                check_var(var, source, symbols, &mut diags);
+            }
+        });
+        gd_ast::visit_stmts(file, &mut |stmt| {
+            if let GdStmt::Var(var) = stmt {
+                check_var(var, source, symbols, &mut diags);
+            }
+        });
         diags
     }
 }
 
-fn check_node(node: Node, source: &str, symbols: &SymbolTable, diags: &mut Vec<LintDiagnostic>) {
-    if node.kind() == "variable_statement" {
-        // Skip if already has a type annotation
-        if node.child_by_field_name("type").is_none()
-            && let Some(value_node) = node.child_by_field_name("value")
-            && let Some(inferred) = infer_expression_type(&value_node, source, symbols)
-            // Only suggest for concrete builtin types (not Void, Variant, or Class)
-            && matches!(inferred, InferredType::Builtin(_))
-        {
-            let var_name = node
-                .child_by_field_name("name")
-                .map_or("variable", |n| &source[n.byte_range()]);
-            let name_node = node.child_by_field_name("name");
-            let (line, col) = if let Some(n) = name_node {
-                (n.start_position().row, n.start_position().column)
-            } else {
-                (node.start_position().row, node.start_position().column)
-            };
-
-            diags.push(LintDiagnostic {
-                rule: "static-type-inference",
-                message: format!(
-                    "variable `{var_name}` could have an explicit type: `{}`",
-                    inferred.display_name()
-                ),
-                severity: Severity::Warning,
-                line,
-                column: col,
-                end_column: None,
-                fix: None,
-                context_lines: None,
-            });
-        }
+fn check_var(
+    var: &GdVar<'_>,
+    source: &str,
+    symbols: &SymbolTable,
+    diags: &mut Vec<LintDiagnostic>,
+) {
+    // Skip if already has any type annotation (explicit or inferred via :=)
+    if var.type_ann.is_some() {
+        return;
     }
 
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            check_node(cursor.node(), source, symbols, diags);
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
+    let Some(value) = &var.value else { return };
+    let value_node = value.node();
+    let Some(inferred) = infer_expression_type(&value_node, source, symbols) else {
+        return;
+    };
+
+    // Only suggest for concrete builtin types (not Void, Variant, or Class)
+    if !matches!(inferred, InferredType::Builtin(_)) {
+        return;
     }
+
+    let (line, col) = if let Some(name_node) = var.node.child_by_field_name("name") {
+        (
+            name_node.start_position().row,
+            name_node.start_position().column,
+        )
+    } else {
+        (
+            var.node.start_position().row,
+            var.node.start_position().column,
+        )
+    };
+
+    diags.push(LintDiagnostic {
+        rule: "static-type-inference",
+        message: format!(
+            "variable `{}` could have an explicit type: `{}`",
+            var.name,
+            inferred.display_name()
+        ),
+        severity: Severity::Warning,
+        line,
+        column: col,
+        end_column: None,
+        fix: None,
+        context_lines: None,
+    });
 }
 
-// Tests remain the same — same diagnostics, consolidated implementation.
-// Now uses check_with_symbols instead of check.
 #[cfg(test)]
 mod tests {
     use super::*;
