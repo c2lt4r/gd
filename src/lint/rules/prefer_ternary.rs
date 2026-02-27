@@ -1,5 +1,4 @@
-use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{self, GdExpr, GdFile, GdStmt};
 
 use super::{Fix, LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -21,75 +20,47 @@ impl LintRule for PreferTernary {
 
     fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        check_node(file.node, source, &mut diags);
+        gd_ast::visit_stmts(file, &mut |stmt| {
+            check_if_else(stmt, source, &mut diags);
+        });
         diags
     }
 }
 
-fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    if node.kind() == "if_statement" {
-        check_if_else(node, source, diags);
-    }
+fn check_if_else(stmt: &GdStmt<'_>, source: &str, diags: &mut Vec<LintDiagnostic>) {
+    let GdStmt::If(gif) = stmt else { return };
 
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            check_node(cursor.node(), source, diags);
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
-    }
-}
-
-fn check_if_else(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
     // Must have an else clause, no elif
-    if has_elif(node) {
+    if !gif.elif_branches.is_empty() || gif.else_body.is_none() {
+        return;
+    }
+    let else_body = gif.else_body.as_ref().unwrap();
+
+    // Each body must have exactly one assignment statement
+    if gif.body.len() != 1 || else_body.len() != 1 {
         return;
     }
 
-    let Some(condition) = node.child_by_field_name("condition") else {
-        return;
-    };
-    let Some(body) = node.child_by_field_name("body") else {
-        return;
-    };
-    let Some(else_node) = find_else_clause(node) else {
-        return;
-    };
-    let Some(else_body) = else_node.child_by_field_name("body") else {
-        return;
-    };
+    let (if_var, if_val) = extract_assignment(&gif.body[0], source);
+    let (else_var, else_val) = extract_assignment(&else_body[0], source);
 
-    // Each body must have exactly one statement that is an assignment
-    let Some(if_stmt) = single_named_non_comment_child(body) else {
-        return;
-    };
-    let Some(else_stmt) = single_named_non_comment_child(else_body) else {
-        return;
-    };
-
-    let Some((if_var, if_val)) = extract_assignment(if_stmt, source) else {
-        return;
-    };
-    let Some((else_var, else_val)) = extract_assignment(else_stmt, source) else {
-        return;
-    };
+    let (Some(if_var), Some(if_val)) = (if_var, if_val) else { return };
+    let (Some(else_var), Some(else_val)) = (else_var, else_val) else { return };
 
     // Must assign to the same variable
     if if_var != else_var {
         return;
     }
 
-    // Values must be single-line (no newlines)
+    // Values must be single-line
     if if_val.contains('\n') || else_val.contains('\n') {
         return;
     }
 
-    let cond_text = &source[condition.byte_range()];
-    let replacement = format!("{if_var} = {if_val} if {cond_text} else {else_val}");
+    let condition = &source[gif.condition.node().byte_range()];
+    let replacement = format!("{if_var} = {if_val} if {condition} else {else_val}");
 
-    let fix = generate_if_else_fix(node, &replacement, source);
+    let fix = generate_if_else_fix(gif.node, &replacement, source);
 
     diags.push(LintDiagnostic {
         rule: "prefer-ternary",
@@ -97,93 +68,36 @@ fn check_if_else(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
             "this if/else assigns to `{if_var}` in both branches; use `{replacement}`"
         ),
         severity: Severity::Warning,
-        line: node.start_position().row,
-        column: node.start_position().column,
+        line: gif.node.start_position().row,
+        column: gif.node.start_position().column,
         end_column: None,
         fix: Some(fix),
         context_lines: None,
     });
 }
 
-fn find_else_clause(if_node: Node) -> Option<Node> {
-    let mut cursor = if_node.walk();
-    if !cursor.goto_first_child() {
-        return None;
+/// Extract (variable_text, value_text) from an assignment statement.
+fn extract_assignment<'a>(stmt: &GdStmt<'a>, source: &'a str) -> (Option<&'a str>, Option<&'a str>) {
+    if let GdStmt::Assign { target, value, .. } = stmt {
+        return (
+            Some(&source[target.node().byte_range()]),
+            Some(&source[value.node().byte_range()]),
+        );
     }
-    loop {
-        let child = cursor.node();
-        if child.kind() == "else_clause" {
-            return Some(child);
-        }
-        if !cursor.goto_next_sibling() {
-            break;
-        }
+    // Also handle Expr wrapping an assignment (expression_statement > assignment in CST)
+    if let GdStmt::Expr { expr, .. } = stmt
+        && let GdExpr::Ident { .. } = expr
+    {
+        // Not an assignment
     }
-    None
+    (None, None)
 }
 
-fn has_elif(if_node: Node) -> bool {
-    let mut cursor = if_node.walk();
-    if !cursor.goto_first_child() {
-        return false;
-    }
-    loop {
-        let kind = cursor.node().kind();
-        if kind == "elif_clause" {
-            return true;
-        }
-        if !cursor.goto_next_sibling() {
-            break;
-        }
-    }
-    false
-}
-
-fn single_named_non_comment_child(body: Node) -> Option<Node> {
-    let mut result = None;
-    let mut count = 0;
-    let mut cursor = body.walk();
-    if !cursor.goto_first_child() {
-        return None;
-    }
-    loop {
-        let child = cursor.node();
-        if child.is_named() && child.kind() != "comment" {
-            count += 1;
-            if count > 1 {
-                return None;
-            }
-            result = Some(child);
-        }
-        if !cursor.goto_next_sibling() {
-            break;
-        }
-    }
-    result
-}
-
-/// Extract (variable, value) from an assignment statement.
-/// Handles both `expression_statement > assignment` and bare `assignment`.
-fn extract_assignment<'a>(stmt: Node<'a>, source: &'a str) -> Option<(&'a str, &'a str)> {
-    let assign = if stmt.kind() == "expression_statement" {
-        let inner = stmt.named_child(0)?;
-        if inner.kind() == "assignment" {
-            inner
-        } else {
-            return None;
-        }
-    } else if stmt.kind() == "assignment" {
-        stmt
-    } else {
-        return None;
-    };
-
-    let left = assign.child_by_field_name("left")?;
-    let right = assign.child_by_field_name("right")?;
-    Some((&source[left.byte_range()], &source[right.byte_range()]))
-}
-
-fn generate_if_else_fix(if_node: Node, replacement_line: &str, source: &str) -> Fix {
+fn generate_if_else_fix(
+    if_node: tree_sitter::Node<'_>,
+    replacement_line: &str,
+    source: &str,
+) -> Fix {
     let source_bytes = source.as_bytes();
 
     // Find the start of the line containing the if
@@ -191,11 +105,9 @@ fn generate_if_else_fix(if_node: Node, replacement_line: &str, source: &str) -> 
     while line_start > 0 && source_bytes[line_start - 1] != b'\n' {
         line_start -= 1;
     }
-
-    // Get indentation
     let indent = &source[line_start..if_node.start_byte()];
 
-    // Include trailing newline in the replaced range if present
+    // Include trailing newline in the replaced range
     let mut end = if_node.end_byte();
     if end < source_bytes.len() && source_bytes[end] == b'\n' {
         end += 1;

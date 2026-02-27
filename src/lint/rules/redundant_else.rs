@@ -1,5 +1,4 @@
-use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{self, GdFile, GdIf, GdStmt};
 
 use super::{Fix, LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -17,105 +16,61 @@ impl LintRule for RedundantElse {
 
     fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        let root = file.node;
-        check_node(root, source, &mut diags);
+        gd_ast::visit_stmts(file, &mut |stmt| {
+            check_redundant_else(stmt, source, &mut diags);
+        });
         diags
     }
 }
 
-fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    if node.kind() == "if_statement" {
-        check_if_statement(node, source, diags);
-    }
+fn check_redundant_else(stmt: &GdStmt<'_>, source: &str, diags: &mut Vec<LintDiagnostic>) {
+    let GdStmt::If(gif) = stmt else { return };
 
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            check_node(cursor.node(), source, diags);
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
-    }
-}
-
-fn check_if_statement(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    // Get the body of the if branch (first `body` child)
-    let Some(body) = node.child_by_field_name("body") else {
-        return;
-    };
-
-    // Check if the body always terminates
-    if !body_always_terminates(body) {
+    // Must have an else clause, no elif
+    if !gif.elif_branches.is_empty() || gif.else_body.is_none() {
         return;
     }
 
-    // Look for an else_clause that is NOT an elif
-    let mut cursor = node.walk();
-    if !cursor.goto_first_child() {
+    // Check if the if body always terminates
+    if !body_always_terminates(&gif.body) {
         return;
     }
 
-    loop {
-        let child = cursor.node();
-        if child.kind() == "else_clause" {
-            // Check if this else clause contains an elif (if_statement as direct child)
-            // If so, don't warn - elif chains are fine
-            let has_elif = child
-                .children(&mut child.walk())
-                .any(|c| c.kind() == "if_statement");
-            if has_elif {
-                return;
-            }
+    // The else clause node is found via the raw tree-sitter node
+    let Some(else_node) = find_else_clause(gif) else { return };
 
-            diags.push(LintDiagnostic {
-                rule: "redundant-else",
-                message: "unnecessary `else` after `return`/`break`/`continue`; remove the `else` and dedent"
-                    .to_string(),
-                severity: Severity::Warning,
-                line: child.start_position().row,
-                column: child.start_position().column,
-                end_column: None,
-                fix: generate_else_fix(&child, source),
-                context_lines: None,
-            });
-            return;
-        }
-
-        // Also skip elif_clause (some grammars use this)
-        if child.kind() == "elif_clause" {
-            return;
-        }
-
-        if !cursor.goto_next_sibling() {
-            break;
-        }
-    }
+    diags.push(LintDiagnostic {
+        rule: "redundant-else",
+        message: "unnecessary `else` after `return`/`break`/`continue`; remove the `else` and dedent"
+            .to_string(),
+        severity: Severity::Warning,
+        line: else_node.start_position().row,
+        column: else_node.start_position().column,
+        end_column: None,
+        fix: generate_else_fix(&else_node, source),
+        context_lines: None,
+    });
 }
 
-/// Check if the last named statement in a body is a terminator.
-fn body_always_terminates(body: Node) -> bool {
-    let mut last_statement = None;
-    let mut cursor = body.walk();
-    if cursor.goto_first_child() {
-        loop {
-            let child = cursor.node();
-            if child.is_named() && child.kind() != "comment" {
-                last_statement = Some(child);
-            }
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
-    }
-
-    match last_statement {
-        Some(stmt) => is_terminator(stmt.kind()),
-        None => false,
-    }
+/// Check if the last statement in a body is a terminator.
+fn body_always_terminates(body: &[GdStmt<'_>]) -> bool {
+    body.last().is_some_and(|stmt| {
+        matches!(
+            stmt,
+            GdStmt::Return { .. } | GdStmt::Break { .. } | GdStmt::Continue { .. }
+        )
+    })
 }
 
-fn generate_else_fix(else_node: &Node, source: &str) -> Option<Fix> {
+/// Find the `else_clause` node from the raw if_statement tree-sitter node.
+fn find_else_clause<'a>(gif: &GdIf<'a>) -> Option<tree_sitter::Node<'a>> {
+    let mut cursor = gif.node.walk();
+    gif.node
+        .children(&mut cursor)
+        .find(|child| child.kind() == "else_clause")
+}
+
+fn generate_else_fix(else_node: &tree_sitter::Node<'_>, source: &str) -> Option<Fix> {
     let source_bytes = source.as_bytes();
 
     // Get the body of the else clause
@@ -127,11 +82,10 @@ fn generate_else_fix(else_node: &Node, source: &str) -> Option<Fix> {
         else_line_start -= 1;
     }
 
-    // Get indentation of the else clause (whitespace before 'else')
+    // Get indentation of the else clause
     let else_indent = &source[else_line_start..else_node.start_byte()];
 
     // Use the first/last child of the body to get the actual statement lines
-    // (body.start_position() points to the colon on the else: line, not the statements)
     let first_stmt = body.child(0)?;
     let last_stmt = body.child(body.child_count().checked_sub(1)?)?;
     let body_first_line = first_stmt.start_position().row;
@@ -145,7 +99,6 @@ fn generate_else_fix(else_node: &Node, source: &str) -> Option<Fix> {
         }
     }
 
-    // Get byte range of the full body lines (including indentation)
     let body_lines_start = line_starts[body_first_line];
     let body_lines_end = if body_last_line + 1 < line_starts.len() {
         line_starts[body_last_line + 1]
@@ -155,12 +108,12 @@ fn generate_else_fix(else_node: &Node, source: &str) -> Option<Fix> {
 
     let body_text = &source[body_lines_start..body_lines_end];
 
-    // Determine how much indent to strip: body indent minus else indent
+    // Determine how much indent to strip
     let first_line = body_text.lines().next()?;
     let first_line_indent_len = first_line.len() - first_line.trim_start().len();
     let strip_len = first_line_indent_len.saturating_sub(else_indent.len());
 
-    // Dedent each body line to the else clause's indentation level
+    // Dedent each body line
     let mut result = String::new();
     for line in body_text.lines() {
         if line.trim().is_empty() {
@@ -184,13 +137,6 @@ fn generate_else_fix(else_node: &Node, source: &str) -> Option<Fix> {
         byte_end: body_lines_end,
         replacement: result,
     })
-}
-
-fn is_terminator(kind: &str) -> bool {
-    matches!(
-        kind,
-        "return_statement" | "break_statement" | "continue_statement"
-    )
 }
 
 #[cfg(test)]
@@ -257,9 +203,6 @@ mod tests {
     #[test]
     fn no_warning_if_return_not_last() {
         let source = "func f(x: int) -> void:\n\tif x > 0:\n\t\treturn\n\t\tprint(\"unreachable\")\n\telse:\n\t\tprint(x)\n";
-        // The return IS the last named non-comment statement?
-        // Actually, print("unreachable") comes after return - but it's still a statement.
-        // The body contains return_statement then expression_statement, so last is expression_statement.
         assert!(check(source).is_empty());
     }
 

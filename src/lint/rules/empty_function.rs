@@ -1,5 +1,4 @@
-use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{GdDecl, GdFile, GdFunc, GdStmt};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -15,10 +14,9 @@ impl LintRule for EmptyFunction {
         LintCategory::Style
     }
 
-    fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, file: &GdFile<'_>, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        let root = file.node;
-        check_scope(root, source, &mut diags);
+        check_scope(&file.declarations, &mut diags);
         diags
     }
 }
@@ -27,66 +25,45 @@ impl LintRule for EmptyFunction {
 /// Two-pass: first detect if the scope contains virtual stubs (empty functions
 /// with all-`_`-prefixed params), then emit warnings skipping zero-param
 /// empty functions that are siblings of virtual stubs.
-fn check_scope(scope: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    // Pass 1: find empty functions and check for virtual stubs in this scope
-    let mut empty_funcs: Vec<Node> = Vec::new();
+fn check_scope(decls: &[GdDecl<'_>], diags: &mut Vec<LintDiagnostic>) {
+    // Pass 1: find empty functions and check for virtual stubs
+    let mut empty_funcs: Vec<&GdFunc<'_>> = Vec::new();
     let mut has_virtual_stubs = false;
 
-    let mut cursor = scope.walk();
-    if cursor.goto_first_child() {
-        loop {
-            let child = cursor.node();
-
-            if child.kind() == "function_definition"
-                && is_empty_body(child)
-                && !has_annotation(child, source, "abstract")
-                && !prev_sibling_has_annotation(child, source, "abstract")
-            {
-                empty_funcs.push(child);
-                if is_virtual_stub(child, source) {
-                    has_virtual_stubs = true;
-                }
+    for decl in decls {
+        if let GdDecl::Func(func) = decl
+            && is_empty_body(func)
+            && !func.annotations.iter().any(|a| a.name == "abstract")
+        {
+            if is_virtual_stub(func) {
+                has_virtual_stubs = true;
             }
+            empty_funcs.push(func);
+        }
 
-            // Recurse into class bodies (separate scope)
-            if child.kind() == "class_definition"
-                && let Some(body) = child.child_by_field_name("body")
-            {
-                check_scope(body, source, diags);
-            }
-
-            if !cursor.goto_next_sibling() {
-                break;
-            }
+        // Recurse into class bodies (separate scope)
+        if let GdDecl::Class(class) = decl {
+            check_scope(&class.declarations, diags);
         }
     }
 
-    // Pass 2: emit warnings, skipping zero-param functions in virtual stub scopes
+    // Pass 2: emit warnings, skipping virtual stubs and zero-param siblings
     for func in empty_funcs {
-        if is_virtual_stub(func, source) {
+        if is_virtual_stub(func) {
             continue;
         }
 
         // Zero-param private function alongside virtual stubs → likely a virtual stub too
-        // (e.g. _on_exit() next to _on_enter(_msg), _on_update(_delta))
-        if has_virtual_stubs && param_count(func) == 0 {
-            let name = func
-                .child_by_field_name("name")
-                .map_or("", |n| &source[n.byte_range()]);
-            if name.starts_with('_') {
-                continue;
-            }
+        if has_virtual_stubs && func.params.is_empty() && func.name.starts_with('_') {
+            continue;
         }
 
-        let func_name = func
-            .child_by_field_name("name")
-            .map_or("<unknown>", |n| &source[n.byte_range()]);
         diags.push(LintDiagnostic {
             rule: "empty-function",
-            message: format!("function `{func_name}` has an empty body (only `pass`)"),
+            message: format!("function `{}` has an empty body (only `pass`)", func.name),
             severity: Severity::Warning,
-            line: func.start_position().row,
-            column: func.start_position().column,
+            line: func.node.start_position().row,
+            column: func.node.start_position().column,
             fix: None,
             end_column: None,
             context_lines: None,
@@ -94,144 +71,15 @@ fn check_scope(scope: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
     }
 }
 
-/// Check if a node has a specific annotation (e.g. `@abstract`).
-fn has_annotation(node: Node, source: &str, annotation_name: &str) -> bool {
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        if child.kind() == "annotations" {
-            let mut annot_cursor = child.walk();
-            for annot in child.children(&mut annot_cursor) {
-                if annot.kind() == "annotation" {
-                    let mut ident_cursor = annot.walk();
-                    for ident_child in annot.children(&mut ident_cursor) {
-                        if ident_child.kind() == "identifier"
-                            && ident_child.utf8_text(source.as_bytes()).ok()
-                                == Some(annotation_name)
-                        {
-                            return true;
-                        }
-                    }
-                }
-            }
-        }
-    }
-    false
-}
-
-/// Check if the previous sibling is an annotation node containing a specific annotation.
-/// Tree-sitter puts annotations on separate lines as sibling `annotation` (singular) or
-/// `annotations` (plural) nodes rather than children of the function.
-fn prev_sibling_has_annotation(node: Node, source: &str, annotation_name: &str) -> bool {
-    let Some(prev) = node.prev_named_sibling() else {
-        return false;
-    };
-    match prev.kind() {
-        // Single annotation on its own line: annotation > identifier
-        "annotation" => {
-            let mut cursor = prev.walk();
-            for child in prev.children(&mut cursor) {
-                if child.kind() == "identifier"
-                    && child.utf8_text(source.as_bytes()).ok() == Some(annotation_name)
-                {
-                    return true;
-                }
-            }
-        }
-        // Multiple annotations block: annotations > annotation > identifier
-        "annotations" => {
-            let mut cursor = prev.walk();
-            for annot in prev.children(&mut cursor) {
-                if annot.kind() == "annotation" {
-                    let mut ident_cursor = annot.walk();
-                    for child in annot.children(&mut ident_cursor) {
-                        if child.kind() == "identifier"
-                            && child.utf8_text(source.as_bytes()).ok() == Some(annotation_name)
-                        {
-                            return true;
-                        }
-                    }
-                }
-            }
-        }
-        _ => {}
-    }
-    false
-}
-
 /// Check if a function has only `pass` in its body.
-fn is_empty_body(func: Node) -> bool {
-    let Some(body) = func.child_by_field_name("body") else {
-        return false;
-    };
-    // Count non-comment named children
-    let stmts: Vec<_> = (0..body.named_child_count())
-        .filter_map(|i| body.named_child(i))
-        .filter(|c| c.kind() != "comment")
-        .collect();
-    stmts.len() == 1 && stmts[0].kind() == "pass_statement"
+fn is_empty_body(func: &GdFunc<'_>) -> bool {
+    func.body.len() == 1 && matches!(func.body[0], GdStmt::Pass { .. })
 }
 
 /// A function is a virtual stub if it has at least one parameter and every
 /// parameter name starts with `_`.
-fn is_virtual_stub(func: Node, source: &str) -> bool {
-    let Some(params) = func.child_by_field_name("parameters") else {
-        return false;
-    };
-
-    let src = source.as_bytes();
-    let mut count = 0;
-
-    let mut cursor = params.walk();
-    if cursor.goto_first_child() {
-        loop {
-            let child = cursor.node();
-            if matches!(
-                child.kind(),
-                "identifier" | "typed_parameter" | "default_parameter" | "typed_default_parameter"
-            ) {
-                count += 1;
-                let name = match child.kind() {
-                    "identifier" => child.utf8_text(src).unwrap_or(""),
-                    _ => child
-                        .child(0)
-                        .and_then(|n| n.utf8_text(src).ok())
-                        .unwrap_or(""),
-                };
-                if !name.starts_with('_') {
-                    return false;
-                }
-            }
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
-    }
-
-    count > 0
-}
-
-/// Count the number of parameters in a function.
-fn param_count(func: Node) -> usize {
-    let Some(params) = func.child_by_field_name("parameters") else {
-        return 0;
-    };
-
-    let mut count = 0;
-    let mut cursor = params.walk();
-    if cursor.goto_first_child() {
-        loop {
-            if matches!(
-                cursor.node().kind(),
-                "identifier" | "typed_parameter" | "default_parameter" | "typed_default_parameter"
-            ) {
-                count += 1;
-            }
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
-    }
-    count
+fn is_virtual_stub(func: &GdFunc<'_>) -> bool {
+    !func.params.is_empty() && func.params.iter().all(|p| p.name.starts_with('_'))
 }
 
 #[cfg(test)]

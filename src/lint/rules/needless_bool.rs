@@ -1,5 +1,4 @@
-use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{self, GdExpr, GdFile, GdStmt};
 
 use super::{Fix, LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -17,85 +16,53 @@ impl LintRule for NeedlessBool {
 
     fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        check_node(file.node, source, &mut diags);
+        gd_ast::visit_stmts(file, &mut |stmt| {
+            check_if_statement(stmt, source, &mut diags);
+        });
+        gd_ast::visit_exprs(file, &mut |expr| {
+            check_ternary(expr, source, &mut diags);
+        });
         diags
     }
 }
 
-fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    match node.kind() {
-        "if_statement" => check_if_statement(node, source, diags),
-        "conditional_expression" | "ternary_expression" => {
-            check_ternary(node, source, diags);
-        }
-        _ => {}
-    }
+fn check_if_statement(stmt: &GdStmt<'_>, source: &str, diags: &mut Vec<LintDiagnostic>) {
+    let GdStmt::If(gif) = stmt else { return };
 
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            check_node(cursor.node(), source, diags);
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
-    }
-}
-
-fn check_if_statement(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
     // Must have exactly one else clause, no elif
-    let Some(body) = node.child_by_field_name("body") else {
+    if !gif.elif_branches.is_empty() || gif.else_body.is_none() {
         return;
-    };
+    }
+    let else_body = gif.else_body.as_ref().unwrap();
 
-    let else_clause = find_else_clause(node);
-    let Some(else_node) = else_clause else {
-        return;
-    };
-
-    // Reject if there's an elif
-    if has_elif(node) {
+    // Each body must have exactly one statement
+    if gif.body.len() != 1 || else_body.len() != 1 {
         return;
     }
 
-    let Some(else_body) = else_node.child_by_field_name("body") else {
-        return;
-    };
-
-    // Get the single statement from each body
-    let Some(if_stmt) = single_named_non_comment_child(body) else {
-        return;
-    };
-    let Some(else_stmt) = single_named_non_comment_child(else_body) else {
-        return;
-    };
-
-    let Some(condition_node) = node.child_by_field_name("condition") else {
-        return;
-    };
-    let condition = &source[condition_node.byte_range()];
+    let condition = &source[gif.condition.node().byte_range()];
 
     // Pattern 1: both return boolean literals
-    if if_stmt.kind() == "return_statement"
-        && else_stmt.kind() == "return_statement"
-        && let (Some(if_bool), Some(else_bool)) = (
-            return_bool_value(if_stmt, source),
-            return_bool_value(else_stmt, source),
-        )
+    if let (
+        GdStmt::Return { value: Some(if_expr), .. },
+        GdStmt::Return { value: Some(else_expr), .. },
+    ) = (&gif.body[0], &else_body[0])
+        && let (GdExpr::Bool { value: if_bool, .. }, GdExpr::Bool { value: else_bool, .. }) =
+            (if_expr, else_expr)
         && if_bool != else_bool
     {
-        let suggestion = if if_bool {
+        let suggestion = if *if_bool {
             format!("return {condition}")
         } else {
             format!("return not {condition}")
         };
-        let fix = generate_if_else_fix(node, &suggestion, source);
+        let fix = generate_if_else_fix(gif.node, &suggestion, source);
         diags.push(LintDiagnostic {
             rule: "needless-bool",
             message: format!("this if/else returns booleans; simplify to `{suggestion}`"),
             severity: Severity::Warning,
-            line: node.start_position().row,
-            column: node.start_position().column,
+            line: gif.node.start_position().row,
+            column: gif.node.start_position().column,
             end_column: None,
             fix: Some(fix),
             context_lines: None,
@@ -104,26 +71,33 @@ fn check_if_statement(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>)
     }
 
     // Pattern 2: both assign same variable to boolean literals
-    if let (Some((if_var, if_bool)), Some((else_var, else_bool))) = (
-        assignment_bool_value(if_stmt, source),
-        assignment_bool_value(else_stmt, source),
-    ) && if_var == else_var
+    if let (
+        GdStmt::Assign { target: if_target, value: if_val, .. },
+        GdStmt::Assign { target: else_target, value: else_val, .. },
+    ) = (&gif.body[0], &else_body[0])
+        && let GdExpr::Bool { value: if_bool, .. } = if_val
+        && let GdExpr::Bool { value: else_bool, .. } = else_val
         && if_bool != else_bool
     {
-        let suggestion = if if_bool {
+        let if_var = &source[if_target.node().byte_range()];
+        let else_var = &source[else_target.node().byte_range()];
+        if if_var != else_var {
+            return;
+        }
+        let suggestion = if *if_bool {
             format!("{if_var} = {condition}")
         } else {
             format!("{if_var} = not {condition}")
         };
-        let fix = generate_if_else_fix(node, &suggestion, source);
+        let fix = generate_if_else_fix(gif.node, &suggestion, source);
         diags.push(LintDiagnostic {
             rule: "needless-bool",
             message: format!(
                 "this if/else assigns booleans to `{if_var}`; simplify to `{suggestion}`"
             ),
             severity: Severity::Warning,
-            line: node.start_position().row,
-            column: node.start_position().column,
+            line: gif.node.start_position().row,
+            column: gif.node.start_position().column,
             end_column: None,
             fix: Some(fix),
             context_lines: None,
@@ -131,30 +105,20 @@ fn check_if_statement(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>)
     }
 }
 
-fn check_ternary(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    // conditional_expression: [0] = true branch, [1] = condition, [2] = false branch
-    let Some(true_branch) = node.named_child(0) else {
-        return;
-    };
-    let Some(condition) = node.named_child(1) else {
-        return;
-    };
-    let Some(false_branch) = node.named_child(2) else {
+fn check_ternary(expr: &GdExpr<'_>, source: &str, diags: &mut Vec<LintDiagnostic>) {
+    let GdExpr::Ternary { node, true_val, condition, false_val } = expr else {
         return;
     };
 
-    let true_text = &source[true_branch.byte_range()];
-    let false_text = &source[false_branch.byte_range()];
+    let GdExpr::Bool { value: true_bool, .. } = true_val.as_ref() else { return };
+    let GdExpr::Bool { value: false_bool, .. } = false_val.as_ref() else { return };
 
-    let true_is_bool = true_text == "true" || true_text == "false";
-    let false_is_bool = false_text == "true" || false_text == "false";
-
-    if !true_is_bool || !false_is_bool || true_text == false_text {
+    if true_bool == false_bool {
         return;
     }
 
-    let cond_text = &source[condition.byte_range()];
-    let (suggestion, replacement) = if true_text == "true" {
+    let cond_text = &source[condition.node().byte_range()];
+    let (suggestion, replacement) = if *true_bool {
         (cond_text.to_string(), cond_text.to_string())
     } else {
         (format!("not {cond_text}"), format!("not {cond_text}"))
@@ -176,114 +140,11 @@ fn check_ternary(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
     });
 }
 
-fn find_else_clause(if_node: Node) -> Option<Node> {
-    let mut cursor = if_node.walk();
-    if !cursor.goto_first_child() {
-        return None;
-    }
-    loop {
-        let child = cursor.node();
-        if child.kind() == "else_clause" {
-            return Some(child);
-        }
-        if !cursor.goto_next_sibling() {
-            break;
-        }
-    }
-    None
-}
-
-fn has_elif(if_node: Node) -> bool {
-    let mut cursor = if_node.walk();
-    if !cursor.goto_first_child() {
-        return false;
-    }
-    loop {
-        let child = cursor.node();
-        if child.kind() == "elif_clause" {
-            return true;
-        }
-        // Also check for elif inside else_clause
-        if child.kind() == "else_clause" {
-            let mut inner = child.walk();
-            if inner.goto_first_child() {
-                loop {
-                    if inner.node().kind() == "if_statement" {
-                        return true;
-                    }
-                    if !inner.goto_next_sibling() {
-                        break;
-                    }
-                }
-            }
-        }
-        if !cursor.goto_next_sibling() {
-            break;
-        }
-    }
-    false
-}
-
-fn single_named_non_comment_child(body: Node) -> Option<Node> {
-    let mut result = None;
-    let mut count = 0;
-    let mut cursor = body.walk();
-    if !cursor.goto_first_child() {
-        return None;
-    }
-    loop {
-        let child = cursor.node();
-        if child.is_named() && child.kind() != "comment" {
-            count += 1;
-            if count > 1 {
-                return None;
-            }
-            result = Some(child);
-        }
-        if !cursor.goto_next_sibling() {
-            break;
-        }
-    }
-    result
-}
-
-fn return_bool_value(return_node: Node, source: &str) -> Option<bool> {
-    let expr = return_node.named_child(0)?;
-    let text = &source[expr.byte_range()];
-    match text {
-        "true" => Some(true),
-        "false" => Some(false),
-        _ => None,
-    }
-}
-
-fn assignment_bool_value<'a>(stmt: Node<'a>, source: &'a str) -> Option<(&'a str, bool)> {
-    // Unwrap expression_statement > assignment
-    let assign = if stmt.kind() == "expression_statement" {
-        let inner = stmt.named_child(0)?;
-        if inner.kind() == "assignment" {
-            inner
-        } else {
-            return None;
-        }
-    } else if stmt.kind() == "assignment" {
-        stmt
-    } else {
-        return None;
-    };
-    let left = assign.child_by_field_name("left")?;
-    let right = assign.child_by_field_name("right")?;
-    let var_name = &source[left.byte_range()];
-    let val_text = &source[right.byte_range()];
-    let val = match val_text {
-        "true" => true,
-        "false" => false,
-        _ => return None,
-    };
-    Some((var_name, val))
-}
-
-fn generate_if_else_fix(if_node: Node, replacement_line: &str, source: &str) -> Fix {
+fn generate_if_else_fix(
+    if_node: tree_sitter::Node<'_>,
+    replacement_line: &str,
+    source: &str,
+) -> Fix {
     let source_bytes = source.as_bytes();
 
     // Find the start of the line containing the if
@@ -295,7 +156,7 @@ fn generate_if_else_fix(if_node: Node, replacement_line: &str, source: &str) -> 
     // Get indentation
     let indent = &source[line_start..if_node.start_byte()];
 
-    // Include trailing newline in the replaced range if present
+    // Include trailing newline in the replaced range
     let mut end = if_node.end_byte();
     if end < source_bytes.len() && source_bytes[end] == b'\n' {
         end += 1;
