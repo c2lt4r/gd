@@ -1,5 +1,4 @@
-use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{self, GdExpr, GdFile, GdStmt, GdVar};
 
 use super::{Fix, LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -36,7 +35,7 @@ impl LintRule for UnsafeVoidReturn {
         symbols: &SymbolTable,
     ) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        check_node(file.node, source, symbols, None, &mut diags);
+        check_stmts(file, source, symbols, None, &mut diags);
         diags
     }
 
@@ -49,112 +48,129 @@ impl LintRule for UnsafeVoidReturn {
         project: &ProjectIndex,
     ) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        check_node(file.node, source, symbols, Some(project), &mut diags);
+        check_stmts(file, source, symbols, Some(project), &mut diags);
         diags
     }
 }
 
-fn check_node(
-    node: Node,
+fn check_stmts(
+    file: &GdFile,
     source: &str,
     symbols: &SymbolTable,
     project: Option<&ProjectIndex>,
     diags: &mut Vec<LintDiagnostic>,
 ) {
-    // Look for `return <expr>` where `<expr>` is a void function call
-    if node.kind() == "return_statement"
-        && let Some(expr) = node.named_child(0)
-        && is_void_call(&expr, source, symbols, project)
-    {
-        let call_text = expr.utf8_text(source.as_bytes()).ok().unwrap_or("?");
-        let display = if call_text.len() > 40 {
-            format!("{}...", &call_text[..37])
-        } else {
-            call_text.to_string()
-        };
-        // Fix: `return void_call()` → `void_call()\n<indent>return`
-        let indent = "\t".repeat(node.start_position().column / 4 + 1);
-        let indent = if node.start_position().column > 0 {
-            &source[node.start_byte() - node.start_position().column..node.start_byte()]
-        } else {
-            &indent
-        };
-        let fix = Some(Fix {
-            byte_start: node.start_byte(),
-            byte_end: node.end_byte(),
-            replacement: format!("{call_text}\n{indent}return"),
-        });
-        diags.push(LintDiagnostic {
-            rule: "unsafe-void-return",
-            message: format!("returning void call `{display}` as a value"),
-            severity: Severity::Warning,
-            line: node.start_position().row,
-            column: node.start_position().column,
-            end_column: None,
-            fix,
-            context_lines: None,
-        });
-    }
-
-    // Also check variable assignments: `var x = void_func()`
-    if node.kind() == "variable_statement"
-        && let Some(value) = node.child_by_field_name("value")
-        && is_void_call(&value, source, symbols, project)
-    {
-        let var_name = node
-            .child_by_field_name("name")
-            .and_then(|n| n.utf8_text(source.as_bytes()).ok())
-            .unwrap_or("?");
-        // Fix: `var x = void_call()` → `void_call()`
-        let call_text = value.utf8_text(source.as_bytes()).unwrap_or("");
-        let fix = if call_text.is_empty() {
-            None
-        } else {
-            Some(Fix {
-                byte_start: node.start_byte(),
-                byte_end: node.end_byte(),
-                replacement: call_text.to_string(),
-            })
-        };
-        diags.push(LintDiagnostic {
-            rule: "unsafe-void-return",
-            message: format!("assigning void call result to `{var_name}`"),
-            severity: Severity::Warning,
-            line: node.start_position().row,
-            column: node.start_position().column,
-            end_column: None,
-            fix,
-            context_lines: None,
-        });
-    }
-
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            check_node(cursor.node(), source, symbols, project, diags);
-            if !cursor.goto_next_sibling() {
-                break;
+    gd_ast::visit_stmts(file, &mut |stmt| {
+        match stmt {
+            GdStmt::Return { value: Some(expr), .. } => {
+                check_return_void(stmt, expr, source, symbols, project, diags);
             }
+            GdStmt::Var(var) => {
+                check_assign_void(var, source, symbols, project, diags);
+            }
+            _ => {}
         }
+    });
+}
+
+fn check_return_void(
+    stmt: &GdStmt,
+    expr: &GdExpr,
+    source: &str,
+    symbols: &SymbolTable,
+    project: Option<&ProjectIndex>,
+    diags: &mut Vec<LintDiagnostic>,
+) {
+    if !is_call_expr(expr) {
+        return;
     }
+    let expr_node = expr.node();
+    if !is_void_call(&expr_node, source, symbols, project) {
+        return;
+    }
+
+    let call_text = &source[expr_node.byte_range()];
+    let display = if call_text.len() > 40 {
+        format!("{}...", &call_text[..37])
+    } else {
+        call_text.to_string()
+    };
+
+    let stmt_node = stmt.node();
+    // Fix: `return void_call()` → `void_call()\n<indent>return`
+    let indent = if stmt_node.start_position().column > 0 {
+        &source[stmt_node.start_byte() - stmt_node.start_position().column..stmt_node.start_byte()]
+    } else {
+        "\t"
+    };
+    let fix = Some(Fix {
+        byte_start: stmt_node.start_byte(),
+        byte_end: stmt_node.end_byte(),
+        replacement: format!("{call_text}\n{indent}return"),
+    });
+
+    diags.push(LintDiagnostic {
+        rule: "unsafe-void-return",
+        message: format!("returning void call `{display}` as a value"),
+        severity: Severity::Warning,
+        line: stmt.line(),
+        column: stmt.column(),
+        end_column: None,
+        fix,
+        context_lines: None,
+    });
+}
+
+fn check_assign_void(
+    var: &GdVar,
+    source: &str,
+    symbols: &SymbolTable,
+    project: Option<&ProjectIndex>,
+    diags: &mut Vec<LintDiagnostic>,
+) {
+    let Some(ref value) = var.value else { return };
+    if !is_call_expr(value) {
+        return;
+    }
+    let value_node = value.node();
+    if !is_void_call(&value_node, source, symbols, project) {
+        return;
+    }
+
+    // Fix: `var x = void_call()` → `void_call()`
+    let call_text = &source[value_node.byte_range()];
+    let fix = if call_text.is_empty() {
+        None
+    } else {
+        Some(Fix {
+            byte_start: var.node.start_byte(),
+            byte_end: var.node.end_byte(),
+            replacement: call_text.to_string(),
+        })
+    };
+
+    diags.push(LintDiagnostic {
+        rule: "unsafe-void-return",
+        message: format!("assigning void call result to `{}`", var.name),
+        severity: Severity::Warning,
+        line: var.node.start_position().row,
+        column: var.node.start_position().column,
+        end_column: None,
+        fix,
+        context_lines: None,
+    });
+}
+
+fn is_call_expr(expr: &GdExpr) -> bool {
+    matches!(expr, GdExpr::Call { .. } | GdExpr::MethodCall { .. })
 }
 
 fn is_void_call(
-    node: &Node,
+    node: &tree_sitter::Node,
     source: &str,
     symbols: &SymbolTable,
     project: Option<&ProjectIndex>,
 ) -> bool {
-    // Only flag actual call expressions (not identifiers or other exprs)
-    let is_call = node.kind() == "call"
-        || (node.kind() == "attribute" && {
-            let mut cursor = node.walk();
-            node.children(&mut cursor)
-                .any(|c| c.kind() == "attribute_call")
-        });
-    if !is_call {
-        return false;
-    }
     let inferred = if let Some(proj) = project {
         infer_expression_type_with_project(node, source, symbols, proj)
     } else {

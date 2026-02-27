@@ -1,5 +1,4 @@
-use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{self, GdDecl, GdExpr, GdFile, GdStmt, GdVar};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -35,67 +34,49 @@ impl LintRule for VariantInference {
         project: &ProjectIndex,
     ) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        check_node(file.node, source, symbols, project, &mut diags);
+        // Check class-level var declarations
+        gd_ast::visit_decls(file, &mut |decl| {
+            if let GdDecl::Var(var) = decl {
+                check_var(var, source, symbols, project, &mut diags);
+            }
+        });
+        // Check function-local var declarations
+        gd_ast::visit_stmts(file, &mut |stmt| {
+            if let GdStmt::Var(var) = stmt {
+                check_var(var, source, symbols, project, &mut diags);
+            }
+        });
         diags
     }
 }
 
-fn check_node(
-    node: Node,
+fn check_var(
+    var: &GdVar,
     source: &str,
     symbols: &SymbolTable,
     project: &ProjectIndex,
     diags: &mut Vec<LintDiagnostic>,
 ) {
-    if node.kind() == "variable_statement" {
-        check_variable(node, source, symbols, project, diags);
-    }
-
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            check_node(cursor.node(), source, symbols, project, diags);
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
-    }
-}
-
-fn check_variable(
-    node: Node,
-    source: &str,
-    symbols: &SymbolTable,
-    project: &ProjectIndex,
-    diags: &mut Vec<LintDiagnostic>,
-) {
-    // Check if this uses := (inferred type via inferred_type node)
-    let is_inferred = node
-        .child_by_field_name("type")
-        .is_some_and(|t| t.kind() == "inferred_type");
-    if !is_inferred {
+    // Only check := (inferred type)
+    let Some(ref type_ann) = var.type_ann else { return };
+    if !type_ann.is_inferred {
         return;
     }
 
-    let Some(value) = node.child_by_field_name("value") else {
-        return;
-    };
+    let Some(ref value) = var.value else { return };
 
     // Godot's parser treats `in`/`not in` as returning Variant at the type
     // level (even though it's always bool at runtime), so `:=` fails.
-    if is_in_operator(&value, source) {
-        let name_node = node.child_by_field_name("name");
-        let var_name = name_node
-            .and_then(|n| n.utf8_text(source.as_bytes()).ok())
-            .unwrap_or("?");
+    if is_in_operator(value) {
         diags.push(LintDiagnostic {
             rule: "variant-inference",
             message: format!(
-                "`:=` cannot infer type from `in` operator for `{var_name}` — use `var {var_name}: bool = ...`"
+                "`:=` cannot infer type from `in` operator for `{}` — use `var {}: bool = ...`",
+                var.name, var.name
             ),
             severity: Severity::Warning,
-            line: node.start_position().row,
-            column: node.start_position().column,
+            line: var.node.start_position().row,
+            column: var.node.start_position().column,
             end_column: None,
             fix: None,
             context_lines: None,
@@ -104,25 +85,22 @@ fn check_variable(
     }
 
     // Use the project-aware inference engine for cross-file resolution.
-    let inferred = infer_expression_type_with_project(&value, source, symbols, project);
+    let value_node = value.node();
+    let inferred = infer_expression_type_with_project(&value_node, source, symbols, project);
     let is_variant = matches!(inferred, Some(InferredType::Variant) | None);
     if !is_variant {
         return;
     }
 
-    let name_node = node.child_by_field_name("name");
-    let var_name = name_node
-        .and_then(|n| n.utf8_text(source.as_bytes()).ok())
-        .unwrap_or("?");
-
     diags.push(LintDiagnostic {
         rule: "variant-inference",
         message: format!(
-            "`:=` infers `Variant` for `{var_name}` — use an explicit type annotation"
+            "`:=` infers `Variant` for `{}` — use an explicit type annotation",
+            var.name
         ),
         severity: Severity::Warning,
-        line: node.start_position().row,
-        column: node.start_position().column,
+        line: var.node.start_position().row,
+        column: var.node.start_position().column,
         end_column: None,
         fix: None,
         context_lines: None,
@@ -130,32 +108,12 @@ fn check_variable(
 }
 
 /// Check if the value expression is (or contains at the top level) an `in` or `not in` operator.
-fn is_in_operator(node: &Node, source: &str) -> bool {
-    if node.kind() == "binary_operator" {
-        for i in 0..node.child_count() {
-            if let Some(child) = node.child(i) {
-                if child.is_named() {
-                    continue;
-                }
-                let text = child.utf8_text(source.as_bytes()).unwrap_or("");
-                if text == "in" {
-                    return true;
-                }
-            }
-        }
+fn is_in_operator(expr: &GdExpr) -> bool {
+    match expr {
+        GdExpr::BinOp { op, .. } if *op == "in" => true,
+        GdExpr::UnaryOp { op, operand, .. } if *op == "not" => is_in_operator(operand),
+        _ => false,
     }
-    // Handle `not X in Y` which parses as unary(not, binary(in))
-    if node.kind() == "unary_operator" {
-        for i in 0..node.child_count() {
-            if let Some(child) = node.child(i)
-                && child.kind() == "binary_operator"
-                && is_in_operator(&child, source)
-            {
-                return true;
-            }
-        }
-    }
-    false
 }
 
 #[cfg(test)]

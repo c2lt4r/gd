@@ -1,5 +1,4 @@
-use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{self, GdExpr, GdFile};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -24,83 +23,59 @@ impl LintRule for StaticCalledOnInstance {
     fn check_with_symbols(
         &self,
         file: &GdFile<'_>,
-        source: &str,
+        _source: &str,
         _config: &LintConfig,
         symbols: &SymbolTable,
     ) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        check_node(file.node, source, symbols, None, &mut diags);
+        check_calls(file, symbols, None, &mut diags);
         diags
     }
 
     fn check_with_project(
         &self,
         file: &GdFile<'_>,
-        source: &str,
+        _source: &str,
         _config: &LintConfig,
         symbols: &SymbolTable,
         project: &ProjectIndex,
     ) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        check_node(file.node, source, symbols, Some(project), &mut diags);
+        check_calls(file, symbols, Some(project), &mut diags);
         diags
     }
 }
 
-fn check_node(
-    node: Node,
-    source: &str,
+fn check_calls(
+    file: &GdFile,
     symbols: &SymbolTable,
     project: Option<&ProjectIndex>,
     diags: &mut Vec<LintDiagnostic>,
 ) {
-    // Look for `attribute` nodes with an `attribute_call` child (method calls)
-    if node.kind() == "attribute" {
-        let mut has_call = false;
-        let mut method_name = None;
-        let mut cursor = node.walk();
-        for child in node.children(&mut cursor) {
-            if child.kind() == "attribute_call" {
-                has_call = true;
-                if let Some(name_node) = child.named_child(0) {
-                    method_name = name_node.utf8_text(source.as_bytes()).ok();
-                }
-            }
-        }
+    gd_ast::visit_exprs(file, &mut |expr| {
+        if let GdExpr::MethodCall { receiver, method, .. } = expr {
+            let receiver_name = match receiver.as_ref() {
+                GdExpr::Ident { name, .. } => *name,
+                _ => return,
+            };
 
-        if has_call
-            && let Some(method) = method_name
-            && let Some(receiver) = node.named_child(0)
-        {
-            let receiver_text = receiver.utf8_text(source.as_bytes()).unwrap_or("");
-
-            // Check if this is `self.static_method()` — same-file static
-            if receiver_text == "self" {
+            // Check `self.static_method()` — same-file static
+            if receiver_name == "self" {
                 if symbols
                     .functions
                     .iter()
-                    .any(|f| f.name == method && f.is_static)
+                    .any(|f| f.name == *method && f.is_static)
                 {
-                    emit_diagnostic(method, receiver_text, diags, &node);
+                    emit_diagnostic(method, receiver_name, diags, expr);
                 }
             } else if let Some(proj) = project
-                && let Some(class) = resolve_receiver_class(receiver_text, symbols)
+                && let Some(class) = resolve_receiver_class(receiver_name, symbols)
                 && proj.method_is_static(&class, method) == Some(true)
             {
-                emit_diagnostic(method, receiver_text, diags, &node);
+                emit_diagnostic(method, receiver_name, diags, expr);
             }
         }
-    }
-
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            check_node(cursor.node(), source, symbols, project, diags);
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
-    }
+    });
 }
 
 /// Try to resolve the class name of a receiver identifier from the symbol table.
@@ -119,15 +94,15 @@ fn resolve_receiver_class(receiver: &str, symbols: &SymbolTable) -> Option<Strin
     None
 }
 
-fn emit_diagnostic(method: &str, receiver: &str, diags: &mut Vec<LintDiagnostic>, node: &Node) {
+fn emit_diagnostic(method: &str, receiver: &str, diags: &mut Vec<LintDiagnostic>, expr: &GdExpr) {
     diags.push(LintDiagnostic {
         rule: "static-called-on-instance",
         message: format!(
             "static method `{method}()` called on instance `{receiver}` — call on the class instead"
         ),
         severity: Severity::Warning,
-        line: node.start_position().row,
-        column: node.start_position().column,
+        line: expr.line(),
+        column: expr.column(),
         end_column: None,
         fix: None,
         context_lines: None,

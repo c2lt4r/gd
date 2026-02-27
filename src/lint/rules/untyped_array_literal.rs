@@ -1,5 +1,4 @@
-use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{self, GdDecl, GdExpr, GdFile, GdStmt, GdVar};
 
 use super::{Fix, LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -29,86 +28,66 @@ impl LintRule for UntypedArrayLiteral {
         symbols: &SymbolTable,
     ) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        check_node(file.node, source, symbols, &mut diags);
+        // Check class-level var declarations
+        gd_ast::visit_decls(file, &mut |decl| {
+            if let GdDecl::Var(var) = decl {
+                check_var(var, source, symbols, &mut diags);
+            }
+        });
+        // Check function-local var declarations
+        gd_ast::visit_stmts(file, &mut |stmt| {
+            if let GdStmt::Var(var) = stmt {
+                check_var(var, source, symbols, &mut diags);
+            }
+        });
         diags
     }
 }
 
-fn check_node(node: Node, source: &str, symbols: &SymbolTable, diags: &mut Vec<LintDiagnostic>) {
-    if node.kind() == "variable_statement" {
-        check_variable(node, source, symbols, diags);
-    }
-
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            check_node(cursor.node(), source, symbols, diags);
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
-    }
-}
-
-fn check_variable(
-    node: Node,
+fn check_var(
+    var: &GdVar,
     source: &str,
     symbols: &SymbolTable,
     diags: &mut Vec<LintDiagnostic>,
 ) {
-    // Check if this uses := (inferred type via inferred_type node)
-    let type_node = node.child_by_field_name("type");
-    let is_inferred = type_node.is_some_and(|t| t.kind() == "inferred_type");
-    if !is_inferred {
+    // Only check := (inferred type)
+    let Some(ref type_ann) = var.type_ann else { return };
+    if !type_ann.is_inferred {
         return;
     }
 
     // Skip const declarations
-    let first_token = &source[node.start_byte()..].trim_start();
-    if first_token.starts_with("const") {
+    if var.is_const {
         return;
     }
 
-    let Some(value) = node.child_by_field_name("value") else {
-        return;
-    };
-
-    if value.kind() != "array" {
-        return;
-    }
-
-    // Only fire for non-empty array literals
-    let element_count = value.named_child_count();
-    if element_count == 0 {
+    // Value must be a non-empty array literal
+    let Some(GdExpr::Array { elements, .. }) = &var.value else { return };
+    if elements.is_empty() {
         return;
     }
 
     // Try to infer element type using the centralized engine
-    let suggested_type = infer_array_element_type(value, source, symbols);
+    let suggested_type = infer_array_element_type(elements, source, symbols);
 
-    let var_name = node
-        .child_by_field_name("name")
-        .and_then(|n| n.utf8_text(source.as_bytes()).ok())
-        .unwrap_or("?");
-
-    // Build auto-fix when type is inferable: replace ` :=` with `: Array[T] =`
-    let fix = suggested_type.as_ref().and_then(|elem_type| {
-        let inferred = type_node?;
-        let mut start = inferred.start_byte();
+    // Build auto-fix when type is inferable: replace `:=` region with `: Array[T] =`
+    let fix = suggested_type.as_ref().map(|elem_type| {
+        let mut start = type_ann.node.start_byte();
         // Consume preceding whitespace so we get `var x: Array[T]` not `var x : Array[T]`
         while start > 0 && source.as_bytes()[start - 1] == b' ' {
             start -= 1;
         }
-        Some(Fix {
+        Fix {
             byte_start: start,
-            byte_end: inferred.end_byte(),
+            byte_end: type_ann.node.end_byte(),
             replacement: format!(": Array[{}] =", elem_type.display_name()),
-        })
+        }
     });
 
     let message = if let Some(ref elem_type) = suggested_type {
         format!(
-            "array literal infers `Variant` with `:=`; consider `var {var_name}: Array[{}] = [...]`",
+            "array literal infers `Variant` with `:=`; consider `var {}: Array[{}] = [...]`",
+            var.name,
             elem_type.display_name()
         )
     } else {
@@ -120,8 +99,8 @@ fn check_variable(
         rule: "untyped-array-literal",
         message,
         severity: Severity::Warning,
-        line: node.start_position().row,
-        column: node.start_position().column,
+        line: var.node.start_position().row,
+        column: var.node.start_position().column,
         end_column: None,
         fix,
         context_lines: None,
@@ -130,16 +109,16 @@ fn check_variable(
 
 /// Infer the common element type of an array literal using the centralized engine.
 fn infer_array_element_type(
-    array_node: Node,
+    elements: &[GdExpr],
     source: &str,
     symbols: &SymbolTable,
 ) -> Option<InferredType> {
-    let count = array_node.named_child_count();
-    if count == 0 {
+    if elements.is_empty() {
         return None;
     }
 
-    let first_type = infer_expression_type(&array_node.named_child(0)?, source, symbols)?;
+    let first_node = elements[0].node();
+    let first_type = infer_expression_type(&first_node, source, symbols)?;
 
     // Skip Variant — can't determine a concrete element type
     if matches!(first_type, InferredType::Variant | InferredType::Void) {
@@ -147,10 +126,10 @@ fn infer_array_element_type(
     }
 
     // Check that all elements have the same type
-    for i in 1..count {
-        let child = array_node.named_child(i)?;
-        let child_type = infer_expression_type(&child, source, symbols)?;
-        if child_type != first_type {
+    for elem in &elements[1..] {
+        let elem_node = elem.node();
+        let elem_type = infer_expression_type(&elem_node, source, symbols)?;
+        if elem_type != first_type {
             return None;
         }
     }

@@ -1,5 +1,4 @@
-use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{self, GdExpr, GdFile, GdStmt};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -36,7 +35,7 @@ impl LintRule for ReturnValueDiscarded {
         symbols: &SymbolTable,
     ) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        check_node(file.node, source, symbols, None, &mut diags);
+        check_stmts(file, source, symbols, None, &mut diags);
         diags
     }
 
@@ -49,79 +48,56 @@ impl LintRule for ReturnValueDiscarded {
         project: &ProjectIndex,
     ) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        check_node(file.node, source, symbols, Some(project), &mut diags);
+        check_stmts(file, source, symbols, Some(project), &mut diags);
         diags
     }
 }
 
-fn check_node(
-    node: Node,
+fn check_stmts(
+    file: &GdFile,
     source: &str,
     symbols: &SymbolTable,
     project: Option<&ProjectIndex>,
     diags: &mut Vec<LintDiagnostic>,
 ) {
-    // Look for expression statements that are function calls with non-void return
-    if node.kind() == "expression_statement"
-        && let Some(expr) = node.named_child(0)
-        && is_discarded_non_void_call(&expr, source, symbols, project)
-    {
-        let call_text = expr.utf8_text(source.as_bytes()).ok().unwrap_or("?");
-        let display = if call_text.len() > 40 {
-            format!("{}...", &call_text[..37])
-        } else {
-            call_text.to_string()
-        };
-        diags.push(LintDiagnostic {
-            rule: "return-value-discarded",
-            message: format!("return value of `{display}` is discarded"),
-            severity: Severity::Info,
-            line: node.start_position().row,
-            column: node.start_position().column,
-            end_column: None,
-            fix: None,
-            context_lines: None,
-        });
-    }
+    gd_ast::visit_stmts(file, &mut |stmt| {
+        // Look for expression statements that are function calls with non-void return
+        if let GdStmt::Expr { expr, .. } = stmt
+            && is_call_expr(expr)
+        {
+            let expr_node = expr.node();
+            let inferred = if let Some(proj) = project {
+                infer_expression_type_with_project(&expr_node, source, symbols, proj)
+            } else {
+                infer_expression_type(&expr_node, source, symbols)
+            };
 
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            check_node(cursor.node(), source, symbols, project, diags);
-            if !cursor.goto_next_sibling() {
-                break;
+            if matches!(inferred, Some(InferredType::Void) | None) {
+                return;
             }
+
+            let call_text = &source[expr_node.byte_range()];
+            let display = if call_text.len() > 40 {
+                format!("{}...", &call_text[..37])
+            } else {
+                call_text.to_string()
+            };
+            diags.push(LintDiagnostic {
+                rule: "return-value-discarded",
+                message: format!("return value of `{display}` is discarded"),
+                severity: Severity::Info,
+                line: stmt.line(),
+                column: stmt.column(),
+                end_column: None,
+                fix: None,
+                context_lines: None,
+            });
         }
-    }
+    });
 }
 
-fn is_discarded_non_void_call(
-    node: &Node,
-    source: &str,
-    symbols: &SymbolTable,
-    project: Option<&ProjectIndex>,
-) -> bool {
-    // Only check actual call expressions
-    let is_call = node.kind() == "call"
-        || (node.kind() == "attribute" && {
-            let mut cursor = node.walk();
-            node.children(&mut cursor)
-                .any(|c| c.kind() == "attribute_call")
-        });
-    if !is_call {
-        return false;
-    }
-
-    let inferred = if let Some(proj) = project {
-        infer_expression_type_with_project(node, source, symbols, proj)
-    } else {
-        infer_expression_type(node, source, symbols)
-    };
-
-    match inferred {
-        Some(InferredType::Void) | None => false,
-        Some(_) => true,
-    }
+fn is_call_expr(expr: &GdExpr) -> bool {
+    matches!(expr, GdExpr::Call { .. } | GdExpr::MethodCall { .. })
 }
 
 #[cfg(test)]
