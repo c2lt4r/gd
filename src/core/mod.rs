@@ -2,6 +2,8 @@
 pub mod color;
 pub mod config;
 pub mod fs;
+#[allow(dead_code)]
+pub mod gd_ast;
 pub mod live_eval;
 pub mod mesh;
 pub mod parser;
