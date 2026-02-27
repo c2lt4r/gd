@@ -1,5 +1,4 @@
-use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{self, GdFile, GdStmt};
 
 use super::{Fix, LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -15,47 +14,40 @@ impl LintRule for LoopVariableName {
         LintCategory::Style
     }
 
-    fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, file: &GdFile<'_>, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        let root = file.node;
-        check_node(root, source, &mut diags);
-        diags
-    }
-}
+        gd_ast::visit_stmts(file, &mut |stmt| {
+            if let GdStmt::For { node, var, .. } = stmt
+                && !var.is_empty()
+                && !is_snake_case(var)
+            {
+                let fixed = to_snake_case(var);
+                // Use tree-sitter node to get variable byte range for fix
+                let fix = node.child_by_field_name("left").map(|var_node| Fix {
+                    byte_start: var_node.start_byte(),
+                    byte_end: var_node.end_byte(),
+                    replacement: fixed.clone(),
+                });
+                let (line, col, end_col) = node
+                    .child_by_field_name("left")
+                    .map_or(
+                        (node.start_position().row, node.start_position().column, None),
+                        |vn| (vn.start_position().row, vn.start_position().column, Some(vn.end_position().column)),
+                    );
 
-fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    if node.kind() == "for_statement"
-        && let Some(iter_node) = node.child_by_field_name("left")
-        && iter_node.kind() == "identifier"
-    {
-        let name = &source[iter_node.byte_range()];
-        if !is_snake_case(name) {
-            let fixed = to_snake_case(name);
-            diags.push(LintDiagnostic {
-                rule: "loop-variable-name",
-                message: format!("loop variable `{name}` should use snake_case: `{fixed}`"),
-                severity: Severity::Warning,
-                line: iter_node.start_position().row,
-                column: iter_node.start_position().column,
-                end_column: Some(iter_node.end_position().column),
-                fix: Some(Fix {
-                    byte_start: iter_node.start_byte(),
-                    byte_end: iter_node.end_byte(),
-                    replacement: fixed,
-                }),
-                context_lines: None,
-            });
-        }
-    }
-
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            check_node(cursor.node(), source, diags);
-            if !cursor.goto_next_sibling() {
-                break;
+                diags.push(LintDiagnostic {
+                    rule: "loop-variable-name",
+                    message: format!("loop variable `{var}` should use snake_case: `{fixed}`"),
+                    severity: Severity::Warning,
+                    line,
+                    column: col,
+                    end_column: end_col,
+                    fix,
+                    context_lines: None,
+                });
             }
-        }
+        });
+        diags
     }
 }
 

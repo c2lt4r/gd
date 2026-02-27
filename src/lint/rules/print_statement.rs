@@ -1,5 +1,4 @@
-use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{self, GdExpr, GdFile};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -15,10 +14,27 @@ impl LintRule for PrintStatement {
         LintCategory::Maintenance
     }
 
-    fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, file: &GdFile<'_>, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        let root = file.node;
-        check_node(root, source, &mut diags);
+        gd_ast::visit_exprs(file, &mut |expr| {
+            if let GdExpr::Call { node, callee, .. } = expr
+                && let GdExpr::Ident { name, .. } = callee.as_ref()
+                && PRINT_FUNCTIONS.contains(name)
+            {
+                diags.push(LintDiagnostic {
+                    rule: "print-statement",
+                    message: format!(
+                        "found `{name}()` call; consider removing before release"
+                    ),
+                    severity: Severity::Info,
+                    line: node.start_position().row,
+                    column: node.start_position().column,
+                    end_column: Some(callee.node().end_position().column),
+                    fix: None,
+                    context_lines: None,
+                });
+            }
+        });
         diags
     }
 }
@@ -36,43 +52,6 @@ const PRINT_FUNCTIONS: &[&str] = &[
     "print_rich",
     "print_verbose",
 ];
-
-fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    if node.kind() == "call" {
-        // Try field name first, fall back to finding first identifier child
-        let func_name_opt = node.child_by_field_name("function").or_else(|| {
-            node.children(&mut node.walk())
-                .find(|c| c.kind() == "identifier")
-        });
-        if let Some(func_node) = func_name_opt {
-            let func_name = &source[func_node.byte_range()];
-            if PRINT_FUNCTIONS.contains(&func_name) {
-                diags.push(LintDiagnostic {
-                    rule: "print-statement",
-                    message: format!(
-                        "found `{func_name}()` call; consider removing before release"
-                    ),
-                    severity: Severity::Info,
-                    line: node.start_position().row,
-                    column: node.start_position().column,
-                    end_column: Some(func_node.end_position().column),
-                    fix: None,
-                    context_lines: None,
-                });
-            }
-        }
-    }
-
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            check_node(cursor.node(), source, diags);
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {

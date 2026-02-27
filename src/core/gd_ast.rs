@@ -30,7 +30,7 @@ pub enum GdExtends<'a> {
     Path(&'a str),
 }
 
-/// A top-level declaration.
+/// A top-level declaration (or bare statement at file/class scope).
 #[derive(Debug)]
 pub enum GdDecl<'a> {
     Func(GdFunc<'a>),
@@ -38,6 +38,8 @@ pub enum GdDecl<'a> {
     Signal(GdSignal<'a>),
     Enum(GdEnum<'a>),
     Class(GdClass<'a>),
+    /// A bare statement at file scope (e.g. `print("hello")` at top level).
+    Stmt(GdStmt<'a>),
 }
 
 /// A function or method.
@@ -354,6 +356,7 @@ fn visit_decl_stmts<'a>(decl: &GdDecl<'a>, f: &mut impl FnMut(&GdStmt<'a>)) {
                 visit_decl_stmts(inner, f);
             }
         }
+        GdDecl::Stmt(stmt) => visit_stmt(stmt, f),
         GdDecl::Var(_) | GdDecl::Signal(_) | GdDecl::Enum(_) => {}
     }
 }
@@ -387,6 +390,7 @@ fn visit_decl_exprs<'a>(decl: &GdDecl<'a>, f: &mut impl FnMut(&GdExpr<'a>)) {
                 }
             }
         }
+        GdDecl::Stmt(stmt) => visit_stmt_exprs(stmt, f),
         GdDecl::Signal(_) => {}
     }
 }
@@ -639,6 +643,8 @@ pub fn convert<'a>(tree: &'a Tree, source: &'a str) -> GdFile<'a> {
             _ => {
                 if let Some(decl) = convert_decl(*child, source, &mut pending_annotations) {
                     file.declarations.push(decl);
+                } else if is_stmt_node(child) {
+                    file.declarations.push(GdDecl::Stmt(convert_stmt(*child, source)));
                 }
                 // If convert_decl returned None, any accumulated annotations
                 // are stale — clear them to avoid leaking onto the next decl.
@@ -949,6 +955,23 @@ fn convert_body<'a>(body_node: Node<'a>, source: &'a str) -> Vec<GdStmt<'a>> {
         stmts.push(convert_stmt(child, source));
     }
     stmts
+}
+
+/// Check if a node is a statement that can appear at file scope.
+fn is_stmt_node(node: &Node) -> bool {
+    matches!(
+        node.kind(),
+        "expression_statement"
+            | "if_statement"
+            | "for_statement"
+            | "while_statement"
+            | "match_statement"
+            | "return_statement"
+            | "pass_statement"
+            | "break_statement"
+            | "continue_statement"
+            | "breakpoint_statement"
+    )
 }
 
 fn convert_stmt<'a>(node: Node<'a>, source: &'a str) -> GdStmt<'a> {

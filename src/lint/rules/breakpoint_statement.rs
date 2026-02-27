@@ -1,5 +1,4 @@
-use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{self, GdFile, GdStmt};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -21,34 +20,21 @@ impl LintRule for BreakpointStatement {
 
     fn check(&self, file: &GdFile<'_>, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        let root = file.node;
-        check_node(root, &mut diags);
-        diags
-    }
-}
-
-fn check_node(node: Node, diags: &mut Vec<LintDiagnostic>) {
-    if node.kind() == "breakpoint_statement" {
-        diags.push(LintDiagnostic {
-            rule: "breakpoint-statement",
-            message: "found `breakpoint`; consider removing before release".to_string(),
-            severity: Severity::Info,
-            line: node.start_position().row,
-            column: node.start_position().column,
-            end_column: Some(node.end_position().column),
-            fix: None,
-            context_lines: None,
-        });
-    }
-
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            check_node(cursor.node(), diags);
-            if !cursor.goto_next_sibling() {
-                break;
+        gd_ast::visit_stmts(file, &mut |stmt| {
+            if let GdStmt::Breakpoint { node } = stmt {
+                diags.push(LintDiagnostic {
+                    rule: "breakpoint-statement",
+                    message: "found `breakpoint`; consider removing before release".to_string(),
+                    severity: Severity::Info,
+                    line: node.start_position().row,
+                    column: node.start_position().column,
+                    end_column: Some(node.end_position().column),
+                    fix: None,
+                    context_lines: None,
+                });
             }
-        }
+        });
+        diags
     }
 }
 

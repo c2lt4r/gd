@@ -3,6 +3,7 @@
 ## [0.3.14] - 2026-02-27
 
 ### Internal
+- **Typed AST migration for lint system** — all 96 lint rules now accept `GdFile<'_>` instead of raw `tree_sitter::Tree`. Added visitor helpers (`visit_exprs`/`visit_stmts`/`visit_decls`) and `GdDecl::Stmt` for top-level statements. 15 rules fully rewritten to use typed AST pattern matching (integer-division, float-comparison, comparison-with-itself, comparison-with-boolean, standalone-ternary, self-assignment, await-in-ready, breakpoint-statement, print-statement, duplicate-key, loop-variable-name, assert-always-false, assert-always-true, duplicated-load, standalone-expression). Remaining rules use `file.node` escape hatch — migration in progress.
 - **Split `check_cmd.rs` into directory module** — the largest file in the project (6,152 lines) is now organized into 7 focused submodules (`structural`, `classdb`, `types`, `args`, `identifiers`, `builtins`, `tests`), following the established module split pattern used by `debug_cmd/`, `scene_cmd/`, and `test_cmd/`. Pure reorganization with no behavioral changes.
 
 ## [0.3.13] - 2026-02-27

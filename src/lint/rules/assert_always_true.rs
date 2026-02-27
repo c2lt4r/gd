@@ -1,5 +1,4 @@
-use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{self, GdExpr, GdFile};
 
 use super::{Fix, LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -21,79 +20,56 @@ impl LintRule for AssertAlwaysTrue {
 
     fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        check_node(file.node, source, &mut diags);
+        gd_ast::visit_exprs(file, &mut |expr| {
+            if let GdExpr::Call { node, callee, args, .. } = expr
+                && let GdExpr::Ident { name: "assert", .. } = callee.as_ref()
+                && let Some(first_arg) = args.first()
+                && is_always_truthy(first_arg, source)
+            {
+                let arg_text = &source[first_arg.node().byte_range()];
+                let fix = node.parent().map(|stmt| {
+                    let source_bytes = source.as_bytes();
+                    let mut start = stmt.start_byte();
+                    let mut end = stmt.end_byte();
+                    while start > 0 && source_bytes[start - 1] == b'\t' {
+                        start -= 1;
+                    }
+                    if end < source.len() && source_bytes[end] == b'\n' {
+                        end += 1;
+                    }
+                    Fix {
+                        byte_start: start,
+                        byte_end: end,
+                        replacement: String::new(),
+                    }
+                });
+                diags.push(LintDiagnostic {
+                    rule: "assert-always-true",
+                    message: format!("assertion is always true: `assert({arg_text})`"),
+                    severity: Severity::Warning,
+                    line: node.start_position().row,
+                    column: node.start_position().column,
+                    end_column: None,
+                    fix,
+                    context_lines: None,
+                });
+            }
+        });
         diags
     }
 }
 
-fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    if node.kind() == "call"
-        && let Some(func) = node
-            .child_by_field_name("function")
-            .or_else(|| node.named_child(0))
-        && func.utf8_text(source.as_bytes()).ok() == Some("assert")
-        && let Some(args) = node.child_by_field_name("arguments")
-        && let Some(first_arg) = args.named_child(0)
-        && is_always_truthy(&first_arg, source)
-    {
-        let arg_text = first_arg.utf8_text(source.as_bytes()).ok().unwrap_or("?");
-        // Fix: delete the entire expression_statement line containing the assert
-        let fix = node.parent().map(|stmt| {
-            let mut start = stmt.start_byte();
-            let mut end = stmt.end_byte();
-            // Include leading whitespace on the line
-            while start > 0 && source.as_bytes()[start - 1] == b'\t' {
-                start -= 1;
-            }
-            // Include trailing newline
-            if end < source.len() && source.as_bytes()[end] == b'\n' {
-                end += 1;
-            }
-            Fix {
-                byte_start: start,
-                byte_end: end,
-                replacement: String::new(),
-            }
-        });
-        diags.push(LintDiagnostic {
-            rule: "assert-always-true",
-            message: format!("assertion is always true: `assert({arg_text})`"),
-            severity: Severity::Warning,
-            line: node.start_position().row,
-            column: node.start_position().column,
-            end_column: None,
-            fix,
-            context_lines: None,
-        });
-    }
-
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            check_node(cursor.node(), source, diags);
-            if !cursor.goto_next_sibling() {
-                break;
-            }
+fn is_always_truthy(expr: &GdExpr<'_>, source: &str) -> bool {
+    match expr {
+        GdExpr::Bool { value: true, .. } => true,
+        GdExpr::IntLiteral { value, .. } => *value != "0",
+        GdExpr::FloatLiteral { value, .. } => {
+            *value != "0.0" && *value != "0." && *value != ".0"
         }
-    }
-}
-
-fn is_always_truthy(node: &Node, source: &str) -> bool {
-    match node.kind() {
-        "true" => true,
-        "string" => {
-            // Non-empty string is truthy
-            let text = node.utf8_text(source.as_bytes()).ok().unwrap_or("");
-            // Quoted strings: `"x"` has len >= 3 for non-empty
+        GdExpr::StringLiteral { .. } => {
+            // Non-empty string is truthy: `"x"` has len >= 3
+            let text = &source[expr.node().byte_range()];
             text.len() > 2
-        }
-        "integer" => {
-            let text = node.utf8_text(source.as_bytes()).ok().unwrap_or("0");
-            text != "0"
-        }
-        "float" => {
-            let text = node.utf8_text(source.as_bytes()).ok().unwrap_or("0.0");
-            text != "0.0" && text != "0." && text != ".0"
         }
         _ => false,
     }

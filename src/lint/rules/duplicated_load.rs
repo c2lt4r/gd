@@ -1,6 +1,5 @@
 use std::collections::HashMap;
-use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{self, GdExpr, GdFile};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -16,17 +15,39 @@ impl LintRule for DuplicatedLoad {
         LintCategory::Performance
     }
 
-    fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, file: &GdFile<'_>, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        let root = file.node;
 
         // Map from load path -> list of (line, col, end_col)
         let mut loads: HashMap<String, Vec<(usize, usize, usize)>> = HashMap::new();
-        collect_load_calls(root, source, &mut loads);
+
+        gd_ast::visit_exprs(file, &mut |expr| {
+            let (trimmed, node) = match expr {
+                GdExpr::Preload { node, path } => {
+                    let t = path.trim_matches('"').trim_matches('\'');
+                    (t, *node)
+                }
+                GdExpr::Call { node, callee, args, .. }
+                    if matches!(callee.as_ref(), GdExpr::Ident { name: "load", .. }) =>
+                {
+                    if let Some(GdExpr::StringLiteral { value, .. }) = args.first() {
+                        (value.trim_matches('"').trim_matches('\''), *node)
+                    } else {
+                        return;
+                    }
+                }
+                _ => return,
+            };
+            if !trimmed.is_empty() {
+                loads
+                    .entry(trimmed.to_string())
+                    .or_default()
+                    .push((node.start_position().row, node.start_position().column, node.end_position().column));
+            }
+        });
 
         for (path, locations) in &loads {
             if locations.len() > 1 {
-                // Report all occurrences after the first
                 for &(line, col, end_col) in &locations[1..] {
                     diags.push(LintDiagnostic {
                         rule: "duplicated-load",
@@ -46,54 +67,8 @@ impl LintRule for DuplicatedLoad {
             }
         }
 
-        // Sort by line for deterministic output
         diags.sort_by_key(|d| (d.line, d.column));
         diags
-    }
-}
-
-fn collect_load_calls(
-    node: Node,
-    source: &str,
-    loads: &mut HashMap<String, Vec<(usize, usize, usize)>>,
-) {
-    if node.kind() == "call"
-        && let Some(func) = node.named_child(0)
-    {
-        let func_name = &source[func.byte_range()];
-        if func_name == "load" || func_name == "preload" {
-            // Extract the string argument from the arguments list
-            if let Some(args) = node.child_by_field_name("arguments") {
-                for i in 0..args.named_child_count() {
-                    if let Some(arg) = args.named_child(i)
-                        && arg.kind() == "string"
-                    {
-                        let text = arg.utf8_text(source.as_bytes()).unwrap_or("");
-                        let path = text.trim_matches('"').trim_matches('\'');
-                        if !path.is_empty() {
-                            let line = node.start_position().row;
-                            let col = node.start_position().column;
-                            let end_col = node.end_position().column;
-                            loads
-                                .entry(path.to_string())
-                                .or_default()
-                                .push((line, col, end_col));
-                        }
-                        break;
-                    }
-                }
-            }
-        }
-    }
-
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            collect_load_calls(cursor.node(), source, loads);
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
     }
 }
 

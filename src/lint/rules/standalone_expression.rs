@@ -1,5 +1,4 @@
-use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{self, GdExpr, GdFile, GdStmt};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -17,46 +16,29 @@ impl LintRule for StandaloneExpression {
 
     fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        let root = file.node;
-        check_node(root, source, &mut diags);
-        diags
-    }
-}
-
-fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    if node.kind() == "expression_statement" {
-        // The expression_statement wraps an expression child
-        if let Some(expr) = node.named_child(0)
-            && is_pure_expression(&expr, source)
-        {
-            let text = &source[expr.byte_range()];
-            // Truncate for display
-            let display = if text.len() > 40 {
-                format!("{}...", &text[..37])
-            } else {
-                text.to_string()
-            };
-            diags.push(LintDiagnostic {
-                rule: "standalone-expression",
-                message: format!("expression `{display}` has no effect as a statement",),
-                severity: Severity::Warning,
-                line: node.start_position().row,
-                column: node.start_position().column,
-                end_column: Some(node.end_position().column),
-                fix: None,
-                context_lines: None,
-            });
-        }
-    }
-
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            check_node(cursor.node(), source, diags);
-            if !cursor.goto_next_sibling() {
-                break;
+        gd_ast::visit_stmts(file, &mut |stmt| {
+            if let GdStmt::Expr { node, expr } = stmt
+                && is_pure_expression(expr)
+            {
+                let text = &source[expr.node().byte_range()];
+                let display = if text.len() > 40 {
+                    format!("{}...", &text[..37])
+                } else {
+                    text.to_string()
+                };
+                diags.push(LintDiagnostic {
+                    rule: "standalone-expression",
+                    message: format!("expression `{display}` has no effect as a statement"),
+                    severity: Severity::Warning,
+                    line: node.start_position().row,
+                    column: node.start_position().column,
+                    end_column: Some(node.end_position().column),
+                    fix: None,
+                    context_lines: None,
+                });
             }
-        }
+        });
+        diags
     }
 }
 
@@ -64,56 +46,36 @@ fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
 /// We flag: identifiers, literals, arithmetic/comparison operators, attribute access,
 ///          subscript, parenthesized, unary operators, array/dictionary literals.
 /// We do NOT flag: calls, assignments, augmented assignments, await, yield.
-#[allow(clippy::only_used_in_recursion)]
-fn is_pure_expression(node: &Node, source: &str) -> bool {
-    match node.kind() {
+fn is_pure_expression(expr: &GdExpr<'_>) -> bool {
+    match expr {
         // Pure value references, literals, binary/unary operators,
         // subscript, array/dictionary constructors, ternary expressions
-        "identifier"
-        | "integer"
-        | "float"
-        | "string"
-        | "true"
-        | "false"
-        | "null"
-        | "get_node"
-        | "node_path"
-        | "binary_operator"
-        | "unary_operator"
-        | "subscript"
-        | "array"
-        | "dictionary"
-        | "conditional_expression" => true,
+        GdExpr::Ident { .. }
+        | GdExpr::IntLiteral { .. }
+        | GdExpr::FloatLiteral { .. }
+        | GdExpr::StringLiteral { .. }
+        | GdExpr::StringName { .. }
+        | GdExpr::Bool { .. }
+        | GdExpr::Null { .. }
+        | GdExpr::GetNode { .. }
+        | GdExpr::BinOp { .. }
+        | GdExpr::UnaryOp { .. }
+        | GdExpr::Subscript { .. }
+        | GdExpr::Array { .. }
+        | GdExpr::Dict { .. }
+        | GdExpr::Ternary { .. }
+        | GdExpr::Cast { .. }
+        | GdExpr::Is { .. }
+        | GdExpr::PropertyAccess { .. } => true,
 
-        // Parenthesized expression - check inner
-        "parenthesized_expression" => {
-            if let Some(inner) = node.named_child(0) {
-                is_pure_expression(&inner, source)
-            } else {
-                true
-            }
-        }
-
-        // Attribute access like `obj.prop` — but NOT if it contains a call (obj.method())
-        "attribute" => {
-            // In tree-sitter-gdscript, obj.method() parses as attribute > [identifier, attribute_call]
-            let mut cursor = node.walk();
-            if cursor.goto_first_child() {
-                loop {
-                    if cursor.node().kind() == "attribute_call" {
-                        return false; // It's a method call, has side effects
-                    }
-                    if !cursor.goto_next_sibling() {
-                        break;
-                    }
-                }
-            }
-            true
-        }
-
-        // Everything else (call, assignment, augmented_assignment, await_expression,
-        // yield_expression, etc.) is considered to have side effects
-        _ => false,
+        // Side-effect expressions: calls, await, lambda, preload
+        GdExpr::Call { .. }
+        | GdExpr::MethodCall { .. }
+        | GdExpr::SuperCall { .. }
+        | GdExpr::Await { .. }
+        | GdExpr::Lambda { .. }
+        | GdExpr::Preload { .. }
+        | GdExpr::Invalid { .. } => false,
     }
 }
 
