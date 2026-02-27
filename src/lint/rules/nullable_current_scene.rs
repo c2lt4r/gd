@@ -1,7 +1,6 @@
 use std::collections::HashSet;
 
-use tree_sitter::Node;
-use crate::core::gd_ast::{self, GdDecl, GdFile};
+use crate::core::gd_ast::{self, GdDecl, GdExpr, GdFile, GdStmt};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -21,14 +20,14 @@ impl LintRule for NullableCurrentScene {
         let mut diags = Vec::new();
 
         // Check direct chained access: get_tree().current_scene.xxx()
+        // Use the raw tree-sitter node for text-based matching (pattern is hard
+        // to express structurally due to arbitrary nesting depth).
         check_direct_access(file.node, source, &mut diags);
 
         // Check aliased access in each function body
         gd_ast::visit_decls(file, &mut |decl| {
-            if let GdDecl::Func(func) = decl
-                && let Some(body) = func.node.child_by_field_name("body")
-            {
-                check_aliased_access(body, source, &mut diags);
+            if let GdDecl::Func(func) = decl {
+                check_aliased_access(&func.body, source, &mut diags);
             }
         });
 
@@ -37,25 +36,29 @@ impl LintRule for NullableCurrentScene {
 }
 
 /// Recursively find `get_tree().current_scene.xxx` chains that are not inside
-/// a null-guard if-block.
-fn check_direct_access(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    if node.kind() == "attribute" && is_current_scene_chain(&node, source) {
-        // Check this isn't inside a guarded block
-        if !is_inside_current_scene_guard(&node, source) {
-            diags.push(LintDiagnostic {
-                rule: "nullable-current-scene",
-                message:
-                    "`get_tree().current_scene` can be null — add a null check before accessing"
-                        .to_string(),
-                severity: Severity::Warning,
-                line: node.start_position().row,
-                column: node.start_position().column,
-                end_column: None,
-                fix: None,
-                context_lines: None,
-            });
-            return; // Don't recurse into children to avoid duplicate reports
-        }
+/// a null-guard if-block. Uses raw tree-sitter nodes for text matching.
+fn check_direct_access(
+    node: tree_sitter::Node,
+    source: &str,
+    diags: &mut Vec<LintDiagnostic>,
+) {
+    if node.kind() == "attribute"
+        && is_current_scene_chain(&node, source)
+        && !is_inside_current_scene_guard(&node, source)
+    {
+        diags.push(LintDiagnostic {
+            rule: "nullable-current-scene",
+            message:
+                "`get_tree().current_scene` can be null — add a null check before accessing"
+                    .to_string(),
+            severity: Severity::Warning,
+            line: node.start_position().row,
+            column: node.start_position().column,
+            end_column: None,
+            fix: None,
+            context_lines: None,
+        });
+        return;
     }
 
     let mut cursor = node.walk();
@@ -66,24 +69,17 @@ fn check_direct_access(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>
 
 /// Check if a node is an attribute chain of the form:
 ///   get_tree().current_scene.something
-/// i.e., there is further access AFTER current_scene.
-fn is_current_scene_chain(node: &Node, source: &str) -> bool {
+fn is_current_scene_chain(node: &tree_sitter::Node, source: &str) -> bool {
     let src = source.as_bytes();
-
-    // Must be an attribute node
     if node.kind() != "attribute" {
         return false;
     }
-
     let Ok(text) = node.utf8_text(src) else {
         return false;
     };
-
-    // Quick check: must contain the pattern with a trailing dot
     if !text.contains("get_tree().current_scene.") {
         return false;
     }
-
     // Ensure we're at the outermost access to avoid duplication
     if let Some(parent) = node.parent()
         && parent.kind() == "attribute"
@@ -92,25 +88,23 @@ fn is_current_scene_chain(node: &Node, source: &str) -> bool {
     {
         return false;
     }
-
     true
 }
 
 /// Walk ancestors to check if this node is inside an if-block that guards
 /// against `current_scene` being null.
-fn is_inside_current_scene_guard(node: &Node, source: &str) -> bool {
+fn is_inside_current_scene_guard(node: &tree_sitter::Node, source: &str) -> bool {
     let mut current = *node;
     while let Some(parent) = current.parent() {
-        if parent.kind() == "if_statement" {
-            // Check if the condition references current_scene
-            if let Some(condition) = parent.named_child(0) {
-                let Ok(cond_text) = condition.utf8_text(source.as_bytes()) else {
-                    current = parent;
-                    continue;
-                };
-                if cond_text.contains("current_scene") {
-                    return true;
-                }
+        if parent.kind() == "if_statement"
+            && let Some(condition) = parent.named_child(0)
+        {
+            let Ok(cond_text) = condition.utf8_text(source.as_bytes()) else {
+                current = parent;
+                continue;
+            };
+            if cond_text.contains("current_scene") {
+                return true;
             }
         }
         current = parent;
@@ -121,29 +115,26 @@ fn is_inside_current_scene_guard(node: &Node, source: &str) -> bool {
 /// Check function body for aliased access pattern:
 ///   var scene = get_tree().current_scene
 ///   scene.method()  <-- flagged if no null check between
-fn check_aliased_access(body: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    let src = source.as_bytes();
-    let mut aliases: Vec<(String, usize)> = Vec::new(); // (var_name, decl_line)
+fn check_aliased_access(body: &[GdStmt], source: &str, diags: &mut Vec<LintDiagnostic>) {
+    let mut aliases: Vec<(&str, usize)> = Vec::new();
 
-    let mut cursor = body.walk();
-    for child in body.children(&mut cursor) {
-        if child.kind() == "variable_statement"
-            && let Some(name_node) = child.child_by_field_name("name")
-            && let Ok(var_name) = name_node.utf8_text(src)
-            && let Some(value) = child.child_by_field_name("value")
-            && let Ok(val_text) = value.utf8_text(src)
-            && val_text == "get_tree().current_scene"
+    // Pass 1: find aliases (var scene = get_tree().current_scene)
+    for stmt in body {
+        if let GdStmt::Var(var) = stmt
+            && let Some(value) = &var.value
+            && is_get_tree_current_scene(value, source)
         {
-            aliases.push((var_name.to_string(), child.start_position().row));
+            aliases.push((var.name, stmt.node().start_position().row));
         }
     }
 
-    for (alias, decl_line) in &aliases {
-        // Collect lines guarded by null checks on the alias
-        let guarded = collect_guarded_lines(body, source, alias);
+    // Pass 2: for each alias, find unguarded access
+    for &(alias, decl_line) in &aliases {
+        let guarded = collect_guarded_lines(body, alias);
 
-        // Find the first unguarded alias.xxx access
-        if let Some((line, col)) = find_alias_access(body, src, alias, *decl_line, &guarded) {
+        if let Some((line, col)) =
+            find_alias_access(body, source, alias, decl_line, &guarded)
+        {
             diags.push(LintDiagnostic {
                 rule: "nullable-current-scene",
                 message: format!(
@@ -161,82 +152,113 @@ fn check_aliased_access(body: Node, source: &str, diags: &mut Vec<LintDiagnostic
     }
 }
 
-/// Collect line numbers inside if-blocks that guard the alias with a null check.
-fn collect_guarded_lines(body: Node, source: &str, alias: &str) -> HashSet<usize> {
-    let mut guarded = HashSet::new();
-    let src = source.as_bytes();
+/// Check if an expression is `get_tree().current_scene`.
+fn is_get_tree_current_scene(expr: &GdExpr, source: &str) -> bool {
+    // Use text matching for simplicity (same as the original)
+    let text = expr.node().utf8_text(source.as_bytes()).unwrap_or("");
+    text == "get_tree().current_scene"
+}
 
-    let mut cursor = body.walk();
-    for child in body.children(&mut cursor) {
-        if child.kind() != "if_statement" {
-            continue;
-        }
-        let Some(condition) = child.named_child(0) else {
-            continue;
-        };
-        if !node_contains_identifier(condition, src, alias) {
-            continue;
-        }
-        let start = child.start_position().row;
-        let end = child.end_position().row;
-        for line in start..=end {
-            guarded.insert(line);
+/// Collect line numbers inside if-blocks that guard the alias with a null check.
+fn collect_guarded_lines(body: &[GdStmt], alias: &str) -> HashSet<usize> {
+    let mut guarded = HashSet::new();
+    for stmt in body {
+        if let GdStmt::If(if_stmt) = stmt
+            && expr_contains_ident(&if_stmt.condition, alias)
+        {
+            let start = stmt.node().start_position().row;
+            let end = stmt.node().end_position().row;
+            for line in start..=end {
+                guarded.insert(line);
+            }
         }
     }
-
     guarded
 }
 
-fn node_contains_identifier(node: Node, source: &[u8], name: &str) -> bool {
-    if node.kind() == "identifier" && node.utf8_text(source).ok() == Some(name) {
-        return true;
-    }
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            if node_contains_identifier(cursor.node(), source, name) {
-                return true;
-            }
-            if !cursor.goto_next_sibling() {
-                break;
-            }
+/// Check if an expression tree contains an identifier with the given name.
+fn expr_contains_ident(expr: &GdExpr, name: &str) -> bool {
+    match expr {
+        GdExpr::Ident { name: n, .. } if *n == name => true,
+        GdExpr::BinOp { left, right, .. } => {
+            expr_contains_ident(left, name) || expr_contains_ident(right, name)
         }
+        GdExpr::UnaryOp { operand, .. } => expr_contains_ident(operand, name),
+        GdExpr::Call { callee, args, .. } => {
+            expr_contains_ident(callee, name)
+                || args.iter().any(|a| expr_contains_ident(a, name))
+        }
+        GdExpr::MethodCall { receiver, args, .. } => {
+            expr_contains_ident(receiver, name)
+                || args.iter().any(|a| expr_contains_ident(a, name))
+        }
+        GdExpr::PropertyAccess { receiver, .. } => expr_contains_ident(receiver, name),
+        _ => false,
     }
-    false
 }
 
-/// Find the first `alias.xxx` attribute access after `decl_line` that's not in a guarded block.
+/// Find the first `alias.xxx` attribute access after `decl_line` that's not guarded.
 fn find_alias_access(
-    node: Node,
-    source: &[u8],
+    body: &[GdStmt],
+    source: &str,
     alias: &str,
     decl_line: usize,
     guarded_lines: &HashSet<usize>,
 ) -> Option<(usize, usize)> {
-    if node.start_position().row > decl_line
-        && node.kind() == "attribute"
-        && let Some(obj) = node.named_child(0)
-        && obj.kind() == "identifier"
-        && obj.utf8_text(source).ok() == Some(alias)
-        && !guarded_lines.contains(&node.start_position().row)
-    {
-        return Some((node.start_position().row, node.start_position().column));
-    }
-
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            if let Some(pos) =
-                find_alias_access(cursor.node(), source, alias, decl_line, guarded_lines)
-            {
-                return Some(pos);
-            }
-            if !cursor.goto_next_sibling() {
-                break;
-            }
+    // Search all expressions in the body for PropertyAccess/MethodCall on the alias
+    for stmt in body {
+        let row = stmt.node().start_position().row;
+        if row <= decl_line {
+            continue;
+        }
+        if let Some(pos) = find_alias_in_expr_tree(stmt, source, alias, guarded_lines) {
+            return Some(pos);
         }
     }
     None
+}
+
+/// Recursively search statement expressions for `alias.xxx` access.
+fn find_alias_in_expr_tree(
+    stmt: &GdStmt,
+    source: &str,
+    alias: &str,
+    guarded_lines: &HashSet<usize>,
+) -> Option<(usize, usize)> {
+    let mut result = None;
+    // Use the raw tree-sitter node to find attribute accesses on the alias
+    find_alias_in_node(stmt.node(), source, alias, guarded_lines, &mut result);
+    result
+}
+
+fn find_alias_in_node(
+    node: tree_sitter::Node,
+    source: &str,
+    alias: &str,
+    guarded_lines: &HashSet<usize>,
+    result: &mut Option<(usize, usize)>,
+) {
+    if result.is_some() {
+        return;
+    }
+
+    if node.kind() == "attribute"
+        && let Some(obj) = node.named_child(0)
+        && obj.kind() == "identifier"
+        && obj.utf8_text(source.as_bytes()).ok() == Some(alias)
+        && !guarded_lines.contains(&node.start_position().row)
+    {
+        *result = Some((node.start_position().row, node.start_position().column));
+        return;
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        find_alias_in_node(child, source, alias, guarded_lines, result);
+        if result.is_some() {
+            return;
+        }
+    }
 }
 
 #[cfg(test)]

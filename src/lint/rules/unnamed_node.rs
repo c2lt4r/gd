@@ -1,5 +1,5 @@
-use tree_sitter::Node;
-use crate::core::gd_ast::{self, GdDecl, GdFile};
+use std::collections::HashMap;
+use crate::core::gd_ast::{self, GdDecl, GdExpr, GdFile, GdStmt};
 
 use super::{LintCategory, LintDiagnostic, LintRule};
 use crate::core::config::LintConfig;
@@ -22,88 +22,87 @@ impl LintRule for UnnamedNode {
         false
     }
 
-    fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, file: &GdFile<'_>, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
         gd_ast::visit_decls(file, &mut |decl| {
-            if let GdDecl::Func(func) = decl
-                && let Some(body) = func.node.child_by_field_name("body")
-            {
-                check_body(&body, source, &mut diags);
+            if let GdDecl::Func(func) = decl {
+                let mut tracked: HashMap<&str, (&str, usize, bool)> = HashMap::new();
+                walk_stmts(&func.body, &mut tracked, &mut diags);
             }
         });
         diags
     }
 }
 
-/// Scan a function body for `add_child(x)` where `x` was `.new()`'d without `.name` set.
-fn check_body(body: &Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    // Track variables: name -> (type_name, line, was_name_set)
-    let mut tracked: std::collections::HashMap<String, (String, usize, bool)> =
-        std::collections::HashMap::new();
-    walk_body(body, source, &mut tracked, diags);
-}
-
-/// Recursively walk statements, tracking `.new()` assignments and flagging unnamed `add_child`.
-fn walk_body(
-    node: &Node,
-    source: &str,
-    tracked: &mut std::collections::HashMap<String, (String, usize, bool)>,
+/// Track: var_name -> (type_name, line_1based, was_name_set)
+fn walk_stmts<'a>(
+    stmts: &[GdStmt<'a>],
+    tracked: &mut HashMap<&'a str, (&'a str, usize, bool)>,
     diags: &mut Vec<LintDiagnostic>,
 ) {
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        match child.kind() {
-            "expression_statement" | "variable_statement" | "assignment_statement" => {
-                process_statement(&child, source, tracked, diags);
-            }
-            "if_statement" | "for_statement" | "while_statement" | "match_statement" | "body"
-            | "block" | "match_body" | "match_arm" | "pattern_guard" | "elif_branch"
-            | "else_branch" => {
-                walk_body(&child, source, tracked, diags);
-            }
-            _ => {
-                if child.named_child_count() > 0
-                    && !matches!(
-                        child.kind(),
-                        "call" | "attribute_call" | "attribute" | "string" | "binary_operator"
-                    )
+    for stmt in stmts {
+        match stmt {
+            // var x = SomeType.new()
+            GdStmt::Var(var) => {
+                if let Some(value) = &var.value
+                    && let Some(type_name) = extract_new_type(value)
+                    && is_node_class(type_name)
                 {
-                    walk_body(&child, source, tracked, diags);
+                    tracked.insert(
+                        var.name,
+                        (type_name, var.node.start_position().row + 1, false),
+                    );
                 }
             }
+            // x = SomeType.new() (reassignment) or x.name = "..."
+            GdStmt::Assign { target, value, .. } => {
+                // x = SomeType.new()
+                if let GdExpr::Ident { name, .. } = target
+                    && let Some(type_name) = extract_new_type(value)
+                    && is_node_class(type_name)
+                {
+                    tracked.insert(
+                        name,
+                        (type_name, stmt.node().start_position().row + 1, false),
+                    );
+                }
+                // x.name = "..."
+                if let GdExpr::PropertyAccess { receiver, property: "name", .. } = target
+                    && let GdExpr::Ident { name, .. } = receiver.as_ref()
+                    && let Some(entry) = tracked.get_mut(name)
+                {
+                    entry.2 = true;
+                }
+            }
+            // Expression statements: add_child(x), parent.add_child(x), call_deferred("add_child", x)
+            GdStmt::Expr { expr, .. } => {
+                if let Some((var_name, row, col)) = extract_add_child_arg(expr) {
+                    emit_unnamed_diag(var_name, row, col, tracked, diags);
+                }
+                if let Some((var_name, row, col)) = extract_deferred_add_child(expr) {
+                    emit_unnamed_diag(var_name, row, col, tracked, diags);
+                }
+            }
+            // Recurse into control flow bodies
+            GdStmt::If(if_stmt) => {
+                walk_stmts(&if_stmt.body, tracked, diags);
+                for (_, branch) in &if_stmt.elif_branches {
+                    walk_stmts(branch, tracked, diags);
+                }
+                if let Some(else_body) = &if_stmt.else_body {
+                    walk_stmts(else_body, tracked, diags);
+                }
+            }
+            GdStmt::For { body, .. } | GdStmt::While { body, .. } => {
+                walk_stmts(body, tracked, diags);
+            }
+            GdStmt::Match { arms, .. } => {
+                for arm in arms {
+                    walk_stmts(&arm.body, tracked, diags);
+                }
+            }
+            _ => {}
         }
-    }
-}
-
-/// Process a single statement node for tracking and diagnostics.
-fn process_statement(
-    stmt: &Node,
-    source: &str,
-    tracked: &mut std::collections::HashMap<String, (String, usize, bool)>,
-    diags: &mut Vec<LintDiagnostic>,
-) {
-    // 1. Detect `var x = SomeType.new()` or `x = SomeType.new()`
-    if let Some((var_name, type_name)) = extract_new_assignment(stmt, source)
-        && is_node_class(&type_name)
-    {
-        tracked.insert(var_name, (type_name, stmt.start_position().row + 1, false));
-    }
-
-    // 2. Detect `x.name = ...`
-    if let Some(var_name) = extract_name_assignment(stmt, source)
-        && let Some(entry) = tracked.get_mut(&var_name)
-    {
-        entry.2 = true;
-    }
-
-    // 3. Detect `add_child(x)` or `something.add_child(x)`
-    if let Some((var_name, row, col)) = extract_add_child_arg(stmt, source) {
-        emit_unnamed_diag(&var_name, row, col, tracked, diags);
-    }
-
-    // 4. Detect `call_deferred("add_child", x)`
-    if let Some((var_name, row, col)) = extract_deferred_add_child(stmt, source) {
-        emit_unnamed_diag(&var_name, row, col, tracked, diags);
     }
 }
 
@@ -112,10 +111,10 @@ fn emit_unnamed_diag(
     var_name: &str,
     row: usize,
     col: usize,
-    tracked: &std::collections::HashMap<String, (String, usize, bool)>,
+    tracked: &HashMap<&str, (&str, usize, bool)>,
     diags: &mut Vec<LintDiagnostic>,
 ) {
-    if let Some((type_name, _, name_was_set)) = tracked.get(var_name)
+    if let Some(&(type_name, _, name_was_set)) = tracked.get(var_name)
         && !name_was_set
     {
         diags.push(LintDiagnostic {
@@ -134,29 +133,33 @@ fn emit_unnamed_diag(
     }
 }
 
-/// Extract `(var_name, type_name)` from `var x = SomeType.new()` or `var x := SomeType.new()`.
-/// Also handles `x = SomeType.new()` reassignments.
-fn extract_new_assignment(node: &Node, source: &str) -> Option<(String, String)> {
-    match node.kind() {
-        "variable_statement" => {
-            // var x = Type.new() — value field holds the RHS
-            let name_node = node.child_by_field_name("name")?;
-            let value_node = node.child_by_field_name("value")?;
-            let var_name = name_node.utf8_text(source.as_bytes()).ok()?;
-            let type_name = extract_new_call_type(&value_node, source)?;
-            Some((var_name.to_string(), type_name))
+/// Extract the class name from `SomeType.new()` — returns the identifier receiver of a "new" method call.
+fn extract_new_type<'a>(expr: &GdExpr<'a>) -> Option<&'a str> {
+    if let GdExpr::MethodCall { method: "new", receiver, .. } = expr
+        && let GdExpr::Ident { name, .. } = receiver.as_ref()
+    {
+        return Some(name);
+    }
+    None
+}
+
+/// Detect `add_child(x)` or `parent.add_child(x)`. Returns (arg_name, row, col).
+fn extract_add_child_arg<'a>(expr: &GdExpr<'a>) -> Option<(&'a str, usize, usize)> {
+    match expr {
+        // add_child(x) — direct call
+        GdExpr::Call { callee, args, node, .. } => {
+            if let GdExpr::Ident { name: func, .. } = callee.as_ref()
+                && *func == "add_child"
+                && let Some(GdExpr::Ident { name, .. }) = args.first()
+            {
+                return Some((name, node.start_position().row, node.start_position().column));
+            }
+            None
         }
-        "expression_statement" => {
-            // x = Type.new() — expression_statement > assignment
-            let child = node.named_child(0)?;
-            if child.kind() == "assignment" {
-                let left = child.named_child(0)?;
-                let right = child.named_child(1)?;
-                if left.kind() == "identifier" {
-                    let var_name = left.utf8_text(source.as_bytes()).ok()?;
-                    let type_name = extract_new_call_type(&right, source)?;
-                    return Some((var_name.to_string(), type_name));
-                }
+        // parent.add_child(x) — method call
+        GdExpr::MethodCall { method: "add_child", args, node, .. } => {
+            if let Some(GdExpr::Ident { name, .. }) = args.first() {
+                return Some((name, node.start_position().row, node.start_position().column));
             }
             None
         }
@@ -164,145 +167,30 @@ fn extract_new_assignment(node: &Node, source: &str) -> Option<(String, String)>
     }
 }
 
-/// Extract the class name from a `SomeType.new()` call node.
-/// Returns None for `preload(...).new()`, `.instantiate()`, or non-`.new()` calls.
-///
-/// AST for `Button.new()`:
-///   attribute
-///     identifier "Button"     (named_child 0)
-///     attribute_call           (named_child 1)
-///       identifier "new"
-///       arguments
-fn extract_new_call_type(node: &Node, source: &str) -> Option<String> {
-    if node.kind() != "attribute" {
-        return None;
-    }
-    let object = node.named_child(0)?;
-    let call_part = node.named_child(1)?;
-    if call_part.kind() != "attribute_call" {
-        return None;
-    }
-    let method = call_part.named_child(0)?;
-    let method_name = method.utf8_text(source.as_bytes()).ok()?;
-    if method_name == "new" && object.kind() == "identifier" {
-        let class_name = object.utf8_text(source.as_bytes()).ok()?;
-        return Some(class_name.to_string());
-    }
-    None
-}
-
-/// Detect `x.name = ...` pattern. Returns the variable name.
-///
-/// AST for `btn.name = "X"`:
-///   expression_statement
-///     assignment
-///       attribute              (named_child 0 = left)
-///         identifier "btn"
-///         identifier "name"
-///       string "X"             (named_child 1 = right)
-fn extract_name_assignment(node: &Node, source: &str) -> Option<String> {
-    if node.kind() != "expression_statement" {
-        return None;
-    }
-    let child = node.named_child(0)?;
-    if child.kind() != "assignment" {
-        return None;
-    }
-    let left = child.named_child(0)?;
-    if left.kind() == "attribute" {
-        let object = left.named_child(0)?;
-        let attr = left.named_child(1)?;
-        if object.kind() == "identifier" && attr.kind() == "identifier" {
-            let attr_name = attr.utf8_text(source.as_bytes()).ok()?;
-            if attr_name == "name" {
-                let var_name = object.utf8_text(source.as_bytes()).ok()?;
-                return Some(var_name.to_string());
+/// Detect `call_deferred("add_child", x)` or `parent.call_deferred("add_child", x)`.
+fn extract_deferred_add_child<'a>(expr: &GdExpr<'a>) -> Option<(&'a str, usize, usize)> {
+    let (method, args, node) = match expr {
+        GdExpr::Call { callee, args, node, .. } => {
+            if let GdExpr::Ident { name, .. } = callee.as_ref() {
+                (*name, args, node)
+            } else {
+                return None;
             }
         }
-    }
-    None
-}
+        GdExpr::MethodCall { method, args, node, .. } => (*method, args, node),
+        _ => return None,
+    };
 
-/// Extract method name and arguments node from a call expression.
-/// Returns (method_name, arguments_node_index_in_parent, row, col).
-///
-/// `call { identifier, arguments }` → method name from identifier
-/// `attribute { object, attribute_call { identifier, arguments } }` → method name from inner identifier
-fn get_method_and_args<'a>(node: &'a Node<'a>, source: &'a str) -> Option<(&'a str, Node<'a>)> {
-    match node.kind() {
-        "call" => {
-            let func = node.named_child(0)?;
-            if func.kind() != "identifier" {
-                return None;
-            }
-            let name = func.utf8_text(source.as_bytes()).ok()?;
-            let args = node.named_child(1)?;
-            if args.kind() != "arguments" {
-                return None;
-            }
-            Some((name, args))
-        }
-        "attribute" => {
-            let call_part = node.named_child(1)?;
-            if call_part.kind() != "attribute_call" {
-                return None;
-            }
-            let method = call_part.named_child(0)?;
-            let name = method.utf8_text(source.as_bytes()).ok()?;
-            let args = call_part.named_child(1)?;
-            if args.kind() != "arguments" {
-                return None;
-            }
-            Some((name, args))
-        }
-        _ => None,
+    if method != "call_deferred" {
+        return None;
     }
-}
 
-/// Detect `add_child(x)` or `something.add_child(x)`. Returns (arg_name, row, col).
-fn extract_add_child_arg(node: &Node, source: &str) -> Option<(String, usize, usize)> {
-    if node.kind() != "expression_statement" {
-        return None;
-    }
-    let call_node = node.named_child(0)?;
-    let (func_name, args_node) = get_method_and_args(&call_node, source)?;
-    if func_name != "add_child" {
-        return None;
-    }
-    let first_arg = args_node.named_child(0)?;
-    if first_arg.kind() == "identifier" {
-        let arg_name = first_arg.utf8_text(source.as_bytes()).ok()?;
-        let row = call_node.start_position().row;
-        let col = call_node.start_position().column;
-        return Some((arg_name.to_string(), row, col));
-    }
-    None
-}
-
-/// Detect `call_deferred("add_child", x)` or `something.call_deferred("add_child", x)`.
-fn extract_deferred_add_child(node: &Node, source: &str) -> Option<(String, usize, usize)> {
-    if node.kind() != "expression_statement" {
-        return None;
-    }
-    let call_node = node.named_child(0)?;
-    let (func_name, args_node) = get_method_and_args(&call_node, source)?;
-    if func_name != "call_deferred" {
-        return None;
-    }
-    // First arg should be "add_child"
-    let first_arg = args_node.named_child(0)?;
-    let arg_text = first_arg.utf8_text(source.as_bytes()).ok()?;
-    let unquoted = arg_text.trim_matches('"').trim_matches('\'');
-    if unquoted != "add_child" {
-        return None;
-    }
-    // Second arg is the node being added
-    let second_arg = args_node.named_child(1)?;
-    if second_arg.kind() == "identifier" {
-        let arg_name = second_arg.utf8_text(source.as_bytes()).ok()?;
-        let row = call_node.start_position().row;
-        let col = call_node.start_position().column;
-        return Some((arg_name.to_string(), row, col));
+    // First arg should be "add_child" string
+    if let Some(GdExpr::StringLiteral { value, .. }) = args.first()
+        && value.trim_matches('"').trim_matches('\'') == "add_child"
+        && let Some(GdExpr::Ident { name, .. }) = args.get(1)
+    {
+        return Some((name, node.start_position().row, node.start_position().column));
     }
     None
 }

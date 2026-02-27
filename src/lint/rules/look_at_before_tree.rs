@@ -1,6 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use tree_sitter::Node;
-use crate::core::gd_ast::{self, GdDecl, GdFile};
+use crate::core::gd_ast::{self, GdDecl, GdExpr, GdFile, GdStmt};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -20,147 +19,137 @@ impl LintRule for LookAtBeforeTree {
         false
     }
 
-    fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, file: &GdFile<'_>, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
         gd_ast::visit_decls(file, &mut |decl| {
-            if let GdDecl::Func(func) = decl
-                && let Some(body) = func.node.child_by_field_name("body")
-            {
-                check_function_body(body, source, &mut diags);
+            if let GdDecl::Func(func) = decl {
+                let mut unattached: HashMap<&str, usize> = HashMap::new();
+                let mut attached: HashSet<&str> = HashSet::new();
+                scan_stmts(&func.body, &mut unattached, &mut attached, &mut diags);
             }
         });
         diags
     }
 }
 
-/// Linear scan through a function body.
-/// Track variables assigned via `X.new()` and flag tree-dependent method calls
-/// on those variables before `add_child(var)` is called.
-fn check_function_body(body: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    // Variables created via X.new() that haven't been added to the tree yet
-    let mut unattached: HashMap<String, usize> = HashMap::new();
-    // Variables that have been added to the tree
-    let mut attached: HashSet<String> = HashSet::new();
-
-    scan_statements(body, source, &mut unattached, &mut attached, diags);
-}
-
-fn scan_statements(
-    node: Node,
-    source: &str,
-    unattached: &mut HashMap<String, usize>,
-    attached: &mut HashSet<String>,
+/// Linear scan through statements tracking `.new()` assignments and flagging
+/// tree-dependent method calls / global property assignments before `add_child()`.
+fn scan_stmts<'a>(
+    stmts: &[GdStmt<'a>],
+    unattached: &mut HashMap<&'a str, usize>,
+    attached: &mut HashSet<&'a str>,
     diags: &mut Vec<LintDiagnostic>,
 ) {
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        if !child.is_named() || child.kind() == "comment" {
-            continue;
-        }
-
-        // var x = SomeClass.new() or var x := SomeClass.new()
-        if child.kind() == "variable_statement" {
-            if let Some((var_name, _line)) = extract_new_assignment(&child, source) {
-                unattached.insert(var_name, child.start_position().row);
-            }
-            // Also check the RHS for tree-dependent calls
-            if let Some(value) = child.child_by_field_name("value") {
-                check_expr_for_tree_calls(&value, source, unattached, attached, diags);
-            }
-            continue;
-        }
-
-        // Check for global_* property assignment on unattached variables
-        // Tree-sitter: `expression_statement > assignment` or `assignment_statement`
-        if let Some((obj, prop)) = extract_global_property_assignment(&child, source)
-            && unattached.contains_key(&obj)
-            && !attached.contains(&obj)
-        {
-            diags.push(LintDiagnostic {
-                rule: "look-at-before-tree",
-                message: format!("`{obj}.{prop}` set before `{obj}` is added to the scene tree"),
-                severity: Severity::Warning,
-                line: child.start_position().row,
-                column: child.start_position().column,
-                end_column: Some(child.end_position().column),
-                fix: None,
-                context_lines: None,
-            });
-            continue;
-        }
-
-        // x = SomeClass.new() (reassignment)
-        if child.kind() == "assignment_statement" {
-            if let Some((var_name, _line)) = extract_new_reassignment(&child, source) {
-                attached.remove(&var_name);
-                unattached.insert(var_name, child.start_position().row);
-            }
-            check_expr_for_tree_calls(&child, source, unattached, attached, diags);
-            continue;
-        }
-
-        // add_child(x) / add_sibling(x) — mark x as attached
-        if is_add_child_call(&child, source) {
-            if let Some(arg_name) = extract_first_arg(&child, source) {
-                unattached.remove(&arg_name);
-                attached.insert(arg_name);
-            }
-            continue;
-        }
-
-        // Check for tree-dependent method calls on unattached variables
-        check_expr_for_tree_calls(&child, source, unattached, attached, diags);
-
-        // Recurse into control flow blocks (if/match/for/while)
-        recurse_into_blocks(&child, source, unattached, attached, diags);
-    }
-}
-
-fn recurse_into_blocks(
-    node: &Node,
-    source: &str,
-    unattached: &mut HashMap<String, usize>,
-    attached: &mut HashSet<String>,
-    diags: &mut Vec<LintDiagnostic>,
-) {
-    match node.kind() {
-        "if_statement" | "for_statement" | "while_statement" | "match_statement" => {
-            let mut cursor = node.walk();
-            for child in node.children(&mut cursor) {
-                if child.kind() == "body" || child.kind() == "match_body" {
-                    scan_statements(child, source, unattached, attached, diags);
-                }
-                // else/elif branches
-                if (child.kind() == "elif_branch" || child.kind() == "else_branch")
-                    && let Some(body) = child.child_by_field_name("body")
+    for stmt in stmts {
+        match stmt {
+            // var x = SomeClass.new()
+            GdStmt::Var(var) => {
+                if let Some(value) = &var.value
+                    && is_new_call(value)
                 {
-                    scan_statements(body, source, unattached, attached, diags);
+                    unattached.insert(var.name, var.node.start_position().row);
+                }
+                if let Some(value) = &var.value {
+                    check_expr_for_tree_calls(value, unattached, attached, diags);
                 }
             }
+            // x = SomeClass.new() or x.global_position = ...
+            GdStmt::Assign { target, value, .. } | GdStmt::AugAssign { target, value, .. } => {
+                // Check for global property assignment on unattached
+                if let GdExpr::PropertyAccess { receiver, property, .. } = target
+                    && let GdExpr::Ident { name: obj, .. } = receiver.as_ref()
+                    && is_global_property(property)
+                    && unattached.contains_key(obj)
+                    && !attached.contains(obj)
+                {
+                    let pos = stmt.node().start_position();
+                    diags.push(LintDiagnostic {
+                        rule: "look-at-before-tree",
+                        message: format!(
+                            "`{obj}.{property}` set before `{obj}` is added to the scene tree"
+                        ),
+                        severity: Severity::Warning,
+                        line: pos.row,
+                        column: pos.column,
+                        end_column: Some(stmt.node().end_position().column),
+                        fix: None,
+                        context_lines: None,
+                    });
+                    continue;
+                }
+                // x = SomeClass.new() reassignment (only for regular assign)
+                if matches!(stmt, GdStmt::Assign { .. })
+                    && let GdExpr::Ident { name, .. } = target
+                    && is_new_call(value)
+                {
+                    attached.remove(name);
+                    unattached.insert(name, stmt.node().start_position().row);
+                }
+                check_expr_for_tree_calls(value, unattached, attached, diags);
+            }
+            // Expression statements: add_child(x), method calls, etc.
+            GdStmt::Expr { expr, .. } => {
+                if let Some(arg_name) = extract_add_child_arg(expr) {
+                    unattached.remove(arg_name);
+                    attached.insert(arg_name);
+                    continue;
+                }
+                check_expr_for_tree_calls(expr, unattached, attached, diags);
+            }
+            // Return statements may contain tree-dependent calls
+            GdStmt::Return { value: Some(v), .. } => {
+                check_expr_for_tree_calls(v, unattached, attached, diags);
+            }
+            // Recurse into control flow bodies
+            GdStmt::If(if_stmt) => {
+                scan_stmts(&if_stmt.body, unattached, attached, diags);
+                for (_, branch) in &if_stmt.elif_branches {
+                    scan_stmts(branch, unattached, attached, diags);
+                }
+                if let Some(else_body) = &if_stmt.else_body {
+                    scan_stmts(else_body, unattached, attached, diags);
+                }
+            }
+            GdStmt::For { body, .. } | GdStmt::While { body, .. } => {
+                scan_stmts(body, unattached, attached, diags);
+            }
+            GdStmt::Match { arms, .. } => {
+                for arm in arms {
+                    scan_stmts(&arm.body, unattached, attached, diags);
+                }
+            }
+            _ => {}
         }
-        _ => {}
     }
 }
 
-/// Check if this expression contains a method call on an unattached variable.
+/// Check if an expression is `SomeClass.new()` — a MethodCall with method "new"
+/// on an identifier (the class name).
+fn is_new_call(expr: &GdExpr) -> bool {
+    matches!(
+        expr,
+        GdExpr::MethodCall { method: "new", receiver, .. }
+            if matches!(receiver.as_ref(), GdExpr::Ident { .. })
+    )
+}
+
+/// Recursively check expressions for tree-dependent method calls on unattached variables.
 fn check_expr_for_tree_calls(
-    node: &Node,
-    source: &str,
-    unattached: &mut HashMap<String, usize>,
-    attached: &HashSet<String>,
+    expr: &GdExpr,
+    unattached: &HashMap<&str, usize>,
+    attached: &HashSet<&str>,
     diags: &mut Vec<LintDiagnostic>,
 ) {
-    // node.method() pattern: attribute > [identifier, attribute_call > [identifier, arguments]]
-    if node.kind() == "attribute"
-        && let Some((obj_name, method_name)) = extract_method_call(node, source)
-        && unattached.contains_key(&obj_name)
-        && !attached.contains(&obj_name)
-        && crate::class_db::is_tree_dependent_method(&method_name)
+    if let GdExpr::MethodCall { receiver, method, node, .. } = expr
+        && let GdExpr::Ident { name, .. } = receiver.as_ref()
+        && unattached.contains_key(name)
+        && !attached.contains(name)
+        && crate::class_db::is_tree_dependent_method(method)
     {
         diags.push(LintDiagnostic {
             rule: "look-at-before-tree",
             message: format!(
-                "`{obj_name}.{method_name}()` called before `{obj_name}` is added to the scene tree"
+                "`{name}.{method}()` called before `{name}` is added to the scene tree"
             ),
             severity: Severity::Warning,
             line: node.start_position().row,
@@ -169,144 +158,86 @@ fn check_expr_for_tree_calls(
             fix: None,
             context_lines: None,
         });
+        return;
     }
 
     // Recurse into sub-expressions
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            let child = cursor.node();
-            if child.kind() != "function_definition" && child.kind() != "lambda" {
-                check_expr_for_tree_calls(&child, source, unattached, attached, diags);
-            }
-            if !cursor.goto_next_sibling() {
-                break;
+    match expr {
+        GdExpr::MethodCall { receiver, args, .. } => {
+            check_expr_for_tree_calls(receiver, unattached, attached, diags);
+            for a in args {
+                check_expr_for_tree_calls(a, unattached, attached, diags);
             }
         }
+        GdExpr::Call { callee, args, .. } => {
+            check_expr_for_tree_calls(callee, unattached, attached, diags);
+            for a in args {
+                check_expr_for_tree_calls(a, unattached, attached, diags);
+            }
+        }
+        GdExpr::BinOp { left, right, .. } => {
+            check_expr_for_tree_calls(left, unattached, attached, diags);
+            check_expr_for_tree_calls(right, unattached, attached, diags);
+        }
+        GdExpr::UnaryOp { operand, .. } => {
+            check_expr_for_tree_calls(operand, unattached, attached, diags);
+        }
+        GdExpr::PropertyAccess { receiver, .. } => {
+            check_expr_for_tree_calls(receiver, unattached, attached, diags);
+        }
+        GdExpr::Subscript { receiver, index, .. } => {
+            check_expr_for_tree_calls(receiver, unattached, attached, diags);
+            check_expr_for_tree_calls(index, unattached, attached, diags);
+        }
+        GdExpr::Ternary { condition, true_val, false_val, .. } => {
+            check_expr_for_tree_calls(condition, unattached, attached, diags);
+            check_expr_for_tree_calls(true_val, unattached, attached, diags);
+            check_expr_for_tree_calls(false_val, unattached, attached, diags);
+        }
+        GdExpr::Array { elements, .. } => {
+            for e in elements {
+                check_expr_for_tree_calls(e, unattached, attached, diags);
+            }
+        }
+        GdExpr::Dict { pairs, .. } => {
+            for (k, v) in pairs {
+                check_expr_for_tree_calls(k, unattached, attached, diags);
+                check_expr_for_tree_calls(v, unattached, attached, diags);
+            }
+        }
+        GdExpr::Cast { expr: inner, .. }
+        | GdExpr::Is { expr: inner, .. }
+        | GdExpr::Await { expr: inner, .. } => {
+            check_expr_for_tree_calls(inner, unattached, attached, diags);
+        }
+        _ => {}
     }
 }
 
-/// Extract `(var_name, line)` from `var x = Foo.new()` or `var x := Foo.new()`.
-fn extract_new_assignment(node: &Node, source: &str) -> Option<(String, usize)> {
-    let name = node
-        .child_by_field_name("name")?
-        .utf8_text(source.as_bytes())
-        .ok()?;
-    let value = node.child_by_field_name("value")?;
-    if is_new_call(&value, source) {
-        Some((name.to_string(), node.start_position().row))
-    } else {
-        None
-    }
-}
-
-/// Extract from `x = Foo.new()` reassignment.
-fn extract_new_reassignment(node: &Node, source: &str) -> Option<(String, usize)> {
-    let lhs = node.named_child(0)?;
-    if lhs.kind() != "identifier" {
-        return None;
-    }
-    let name = lhs.utf8_text(source.as_bytes()).ok()?;
-    // RHS is the last named child
-    let rhs = node.named_child(node.named_child_count() - 1)?;
-    if is_new_call(&rhs, source) {
-        Some((name.to_string(), node.start_position().row))
-    } else {
-        None
-    }
-}
-
-/// Check if a node is a `.new()` call: attribute > [identifier, attribute_call > [identifier("new")]]
-fn is_new_call(node: &Node, source: &str) -> bool {
-    if node.kind() != "attribute" {
-        return false;
-    }
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        if child.kind() == "attribute_call"
-            && let Some(name_node) = child.named_child(0)
-            && name_node.utf8_text(source.as_bytes()).ok() == Some("new")
+/// Extract the first identifier argument name from `add_child(x)` / `add_sibling(x)` calls.
+fn extract_add_child_arg<'a>(expr: &GdExpr<'a>) -> Option<&'a str> {
+    match expr {
+        // add_child(x) — direct call
+        GdExpr::Call { callee, args, .. } => {
+            if let GdExpr::Ident { name: func, .. } = callee.as_ref()
+                && matches!(*func, "add_child" | "add_sibling")
+                && let Some(GdExpr::Ident { name, .. }) = args.first()
+            {
+                return Some(name);
+            }
+            None
+        }
+        // self.add_child(x) or parent.add_child(x)
+        GdExpr::MethodCall { method, args, .. }
+            if matches!(*method, "add_child" | "add_sibling") =>
         {
-            return true;
-        }
-    }
-    false
-}
-
-/// Check if a node is `add_child(...)` or `add_sibling(...)`.
-fn is_add_child_call(node: &Node, source: &str) -> bool {
-    // Direct call: add_child(x)
-    if node.kind() == "call"
-        && let Some(id) = node.named_child(0)
-        && id.kind() == "identifier"
-        && let Ok(name) = id.utf8_text(source.as_bytes())
-    {
-        return matches!(name, "add_child" | "add_sibling");
-    }
-    // Also expression_statement wrapping a call or attribute call
-    if node.kind() == "expression_statement" {
-        let mut cursor = node.walk();
-        for child in node.children(&mut cursor) {
-            if is_add_child_call(&child, source) {
-                return true;
+            if let Some(GdExpr::Ident { name, .. }) = args.first() {
+                return Some(name);
             }
-            // self.add_child(x) → attribute > [identifier("self"), attribute_call > [identifier("add_child"), arguments]]
-            if child.kind() == "attribute"
-                && let Some((_, method)) = extract_method_call(&child, source)
-                && matches!(method.as_str(), "add_child" | "add_sibling")
-            {
-                return true;
-            }
+            None
         }
+        _ => None,
     }
-    false
-}
-
-/// Extract first positional argument name from a call or attribute_call.
-fn extract_first_arg(node: &Node, source: &str) -> Option<String> {
-    // For expression_statement, look inside
-    if node.kind() == "expression_statement" {
-        let mut cursor = node.walk();
-        for child in node.children(&mut cursor) {
-            if let Some(arg) = extract_first_arg(&child, source) {
-                return Some(arg);
-            }
-        }
-        return None;
-    }
-
-    // Direct call: call > [identifier, arguments > [identifier]]
-    if node.kind() == "call" {
-        let mut cursor = node.walk();
-        for child in node.children(&mut cursor) {
-            if child.kind() == "arguments"
-                && let Some(first) = child.named_child(0)
-                && first.kind() == "identifier"
-            {
-                return first.utf8_text(source.as_bytes()).ok().map(String::from);
-            }
-        }
-    }
-
-    // Attribute call: attribute > [..., attribute_call > [identifier, arguments]]
-    if node.kind() == "attribute" {
-        let mut cursor = node.walk();
-        for child in node.children(&mut cursor) {
-            if child.kind() == "attribute_call" {
-                let mut inner_cursor = child.walk();
-                for inner in child.children(&mut inner_cursor) {
-                    if inner.kind() == "arguments"
-                        && let Some(first) = inner.named_child(0)
-                        && first.kind() == "identifier"
-                    {
-                        return first.utf8_text(source.as_bytes()).ok().map(String::from);
-                    }
-                }
-            }
-        }
-    }
-
-    None
 }
 
 /// Global properties that are silently wrong when set before the node is in the tree.
@@ -318,68 +249,8 @@ const GLOBAL_PROPERTIES: &[&str] = &[
     "global_basis",
 ];
 
-/// Extract `(object_name, property_name)` from assignments like `obj.global_position = ...`.
-/// Handles both `assignment_statement` and `expression_statement > assignment`.
-fn extract_global_property_assignment(node: &Node, source: &str) -> Option<(String, String)> {
-    let assign = if node.kind() == "expression_statement" {
-        // Look for `assignment` or `augmented_assignment` inside
-        let mut cursor = node.walk();
-        let mut found = None;
-        for child in node.children(&mut cursor) {
-            if child.kind() == "assignment" || child.kind() == "augmented_assignment" {
-                found = Some(child);
-                break;
-            }
-        }
-        found?
-    } else if node.kind() == "assignment_statement"
-        || node.kind() == "augmented_assignment_statement"
-    {
-        *node
-    } else {
-        return None;
-    };
-
-    // LHS is the first named child
-    let lhs = assign.named_child(0)?;
-    if lhs.kind() != "attribute" {
-        return None;
-    }
-    let obj = lhs.named_child(0)?;
-    if obj.kind() != "identifier" {
-        return None;
-    }
-    let obj_name = obj.utf8_text(source.as_bytes()).ok()?;
-    let prop = lhs.named_child(1)?;
-    let prop_name = prop.utf8_text(source.as_bytes()).ok()?;
-    if GLOBAL_PROPERTIES.contains(&prop_name) {
-        Some((obj_name.to_string(), prop_name.to_string()))
-    } else {
-        None
-    }
-}
-
-/// Extract (object_name, method_name) from `obj.method(...)` call.
-fn extract_method_call(node: &Node, source: &str) -> Option<(String, String)> {
-    if node.kind() != "attribute" {
-        return None;
-    }
-    let obj = node.named_child(0)?;
-    if obj.kind() != "identifier" {
-        return None;
-    }
-    let obj_name = obj.utf8_text(source.as_bytes()).ok()?;
-
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        if child.kind() == "attribute_call"
-            && let Some(name_node) = child.named_child(0)
-            && let Ok(method_name) = name_node.utf8_text(source.as_bytes())
-        {
-            return Some((obj_name.to_string(), method_name.to_string()));
-        }
-    }
-    None
+fn is_global_property(name: &str) -> bool {
+    GLOBAL_PROPERTIES.contains(&name)
 }
 
 #[cfg(test)]
