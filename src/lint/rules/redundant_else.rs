@@ -1,4 +1,4 @@
-use crate::core::gd_ast::{self, GdFile, GdIf, GdStmt};
+use crate::core::gd_ast::{self, GdFile, GdStmt};
 
 use super::{Fix, LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -36,8 +36,8 @@ fn check_redundant_else(stmt: &GdStmt<'_>, source: &str, diags: &mut Vec<LintDia
         return;
     }
 
-    // The else clause node is found via the raw tree-sitter node
-    let Some(else_node) = find_else_clause(gif) else { return };
+    // The else clause node is captured during typed AST conversion
+    let Some(else_node) = gif.else_node else { return };
 
     diags.push(LintDiagnostic {
         rule: "redundant-else",
@@ -60,14 +60,6 @@ fn body_always_terminates(body: &[GdStmt<'_>]) -> bool {
             GdStmt::Return { .. } | GdStmt::Break { .. } | GdStmt::Continue { .. }
         )
     })
-}
-
-/// Find the `else_clause` node from the raw if_statement tree-sitter node.
-fn find_else_clause<'a>(gif: &GdIf<'a>) -> Option<tree_sitter::Node<'a>> {
-    let mut cursor = gif.node.walk();
-    gif.node
-        .children(&mut cursor)
-        .find(|child| child.kind() == "else_clause")
 }
 
 fn generate_else_fix(else_node: &tree_sitter::Node<'_>, source: &str) -> Option<Fix> {

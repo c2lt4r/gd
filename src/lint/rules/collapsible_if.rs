@@ -45,7 +45,7 @@ fn check_collapsible_if(stmt: &GdStmt<'_>, source: &str, diags: &mut Vec<LintDia
     let outer_cond = &source[gif.condition.node().byte_range()];
     let inner_cond = &source[inner.condition.node().byte_range()];
 
-    let fix = generate_fix(gif.node, inner.node, outer_cond, inner_cond, source);
+    let fix = generate_fix(gif.node, &inner.body, outer_cond, inner_cond, source);
 
     diags.push(LintDiagnostic {
         rule: "collapsible-if",
@@ -63,12 +63,14 @@ fn check_collapsible_if(stmt: &GdStmt<'_>, source: &str, diags: &mut Vec<LintDia
 
 fn generate_fix(
     outer_if: tree_sitter::Node<'_>,
-    inner_if: tree_sitter::Node<'_>,
+    inner_body: &[GdStmt<'_>],
     outer_cond: &str,
     inner_cond: &str,
     source: &str,
 ) -> Option<Fix> {
     let source_bytes = source.as_bytes();
+    let first_stmt = inner_body.first()?;
+    let last_stmt = inner_body.last()?;
 
     // Find start of the line containing the outer if
     let mut line_start = outer_if.start_byte();
@@ -77,57 +79,36 @@ fn generate_fix(
     }
     let indent = &source[line_start..outer_if.start_byte()];
 
-    // Get the inner if's body
-    let inner_body = inner_if.child_by_field_name("body")?;
+    // Get byte range of body statements (line-start of first to end of last)
+    let mut body_start = first_stmt.node().start_byte();
+    while body_start > 0 && source_bytes[body_start - 1] != b'\n' {
+        body_start -= 1;
+    }
+    let last_end = last_stmt.node().end_byte();
+    let body_end = if last_end < source_bytes.len() && source_bytes[last_end] == b'\n' {
+        last_end + 1
+    } else {
+        last_end
+    };
 
-    // Collect body content and re-indent
+    let raw_body = &source[body_start..body_end];
+    let outer_body_indent = format!("{indent}\t");
+    let first_line = raw_body.lines().next().unwrap_or("");
+    let current_indent_len = first_line.len() - first_line.trim_start().len();
+
     let mut body_lines = String::new();
-    let mut c2 = inner_body.walk();
-    if c2.goto_first_child() {
-        let mut first_named_start = None;
-        let mut last_end = inner_body.end_byte();
-        loop {
-            let child = c2.node();
-            if child.is_named() && child.kind() != "comment" {
-                if first_named_start.is_none() {
-                    let mut ls = child.start_byte();
-                    while ls > 0 && source_bytes[ls - 1] != b'\n' {
-                        ls -= 1;
-                    }
-                    first_named_start = Some(ls);
-                }
-                last_end = child.end_byte();
-            }
-            if !c2.goto_next_sibling() {
-                break;
-            }
-        }
-
-        let body_start = first_named_start?;
-        let body_end = if last_end < source_bytes.len() && source_bytes[last_end] == b'\n' {
-            last_end + 1
+    for line in raw_body.lines() {
+        if line.trim().is_empty() {
+            body_lines.push('\n');
         } else {
-            last_end
-        };
-
-        let raw_body = &source[body_start..body_end];
-        let outer_body_indent = format!("{indent}\t");
-        let first_line = raw_body.lines().next().unwrap_or("");
-        let current_indent_len = first_line.len() - first_line.trim_start().len();
-
-        for line in raw_body.lines() {
-            if line.trim().is_empty() {
-                body_lines.push('\n');
+            let stripped = if line.len() >= current_indent_len {
+                &line[current_indent_len..]
             } else {
-                let stripped = if line.len() >= current_indent_len {
-                    &line[current_indent_len..]
-                } else {
-                    line.trim_start()
-                };
-                body_lines.push_str(&outer_body_indent);
-                body_lines.push_str(stripped);
-                body_lines.push('\n');
-            }
+                line.trim_start()
+            };
+            body_lines.push_str(&outer_body_indent);
+            body_lines.push_str(stripped);
+            body_lines.push('\n');
         }
     }
 

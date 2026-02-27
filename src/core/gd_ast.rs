@@ -143,6 +143,8 @@ pub struct GdIf<'a> {
     pub body: Vec<GdStmt<'a>>,
     pub elif_branches: Vec<(GdExpr<'a>, Vec<GdStmt<'a>>)>,
     pub else_body: Option<Vec<GdStmt<'a>>>,
+    /// Raw tree-sitter `else_clause` node (for position/fix generation).
+    pub else_node: Option<Node<'a>>,
 }
 
 /// A single `match` arm (patterns + optional guard + body).
@@ -1093,6 +1095,7 @@ fn convert_if<'a>(node: Node<'a>, source: &'a str) -> GdIf<'a> {
 
     let mut elif_branches = Vec::new();
     let mut else_body = None;
+    let mut else_node = None;
 
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
@@ -1109,6 +1112,7 @@ fn convert_if<'a>(node: Node<'a>, source: &'a str) -> GdIf<'a> {
                 elif_branches.push((cond, stmts));
             }
             "else_clause" => {
+                else_node = Some(child);
                 else_body = child
                     .child_by_field_name("body")
                     .map(|b| convert_body(b, source));
@@ -1117,7 +1121,7 @@ fn convert_if<'a>(node: Node<'a>, source: &'a str) -> GdIf<'a> {
         }
     }
 
-    GdIf { node, condition, body, elif_branches, else_body }
+    GdIf { node, condition, body, elif_branches, else_body, else_node }
 }
 
 fn convert_for<'a>(node: Node<'a>, source: &'a str) -> GdStmt<'a> {
