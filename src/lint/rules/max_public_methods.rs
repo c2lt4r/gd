@@ -1,4 +1,5 @@
-use tree_sitter::{Node, Tree};
+use tree_sitter::Node;
+use crate::core::gd_ast::GdFile;
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -18,10 +19,10 @@ impl LintRule for MaxPublicMethods {
         false
     }
 
-    fn check(&self, tree: &Tree, source: &str, config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, file: &GdFile<'_>, source: &str, config: &LintConfig) -> Vec<LintDiagnostic> {
         let max_methods = config.max_public_methods;
         let mut diags = Vec::new();
-        let root = tree.root_node();
+        let root = file.node;
 
         // Check top-level scope (the script itself acts as a class)
         let top_level_count = count_public_methods(root, source);
@@ -114,13 +115,15 @@ fn check_classes(node: Node, source: &str, max_methods: usize, diags: &mut Vec<L
 mod tests {
     use super::*;
     use crate::core::parser;
+    use crate::core::gd_ast;
 
     const DEFAULT_MAX_PUBLIC_METHODS: usize = 20;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();
+        let file = gd_ast::convert(&tree, source);
         let config = LintConfig::default();
-        MaxPublicMethods.check(&tree, source, &config)
+        MaxPublicMethods.check(&file, source, &config)
     }
 
     fn make_methods(public: usize, private: usize) -> String {

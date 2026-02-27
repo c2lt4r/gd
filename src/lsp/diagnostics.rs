@@ -6,6 +6,7 @@ pub fn lint_source(source: &str, uri: &Url) -> Vec<Diagnostic> {
     let Ok(tree) = crate::core::parser::parse(source) else {
         return vec![];
     };
+    let file = crate::core::gd_ast::convert(&tree, source);
 
     // Load config, searching upward from the file's directory
     let config = uri
@@ -51,7 +52,7 @@ pub fn lint_source(source: &str, uri: &Url) -> Vec<Diagnostic> {
         {
             continue;
         }
-        diags.extend(rule.check(&tree, source, &config.lint));
+        diags.extend(rule.check(&file, source, &config.lint));
     }
 
     // Parse suppressions and filter

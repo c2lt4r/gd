@@ -1,4 +1,5 @@
-use tree_sitter::{Node, Tree};
+use tree_sitter::Node;
+use crate::core::gd_ast::GdFile;
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -14,9 +15,9 @@ impl LintRule for GetNodeInProcess {
         LintCategory::Performance
     }
 
-    fn check(&self, tree: &Tree, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        let root = tree.root_node();
+        let root = file.node;
         find_process_functions(root, source, &mut diags);
         diags
     }
@@ -153,11 +154,13 @@ fn check_attribute_get_node(
 mod tests {
     use super::*;
     use crate::core::parser;
+    use crate::core::gd_ast;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();
+        let file = gd_ast::convert(&tree, source);
         let config = LintConfig::default();
-        GetNodeInProcess.check(&tree, source, &config)
+        GetNodeInProcess.check(&file, source, &config)
     }
 
     #[test]

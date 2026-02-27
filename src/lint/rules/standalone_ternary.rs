@@ -1,4 +1,4 @@
-use tree_sitter::{Node, Tree};
+use crate::core::gd_ast::{self, GdExpr, GdFile, GdStmt};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -14,57 +14,47 @@ impl LintRule for StandaloneTernary {
         LintCategory::Suspicious
     }
 
-    fn check(&self, tree: &Tree, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        check_node(tree.root_node(), source, &mut diags);
-        diags
-    }
-}
-
-fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    // A ternary used as a statement (expression_statement > conditional_expression)
-    if node.kind() == "expression_statement"
-        && let Some(expr) = node.named_child(0)
-        && (expr.kind() == "conditional_expression" || expr.kind() == "ternary_expression")
-    {
-        let text = expr.utf8_text(source.as_bytes()).ok().unwrap_or("?");
-        let display = if text.len() > 40 {
-            format!("{}...", &text[..37])
-        } else {
-            text.to_string()
-        };
-        diags.push(LintDiagnostic {
-            rule: "standalone-ternary",
-            message: format!("ternary expression `{display}` used as statement; result is unused"),
-            severity: Severity::Warning,
-            line: node.start_position().row,
-            column: node.start_position().column,
-            end_column: Some(node.end_position().column),
-            fix: None,
-            context_lines: None,
-        });
-    }
-
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            check_node(cursor.node(), source, diags);
-            if !cursor.goto_next_sibling() {
-                break;
+        gd_ast::visit_stmts(file, &mut |stmt| {
+            if let GdStmt::Expr { node, expr } = stmt
+                && matches!(expr, GdExpr::Ternary { .. })
+            {
+                let text = &source[expr.node().byte_range()];
+                let display = if text.len() > 40 {
+                    format!("{}...", &text[..37])
+                } else {
+                    text.to_string()
+                };
+                diags.push(LintDiagnostic {
+                    rule: "standalone-ternary",
+                    message: format!(
+                        "ternary expression `{display}` used as statement; result is unused"
+                    ),
+                    severity: Severity::Warning,
+                    line: node.start_position().row,
+                    column: node.start_position().column,
+                    end_column: Some(node.end_position().column),
+                    fix: None,
+                    context_lines: None,
+                });
             }
-        }
+        });
+        diags
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::gd_ast;
     use crate::core::parser;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();
+        let file = gd_ast::convert(&tree, source);
         let config = LintConfig::default();
-        StandaloneTernary.check(&tree, source, &config)
+        StandaloneTernary.check(&file, source, &config)
     }
 
     #[test]

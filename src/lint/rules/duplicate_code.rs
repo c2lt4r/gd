@@ -1,4 +1,5 @@
-use tree_sitter::{Node, Tree};
+use tree_sitter::Node;
+use crate::core::gd_ast::GdFile;
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -18,14 +19,14 @@ impl LintRule for DuplicateCode {
         false
     }
 
-    fn check(&self, tree: &Tree, source: &str, config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, file: &GdFile<'_>, source: &str, config: &LintConfig) -> Vec<LintDiagnostic> {
         let rule_config = config.rules.get("duplicate-code");
         let min_statements = rule_config.and_then(|r| r.min_statements).unwrap_or(5);
         let threshold = rule_config
             .and_then(|r| r.similarity_threshold)
             .unwrap_or(80);
 
-        let functions = collect_functions(tree.root_node(), source);
+        let functions = collect_functions(file.node, source);
         find_duplicates(&functions, min_statements, threshold)
     }
 }
@@ -400,15 +401,18 @@ fn emit_diagnostics(functions: &[FunctionInfo], groups: &[DuplicateGroup]) -> Ve
 mod tests {
     use super::*;
     use crate::core::parser;
+    use crate::core::gd_ast;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();
+        let file = gd_ast::convert(&tree, source);
         let config = LintConfig::default();
-        DuplicateCode.check(&tree, source, &config)
+        DuplicateCode.check(&file, source, &config)
     }
 
     fn check_with_config(source: &str, min_stmts: usize, threshold: usize) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();
+        let file = gd_ast::convert(&tree, source);
         let mut config = LintConfig::default();
         let rule_config = crate::core::config::RuleConfig {
             min_statements: Some(min_stmts),
@@ -418,7 +422,7 @@ mod tests {
         config
             .rules
             .insert("duplicate-code".to_string(), rule_config);
-        DuplicateCode.check(&tree, source, &config)
+        DuplicateCode.check(&file, source, &config)
     }
 
     #[test]

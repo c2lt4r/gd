@@ -307,6 +307,276 @@ impl<'a> GdStmt<'a> {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
+//  Visitors — pre-order traversal helpers
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Visit every expression in the file (pre-order).
+pub fn visit_exprs<'a>(file: &GdFile<'a>, f: &mut impl FnMut(&GdExpr<'a>)) {
+    for decl in &file.declarations {
+        visit_decl_exprs(decl, f);
+    }
+}
+
+/// Visit every statement in the file (pre-order).
+pub fn visit_stmts<'a>(file: &GdFile<'a>, f: &mut impl FnMut(&GdStmt<'a>)) {
+    for decl in &file.declarations {
+        visit_decl_stmts(decl, f);
+    }
+}
+
+/// Visit every declaration in the file (pre-order).
+pub fn visit_decls<'a>(file: &GdFile<'a>, f: &mut impl FnMut(&GdDecl<'a>)) {
+    for decl in &file.declarations {
+        visit_decl(decl, f);
+    }
+}
+
+// ── Declaration visitors ────────────────────────────────────────────
+
+fn visit_decl<'a>(decl: &GdDecl<'a>, f: &mut impl FnMut(&GdDecl<'a>)) {
+    f(decl);
+    if let GdDecl::Class(cls) = decl {
+        for inner in &cls.declarations {
+            visit_decl(inner, f);
+        }
+    }
+}
+
+fn visit_decl_stmts<'a>(decl: &GdDecl<'a>, f: &mut impl FnMut(&GdStmt<'a>)) {
+    match decl {
+        GdDecl::Func(func) => {
+            for stmt in &func.body {
+                visit_stmt(stmt, f);
+            }
+        }
+        GdDecl::Class(cls) => {
+            for inner in &cls.declarations {
+                visit_decl_stmts(inner, f);
+            }
+        }
+        GdDecl::Var(_) | GdDecl::Signal(_) | GdDecl::Enum(_) => {}
+    }
+}
+
+fn visit_decl_exprs<'a>(decl: &GdDecl<'a>, f: &mut impl FnMut(&GdExpr<'a>)) {
+    match decl {
+        GdDecl::Func(func) => {
+            for param in &func.params {
+                if let Some(default) = &param.default {
+                    visit_expr(default, f);
+                }
+            }
+            for stmt in &func.body {
+                visit_stmt_exprs(stmt, f);
+            }
+        }
+        GdDecl::Var(var) => {
+            if let Some(value) = &var.value {
+                visit_expr(value, f);
+            }
+        }
+        GdDecl::Class(cls) => {
+            for inner in &cls.declarations {
+                visit_decl_exprs(inner, f);
+            }
+        }
+        GdDecl::Enum(e) => {
+            for member in &e.members {
+                if let Some(value) = &member.value {
+                    visit_expr(value, f);
+                }
+            }
+        }
+        GdDecl::Signal(_) => {}
+    }
+}
+
+// ── Statement visitors ──────────────────────────────────────────────
+
+fn visit_stmt<'a>(stmt: &GdStmt<'a>, f: &mut impl FnMut(&GdStmt<'a>)) {
+    f(stmt);
+    match stmt {
+        GdStmt::If(if_stmt) => {
+            for s in &if_stmt.body {
+                visit_stmt(s, f);
+            }
+            for (_, branch) in &if_stmt.elif_branches {
+                for s in branch {
+                    visit_stmt(s, f);
+                }
+            }
+            if let Some(else_body) = &if_stmt.else_body {
+                for s in else_body {
+                    visit_stmt(s, f);
+                }
+            }
+        }
+        GdStmt::For { body, .. } | GdStmt::While { body, .. } => {
+            for s in body {
+                visit_stmt(s, f);
+            }
+        }
+        GdStmt::Match { arms, .. } => {
+            for arm in arms {
+                for s in &arm.body {
+                    visit_stmt(s, f);
+                }
+            }
+        }
+        GdStmt::Expr { .. }
+        | GdStmt::Var(_)
+        | GdStmt::Assign { .. }
+        | GdStmt::AugAssign { .. }
+        | GdStmt::Return { .. }
+        | GdStmt::Pass { .. }
+        | GdStmt::Break { .. }
+        | GdStmt::Continue { .. }
+        | GdStmt::Breakpoint { .. }
+        | GdStmt::Invalid { .. } => {}
+    }
+}
+
+fn visit_stmt_exprs<'a>(stmt: &GdStmt<'a>, f: &mut impl FnMut(&GdExpr<'a>)) {
+    match stmt {
+        GdStmt::Expr { expr, .. } => visit_expr(expr, f),
+        GdStmt::Var(var) => {
+            if let Some(value) = &var.value {
+                visit_expr(value, f);
+            }
+        }
+        GdStmt::Assign { target, value, .. } | GdStmt::AugAssign { target, value, .. } => {
+            visit_expr(target, f);
+            visit_expr(value, f);
+        }
+        GdStmt::Return { value, .. } => {
+            if let Some(v) = value {
+                visit_expr(v, f);
+            }
+        }
+        GdStmt::If(if_stmt) => {
+            visit_expr(&if_stmt.condition, f);
+            for s in &if_stmt.body {
+                visit_stmt_exprs(s, f);
+            }
+            for (cond, branch) in &if_stmt.elif_branches {
+                visit_expr(cond, f);
+                for s in branch {
+                    visit_stmt_exprs(s, f);
+                }
+            }
+            if let Some(else_body) = &if_stmt.else_body {
+                for s in else_body {
+                    visit_stmt_exprs(s, f);
+                }
+            }
+        }
+        GdStmt::For { iter, body, .. } => {
+            visit_expr(iter, f);
+            for s in body {
+                visit_stmt_exprs(s, f);
+            }
+        }
+        GdStmt::While { condition, body, .. } => {
+            visit_expr(condition, f);
+            for s in body {
+                visit_stmt_exprs(s, f);
+            }
+        }
+        GdStmt::Match { value, arms, .. } => {
+            visit_expr(value, f);
+            for arm in arms {
+                for pat in &arm.patterns {
+                    visit_expr(pat, f);
+                }
+                if let Some(guard) = &arm.guard {
+                    visit_expr(guard, f);
+                }
+                for s in &arm.body {
+                    visit_stmt_exprs(s, f);
+                }
+            }
+        }
+        GdStmt::Pass { .. }
+        | GdStmt::Break { .. }
+        | GdStmt::Continue { .. }
+        | GdStmt::Breakpoint { .. }
+        | GdStmt::Invalid { .. } => {}
+    }
+}
+
+// ── Expression visitor ──────────────────────────────────────────────
+
+fn visit_expr<'a>(expr: &GdExpr<'a>, f: &mut impl FnMut(&GdExpr<'a>)) {
+    f(expr);
+    match expr {
+        GdExpr::BinOp { left, right, .. } => {
+            visit_expr(left, f);
+            visit_expr(right, f);
+        }
+        GdExpr::UnaryOp { operand, .. } => visit_expr(operand, f),
+        GdExpr::Call { callee, args, .. } => {
+            visit_expr(callee, f);
+            for arg in args {
+                visit_expr(arg, f);
+            }
+        }
+        GdExpr::MethodCall { receiver, args, .. } => {
+            visit_expr(receiver, f);
+            for arg in args {
+                visit_expr(arg, f);
+            }
+        }
+        GdExpr::SuperCall { args, .. } => {
+            for arg in args {
+                visit_expr(arg, f);
+            }
+        }
+        GdExpr::PropertyAccess { receiver, .. } => visit_expr(receiver, f),
+        GdExpr::Subscript { receiver, index, .. } => {
+            visit_expr(receiver, f);
+            visit_expr(index, f);
+        }
+        GdExpr::Cast { expr: inner, .. } | GdExpr::Is { expr: inner, .. } => {
+            visit_expr(inner, f);
+        }
+        GdExpr::Ternary { true_val, condition, false_val, .. } => {
+            visit_expr(true_val, f);
+            visit_expr(condition, f);
+            visit_expr(false_val, f);
+        }
+        GdExpr::Await { expr: inner, .. } => visit_expr(inner, f),
+        GdExpr::Array { elements, .. } => {
+            for e in elements {
+                visit_expr(e, f);
+            }
+        }
+        GdExpr::Dict { pairs, .. } => {
+            for (k, v) in pairs {
+                visit_expr(k, f);
+                visit_expr(v, f);
+            }
+        }
+        GdExpr::Lambda { func, .. } => {
+            for param in &func.params {
+                if let Some(default) = &param.default {
+                    visit_expr(default, f);
+                }
+            }
+        }
+        GdExpr::IntLiteral { .. }
+        | GdExpr::FloatLiteral { .. }
+        | GdExpr::StringLiteral { .. }
+        | GdExpr::StringName { .. }
+        | GdExpr::Bool { .. }
+        | GdExpr::Null { .. }
+        | GdExpr::Ident { .. }
+        | GdExpr::GetNode { .. }
+        | GdExpr::Preload { .. }
+        | GdExpr::Invalid { .. } => {}
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 //  Conversion — public entry point
 // ═══════════════════════════════════════════════════════════════════════
 

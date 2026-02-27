@@ -1,4 +1,5 @@
-use tree_sitter::{Node, Tree};
+use tree_sitter::Node;
+use crate::core::gd_ast::GdFile;
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -14,9 +15,9 @@ impl LintRule for CyclomaticComplexity {
         LintCategory::Complexity
     }
 
-    fn check(&self, tree: &Tree, source: &str, config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, file: &GdFile<'_>, source: &str, config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        let root = tree.root_node();
+        let root = file.node;
         let max_complexity = config
             .rules
             .get("cyclomatic-complexity")
@@ -167,16 +168,19 @@ fn is_guard_clause(if_node: &Node) -> bool {
 mod tests {
     use super::*;
     use crate::core::parser;
+    use crate::core::gd_ast;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();
+        let file = gd_ast::convert(&tree, source);
         let config = LintConfig::default();
-        CyclomaticComplexity.check(&tree, source, &config)
+        CyclomaticComplexity.check(&file, source, &config)
     }
 
     fn complexity_of(source: &str) -> usize {
         let tree = parser::parse(source).unwrap();
-        let root = tree.root_node();
+        let file = gd_ast::convert(&tree, source);
+        let root = file.node;
         let mut cursor = root.walk();
         cursor.goto_first_child();
         loop {

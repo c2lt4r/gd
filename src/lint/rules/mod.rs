@@ -103,9 +103,9 @@ pub mod unused_private_function;
 use std::collections::HashMap;
 use std::fmt;
 use std::str::FromStr;
-use tree_sitter::Tree;
 
 use crate::core::config::{LintConfig, RuleConfig};
+use crate::core::gd_ast::GdFile;
 use crate::core::symbol_table::SymbolTable;
 use crate::core::workspace_index::ProjectIndex;
 
@@ -245,19 +245,19 @@ pub trait LintRule: Send + Sync {
     }
 
     /// Run the rule against a parsed file and return diagnostics.
-    fn check(&self, tree: &Tree, source: &str, config: &LintConfig) -> Vec<LintDiagnostic>;
+    fn check(&self, file: &GdFile<'_>, source: &str, config: &LintConfig) -> Vec<LintDiagnostic>;
 
     /// Run the rule with access to the per-file symbol table.
     /// Default delegates to `check()`, ignoring the symbol table.
     /// Override this in rules that need declaration-level type information.
     fn check_with_symbols(
         &self,
-        tree: &Tree,
+        file: &GdFile<'_>,
         source: &str,
         config: &LintConfig,
         _symbols: &SymbolTable,
     ) -> Vec<LintDiagnostic> {
-        self.check(tree, source, config)
+        self.check(file, source, config)
     }
 
     /// Run the rule with access to the project-wide symbol index.
@@ -265,13 +265,13 @@ pub trait LintRule: Send + Sync {
     /// Override this in rules that need cross-file resolution (Layer 3).
     fn check_with_project(
         &self,
-        tree: &Tree,
+        file: &GdFile<'_>,
         source: &str,
         config: &LintConfig,
         symbols: &SymbolTable,
         _project: &ProjectIndex,
     ) -> Vec<LintDiagnostic> {
-        self.check_with_symbols(tree, source, config, symbols)
+        self.check_with_symbols(file, source, config, symbols)
     }
 }
 

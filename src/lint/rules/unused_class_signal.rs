@@ -1,4 +1,4 @@
-use tree_sitter::Tree;
+use crate::core::gd_ast::GdFile;
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -20,13 +20,13 @@ impl LintRule for UnusedClassSignal {
         false
     }
 
-    fn check(&self, _tree: &Tree, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, _file: &GdFile<'_>, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         Vec::new()
     }
 
     fn check_with_project(
         &self,
-        _tree: &Tree,
+        _file: &GdFile<'_>,
         source: &str,
         _config: &LintConfig,
         symbols: &SymbolTable,
@@ -169,6 +169,7 @@ fn has_signal_reference(node: tree_sitter::Node, source: &[u8], name: &str) -> b
 mod tests {
     use super::*;
     use crate::core::workspace_index;
+    use crate::core::gd_ast;
     use crate::core::{parser, symbol_table};
     use std::path::PathBuf;
 
@@ -181,9 +182,10 @@ mod tests {
         let project = workspace_index::build_from_sources(&root, &file_entries, &[]);
 
         let tree = parser::parse(source).unwrap();
+        let file = gd_ast::convert(&tree, source);
         let symbols = symbol_table::build(&tree, source);
         let config = LintConfig::default();
-        UnusedClassSignal.check_with_project(&tree, source, &config, &symbols, &project)
+        UnusedClassSignal.check_with_project(&file, source, &config, &symbols, &project)
     }
 
     #[test]
@@ -212,10 +214,11 @@ signal health_changed(value: int)
 
         let project = crate::core::workspace_index::ProjectIndex::build(dir.path());
         let tree = parser::parse(emitter).unwrap();
+        let file = gd_ast::convert(&tree, emitter);
         let symbols = symbol_table::build(&tree, emitter);
         let config = LintConfig::default();
         let diags =
-            UnusedClassSignal.check_with_project(&tree, emitter, &config, &symbols, &project);
+            UnusedClassSignal.check_with_project(&file, emitter, &config, &symbols, &project);
         assert!(diags.is_empty(), "signal connected from listener.gd");
     }
 
@@ -256,10 +259,11 @@ signal _private_signal
 
         let project = crate::core::workspace_index::ProjectIndex::build(dir.path());
         let tree = parser::parse(source).unwrap();
+        let file = gd_ast::convert(&tree, source);
         let symbols = symbol_table::build(&tree, source);
         let config = LintConfig::default();
         let diags =
-            UnusedClassSignal.check_with_project(&tree, source, &config, &symbols, &project);
+            UnusedClassSignal.check_with_project(&file, source, &config, &symbols, &project);
         assert!(diags.is_empty(), "signal connected in .tscn");
     }
 

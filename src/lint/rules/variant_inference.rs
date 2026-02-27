@@ -1,4 +1,5 @@
-use tree_sitter::{Node, Tree};
+use tree_sitter::Node;
+use crate::core::gd_ast::GdFile;
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -21,20 +22,20 @@ impl LintRule for VariantInference {
         false
     }
 
-    fn check(&self, _tree: &Tree, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, _file: &GdFile<'_>, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         Vec::new()
     }
 
     fn check_with_project(
         &self,
-        tree: &Tree,
+        file: &GdFile<'_>,
         source: &str,
         _config: &LintConfig,
         symbols: &SymbolTable,
         project: &ProjectIndex,
     ) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        check_node(tree.root_node(), source, symbols, project, &mut diags);
+        check_node(file.node, source, symbols, project, &mut diags);
         diags
     }
 }
@@ -160,16 +161,18 @@ fn is_in_operator(node: &Node, source: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::gd_ast;
     use crate::core::{parser, symbol_table, workspace_index};
     use std::path::PathBuf;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();
+        let file = gd_ast::convert(&tree, source);
         let symbols = symbol_table::build(&tree, source);
         let config = LintConfig::default();
         let root = PathBuf::from("/test_project");
         let project = workspace_index::build_from_sources(&root, &[], &[]);
-        VariantInference.check_with_project(&tree, source, &config, &symbols, &project)
+        VariantInference.check_with_project(&file, source, &config, &symbols, &project)
     }
 
     fn check_with_files(source: &str, project_files: &[(&str, &str)]) -> Vec<LintDiagnostic> {
@@ -181,9 +184,10 @@ mod tests {
         let project = workspace_index::build_from_sources(&root, &file_entries, &[]);
 
         let tree = parser::parse(source).unwrap();
+        let file = gd_ast::convert(&tree, source);
         let symbols = symbol_table::build(&tree, source);
         let config = LintConfig::default();
-        VariantInference.check_with_project(&tree, source, &config, &symbols, &project)
+        VariantInference.check_with_project(&file, source, &config, &symbols, &project)
     }
 
     #[test]

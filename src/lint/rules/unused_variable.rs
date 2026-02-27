@@ -1,5 +1,6 @@
 use std::collections::HashMap;
-use tree_sitter::{Node, Tree};
+use tree_sitter::Node;
+use crate::core::gd_ast::GdFile;
 
 use super::{Fix, LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -15,9 +16,9 @@ impl LintRule for UnusedVariable {
         LintCategory::Maintenance
     }
 
-    fn check(&self, tree: &Tree, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        let root = tree.root_node();
+        let root = file.node;
 
         // Find all function definitions and check each scope
         collect_functions(root, source, &mut diags);

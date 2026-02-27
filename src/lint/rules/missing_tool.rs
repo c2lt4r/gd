@@ -1,4 +1,4 @@
-use tree_sitter::Tree;
+use crate::core::gd_ast::GdFile;
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -20,13 +20,13 @@ impl LintRule for MissingTool {
         false
     }
 
-    fn check(&self, _tree: &Tree, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, _file: &GdFile<'_>, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         Vec::new()
     }
 
     fn check_with_project(
         &self,
-        _tree: &Tree,
+        _file: &GdFile<'_>,
         _source: &str,
         _config: &LintConfig,
         symbols: &SymbolTable,
@@ -64,6 +64,7 @@ impl LintRule for MissingTool {
 mod tests {
     use super::*;
     use crate::core::workspace_index;
+    use crate::core::gd_ast;
     use crate::core::{parser, symbol_table};
     use std::path::PathBuf;
 
@@ -76,9 +77,10 @@ mod tests {
         let project = workspace_index::build_from_sources(&root, &file_entries, &[]);
 
         let tree = parser::parse(source).unwrap();
+        let file = gd_ast::convert(&tree, source);
         let symbols = symbol_table::build(&tree, source);
         let config = LintConfig::default();
-        MissingTool.check_with_project(&tree, source, &config, &symbols, &project)
+        MissingTool.check_with_project(&file, source, &config, &symbols, &project)
     }
 
     #[test]

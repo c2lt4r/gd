@@ -1,4 +1,5 @@
-use tree_sitter::{Node, Tree};
+use tree_sitter::Node;
+use crate::core::gd_ast::GdFile;
 
 use super::{Fix, LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -18,9 +19,9 @@ impl LintRule for PreferIsInstance {
         false
     }
 
-    fn check(&self, tree: &Tree, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        check_node(tree.root_node(), source, &mut diags);
+        check_node(file.node, source, &mut diags);
         diags
     }
 }
@@ -186,11 +187,13 @@ fn type_constant_to_type(constant: &str) -> Option<&'static str> {
 mod tests {
     use super::*;
     use crate::core::parser;
+    use crate::core::gd_ast;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();
+        let file = gd_ast::convert(&tree, source);
         let config = LintConfig::default();
-        PreferIsInstance.check(&tree, source, &config)
+        PreferIsInstance.check(&file, source, &config)
     }
 
     fn apply_fix(source: &str, fix: &Fix) -> String {

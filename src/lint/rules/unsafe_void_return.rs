@@ -1,4 +1,5 @@
-use tree_sitter::{Node, Tree};
+use tree_sitter::Node;
+use crate::core::gd_ast::GdFile;
 
 use super::{Fix, LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -23,32 +24,32 @@ impl LintRule for UnsafeVoidReturn {
         false
     }
 
-    fn check(&self, _tree: &Tree, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, _file: &GdFile<'_>, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         Vec::new()
     }
 
     fn check_with_symbols(
         &self,
-        tree: &Tree,
+        file: &GdFile<'_>,
         source: &str,
         _config: &LintConfig,
         symbols: &SymbolTable,
     ) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        check_node(tree.root_node(), source, symbols, None, &mut diags);
+        check_node(file.node, source, symbols, None, &mut diags);
         diags
     }
 
     fn check_with_project(
         &self,
-        tree: &Tree,
+        file: &GdFile<'_>,
         source: &str,
         _config: &LintConfig,
         symbols: &SymbolTable,
         project: &ProjectIndex,
     ) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        check_node(tree.root_node(), source, symbols, Some(project), &mut diags);
+        check_node(file.node, source, symbols, Some(project), &mut diags);
         diags
     }
 }
@@ -165,13 +166,15 @@ fn is_void_call(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::gd_ast;
     use crate::core::{parser, symbol_table};
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();
+        let file = gd_ast::convert(&tree, source);
         let symbols = symbol_table::build(&tree, source);
         let config = LintConfig::default();
-        UnsafeVoidReturn.check_with_symbols(&tree, source, &config, &symbols)
+        UnsafeVoidReturn.check_with_symbols(&file, source, &config, &symbols)
     }
 
     #[test]

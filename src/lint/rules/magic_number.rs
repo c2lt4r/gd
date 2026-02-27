@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
-use tree_sitter::{Node, Tree};
+use tree_sitter::Node;
+use crate::core::gd_ast::GdFile;
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -80,7 +81,7 @@ impl LintRule for MagicNumber {
         false
     }
 
-    fn check(&self, tree: &Tree, source: &str, config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, file: &GdFile<'_>, source: &str, config: &LintConfig) -> Vec<LintDiagnostic> {
         let rule_config = config.rules.get("magic-number");
 
         // Build allowed set from config or defaults
@@ -107,7 +108,7 @@ impl LintRule for MagicNumber {
         let min_value = rule_config.and_then(|rc| rc.min_value).unwrap_or(0.0);
 
         let mut diags = Vec::new();
-        let root = tree.root_node();
+        let root = file.node;
         let ctx = CheckContext {
             allowed: &allowed,
             allowed_contexts: &allowed_contexts,
@@ -330,17 +331,20 @@ mod tests {
     use super::*;
     use crate::core::config::{LintConfig, RuleConfig};
     use crate::core::parser;
+    use crate::core::gd_ast;
     use std::collections::HashMap;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();
+        let file = gd_ast::convert(&tree, source);
         let config = LintConfig::default();
-        MagicNumber.check(&tree, source, &config)
+        MagicNumber.check(&file, source, &config)
     }
 
     fn check_with_config(source: &str, config: &LintConfig) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();
-        MagicNumber.check(&tree, source, config)
+        let file = gd_ast::convert(&tree, source);
+        MagicNumber.check(&file, source, config)
     }
 
     #[test]

@@ -1,4 +1,5 @@
-use tree_sitter::{Node, Tree};
+use tree_sitter::Node;
+use crate::core::gd_ast::GdFile;
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -18,8 +19,8 @@ impl LintRule for EnumWithoutClassName {
         false
     }
 
-    fn check(&self, tree: &Tree, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
-        let root = tree.root_node();
+    fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+        let root = file.node;
         let bytes = source.as_bytes();
 
         // Pass 1: scan top-level for class_name and enum definitions
@@ -117,11 +118,13 @@ fn emit(diags: &mut Vec<LintDiagnostic>, type_text: &str, node: &Node) {
 mod tests {
     use super::*;
     use crate::core::parser;
+    use crate::core::gd_ast;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();
+        let file = gd_ast::convert(&tree, source);
         let config = LintConfig::default();
-        EnumWithoutClassName.check(&tree, source, &config)
+        EnumWithoutClassName.check(&file, source, &config)
     }
 
     #[test]

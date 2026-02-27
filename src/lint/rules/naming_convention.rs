@@ -1,4 +1,4 @@
-use tree_sitter::Tree;
+use crate::core::gd_ast::GdFile;
 
 use super::{Fix, LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -14,9 +14,9 @@ impl LintRule for NamingConvention {
         LintCategory::Style
     }
 
-    fn check(&self, tree: &Tree, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        let root = tree.root_node();
+        let root = file.node;
         let mut cursor = root.walk();
 
         check_node(root, source, &mut diags, &mut cursor);

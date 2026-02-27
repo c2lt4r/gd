@@ -7,6 +7,7 @@ use tower_lsp::lsp_types::{
 pub fn provide_code_actions(uri: &Url, source: &str, range: &Range) -> Option<CodeActionResponse> {
     // Parse and lint
     let tree = crate::core::parser::parse(source).ok()?;
+    let file = crate::core::gd_ast::convert(&tree, source);
     let config = std::env::current_dir()
         .ok()
         .and_then(|cwd| crate::core::config::Config::load(&cwd).ok())
@@ -20,7 +21,7 @@ pub fn provide_code_actions(uri: &Url, source: &str, range: &Range) -> Option<Co
 
     let mut all_diags = Vec::new();
     for rule in &rules {
-        all_diags.extend(rule.check(&tree, source, &config.lint));
+        all_diags.extend(rule.check(&file, source, &config.lint));
     }
 
     let mut actions = Vec::new();

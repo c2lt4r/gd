@@ -1,4 +1,4 @@
-use tree_sitter::{Node, Tree};
+use crate::core::gd_ast::{self, GdExpr, GdFile};
 
 use super::{Fix, LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -14,99 +14,65 @@ impl LintRule for ComparisonWithBoolean {
         LintCategory::Style
     }
 
-    fn check(&self, tree: &Tree, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        let root = tree.root_node();
-        check_node(root, source, &mut diags);
+        gd_ast::visit_exprs(file, &mut |expr| {
+            let GdExpr::BinOp { node, op, left, right, .. } = expr else { return };
+            if *op != "==" && *op != "!=" {
+                return;
+            }
+
+            let left_is_bool = matches!(left.as_ref(), GdExpr::Bool { .. });
+            let right_is_bool = matches!(right.as_ref(), GdExpr::Bool { .. });
+
+            if !left_is_bool && !right_is_bool {
+                return;
+            }
+
+            let suggestion = if *op == "==" {
+                "use the value directly (e.g. `if x:` instead of `if x == true:`)"
+            } else {
+                "use `not` (e.g. `if not x:` instead of `if x != true:`)"
+            };
+
+            let (bool_expr, other_expr) = if left_is_bool {
+                (left.as_ref(), right.as_ref())
+            } else {
+                (right.as_ref(), left.as_ref())
+            };
+
+            let bool_text = &source[bool_expr.node().byte_range()];
+            let other_text = &source[other_expr.node().byte_range()];
+
+            let fix = match (*op, bool_text) {
+                ("==", "true") | ("!=", "false") => Some(Fix {
+                    byte_start: node.start_byte(),
+                    byte_end: node.end_byte(),
+                    replacement: other_text.to_string(),
+                }),
+                ("==", "false") | ("!=", "true") => Some(Fix {
+                    byte_start: node.start_byte(),
+                    byte_end: node.end_byte(),
+                    replacement: format!("not {other_text}"),
+                }),
+                _ => None,
+            };
+
+            diags.push(LintDiagnostic {
+                rule: "comparison-with-boolean",
+                message: format!(
+                    "comparison `{}` with boolean literal is redundant; {}",
+                    &source[node.byte_range()],
+                    suggestion,
+                ),
+                severity: Severity::Warning,
+                line: node.start_position().row,
+                column: node.start_position().column,
+                end_column: Some(node.end_position().column),
+                fix,
+                context_lines: None,
+            });
+        });
         diags
     }
-}
-
-fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    if node.kind() == "binary_operator"
-        && let Some(op_node) = node.child_by_field_name("op")
-    {
-        let op = &source[op_node.byte_range()];
-        if op == "==" || op == "!=" {
-            let left = node.child_by_field_name("left");
-            let right = node.child_by_field_name("right");
-
-            let left_is_bool = left.as_ref().is_some_and(|n| is_boolean_literal(n, source));
-            let right_is_bool = right
-                .as_ref()
-                .is_some_and(|n| is_boolean_literal(n, source));
-
-            if left_is_bool || right_is_bool {
-                let suggestion = if op == "==" {
-                    "use the value directly (e.g. `if x:` instead of `if x == true:`)"
-                } else {
-                    "use `not` (e.g. `if not x:` instead of `if x != true:`)"
-                };
-
-                // Generate fix
-                let fix = generate_fix(&node, left, right, op, left_is_bool, right_is_bool, source);
-
-                diags.push(LintDiagnostic {
-                    rule: "comparison-with-boolean",
-                    message: format!(
-                        "comparison `{}` with boolean literal is redundant; {}",
-                        &source[node.byte_range()],
-                        suggestion,
-                    ),
-                    severity: Severity::Warning,
-                    line: node.start_position().row,
-                    column: node.start_position().column,
-                    end_column: Some(node.end_position().column),
-                    fix,
-                    context_lines: None,
-                });
-            }
-        }
-    }
-
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            check_node(cursor.node(), source, diags);
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
-    }
-}
-
-fn is_boolean_literal(node: &Node, source: &str) -> bool {
-    let text = &source[node.byte_range()];
-    text == "true" || text == "false"
-}
-
-fn generate_fix(
-    node: &Node,
-    left: Option<Node>,
-    right: Option<Node>,
-    op: &str,
-    left_is_bool: bool,
-    _right_is_bool: bool,
-    source: &str,
-) -> Option<Fix> {
-    let (bool_node, other_node) = if left_is_bool {
-        (left?, right?)
-    } else {
-        (right?, left?)
-    };
-
-    let bool_text = &source[bool_node.byte_range()];
-    let other_text = source[other_node.byte_range()].to_string();
-
-    let replacement = match (op, bool_text) {
-        ("==", "true") | ("!=", "false") => other_text,
-        ("==", "false") | ("!=", "true") => format!("not {other_text}"),
-        _ => return None,
-    };
-
-    Some(Fix {
-        byte_start: node.start_byte(),
-        byte_end: node.end_byte(),
-        replacement,
-    })
 }

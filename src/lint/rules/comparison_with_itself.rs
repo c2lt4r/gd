@@ -1,4 +1,4 @@
-use tree_sitter::{Node, Tree};
+use crate::core::gd_ast::{self, GdExpr, GdFile};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -14,67 +14,46 @@ impl LintRule for ComparisonWithItself {
         LintCategory::Correctness
     }
 
-    fn check(&self, tree: &Tree, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        let root = tree.root_node();
-        check_node(root, source, &mut diags);
+        gd_ast::visit_exprs(file, &mut |expr| {
+            if let GdExpr::BinOp { node, op, left, right, .. } = expr
+                && matches!(*op, "==" | "!=" | "<" | ">" | "<=" | ">=")
+            {
+                let left_text = &source[left.node().byte_range()];
+                let right_text = &source[right.node().byte_range()];
+
+                if left_text == right_text {
+                    diags.push(LintDiagnostic {
+                        rule: "comparison-with-itself",
+                        message: format!(
+                            "comparing `{left_text}` with itself (`{left_text} {op} {right_text}`)",
+                        ),
+                        severity: Severity::Warning,
+                        line: node.start_position().row,
+                        column: node.start_position().column,
+                        end_column: Some(node.end_position().column),
+                        fix: None,
+                        context_lines: None,
+                    });
+                }
+            }
+        });
         diags
-    }
-}
-
-const COMPARISON_OPS: &[&str] = &["==", "!=", "<", ">", "<=", ">="];
-
-fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    if node.kind() == "binary_operator"
-        && let Some(op_node) = node.child_by_field_name("op")
-    {
-        let op = &source[op_node.byte_range()];
-        if COMPARISON_OPS.contains(&op)
-            && let (Some(left), Some(right)) = (
-                node.child_by_field_name("left"),
-                node.child_by_field_name("right"),
-            )
-        {
-            let left_text = &source[left.byte_range()];
-            let right_text = &source[right.byte_range()];
-
-            if left_text == right_text {
-                diags.push(LintDiagnostic {
-                    rule: "comparison-with-itself",
-                    message: format!(
-                        "comparing `{left_text}` with itself (`{left_text} {op} {right_text}`)",
-                    ),
-                    severity: Severity::Warning,
-                    line: node.start_position().row,
-                    column: node.start_position().column,
-                    end_column: Some(node.end_position().column),
-                    fix: None,
-                    context_lines: None,
-                });
-            }
-        }
-    }
-
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            check_node(cursor.node(), source, diags);
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::gd_ast;
     use crate::core::parser;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();
+        let file = gd_ast::convert(&tree, source);
         let config = LintConfig::default();
-        ComparisonWithItself.check(&tree, source, &config)
+        ComparisonWithItself.check(&file, source, &config)
     }
 
     // ── Should warn ─────────────────────────────────────────────────

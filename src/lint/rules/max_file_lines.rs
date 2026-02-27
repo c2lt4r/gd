@@ -1,4 +1,4 @@
-use tree_sitter::Tree;
+use crate::core::gd_ast::GdFile;
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -18,7 +18,7 @@ impl LintRule for MaxFileLines {
         false
     }
 
-    fn check(&self, _tree: &Tree, source: &str, config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, _file: &GdFile<'_>, source: &str, config: &LintConfig) -> Vec<LintDiagnostic> {
         let max_lines = config.max_file_lines;
         let line_count = source.lines().count();
 
@@ -43,13 +43,15 @@ impl LintRule for MaxFileLines {
 mod tests {
     use super::*;
     use crate::core::parser;
+    use crate::core::gd_ast;
 
     const DEFAULT_MAX_FILE_LINES: usize = 500;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();
+        let file = gd_ast::convert(&tree, source);
         let config = LintConfig::default();
-        MaxFileLines.check(&tree, source, &config)
+        MaxFileLines.check(&file, source, &config)
     }
 
     #[test]

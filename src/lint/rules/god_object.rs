@@ -1,4 +1,5 @@
-use tree_sitter::{Node, Tree};
+use tree_sitter::Node;
+use crate::core::gd_ast::GdFile;
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -18,13 +19,13 @@ impl LintRule for GodObject {
         false
     }
 
-    fn check(&self, tree: &Tree, source: &str, config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, file: &GdFile<'_>, source: &str, config: &LintConfig) -> Vec<LintDiagnostic> {
         let max_functions = config.max_god_object_functions;
         let max_members = config.max_god_object_members;
         let max_lines = config.max_god_object_lines;
 
         let mut diags = Vec::new();
-        let root = tree.root_node();
+        let root = file.node;
 
         // Check the top-level script as a class
         let (funcs, members) = count_definitions(root, source);
@@ -165,11 +166,13 @@ fn check_classes(
 mod tests {
     use super::*;
     use crate::core::parser;
+    use crate::core::gd_ast;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();
+        let file = gd_ast::convert(&tree, source);
         let config = LintConfig::default();
-        GodObject.check(&tree, source, &config)
+        GodObject.check(&file, source, &config)
     }
 
     fn make_functions(count: usize) -> String {

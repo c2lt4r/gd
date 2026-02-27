@@ -11,6 +11,7 @@ use similar::TextDiff;
 
 use crate::core::config::{Config, find_project_root};
 use crate::core::fs::collect_gdscript_files;
+use crate::core::gd_ast;
 use crate::core::parser;
 use crate::core::symbol_table;
 use crate::core::workspace_index::ProjectIndex;
@@ -310,19 +311,20 @@ fn lint_file(
 ) -> Result<Vec<LintDiagnostic>> {
     let (source, tree) = parser::parse_file(path)?;
     let symbols = symbol_table::build(&tree, &source);
+    let file = gd_ast::convert(&tree, &source);
 
     let mut all_diags = Vec::new();
     for rule in rules {
         if is_rule_excluded_by_override(path, ignore_base, rule.name(), &config.lint.overrides) {
             continue;
         }
-        let diags = rule.check_with_project(&tree, &source, &config.lint, &symbols, project);
+        let diags = rule.check_with_project(&file, &source, &config.lint, &symbols, project);
         all_diags.extend(diags);
     }
 
     // Include compiler-level checks (gd check parity) as error-severity diagnostics
     let structural =
-        crate::cli::check_cmd::check_classdb_errors(&tree.root_node(), &source, &symbols, project);
+        crate::cli::check_cmd::check_classdb_errors(&file.node, &source, &symbols, project);
     for err in structural {
         all_diags.push(LintDiagnostic {
             rule: "compiler-error",

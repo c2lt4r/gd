@@ -1,4 +1,4 @@
-use tree_sitter::Tree;
+use crate::core::gd_ast::GdFile;
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -20,13 +20,13 @@ impl LintRule for UnusedClassVariable {
         false
     }
 
-    fn check(&self, _tree: &Tree, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, _file: &GdFile<'_>, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         Vec::new()
     }
 
     fn check_with_project(
         &self,
-        _tree: &Tree,
+        _file: &GdFile<'_>,
         source: &str,
         _config: &LintConfig,
         symbols: &SymbolTable,
@@ -128,6 +128,7 @@ fn has_identifier_reference(node: tree_sitter::Node, source: &[u8], name: &str) 
 mod tests {
     use super::*;
     use crate::core::workspace_index;
+    use crate::core::gd_ast;
     use crate::core::{parser, symbol_table};
     use std::path::PathBuf;
 
@@ -140,9 +141,10 @@ mod tests {
         let project = workspace_index::build_from_sources(&root, &file_entries, &[]);
 
         let tree = parser::parse(source).unwrap();
+        let file = gd_ast::convert(&tree, source);
         let symbols = symbol_table::build(&tree, source);
         let config = LintConfig::default();
-        UnusedClassVariable.check_with_project(&tree, source, &config, &symbols, &project)
+        UnusedClassVariable.check_with_project(&file, source, &config, &symbols, &project)
     }
 
     #[test]
@@ -169,10 +171,11 @@ var health: int = 100
 
         let project = crate::core::workspace_index::ProjectIndex::build(dir.path());
         let tree = parser::parse(player_source).unwrap();
+        let file = gd_ast::convert(&tree, player_source);
         let symbols = symbol_table::build(&tree, player_source);
         let config = LintConfig::default();
         let diags = UnusedClassVariable.check_with_project(
-            &tree,
+            &file,
             player_source,
             &config,
             &symbols,
@@ -224,10 +227,11 @@ const MAX_SPEED: float = 300.0
 
         let project = crate::core::workspace_index::ProjectIndex::build(dir.path());
         let tree = parser::parse(global_source).unwrap();
+        let file = gd_ast::convert(&tree, global_source);
         let symbols = symbol_table::build(&tree, global_source);
         let config = LintConfig::default();
         let diags = UnusedClassVariable.check_with_project(
-            &tree,
+            &file,
             global_source,
             &config,
             &symbols,

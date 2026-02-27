@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
-use tree_sitter::{Node, Tree};
+use tree_sitter::Node;
+use crate::core::gd_ast::GdFile;
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -19,8 +20,8 @@ impl LintRule for UseBeforeAssign {
         false // opt-in — cross-function analysis, can have false positives
     }
 
-    fn check(&self, tree: &Tree, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
-        let root = tree.root_node();
+    fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+        let root = file.node;
 
         let members = collect_member_vars(root, source);
         if members.is_empty() {
@@ -673,11 +674,13 @@ fn check_callee(
 mod tests {
     use super::*;
     use crate::core::parser;
+    use crate::core::gd_ast;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();
+        let file = gd_ast::convert(&tree, source);
         let config = LintConfig::default();
-        UseBeforeAssign.check(&tree, source, &config)
+        UseBeforeAssign.check(&file, source, &config)
     }
 
     #[test]

@@ -1,4 +1,5 @@
-use tree_sitter::{Node, Tree};
+use tree_sitter::Node;
+use crate::core::gd_ast::GdFile;
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -16,9 +17,9 @@ impl LintRule for PrivateMethodAccess {
         LintCategory::TypeSafety
     }
 
-    fn check(&self, tree: &Tree, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        let root = tree.root_node();
+        let root = file.node;
         check_node(root, source, &mut diags);
         diags
     }
@@ -140,7 +141,8 @@ mod tests {
             .set_language(&tree_sitter_gdscript::LANGUAGE.into())
             .unwrap();
         let tree = parser.parse(source, None).unwrap();
-        PrivateMethodAccess.check(&tree, source, &LintConfig::default())
+        let file = crate::core::gd_ast::convert(&tree, source);
+        PrivateMethodAccess.check(&file, source, &LintConfig::default())
     }
 
     #[test]

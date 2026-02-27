@@ -1,4 +1,5 @@
-use tree_sitter::{Node, Tree};
+use tree_sitter::Node;
+use crate::core::gd_ast::GdFile;
 
 use super::{LintCategory, LintDiagnostic, LintRule};
 use crate::core::config::LintConfig;
@@ -21,9 +22,9 @@ impl LintRule for UnnamedNode {
         false
     }
 
-    fn check(&self, tree: &Tree, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        let root = tree.root_node();
+        let root = file.node;
         check_functions(&root, source, &mut diags);
         diags
     }
@@ -333,8 +334,9 @@ mod tests {
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = crate::core::parser::parse(source).unwrap();
+        let file = crate::core::gd_ast::convert(&tree, source);
         let config = LintConfig::default();
-        UnnamedNode.check(&tree, source, &config)
+        UnnamedNode.check(&file, source, &config)
     }
 
     #[test]

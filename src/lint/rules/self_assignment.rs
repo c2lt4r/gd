@@ -1,4 +1,4 @@
-use tree_sitter::{Node, Tree};
+use crate::core::gd_ast::{self, GdExpr, GdFile, GdStmt};
 
 use super::{Fix, LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -14,39 +14,27 @@ impl LintRule for SelfAssignment {
         LintCategory::Correctness
     }
 
-    fn check(&self, tree: &Tree, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+        let source_bytes = source.as_bytes();
         let mut diags = Vec::new();
-        let root = tree.root_node();
-        check_node(root, source.as_bytes(), source, &mut diags);
-        diags
-    }
-}
-
-fn check_node(node: Node, source_bytes: &[u8], source: &str, diags: &mut Vec<LintDiagnostic>) {
-    if node.kind() == "assignment" {
-        // assignment has children: left, "=", right
-        let child_count = node.child_count();
-        if child_count >= 3 {
-            let left = node.child(0);
-            let right = node.child(child_count - 1);
-
-            if let (Some(left), Some(right)) = (left, right) {
-                let left_text = &source[left.byte_range()];
-                let right_text = &source[right.byte_range()];
+        gd_ast::visit_stmts(file, &mut |stmt| {
+            if let GdStmt::Assign { node, target, value } = stmt {
+                let left_text = &source[target.node().byte_range()];
+                let right_text = &source[value.node().byte_range()];
 
                 if left_text == right_text {
                     // For simple identifiers like `speed = speed`, the fix is to
                     // prepend `self.` to the LHS (parameter shadows instance var).
                     // For attribute access like `self.x = self.x`, it's a true
                     // no-op so we delete the entire line.
-                    let fix = if left.kind() == "identifier" {
+                    let fix = if matches!(target, GdExpr::Ident { .. }) {
                         Fix {
-                            byte_start: left.start_byte(),
-                            byte_end: left.end_byte(),
+                            byte_start: target.node().start_byte(),
+                            byte_end: target.node().end_byte(),
                             replacement: format!("self.{left_text}"),
                         }
                     } else {
-                        generate_fix(&node, source_bytes)
+                        generate_line_delete(node, source_bytes)
                     };
 
                     diags.push(LintDiagnostic {
@@ -61,35 +49,16 @@ fn check_node(node: Node, source_bytes: &[u8], source: &str, diags: &mut Vec<Lin
                     });
                 }
             }
-        }
-    }
-
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            check_node(cursor.node(), source_bytes, source, diags);
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
+        });
+        diags
     }
 }
 
-fn generate_fix(node: &Node, source_bytes: &[u8]) -> Fix {
-    // For self-assignment, we want to remove the entire line
-    // This could be an assignment node or its parent (expression_statement)
-    let target_node = if let Some(parent) = node.parent() {
-        if parent.kind() == "expression_statement" {
-            parent
-        } else {
-            *node
-        }
-    } else {
-        *node
-    };
-
-    let mut byte_start = target_node.start_byte();
-    let mut byte_end = target_node.end_byte();
+fn generate_line_delete(node: &tree_sitter::Node, source_bytes: &[u8]) -> Fix {
+    // For self-assignment, we want to remove the entire line.
+    // The node is expression_statement (the Assign's backing stmt node).
+    let mut byte_start = node.start_byte();
+    let mut byte_end = node.end_byte();
 
     // Extend to include trailing newline if present
     if byte_end < source_bytes.len() && source_bytes[byte_end] == b'\n' {
@@ -102,9 +71,6 @@ fn generate_fix(node: &Node, source_bytes: &[u8]) -> Fix {
         let ch = source_bytes[prev];
         if ch == b' ' || ch == b'\t' {
             byte_start = prev;
-        } else if ch == b'\n' {
-            // Don't include the previous newline, just stop here
-            break;
         } else {
             break;
         }
@@ -120,12 +86,14 @@ fn generate_fix(node: &Node, source_bytes: &[u8]) -> Fix {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::gd_ast;
     use crate::core::parser;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();
+        let file = gd_ast::convert(&tree, source);
         let config = LintConfig::default();
-        SelfAssignment.check(&tree, source, &config)
+        SelfAssignment.check(&file, source, &config)
     }
 
     fn apply_fix(source: &str, fix: &Fix) -> String {

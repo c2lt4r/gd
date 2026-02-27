@@ -325,11 +325,12 @@ fn check_duplicates(
     tree: &tree_sitter::Tree,
     source: &str,
 ) -> Vec<crate::lint::rules::LintDiagnostic> {
+    let file = crate::core::gd_ast::convert(tree, source);
     let lint_config = crate::core::config::LintConfig::default();
     let rules: [&dyn LintRule; 3] = [&DuplicateFunction, &DuplicateSignal, &DuplicateVariable];
     let mut diags = Vec::new();
     for rule in rules {
-        diags.extend(rule.check(tree, source, &lint_config));
+        diags.extend(rule.check(&file, source, &lint_config));
     }
     diags
 }
@@ -344,8 +345,9 @@ fn check_overrides(
     symbols: &SymbolTable,
     project: &ProjectIndex,
 ) -> Vec<crate::lint::rules::LintDiagnostic> {
+    let file = crate::core::gd_ast::convert(tree, source);
     let lint_config = crate::core::config::LintConfig::default();
-    OverrideSignatureMismatch.check_with_project(tree, source, &lint_config, symbols, project)
+    OverrideSignatureMismatch.check_with_project(&file, source, &lint_config, symbols, project)
 }
 
 // ---------------------------------------------------------------------------
@@ -357,25 +359,26 @@ fn check_promoted_rules(
     source: &str,
     symbols: &SymbolTable,
 ) -> Vec<crate::lint::rules::LintDiagnostic> {
+    let file = crate::core::gd_ast::convert(tree, source);
     let lint_config = crate::core::config::LintConfig::default();
     let mut diags = Vec::new();
 
     // duplicate-key: duplicate dictionary keys are a compile error
-    diags.extend(DuplicateKey.check(tree, source, &lint_config));
+    diags.extend(DuplicateKey.check(&file, source, &lint_config));
 
     // onready-with-export: @onready + @export is a compile error
-    diags.extend(OnreadyWithExport.check_with_symbols(tree, source, &lint_config, symbols));
+    diags.extend(OnreadyWithExport.check_with_symbols(&file, source, &lint_config, symbols));
 
     // get-node-default-without-onready: $Path default without @onready is a compile error
     diags.extend(GetNodeDefaultWithoutOnready.check_with_symbols(
-        tree,
+        &file,
         source,
         &lint_config,
         symbols,
     ));
 
     // native-method-override: overriding a native non-virtual method is a compile error
-    diags.extend(NativeMethodOverride.check_with_symbols(tree, source, &lint_config, symbols));
+    diags.extend(NativeMethodOverride.check_with_symbols(&file, source, &lint_config, symbols));
 
     diags
 }

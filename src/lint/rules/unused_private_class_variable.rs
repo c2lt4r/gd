@@ -1,4 +1,5 @@
-use tree_sitter::{Node, Tree};
+use tree_sitter::Node;
+use crate::core::gd_ast::GdFile;
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -19,13 +20,13 @@ impl LintRule for UnusedPrivateClassVariable {
         false
     }
 
-    fn check(&self, _tree: &Tree, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, _file: &GdFile<'_>, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         Vec::new()
     }
 
     fn check_with_symbols(
         &self,
-        tree: &Tree,
+        file: &GdFile<'_>,
         source: &str,
         _config: &LintConfig,
         symbols: &SymbolTable,
@@ -38,7 +39,7 @@ impl LintRule for UnusedPrivateClassVariable {
             }
             // Check if the variable name appears anywhere else in the source
             // besides its declaration
-            if !is_used_elsewhere(tree.root_node(), source, &var.name, var.line) {
+            if !is_used_elsewhere(file.node, source, &var.name, var.line) {
                 diags.push(LintDiagnostic {
                     rule: "unused-private-class-variable",
                     message: format!(
@@ -92,13 +93,15 @@ fn search_node(node: Node, source: &[u8], name: &str, decl_line: usize) -> bool 
 mod tests {
     use super::*;
     use crate::core::parser;
+    use crate::core::gd_ast;
     use crate::core::symbol_table;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();
+        let file = gd_ast::convert(&tree, source);
         let symbols = symbol_table::build(&tree, source);
         let config = LintConfig::default();
-        UnusedPrivateClassVariable.check_with_symbols(&tree, source, &config, &symbols)
+        UnusedPrivateClassVariable.check_with_symbols(&file, source, &config, &symbols)
     }
 
     #[test]

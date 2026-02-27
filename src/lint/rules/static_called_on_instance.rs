@@ -1,4 +1,5 @@
-use tree_sitter::{Node, Tree};
+use tree_sitter::Node;
+use crate::core::gd_ast::GdFile;
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -16,32 +17,32 @@ impl LintRule for StaticCalledOnInstance {
         LintCategory::Suspicious
     }
 
-    fn check(&self, _tree: &Tree, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, _file: &GdFile<'_>, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         Vec::new()
     }
 
     fn check_with_symbols(
         &self,
-        tree: &Tree,
+        file: &GdFile<'_>,
         source: &str,
         _config: &LintConfig,
         symbols: &SymbolTable,
     ) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        check_node(tree.root_node(), source, symbols, None, &mut diags);
+        check_node(file.node, source, symbols, None, &mut diags);
         diags
     }
 
     fn check_with_project(
         &self,
-        tree: &Tree,
+        file: &GdFile<'_>,
         source: &str,
         _config: &LintConfig,
         symbols: &SymbolTable,
         project: &ProjectIndex,
     ) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        check_node(tree.root_node(), source, symbols, Some(project), &mut diags);
+        check_node(file.node, source, symbols, Some(project), &mut diags);
         diags
     }
 }
@@ -137,14 +138,16 @@ fn emit_diagnostic(method: &str, receiver: &str, diags: &mut Vec<LintDiagnostic>
 mod tests {
     use super::*;
     use crate::core::workspace_index;
+    use crate::core::gd_ast;
     use crate::core::{parser, symbol_table};
     use std::path::PathBuf;
 
     fn check_same_file(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();
+        let file = gd_ast::convert(&tree, source);
         let symbols = symbol_table::build(&tree, source);
         let config = LintConfig::default();
-        StaticCalledOnInstance.check_with_symbols(&tree, source, &config, &symbols)
+        StaticCalledOnInstance.check_with_symbols(&file, source, &config, &symbols)
     }
 
     fn check_with_project(source: &str, project_files: &[(&str, &str)]) -> Vec<LintDiagnostic> {
@@ -156,9 +159,10 @@ mod tests {
         let project = workspace_index::build_from_sources(&root, &file_entries, &[]);
 
         let tree = parser::parse(source).unwrap();
+        let file = gd_ast::convert(&tree, source);
         let symbols = symbol_table::build(&tree, source);
         let config = LintConfig::default();
-        StaticCalledOnInstance.check_with_project(&tree, source, &config, &symbols, &project)
+        StaticCalledOnInstance.check_with_project(&file, source, &config, &symbols, &project)
     }
 
     #[test]

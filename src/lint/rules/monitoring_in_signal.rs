@@ -1,5 +1,6 @@
 use std::collections::HashSet;
-use tree_sitter::{Node, Tree};
+use tree_sitter::Node;
+use crate::core::gd_ast::GdFile;
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -31,19 +32,19 @@ impl LintRule for MonitoringInSignal {
         LintCategory::Godot
     }
 
-    fn check(&self, tree: &Tree, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
 
         // 1. Collect callback function names connected to area signals
         let mut signal_callbacks: HashSet<String> = HashSet::new();
-        collect_signal_callbacks(tree.root_node(), source, &mut signal_callbacks);
+        collect_signal_callbacks(file.node, source, &mut signal_callbacks);
 
         // 2. Also check functions whose name matches the Godot auto-connect pattern:
         //    _on_<NodeName>_<signal> e.g. _on_Area2D_body_entered
         // We don't add these to signal_callbacks because we check them below.
 
         // 3. Check each matching function body for direct monitoring/monitorable assignment
-        check_functions(tree.root_node(), source, &signal_callbacks, &mut diags);
+        check_functions(file.node, source, &signal_callbacks, &mut diags);
 
         diags
     }
@@ -301,11 +302,13 @@ fn extract_monitoring_assignment<'a>(
 mod tests {
     use super::*;
     use crate::core::parser;
+    use crate::core::gd_ast;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();
+        let file = gd_ast::convert(&tree, source);
         let config = LintConfig::default();
-        MonitoringInSignal.check(&tree, source, &config)
+        MonitoringInSignal.check(&file, source, &config)
     }
 
     #[test]
