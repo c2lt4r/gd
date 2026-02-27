@@ -1,5 +1,4 @@
-use tree_sitter::Node;
-use crate::core::gd_ast::{self, GdDecl, GdFile};
+use crate::core::gd_ast::{self, GdDecl, GdExpr, GdFile, GdStmt};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -19,216 +18,94 @@ impl LintRule for DuplicateDelegate {
         false
     }
 
-    fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, file: &GdFile<'_>, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
         gd_ast::visit_decls(file, &mut |decl| {
             if let GdDecl::Func(func) = decl {
-                check_function(func.node, source, &mut diags);
+                check_function(func, &mut diags);
             }
         });
         diags
     }
 }
 
-fn check_function(func: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    let src = source.as_bytes();
+fn check_function(func: &crate::core::gd_ast::GdFunc, diags: &mut Vec<LintDiagnostic>) {
+    let params: Vec<&str> = func.params.iter().map(|p| p.name).collect();
 
-    // Get function name
-    let func_name = match func.child_by_field_name("name") {
-        Some(n) => n.utf8_text(src).unwrap_or(""),
-        None => return,
-    };
-
-    // Collect parameter names in order
-    let params: Vec<&str> = match func.child_by_field_name("parameters") {
-        Some(p) => collect_param_names(p, src),
-        None => return,
-    };
-
-    // Get body
-    let Some(body) = func.child_by_field_name("body") else {
-        return;
-    };
-
-    // Body must have exactly one named non-comment child
-    let statements: Vec<Node> = body
-        .children(&mut body.walk())
-        .filter(|c| c.is_named() && c.kind() != "comment")
+    // Body must have exactly one non-pass statement
+    let stmts: Vec<&GdStmt> = func
+        .body
+        .iter()
+        .filter(|s| !matches!(s, GdStmt::Pass { .. }))
         .collect();
-
-    if statements.len() != 1 {
+    if stmts.len() != 1 {
         return;
     }
 
-    let stmt = statements[0];
-
-    // The statement must be either:
-    // - return_statement containing a call
-    // - expression_statement containing a call
-    let call_node = match stmt.kind() {
-        "return_statement" | "expression_statement" => find_call_child(stmt),
-        _ => None,
-    };
-
-    let Some(call_node) = call_node else {
+    // Extract the call expression (from return or expression statement)
+    let (GdStmt::Return { value: Some(call_expr), .. } | GdStmt::Expr { expr: call_expr, .. }) =
+        stmts[0]
+    else {
         return;
     };
 
-    // The call must be a method call on self.something (attribute > attribute_call)
-    // Pattern: self.ref.method(args) or ref.method(args)
-    let Some(target) = extract_delegate_target(call_node, src) else {
+    // Must be a method call (self.ref.method(args) or ref.method(args))
+    let GdExpr::MethodCall { receiver, method, args, .. } = call_expr else {
         return;
     };
 
-    // Check that the call arguments exactly match the function parameters
-    if !args_match_params(call_node, src, &params) {
+    // Build the delegate target string from the receiver chain + method
+    let mut parts: Vec<&str> = Vec::new();
+    collect_chain_parts(receiver, &mut parts);
+    parts.push(method);
+
+    // Must have at least receiver.method (2+ parts)
+    if parts.len() < 2 {
         return;
     }
 
+    // Check that call arguments exactly match function parameters
+    if !args_match_params(args, &params) {
+        return;
+    }
+
+    let target = parts.join(".");
     diags.push(LintDiagnostic {
         rule: "duplicate-delegate",
         message: format!(
-            "`{func_name}` is a pure delegate to `{target}`; consider inlining or removing"
+            "`{}` is a pure delegate to `{target}`; consider inlining or removing",
+            func.name
         ),
         severity: Severity::Info,
-        line: func.start_position().row,
-        column: func.start_position().column,
+        line: func.node.start_position().row,
+        column: func.node.start_position().column,
         end_column: None,
         fix: None,
         context_lines: None,
     });
 }
 
-fn collect_param_names<'a>(params_node: Node<'a>, src: &'a [u8]) -> Vec<&'a str> {
-    let mut names = Vec::new();
-    let mut cursor = params_node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            let child = cursor.node();
-            let name_node = match child.kind() {
-                "identifier" => Some(child),
-                "typed_parameter" | "default_parameter" | "typed_default_parameter" => {
-                    child.child(0)
-                }
-                _ => None,
-            };
-            if let Some(n) = name_node
-                && let Ok(name) = n.utf8_text(src)
-            {
-                names.push(name);
-            }
-            if !cursor.goto_next_sibling() {
-                break;
-            }
+/// Collect identifier parts from a receiver chain (e.g., `self.ref` becomes `["self", "ref"]`).
+fn collect_chain_parts<'a>(expr: &GdExpr<'a>, parts: &mut Vec<&'a str>) {
+    match expr {
+        GdExpr::Ident { name, .. } => parts.push(name),
+        GdExpr::PropertyAccess { receiver, property, .. } => {
+            collect_chain_parts(receiver, parts);
+            parts.push(property);
         }
-    }
-    names
-}
-
-/// Find a call expression inside a statement node.
-/// For attribute method calls, the structure is:
-/// expression_statement > attribute > attribute_call > arguments
-fn find_call_child(node: Node) -> Option<Node> {
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            let child = cursor.node();
-            // Direct call: `foo(args)`
-            if child.kind() == "call" {
-                return Some(child);
-            }
-            // Method call: `obj.method(args)` → attribute node
-            if child.kind() == "attribute" {
-                return Some(child);
-            }
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
-    }
-    None
-}
-
-/// Extract the delegate target string like "self.ref.method" from a call.
-fn extract_delegate_target<'a>(node: Node<'a>, src: &'a [u8]) -> Option<String> {
-    // For attribute chains: self.ref.method(args)
-    // The node is an "attribute" with children: identifiers and attribute_call
-    if node.kind() != "attribute" {
-        return None;
-    }
-
-    // Must have at least one attribute_call child (the method call)
-    let has_method_call = node
-        .children(&mut node.walk())
-        .any(|c| c.kind() == "attribute_call");
-
-    if !has_method_call {
-        return None;
-    }
-
-    // Build the target string from identifiers
-    let mut parts: Vec<&str> = Vec::new();
-    for child in node.children(&mut node.walk()) {
-        if child.kind() == "identifier"
-            && let Ok(text) = child.utf8_text(src)
-        {
-            parts.push(text);
-        }
-        if child.kind() == "attribute_call"
-            && let Some(method_name) = child
-                .children(&mut child.walk())
-                .find(|c| c.kind() == "identifier")
-            && let Ok(text) = method_name.utf8_text(src)
-        {
-            parts.push(text);
-        }
-    }
-
-    if parts.len() >= 2 {
-        Some(parts.join("."))
-    } else {
-        None
+        _ => {}
     }
 }
 
-/// Check that the call arguments exactly match the function parameters in order.
-fn args_match_params(call_node: Node, src: &[u8], params: &[&str]) -> bool {
-    // Find the arguments node
-    let args_node = if call_node.kind() == "attribute" {
-        // For method calls, arguments are inside the attribute_call child
-        call_node
-            .children(&mut call_node.walk())
-            .find(|c| c.kind() == "attribute_call")
-            .and_then(|ac| {
-                ac.children(&mut ac.walk())
-                    .find(|c| c.kind() == "arguments")
-            })
-    } else {
-        // For direct calls
-        call_node
-            .children(&mut call_node.walk())
-            .find(|c| c.kind() == "arguments")
-    };
-
-    let Some(args_node) = args_node else {
-        return params.is_empty();
-    };
-
-    // Collect argument identifiers
-    let args: Vec<&str> = args_node
-        .children(&mut args_node.walk())
-        .filter(tree_sitter::Node::is_named)
-        .filter_map(|c| {
-            if c.kind() == "identifier" {
-                c.utf8_text(src).ok()
-            } else {
-                None // Non-identifier arg (expression, literal, etc.)
-            }
-        })
-        .collect();
-
-    // Must have same count and same order
-    args.len() == params.len() && args.iter().zip(params.iter()).all(|(a, p)| a == p)
+/// Check that call arguments are all plain identifiers matching the function parameters
+/// in the same order.
+fn args_match_params(args: &[GdExpr], params: &[&str]) -> bool {
+    if args.len() != params.len() {
+        return false;
+    }
+    args.iter().zip(params.iter()).all(|(arg, param)| {
+        matches!(arg, GdExpr::Ident { name, .. } if *name == *param)
+    })
 }
 
 #[cfg(test)]

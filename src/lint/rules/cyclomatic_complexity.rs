@@ -1,5 +1,4 @@
-use tree_sitter::Node;
-use crate::core::gd_ast::{self, GdDecl, GdFile};
+use crate::core::gd_ast::{self, GdDecl, GdExpr, GdFile, GdIf, GdStmt};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -15,7 +14,7 @@ impl LintRule for CyclomaticComplexity {
         LintCategory::Complexity
     }
 
-    fn check(&self, file: &GdFile<'_>, source: &str, config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, file: &GdFile<'_>, _source: &str, config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
         let max_complexity = config
             .rules
@@ -24,7 +23,7 @@ impl LintRule for CyclomaticComplexity {
             .unwrap_or(config.max_cyclomatic_complexity);
         gd_ast::visit_decls(file, &mut |decl| {
             if let GdDecl::Func(func) = decl {
-                let complexity = compute_complexity(func.node, source);
+                let complexity = compute_complexity(&func.body);
                 if complexity > max_complexity {
                     diags.push(LintDiagnostic {
                         rule: "cyclomatic-complexity",
@@ -46,102 +45,131 @@ impl LintRule for CyclomaticComplexity {
     }
 }
 
-/// Compute cyclomatic complexity of a function.
+/// Compute cyclomatic complexity of a function body.
 /// Starts at 1 and increments for each branching construct.
-fn compute_complexity(func: Node, source: &str) -> usize {
-    let Some(body) = func.child_by_field_name("body") else {
-        return 1;
-    };
+fn compute_complexity(body: &[GdStmt]) -> usize {
     let mut complexity = 1;
-    count_branches(body, source, &mut complexity, false);
+    count_branches(body, &mut complexity);
     complexity
 }
 
-fn count_branches(node: Node, source: &str, complexity: &mut usize, in_guard: bool) {
-    match node.kind() {
-        "if_statement" => {
-            *complexity += 1;
-            // If this is a guard clause (body is just `return`/`continue`/`break`),
-            // don't count and/or in its condition — the guard is one decision point.
-            if is_guard_clause(&node) {
-                // Skip condition (don't count and/or), only recurse into non-condition children
-                let mut cursor = node.walk();
-                if cursor.goto_first_child() {
-                    loop {
-                        let child = cursor.node();
-                        // The condition is typically the first named child before "body"
-                        if child.kind() == "body"
-                            || child.kind() == "elif_branch"
-                            || child.kind() == "else_branch"
-                        {
-                            count_branches(child, source, complexity, false);
-                        }
-                        if !cursor.goto_next_sibling() {
-                            break;
-                        }
+fn count_branches(stmts: &[GdStmt], complexity: &mut usize) {
+    for stmt in stmts {
+        match stmt {
+            GdStmt::If(if_stmt) => {
+                *complexity += 1;
+                if is_guard_clause(if_stmt) {
+                    // Guard clause: don't count and/or in its condition.
+                    // Only recurse into body/elif/else (not condition).
+                    count_branches(&if_stmt.body, complexity);
+                    for (_, branch) in &if_stmt.elif_branches {
+                        *complexity += 1;
+                        count_branches(branch, complexity);
+                    }
+                    if let Some(else_body) = &if_stmt.else_body {
+                        count_branches(else_body, complexity);
+                    }
+                } else {
+                    count_expr_branches(&if_stmt.condition, complexity);
+                    count_branches(&if_stmt.body, complexity);
+                    for (cond, branch) in &if_stmt.elif_branches {
+                        *complexity += 1;
+                        count_expr_branches(cond, complexity);
+                        count_branches(branch, complexity);
+                    }
+                    if let Some(else_body) = &if_stmt.else_body {
+                        count_branches(else_body, complexity);
                     }
                 }
-                return;
             }
-        }
-        "elif_clause" | "for_statement" | "while_statement" | "pattern_section" => {
-            *complexity += 1;
-        }
-        "binary_operator" => {
-            if !in_guard && let Some(op_node) = node.child_by_field_name("op") {
-                let op_text = &source[op_node.byte_range()];
-                if op_text == "and" || op_text == "or" {
+            GdStmt::For { body, .. } | GdStmt::While { body, .. } => {
+                *complexity += 1;
+                count_branches(body, complexity);
+            }
+            GdStmt::Match { arms, .. } => {
+                for arm in arms {
                     *complexity += 1;
+                    count_branches(&arm.body, complexity);
                 }
             }
-        }
-        "function_definition" => return,
-        _ => {}
-    }
-
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            count_branches(cursor.node(), source, complexity, in_guard);
-            if !cursor.goto_next_sibling() {
-                break;
+            // Other statements: check for and/or in expressions
+            GdStmt::Expr { expr, .. } => count_expr_branches(expr, complexity),
+            GdStmt::Assign { target, value, .. } | GdStmt::AugAssign { target, value, .. } => {
+                count_expr_branches(target, complexity);
+                count_expr_branches(value, complexity);
             }
+            GdStmt::Var(var) => {
+                if let Some(value) = &var.value {
+                    count_expr_branches(value, complexity);
+                }
+            }
+            GdStmt::Return { value: Some(v), .. } => {
+                count_expr_branches(v, complexity);
+            }
+            _ => {}
         }
     }
 }
 
-/// Check if an if_statement is a guard clause: body contains only `return`, `continue`, or `break`.
-fn is_guard_clause(if_node: &Node) -> bool {
-    // Must have no elif/else branches
-    let mut cursor = if_node.walk();
-    for child in if_node.children(&mut cursor) {
-        if child.kind() == "elif_branch" || child.kind() == "else_branch" {
-            return false;
+/// Count `and`/`or` operators in expressions.
+fn count_expr_branches(expr: &GdExpr, complexity: &mut usize) {
+    match expr {
+        GdExpr::BinOp { op, left, right, .. } => {
+            if matches!(*op, "and" | "or") {
+                *complexity += 1;
+            }
+            count_expr_branches(left, complexity);
+            count_expr_branches(right, complexity);
         }
+        GdExpr::UnaryOp { operand, .. } | GdExpr::Cast { expr: operand, .. }
+        | GdExpr::Is { expr: operand, .. } | GdExpr::Await { expr: operand, .. } => {
+            count_expr_branches(operand, complexity);
+        }
+        GdExpr::Call { callee, args, .. } => {
+            count_expr_branches(callee, complexity);
+            for a in args { count_expr_branches(a, complexity); }
+        }
+        GdExpr::MethodCall { receiver, args, .. } => {
+            count_expr_branches(receiver, complexity);
+            for a in args { count_expr_branches(a, complexity); }
+        }
+        GdExpr::SuperCall { args, .. } => {
+            for a in args { count_expr_branches(a, complexity); }
+        }
+        GdExpr::PropertyAccess { receiver, .. } => count_expr_branches(receiver, complexity),
+        GdExpr::Subscript { receiver, index, .. } => {
+            count_expr_branches(receiver, complexity);
+            count_expr_branches(index, complexity);
+        }
+        GdExpr::Ternary { true_val, condition, false_val, .. } => {
+            count_expr_branches(true_val, complexity);
+            count_expr_branches(condition, complexity);
+            count_expr_branches(false_val, complexity);
+        }
+        GdExpr::Array { elements, .. } => {
+            for e in elements { count_expr_branches(e, complexity); }
+        }
+        GdExpr::Dict { pairs, .. } => {
+            for (k, v) in pairs { count_expr_branches(k, complexity); count_expr_branches(v, complexity); }
+        }
+        // Don't recurse into lambdas — separate complexity scope
+        _ => {}
     }
+}
 
-    let Some(body) = if_node.child_by_field_name("body") else {
+/// Check if an if_statement is a guard clause: no elif/else branches, body is a single
+/// return/continue/break.
+fn is_guard_clause(if_stmt: &GdIf) -> bool {
+    if !if_stmt.elif_branches.is_empty() || if_stmt.else_body.is_some() {
         return false;
-    };
-
-    // Body must contain exactly one statement that is return/continue/break
-    let mut stmt_count = 0;
-    let mut is_early_exit = false;
-    let mut c = body.walk();
-    for child in body.children(&mut c) {
-        if !child.is_named() || child.kind() == "comment" {
-            continue;
-        }
-        stmt_count += 1;
-        if stmt_count > 1 {
-            return false;
-        }
-        is_early_exit = matches!(
-            child.kind(),
-            "return_statement" | "continue_statement" | "break_statement"
-        );
     }
-    stmt_count == 1 && is_early_exit
+    if if_stmt.body.len() != 1 {
+        return false;
+    }
+    matches!(
+        &if_stmt.body[0],
+        GdStmt::Return { .. } | GdStmt::Break { .. } | GdStmt::Continue { .. }
+    )
 }
 
 #[cfg(test)]
@@ -160,15 +188,10 @@ mod tests {
     fn complexity_of(source: &str) -> usize {
         let tree = parser::parse(source).unwrap();
         let file = gd_ast::convert(&tree, source);
-        let root = file.node;
-        let mut cursor = root.walk();
-        cursor.goto_first_child();
-        loop {
-            if cursor.node().kind() == "function_definition" {
-                return compute_complexity(cursor.node(), source);
-            }
-            if !cursor.goto_next_sibling() {
-                break;
+        // Find the first function
+        for decl in &file.declarations {
+            if let GdDecl::Func(func) = decl {
+                return compute_complexity(&func.body);
             }
         }
         panic!("no function found");

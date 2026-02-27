@@ -1,5 +1,4 @@
-use tree_sitter::Node;
-use crate::core::gd_ast::{self, GdDecl, GdFile};
+use crate::core::gd_ast::{self, GdDecl, GdFile, GdStmt};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -15,7 +14,7 @@ impl LintRule for DeeplyNestedCode {
         LintCategory::Complexity
     }
 
-    fn check(&self, file: &GdFile<'_>, source: &str, config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, file: &GdFile<'_>, _source: &str, config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
         let max_depth = config
             .rules
@@ -23,87 +22,127 @@ impl LintRule for DeeplyNestedCode {
             .and_then(|r| r.max_depth)
             .unwrap_or(config.max_nesting_depth);
         gd_ast::visit_decls(file, &mut |decl| {
-            if let GdDecl::Func(func) = decl
-                && let Some(body) = func.node.child_by_field_name("body")
-            {
-                let _ = check_depth(body, source, func.name, 0, max_depth, &mut diags);
+            if let GdDecl::Func(func) = decl {
+                check_stmts_depth(&func.body, func.name, 0, max_depth, &mut diags);
             }
         });
         diags
     }
 }
 
-/// Returns true if a node kind increases nesting depth.
-fn is_nesting_node(kind: &str) -> bool {
-    matches!(
-        kind,
-        "if_statement"
-            | "elif_clause"
-            | "else_clause"
-            | "for_statement"
-            | "while_statement"
-            | "match_statement"
-            | "pattern_section"
-    )
-}
-
-/// Walk the AST tracking nesting depth. Warn on the first statement exceeding max_depth.
-/// Only reports one diagnostic per function to avoid noise. Returns true if a diagnostic
-/// was emitted so callers can stop recursing.
-#[allow(clippy::only_used_in_recursion)]
-fn check_depth(
-    node: Node,
-    source: &str,
+/// Walk the typed AST tracking nesting depth. Returns true if a diagnostic
+/// was emitted (stop-at-first per function).
+fn check_stmts_depth(
+    stmts: &[GdStmt],
     func_name: &str,
-    current_depth: usize,
+    depth: usize,
     max_depth: usize,
     diags: &mut Vec<LintDiagnostic>,
 ) -> bool {
-    let mut cursor = node.walk();
-    if !cursor.goto_first_child() {
-        return false;
-    }
-
-    loop {
-        let child = cursor.node();
-
-        // Don't recurse into nested function definitions
-        if child.kind() == "function_definition" {
-            if !cursor.goto_next_sibling() {
-                break;
+    for stmt in stmts {
+        match stmt {
+            GdStmt::If(if_stmt) => {
+                let new_depth = depth + 1;
+                if new_depth > max_depth {
+                    emit(stmt, func_name, new_depth, max_depth, diags);
+                    return true;
+                }
+                if check_stmts_depth(&if_stmt.body, func_name, new_depth, max_depth, diags) {
+                    return true;
+                }
+                // elif adds another nesting level (same as tree-sitter elif_clause)
+                for (cond, branch) in &if_stmt.elif_branches {
+                    let elif_depth = new_depth + 1;
+                    if elif_depth > max_depth {
+                        let pos = cond.node().start_position();
+                        emit_at(pos.row, pos.column, func_name, elif_depth, max_depth, diags);
+                        return true;
+                    }
+                    if check_stmts_depth(branch, func_name, elif_depth, max_depth, diags) {
+                        return true;
+                    }
+                }
+                // else adds another nesting level (same as tree-sitter else_clause)
+                if let Some(else_body) = &if_stmt.else_body {
+                    let else_depth = new_depth + 1;
+                    if else_depth > max_depth {
+                        let pos = else_body
+                            .first()
+                            .map_or_else(|| if_stmt.node.start_position(), |s| s.node().start_position());
+                        emit_at(pos.row, pos.column, func_name, else_depth, max_depth, diags);
+                        return true;
+                    }
+                    if check_stmts_depth(else_body, func_name, else_depth, max_depth, diags) {
+                        return true;
+                    }
+                }
             }
-            continue;
-        }
-
-        if is_nesting_node(child.kind()) {
-            let new_depth = current_depth + 1;
-            if new_depth > max_depth {
-                diags.push(LintDiagnostic {
-                    rule: "deeply-nested-code",
-                    message: format!(
-                        "function `{func_name}` has code nested {new_depth} levels deep (max {max_depth})"
-                    ),
-                    severity: Severity::Warning,
-                    line: child.start_position().row,
-                    column: child.start_position().column,
-                    fix: None,
-                    end_column: None,
-                    context_lines: None,
-                });
-                return true;
+            GdStmt::For { body, .. } | GdStmt::While { body, .. } => {
+                let new_depth = depth + 1;
+                if new_depth > max_depth {
+                    emit(stmt, func_name, new_depth, max_depth, diags);
+                    return true;
+                }
+                if check_stmts_depth(body, func_name, new_depth, max_depth, diags) {
+                    return true;
+                }
             }
-            if check_depth(child, source, func_name, new_depth, max_depth, diags) {
-                return true;
+            GdStmt::Match { arms, .. } => {
+                let new_depth = depth + 1;
+                if new_depth > max_depth {
+                    emit(stmt, func_name, new_depth, max_depth, diags);
+                    return true;
+                }
+                // Each match arm (pattern_section) adds another level
+                for arm in arms {
+                    let arm_depth = new_depth + 1;
+                    if arm_depth > max_depth {
+                        let pos = arm.node.start_position();
+                        emit_at(pos.row, pos.column, func_name, arm_depth, max_depth, diags);
+                        return true;
+                    }
+                    if check_stmts_depth(&arm.body, func_name, arm_depth, max_depth, diags) {
+                        return true;
+                    }
+                }
             }
-        } else if check_depth(child, source, func_name, current_depth, max_depth, diags) {
-            return true;
-        }
-
-        if !cursor.goto_next_sibling() {
-            break;
+            _ => {}
         }
     }
     false
+}
+
+fn emit(
+    stmt: &GdStmt,
+    func_name: &str,
+    depth: usize,
+    max_depth: usize,
+    diags: &mut Vec<LintDiagnostic>,
+) {
+    let pos = stmt.node().start_position();
+    emit_at(pos.row, pos.column, func_name, depth, max_depth, diags);
+}
+
+fn emit_at(
+    row: usize,
+    column: usize,
+    func_name: &str,
+    depth: usize,
+    max_depth: usize,
+    diags: &mut Vec<LintDiagnostic>,
+) {
+    diags.push(LintDiagnostic {
+        rule: "deeply-nested-code",
+        message: format!(
+            "function `{func_name}` has code nested {depth} levels deep (max {max_depth})"
+        ),
+        severity: Severity::Warning,
+        line: row,
+        column,
+        fix: None,
+        end_column: None,
+        context_lines: None,
+    });
 }
 
 #[cfg(test)]
