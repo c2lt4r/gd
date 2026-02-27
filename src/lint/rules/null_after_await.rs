@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{GdDecl, GdExpr, GdFile};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -23,80 +23,46 @@ impl LintRule for NullAfterAwait {
 
     fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        let root = file.node;
 
-        // Step 1: Collect nullable member vars
-        let nullable_vars = collect_nullable_vars(root, source);
+        // Step 1: Collect nullable member vars (no init or init to null)
+        let mut nullable_vars = HashSet::new();
+        for decl in &file.declarations {
+            if let GdDecl::Var(var) = decl
+                && matches!(&var.value, None | Some(GdExpr::Null { .. }))
+            {
+                nullable_vars.insert(var.name.to_string());
+            }
+        }
         if nullable_vars.is_empty() {
             return diags;
         }
 
         // Step 2: Find vars assigned after await in any function
-        let vars_assigned_after_await =
-            find_vars_assigned_after_await(root, source, &nullable_vars);
+        let mut vars_assigned_after_await = HashSet::new();
+        for decl in &file.declarations {
+            if let GdDecl::Func(func) = decl
+                && let Some(body) = func.node.child_by_field_name("body")
+                && contains_await(body)
+            {
+                collect_assignments_after_await(body, source, &nullable_vars, &mut vars_assigned_after_await);
+            }
+        }
         if vars_assigned_after_await.is_empty() {
             return diags;
         }
 
         // Step 3: Check _process/_physics_process for unguarded access
-        check_process_functions(root, source, &vars_assigned_after_await, &mut diags);
+        for decl in &file.declarations {
+            if let GdDecl::Func(func) = decl
+                && matches!(func.name, "_process" | "_physics_process")
+                && let Some(body) = func.node.child_by_field_name("body")
+            {
+                check_unguarded_access(body, source, &vars_assigned_after_await, &mut diags);
+            }
+        }
 
         diags
     }
-}
-
-fn collect_nullable_vars(root: Node, source: &str) -> HashSet<String> {
-    let mut vars = HashSet::new();
-    let mut cursor = root.walk();
-    for child in root.children(&mut cursor) {
-        if child.kind() != "variable_statement" {
-            continue;
-        }
-        let Some(name_node) = child.child_by_field_name("name") else {
-            continue;
-        };
-        let Ok(name) = name_node.utf8_text(source.as_bytes()) else {
-            continue;
-        };
-
-        // No initializer or initialized to null
-        match child.child_by_field_name("value") {
-            None => {
-                vars.insert(name.to_string());
-            }
-            Some(val) if val.kind() == "null" => {
-                vars.insert(name.to_string());
-            }
-            _ => {}
-        }
-    }
-    vars
-}
-
-fn find_vars_assigned_after_await(
-    root: Node,
-    source: &str,
-    nullable_vars: &HashSet<String>,
-) -> HashSet<String> {
-    let mut result = HashSet::new();
-    let mut cursor = root.walk();
-    for child in root.children(&mut cursor) {
-        if child.kind() != "function_definition" && child.kind() != "constructor_definition" {
-            continue;
-        }
-        let Some(body) = child.child_by_field_name("body") else {
-            continue;
-        };
-
-        // Check if function contains await
-        if !contains_await(body) {
-            continue;
-        }
-
-        // Find assignments to nullable vars after an await
-        collect_assignments_after_await(body, source, nullable_vars, &mut result);
-    }
-    result
 }
 
 fn contains_await(node: Node) -> bool {
@@ -159,37 +125,6 @@ fn check_assignment(
                 break;
             }
         }
-    }
-}
-
-fn check_process_functions(
-    root: Node,
-    source: &str,
-    risky_vars: &HashSet<String>,
-    diags: &mut Vec<LintDiagnostic>,
-) {
-    let mut cursor = root.walk();
-    for child in root.children(&mut cursor) {
-        if child.kind() != "function_definition" {
-            continue;
-        }
-        let Some(name_node) = child.child_by_field_name("name") else {
-            continue;
-        };
-        let Ok(func_name) = name_node.utf8_text(source.as_bytes()) else {
-            continue;
-        };
-
-        if func_name != "_process" && func_name != "_physics_process" {
-            continue;
-        }
-
-        let Some(body) = child.child_by_field_name("body") else {
-            continue;
-        };
-
-        // Find usages of risky vars that aren't inside a null guard
-        check_unguarded_access(body, source, risky_vars, diags);
     }
 }
 
