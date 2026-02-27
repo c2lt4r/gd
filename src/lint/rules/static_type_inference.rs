@@ -64,7 +64,7 @@ fn check_var(
         return;
     }
 
-    let (line, col) = if let Some(name_node) = var.node.child_by_field_name("name") {
+    let (line, col) = if let Some(name_node) = var.name_node {
         (
             name_node.start_position().row,
             name_node.start_position().column,

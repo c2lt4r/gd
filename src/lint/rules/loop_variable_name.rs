@@ -17,23 +17,20 @@ impl LintRule for LoopVariableName {
     fn check(&self, file: &GdFile<'_>, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
         gd_ast::visit_stmts(file, &mut |stmt| {
-            if let GdStmt::For { node, var, .. } = stmt
+            if let GdStmt::For { node, var, var_node, .. } = stmt
                 && !var.is_empty()
                 && !is_snake_case(var)
             {
                 let fixed = to_snake_case(var);
-                // Use tree-sitter node to get variable byte range for fix
-                let fix = node.child_by_field_name("left").map(|var_node| Fix {
-                    byte_start: var_node.start_byte(),
-                    byte_end: var_node.end_byte(),
+                let fix = var_node.map(|vn| Fix {
+                    byte_start: vn.start_byte(),
+                    byte_end: vn.end_byte(),
                     replacement: fixed.clone(),
                 });
-                let (line, col, end_col) = node
-                    .child_by_field_name("left")
-                    .map_or(
-                        (node.start_position().row, node.start_position().column, None),
-                        |vn| (vn.start_position().row, vn.start_position().column, Some(vn.end_position().column)),
-                    );
+                let (line, col, end_col) = var_node.map_or(
+                    (node.start_position().row, node.start_position().column, None),
+                    |vn| (vn.start_position().row, vn.start_position().column, Some(vn.end_position().column)),
+                );
 
                 diags.push(LintDiagnostic {
                     rule: "loop-variable-name",

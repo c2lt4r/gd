@@ -21,17 +21,11 @@ impl LintRule for ParameterNaming {
                 for param in &func.params {
                     if !is_snake_case(param.name) {
                         let fixed = to_snake_case(param.name);
-                        // Get name identifier node for fix byte range
-                        let name_node = if param.node.kind() == "identifier" {
-                            Some(param.node)
-                        } else {
-                            param.node.child(0).filter(|n| n.kind() == "identifier")
-                        };
-                        let (line, col, end_col) = name_node.map_or(
+                        let (line, col, end_col) = param.name_node.map_or(
                             (param.node.start_position().row, param.node.start_position().column, None),
                             |n| (n.start_position().row, n.start_position().column, Some(n.end_position().column)),
                         );
-                        let fix = name_node.map(|n| Fix {
+                        let fix = param.name_node.map(|n| Fix {
                             byte_start: n.start_byte(),
                             byte_end: n.end_byte(),
                             replacement: fixed.clone(),

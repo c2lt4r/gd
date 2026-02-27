@@ -29,11 +29,10 @@ impl LintRule for UnusedPreload {
                         if matches!(callee.as_ref(), GdExpr::Ident { name: "load", .. })
                 );
                 if (is_preload || is_load) && !var.name.is_empty() && !var.name.starts_with('_') {
-                    let name_pos = var.node.child_by_field_name("name");
-                    let col = name_pos.map_or(var.node.start_position().column, |n| {
+                    let col = var.name_node.map_or(var.node.start_position().column, |n| {
                         n.start_position().column
                     });
-                    let line = name_pos.map_or(var.node.start_position().row, |n| {
+                    let line = var.name_node.map_or(var.node.start_position().row, |n| {
                         n.start_position().row
                     });
                     preloads

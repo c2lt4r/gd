@@ -46,10 +46,7 @@ fn check_body<'a>(
     for stmt in stmts {
         if let GdStmt::Var(var) = stmt {
             if outer.contains(var.name) {
-                let name_node = var
-                    .node
-                    .child_by_field_name("name")
-                    .unwrap_or(var.node);
+                let name_node = var.name_node.unwrap_or(var.node);
                 diags.push(LintDiagnostic {
                     rule: "shadowed-variable",
                     message: format!(

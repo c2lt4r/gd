@@ -21,12 +21,11 @@ impl LintRule for EnumNaming {
                 // Check enum name is PascalCase
                 if !e.name.is_empty() && !is_pascal_case(e.name) {
                     let fixed = to_pascal_case(e.name);
-                    let name_node = e.node.child_by_field_name("name");
-                    let (line, col, end_col) = name_node.map_or(
+                    let (line, col, end_col) = e.name_node.map_or(
                         (e.node.start_position().row, e.node.start_position().column, None),
                         |n| (n.start_position().row, n.start_position().column, Some(n.end_position().column)),
                     );
-                    let fix = name_node.map(|n| Fix {
+                    let fix = e.name_node.map(|n| Fix {
                         byte_start: n.start_byte(),
                         byte_end: n.end_byte(),
                         replacement: fixed.clone(),
@@ -47,13 +46,11 @@ impl LintRule for EnumNaming {
                 for member in &e.members {
                     if !is_upper_snake_case(member.name) {
                         let fixed = to_upper_snake_case(member.name);
-                        // First child of enumerator node is the name identifier
-                        let name_node = member.node.child(0);
-                        let (line, col, end_col) = name_node.map_or(
+                        let (line, col, end_col) = member.name_node.map_or(
                             (member.node.start_position().row, member.node.start_position().column, None),
                             |n| (n.start_position().row, n.start_position().column, Some(n.end_position().column)),
                         );
-                        let fix = name_node.map(|n| Fix {
+                        let fix = member.name_node.map(|n| Fix {
                             byte_start: n.start_byte(),
                             byte_end: n.end_byte(),
                             replacement: fixed.clone(),

@@ -45,8 +45,7 @@ fn check_var(var: &GdVar<'_>, diags: &mut Vec<LintDiagnostic>) {
     }
 
     let col = var
-        .node
-        .child_by_field_name("name")
+        .name_node
         .map_or(var.node.start_position().column, |n| {
             n.start_position().column
         });

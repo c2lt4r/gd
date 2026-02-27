@@ -71,8 +71,7 @@ fn collect_decls_and_refs<'a>(
         match stmt {
             GdStmt::Var(var) => {
                 // Record local variable declaration
-                let name_node = var.node.child_by_field_name("name");
-                let (line, col, byte_start) = if let Some(n) = name_node {
+                let (line, col, byte_start) = if let Some(n) = var.name_node {
                     (n.start_position().row, n.start_position().column, n.start_byte())
                 } else {
                     let pos = var.node.start_position();

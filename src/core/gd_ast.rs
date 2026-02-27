@@ -47,6 +47,7 @@ pub enum GdDecl<'a> {
 pub struct GdFunc<'a> {
     pub node: Node<'a>,
     pub name: &'a str,
+    pub name_node: Option<Node<'a>>,
     pub params: Vec<GdParam<'a>>,
     pub return_type: Option<GdTypeRef<'a>>,
     pub body: Vec<GdStmt<'a>>,
@@ -60,6 +61,7 @@ pub struct GdFunc<'a> {
 pub struct GdParam<'a> {
     pub node: Node<'a>,
     pub name: &'a str,
+    pub name_node: Option<Node<'a>>,
     pub type_ann: Option<GdTypeRef<'a>>,
     pub default: Option<GdExpr<'a>>,
 }
@@ -69,6 +71,7 @@ pub struct GdParam<'a> {
 pub struct GdVar<'a> {
     pub node: Node<'a>,
     pub name: &'a str,
+    pub name_node: Option<Node<'a>>,
     pub type_ann: Option<GdTypeRef<'a>>,
     pub value: Option<GdExpr<'a>>,
     pub is_const: bool,
@@ -99,6 +102,7 @@ pub struct GdAnnotation<'a> {
 pub struct GdSignal<'a> {
     pub node: Node<'a>,
     pub name: &'a str,
+    pub name_node: Option<Node<'a>>,
     pub params: Vec<GdParam<'a>>,
 }
 
@@ -107,6 +111,7 @@ pub struct GdSignal<'a> {
 pub struct GdEnum<'a> {
     pub node: Node<'a>,
     pub name: &'a str,
+    pub name_node: Option<Node<'a>>,
     pub members: Vec<GdEnumMember<'a>>,
 }
 
@@ -115,6 +120,7 @@ pub struct GdEnum<'a> {
 pub struct GdEnumMember<'a> {
     pub node: Node<'a>,
     pub name: &'a str,
+    pub name_node: Option<Node<'a>>,
     pub value: Option<GdExpr<'a>>,
 }
 
@@ -211,6 +217,7 @@ pub enum GdStmt<'a> {
     For {
         node: Node<'a>,
         var: &'a str,
+        var_node: Option<Node<'a>>,
         var_type: Option<GdTypeRef<'a>>,
         iter: GdExpr<'a>,
         body: Vec<GdStmt<'a>>,
@@ -745,10 +752,11 @@ fn convert_decl<'a>(
 
 fn convert_func<'a>(node: Node<'a>, source: &'a str, is_constructor: bool) -> GdFunc<'a> {
     let bytes = source.as_bytes();
+    let name_node = node.child_by_field_name("name");
     let name = if is_constructor {
         "_init"
     } else {
-        node.child_by_field_name("name")
+        name_node
             .and_then(|n| n.utf8_text(bytes).ok())
             .unwrap_or("")
     };
@@ -771,6 +779,7 @@ fn convert_func<'a>(node: Node<'a>, source: &'a str, is_constructor: bool) -> Gd
     GdFunc {
         node,
         name,
+        name_node,
         params,
         return_type,
         body,
@@ -791,6 +800,7 @@ fn convert_params<'a>(params_node: Node<'a>, source: &'a str) -> Vec<GdParam<'a>
                     params.push(GdParam {
                         node: child,
                         name,
+                        name_node: Some(child),
                         type_ann: None,
                         default: None,
                     });
@@ -812,13 +822,19 @@ fn convert_params<'a>(params_node: Node<'a>, source: &'a str) -> Vec<GdParam<'a>
 }
 
 fn convert_typed_param<'a>(node: Node<'a>, source: &'a str) -> GdParam<'a> {
-    let name = first_identifier(node, source).unwrap_or("");
+    let name_node = first_identifier_node(node);
+    let name = name_node
+        .and_then(|n| n.utf8_text(source.as_bytes()).ok())
+        .unwrap_or("");
     let type_ann = convert_type_ref_field(node, "type", source);
-    GdParam { node, name, type_ann, default: None }
+    GdParam { node, name, name_node, type_ann, default: None }
 }
 
 fn convert_default_param<'a>(node: Node<'a>, source: &'a str, typed: bool) -> GdParam<'a> {
-    let name = first_identifier(node, source).unwrap_or("");
+    let name_node = first_identifier_node(node);
+    let name = name_node
+        .and_then(|n| n.utf8_text(source.as_bytes()).ok())
+        .unwrap_or("");
     let type_ann = if typed {
         convert_type_ref_field(node, "type", source)
     } else {
@@ -827,7 +843,7 @@ fn convert_default_param<'a>(node: Node<'a>, source: &'a str, typed: bool) -> Gd
     let default = node
         .child_by_field_name("value")
         .map(|v| convert_expr(v, source));
-    GdParam { node, name, type_ann, default }
+    GdParam { node, name, name_node, type_ann, default }
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -836,8 +852,8 @@ fn convert_default_param<'a>(node: Node<'a>, source: &'a str, typed: bool) -> Gd
 
 fn convert_var<'a>(node: Node<'a>, source: &'a str, is_const: bool) -> GdVar<'a> {
     let bytes = source.as_bytes();
-    let name = node
-        .child_by_field_name("name")
+    let name_node = node.child_by_field_name("name");
+    let name = name_node
         .and_then(|n| n.utf8_text(bytes).ok())
         .unwrap_or("");
 
@@ -862,6 +878,7 @@ fn convert_var<'a>(node: Node<'a>, source: &'a str, is_const: bool) -> GdVar<'a>
     GdVar {
         node,
         name,
+        name_node,
         type_ann,
         value,
         is_const,
@@ -878,21 +895,21 @@ fn convert_var<'a>(node: Node<'a>, source: &'a str, is_const: bool) -> GdVar<'a>
 
 fn convert_signal<'a>(node: Node<'a>, source: &'a str) -> GdSignal<'a> {
     let bytes = source.as_bytes();
-    let name = node
-        .child_by_field_name("name")
+    let name_node = node.child_by_field_name("name");
+    let name = name_node
         .and_then(|n| n.utf8_text(bytes).ok())
         .unwrap_or("");
     let params = node
         .child_by_field_name("parameters")
         .map(|p| convert_params(p, source))
         .unwrap_or_default();
-    GdSignal { node, name, params }
+    GdSignal { node, name, name_node, params }
 }
 
 fn convert_enum<'a>(node: Node<'a>, source: &'a str) -> GdEnum<'a> {
     let bytes = source.as_bytes();
-    let name = node
-        .child_by_field_name("name")
+    let name_node = node.child_by_field_name("name");
+    let name = name_node
         .and_then(|n| n.utf8_text(bytes).ok())
         .unwrap_or("");
     let mut members = Vec::new();
@@ -900,18 +917,18 @@ fn convert_enum<'a>(node: Node<'a>, source: &'a str) -> GdEnum<'a> {
         let mut cursor = body.walk();
         for child in body.named_children(&mut cursor) {
             if child.kind() == "enumerator" {
-                let member_name = child
-                    .child_by_field_name("left")
+                let member_name_node = child.child_by_field_name("left");
+                let member_name = member_name_node
                     .and_then(|n| n.utf8_text(bytes).ok())
                     .unwrap_or("");
                 let value = child
                     .child_by_field_name("right")
                     .map(|v| convert_expr(v, source));
-                members.push(GdEnumMember { node: child, name: member_name, value });
+                members.push(GdEnumMember { node: child, name: member_name, name_node: member_name_node, value });
             }
         }
     }
-    GdEnum { node, name, members }
+    GdEnum { node, name, name_node, members }
 }
 
 fn convert_class<'a>(node: Node<'a>, source: &'a str) -> GdClass<'a> {
@@ -1102,8 +1119,8 @@ fn convert_if<'a>(node: Node<'a>, source: &'a str) -> GdIf<'a> {
 
 fn convert_for<'a>(node: Node<'a>, source: &'a str) -> GdStmt<'a> {
     let bytes = source.as_bytes();
-    let var = node
-        .child_by_field_name("left")
+    let var_node = node.child_by_field_name("left");
+    let var = var_node
         .and_then(|n| n.utf8_text(bytes).ok())
         .unwrap_or("");
     let var_type = convert_type_ref_field(node, "type", source);
@@ -1115,7 +1132,7 @@ fn convert_for<'a>(node: Node<'a>, source: &'a str) -> GdStmt<'a> {
         .child_by_field_name("body")
         .map(|b| convert_body(b, source))
         .unwrap_or_default();
-    GdStmt::For { node, var, var_type, iter, body }
+    GdStmt::For { node, var, var_node, var_type, iter, body }
 }
 
 fn convert_match<'a>(node: Node<'a>, source: &'a str) -> GdStmt<'a> {
@@ -1532,13 +1549,13 @@ fn collect_inline_annotations<'a>(node: Node<'a>, source: &'a str) -> Vec<GdAnno
 
 /// Get the text of the first `identifier` child.
 fn first_identifier<'a>(node: Node<'a>, source: &'a str) -> Option<&'a str> {
+    first_identifier_node(node)
+        .and_then(|n| n.utf8_text(source.as_bytes()).ok())
+}
+
+fn first_identifier_node(node: Node<'_>) -> Option<Node<'_>> {
     let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        if child.kind() == "identifier" {
-            return child.utf8_text(source.as_bytes()).ok();
-        }
-    }
-    None
+    node.children(&mut cursor).find(|child| child.kind() == "identifier")
 }
 
 /// Check whether `node` has a child of the given kind.

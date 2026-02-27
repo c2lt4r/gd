@@ -28,8 +28,7 @@ fn check_scope(decls: &[GdDecl<'_>], diags: &mut Vec<LintDiagnostic>) {
     for decl in decls {
         if let GdDecl::Func(func) = decl {
             let line = func.node.start_position().row;
-            let name_node = func.node.child_by_field_name("name");
-            let col = name_node.map_or(func.node.start_position().column, |n| n.start_position().column);
+            let col = func.name_node.map_or(func.node.start_position().column, |n| n.start_position().column);
 
             if let Some(&first_line) = functions.get(func.name) {
                 diags.push(LintDiagnostic {

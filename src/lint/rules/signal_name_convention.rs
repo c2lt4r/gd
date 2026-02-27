@@ -20,12 +20,11 @@ impl LintRule for SignalNameConvention {
             if let GdDecl::Signal(sig) = decl
                 && let Some(fixed) = sig.name.strip_prefix("on_")
             {
-                let name_node = sig.node.child_by_field_name("name");
-                let (line, col, end_col) = name_node.map_or(
+                let (line, col, end_col) = sig.name_node.map_or(
                     (sig.node.start_position().row, sig.node.start_position().column, None),
                     |n| (n.start_position().row, n.start_position().column, Some(n.end_position().column)),
                 );
-                let fix = name_node.map(|n| Fix {
+                let fix = sig.name_node.map(|n| Fix {
                     byte_start: n.start_byte(),
                     byte_end: n.end_byte(),
                     replacement: fixed.to_string(),
