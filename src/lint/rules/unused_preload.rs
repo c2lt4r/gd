@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{self, GdDecl, GdExpr, GdFile};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -18,27 +18,43 @@ impl LintRule for UnusedPreload {
 
     fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        let root = file.node;
-        let src = source.as_bytes();
 
-        // Collect all `var X = preload(...)` declarations
-        let mut preloads: HashMap<String, (usize, usize, usize)> = HashMap::new(); // name -> (line, col, end_col)
-        collect_preload_vars(root, src, source, &mut preloads);
+        // Collect all `var X = preload(...)` or `var X = load(...)` declarations via typed AST
+        let mut preloads: HashMap<String, (usize, usize, usize)> = HashMap::new();
+        gd_ast::visit_decls(file, &mut |decl| {
+            if let GdDecl::Var(var) = decl {
+                let is_preload = matches!(&var.value, Some(GdExpr::Preload { .. }));
+                let is_load = matches!(
+                    &var.value,
+                    Some(GdExpr::Call { callee, .. })
+                        if matches!(callee.as_ref(), GdExpr::Ident { name: "load", .. })
+                );
+                if (is_preload || is_load) && !var.name.is_empty() && !var.name.starts_with('_') {
+                    let name_pos = var.node.child_by_field_name("name");
+                    let col = name_pos.map_or(var.node.start_position().column, |n| {
+                        n.start_position().column
+                    });
+                    let line = name_pos.map_or(var.node.start_position().row, |n| {
+                        n.start_position().row
+                    });
+                    preloads.insert(
+                        var.name.to_string(),
+                        (line, col, col + var.name.len()),
+                    );
+                }
+            }
+        });
 
         if preloads.is_empty() {
             return diags;
         }
 
-        // Collect all identifier references across the entire file
+        // Collect all identifier references across the entire file (CST for full tree scan)
         let mut references: HashSet<String> = HashSet::new();
-        collect_all_references(root, src, &mut references);
+        collect_all_references(file.node, source.as_bytes(), &mut references);
 
         // Report preloaded vars that are never referenced elsewhere
         for (name, (line, col, end_col)) in &preloads {
-            // The declaration itself counts as one reference (the assignment),
-            // so we check if the name appears as an identifier reference anywhere else.
-            // Since collect_all_references skips variable_statement name fields,
-            // any reference found means it's actually used.
             if !references.contains(name.as_str()) {
                 diags.push(LintDiagnostic {
                     rule: "unused-preload",
@@ -55,63 +71,6 @@ impl LintRule for UnusedPreload {
 
         diags
     }
-}
-
-/// Find all `var X = preload(...)` or `var X = load(...)` at module scope.
-fn collect_preload_vars(
-    node: Node,
-    src: &[u8],
-    source: &str,
-    preloads: &mut HashMap<String, (usize, usize, usize)>,
-) {
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            let child = cursor.node();
-
-            if child.kind() == "variable_statement" {
-                // Check if the value is a preload() or load() call
-                if let Some(value) = child.child_by_field_name("value")
-                    && is_preload_call(&value, source)
-                    && let Some(name_node) = child.child_by_field_name("name")
-                {
-                    let name = name_node.utf8_text(src).unwrap_or("").to_string();
-                    if !name.is_empty() && !name.starts_with('_') {
-                        let line = name_node.start_position().row;
-                        let col = name_node.start_position().column;
-                        let end_col = col + name.len();
-                        preloads.insert(name, (line, col, end_col));
-                    }
-                }
-            }
-
-            // Recurse into class bodies
-            if child.kind() == "class_definition"
-                && let Some(body) = child.child_by_field_name("body")
-            {
-                collect_preload_vars(body, src, source, preloads);
-            }
-
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
-    }
-}
-
-fn is_preload_call(node: &Node, source: &str) -> bool {
-    if node.kind() == "call" {
-        // Try field name first, fall back to first named child
-        // (tree-sitter-gdscript doesn't always set the "function" field for builtins)
-        let func = node
-            .child_by_field_name("function")
-            .or_else(|| node.named_child(0));
-        if let Some(func_node) = func {
-            let name = &source[func_node.byte_range()];
-            return name == "preload" || name == "load";
-        }
-    }
-    false
 }
 
 /// Collect all identifier references, skipping declaration name positions.
@@ -152,11 +111,7 @@ mod tests {
     use crate::core::config::LintConfig;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
-        let mut parser = tree_sitter::Parser::new();
-        parser
-            .set_language(&tree_sitter_gdscript::LANGUAGE.into())
-            .unwrap();
-        let tree = parser.parse(source, None).unwrap();
+        let tree = crate::core::parser::parse(source).unwrap();
         let file = crate::core::gd_ast::convert(&tree, source);
         UnusedPreload.check(&file, source, &LintConfig::default())
     }

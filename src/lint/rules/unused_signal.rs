@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{self, GdDecl, GdFile};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -18,12 +18,17 @@ impl LintRule for UnusedSignal {
 
     fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        let root = file.node;
-        let src = source.as_bytes();
 
-        // First pass: collect all signal declarations
+        // First pass: collect all signal declarations via typed AST
         let mut signals: HashMap<String, (usize, usize)> = HashMap::new();
-        collect_signals(root, src, &mut signals);
+        gd_ast::visit_decls(file, &mut |decl| {
+            if let GdDecl::Signal(sig) = decl {
+                let pos = sig.node.child_by_field_name("name").unwrap_or(sig.node);
+                signals
+                    .entry(sig.name.to_string())
+                    .or_insert((pos.start_position().row, pos.start_position().column));
+            }
+        });
 
         if signals.is_empty() {
             return diags;
@@ -31,14 +36,13 @@ impl LintRule for UnusedSignal {
 
         // Event bus heuristic: if the file has no functions, it's likely an event
         // bus or signal-only file where signals are used from other files.
-        // Suppress all unused-signal warnings in this case.
-        if !has_functions(root) {
+        if !file.declarations.iter().any(|d| matches!(d, GdDecl::Func(_))) {
             return diags;
         }
 
-        // Second pass: find all referenced signals
+        // Second pass: find all referenced signals (CST for attribute chain inspection)
         let mut referenced: HashSet<String> = HashSet::new();
-        collect_references(root, src, &mut referenced);
+        collect_references(file.node, source.as_bytes(), &mut referenced);
 
         // Report signals that are never referenced in this file
         for (name, (line, column)) in &signals {
@@ -59,46 +63,6 @@ impl LintRule for UnusedSignal {
         }
 
         diags
-    }
-}
-
-/// Check if the root scope has any function definitions.
-fn has_functions(root: Node) -> bool {
-    let mut cursor = root.walk();
-    if cursor.goto_first_child() {
-        loop {
-            let kind = cursor.node().kind();
-            if kind == "function_definition" || kind == "constructor_definition" {
-                return true;
-            }
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
-    }
-    false
-}
-
-fn collect_signals(node: Node, src: &[u8], signals: &mut HashMap<String, (usize, usize)>) {
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            let child = cursor.node();
-            if child.kind() == "signal_statement"
-                && let Some(name_node) = child.child_by_field_name("name")
-            {
-                let name = name_node.utf8_text(src).unwrap_or("").to_string();
-                let line = name_node.start_position().row;
-                let col = name_node.start_position().column;
-                signals.entry(name).or_insert((line, col));
-            }
-
-            collect_signals(child, src, signals);
-
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
     }
 }
 

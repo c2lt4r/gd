@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{self, GdDecl, GdFile};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -22,21 +22,26 @@ impl LintRule for SignalNotConnected {
 
     fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        let root = file.node;
-        let src = source.as_bytes();
 
-        // Collect signal declarations: name → (line, column)
+        // Collect signal declarations via typed AST
         let mut signals: HashMap<String, (usize, usize)> = HashMap::new();
-        collect_signals(root, src, &mut signals);
+        gd_ast::visit_decls(file, &mut |decl| {
+            if let GdDecl::Signal(sig) = decl {
+                let pos = sig.node.child_by_field_name("name").unwrap_or(sig.node);
+                signals
+                    .entry(sig.name.to_string())
+                    .or_insert((pos.start_position().row, pos.start_position().column));
+            }
+        });
 
         if signals.is_empty() {
             return diags;
         }
 
-        // Collect signals that are emitted and connected
+        // Collect signals that are emitted and connected (CST for attribute chains)
         let mut emitted: HashSet<String> = HashSet::new();
         let mut connected: HashSet<String> = HashSet::new();
-        collect_usage(root, src, &mut emitted, &mut connected);
+        collect_usage(file.node, source.as_bytes(), &mut emitted, &mut connected);
 
         // Report signals that are emitted but never connected in this file
         for (name, (line, column)) in &signals {
@@ -55,28 +60,6 @@ impl LintRule for SignalNotConnected {
         }
 
         diags
-    }
-}
-
-fn collect_signals(node: Node, src: &[u8], signals: &mut HashMap<String, (usize, usize)>) {
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            let child = cursor.node();
-            if child.kind() == "signal_statement"
-                && let Some(name_node) = child.child_by_field_name("name")
-                && let Ok(name) = name_node.utf8_text(src)
-            {
-                signals.entry(name.to_string()).or_insert((
-                    name_node.start_position().row,
-                    name_node.start_position().column,
-                ));
-            }
-            collect_signals(child, src, signals);
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
     }
 }
 
