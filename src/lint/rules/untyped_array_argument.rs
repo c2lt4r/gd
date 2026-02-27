@@ -1,5 +1,4 @@
-use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{self, GdDecl, GdExpr, GdFile, GdFunc, GdStmt};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -31,63 +30,143 @@ impl LintRule for UntypedArrayArgument {
         project: &ProjectIndex,
     ) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        check_node(file.node, source, symbols, project, &mut diags);
+        gd_ast::visit_decls(file, &mut |decl| {
+            if let GdDecl::Func(func) = decl {
+                check_stmts(&func.body, func, source, symbols, project, &mut diags);
+            }
+        });
         diags
     }
 }
 
-fn check_node(
-    node: Node,
+/// Recursively search statements for function calls with array arguments.
+fn check_stmts(
+    stmts: &[GdStmt],
+    func: &GdFunc,
     source: &str,
     symbols: &SymbolTable,
     project: &ProjectIndex,
     diags: &mut Vec<LintDiagnostic>,
 ) {
-    if node.kind() == "call" {
-        check_call(&node, source, symbols, project, diags);
-    }
-
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        check_node(child, source, symbols, project, diags);
+    for stmt in stmts {
+        match stmt {
+            GdStmt::Expr { expr, .. } => {
+                check_call_expr(expr, func, source, symbols, project, diags);
+            }
+            GdStmt::Var(var) => {
+                if let Some(value) = &var.value {
+                    check_call_expr(value, func, source, symbols, project, diags);
+                }
+            }
+            GdStmt::Assign { value, .. } | GdStmt::AugAssign { value, .. } => {
+                check_call_expr(value, func, source, symbols, project, diags);
+            }
+            GdStmt::Return { value: Some(v), .. } => {
+                check_call_expr(v, func, source, symbols, project, diags);
+            }
+            GdStmt::If(if_stmt) => {
+                check_call_expr(&if_stmt.condition, func, source, symbols, project, diags);
+                check_stmts(&if_stmt.body, func, source, symbols, project, diags);
+                for (cond, branch) in &if_stmt.elif_branches {
+                    check_call_expr(cond, func, source, symbols, project, diags);
+                    check_stmts(branch, func, source, symbols, project, diags);
+                }
+                if let Some(else_body) = &if_stmt.else_body {
+                    check_stmts(else_body, func, source, symbols, project, diags);
+                }
+            }
+            GdStmt::For { iter, body, .. } => {
+                check_call_expr(iter, func, source, symbols, project, diags);
+                check_stmts(body, func, source, symbols, project, diags);
+            }
+            GdStmt::While { condition, body, .. } => {
+                check_call_expr(condition, func, source, symbols, project, diags);
+                check_stmts(body, func, source, symbols, project, diags);
+            }
+            GdStmt::Match { value, arms, .. } => {
+                check_call_expr(value, func, source, symbols, project, diags);
+                for arm in arms {
+                    check_stmts(&arm.body, func, source, symbols, project, diags);
+                }
+            }
+            _ => {}
+        }
     }
 }
 
-fn check_call(
-    node: &Node,
+/// Recursively check expressions for function calls with array type mismatches.
+fn check_call_expr(
+    expr: &GdExpr,
+    func: &GdFunc,
     source: &str,
     symbols: &SymbolTable,
     project: &ProjectIndex,
     diags: &mut Vec<LintDiagnostic>,
 ) {
-    let src = source.as_bytes();
+    // Check if this is a plain call: func_name(args)
+    if let GdExpr::Call { callee, args, .. } = expr
+        && let GdExpr::Ident { name: func_name, .. } = callee.as_ref()
+    {
+        check_call_args(func_name, args, func, source, symbols, project, diags);
+    }
 
-    // Get function name (plain calls only — `func_name(args)`)
-    let Some(func_name_node) = node
-        .children(&mut node.walk())
-        .find(|c| c.kind() == "identifier")
-    else {
-        return;
-    };
-    let Ok(func_name) = func_name_node.utf8_text(src) else {
-        return;
-    };
+    // Recurse into sub-expressions
+    match expr {
+        GdExpr::Call { callee, args, .. } => {
+            check_call_expr(callee, func, source, symbols, project, diags);
+            for a in args {
+                check_call_expr(a, func, source, symbols, project, diags);
+            }
+        }
+        GdExpr::MethodCall { receiver, args, .. } => {
+            check_call_expr(receiver, func, source, symbols, project, diags);
+            for a in args {
+                check_call_expr(a, func, source, symbols, project, diags);
+            }
+        }
+        GdExpr::BinOp { left, right, .. } => {
+            check_call_expr(left, func, source, symbols, project, diags);
+            check_call_expr(right, func, source, symbols, project, diags);
+        }
+        GdExpr::UnaryOp { operand, .. } => {
+            check_call_expr(operand, func, source, symbols, project, diags);
+        }
+        GdExpr::Ternary { condition, true_val, false_val, .. } => {
+            check_call_expr(condition, func, source, symbols, project, diags);
+            check_call_expr(true_val, func, source, symbols, project, diags);
+            check_call_expr(false_val, func, source, symbols, project, diags);
+        }
+        GdExpr::Array { elements, .. } => {
+            for e in elements {
+                check_call_expr(e, func, source, symbols, project, diags);
+            }
+        }
+        GdExpr::Subscript { receiver, index, .. } => {
+            check_call_expr(receiver, func, source, symbols, project, diags);
+            check_call_expr(index, func, source, symbols, project, diags);
+        }
+        GdExpr::PropertyAccess { receiver, .. } => {
+            check_call_expr(receiver, func, source, symbols, project, diags);
+        }
+        GdExpr::Cast { expr: inner, .. }
+        | GdExpr::Is { expr: inner, .. }
+        | GdExpr::Await { expr: inner, .. } => {
+            check_call_expr(inner, func, source, symbols, project, diags);
+        }
+        _ => {}
+    }
+}
 
-    // Get arguments node
-    let Some(args_node) = node
-        .children(&mut node.walk())
-        .find(|c| c.kind() == "arguments")
-    else {
-        return;
-    };
-
-    // Collect argument expression nodes
-    let args: Vec<Node> = args_node
-        .children(&mut args_node.walk())
-        .filter(|c| c.is_named() && c.kind() != "comment")
-        .collect();
-
-    // Resolve expected parameter types
+/// Check arguments of a plain function call against expected parameter types.
+fn check_call_args(
+    func_name: &str,
+    args: &[GdExpr],
+    func: &GdFunc,
+    source: &str,
+    symbols: &SymbolTable,
+    project: &ProjectIndex,
+    diags: &mut Vec<LintDiagnostic>,
+) {
     let param_types = resolve_param_types(func_name, symbols, project);
     if param_types.is_empty() {
         return;
@@ -106,9 +185,11 @@ fn check_call(
             continue;
         };
 
-        // Infer argument type — try type inference first, then local variable lookup
-        let arg_type = infer_expression_type_with_project(arg, source, symbols, project)
-            .or_else(|| resolve_local_type(arg, source));
+        // Infer argument type — use raw node escape hatch for type inference API,
+        // then fall back to local variable lookup via typed AST
+        let arg_node = arg.node();
+        let arg_type = infer_expression_type_with_project(&arg_node, source, symbols, project)
+            .or_else(|| resolve_local_type(arg, &func.body));
 
         let Some(arg_type) = arg_type else {
             continue;
@@ -118,21 +199,19 @@ fn check_call(
             // Untyped Array passed to typed Array[T]
             InferredType::Builtin("Array") => {
                 // Skip empty array literals — Godot handles these fine
-                let Ok(arg_text) = arg.utf8_text(src) else {
-                    continue;
-                };
-                if arg_text.trim() == "[]" {
+                if matches!(arg, GdExpr::Array { elements, .. } if elements.is_empty()) {
                     continue;
                 }
+                let node = arg.node();
                 diags.push(LintDiagnostic {
                     rule: "untyped-array-argument",
                     message: format!(
                         "passing untyped `Array` to parameter expecting `Array[{expected_element}]`"
                     ),
                     severity: Severity::Warning,
-                    line: arg.start_position().row,
-                    column: arg.start_position().column,
-                    end_column: Some(arg.end_position().column),
+                    line: node.start_position().row,
+                    column: node.start_position().column,
+                    end_column: Some(node.end_position().column),
                     fix: None,
                     context_lines: None,
                 });
@@ -141,15 +220,16 @@ fn check_call(
             InferredType::TypedArray(inner) => {
                 let actual_element = inner.display_name();
                 if actual_element != expected_element {
+                    let node = arg.node();
                     diags.push(LintDiagnostic {
                         rule: "untyped-array-argument",
                         message: format!(
                             "passing `Array[{actual_element}]` to parameter expecting `Array[{expected_element}]`"
                         ),
                         severity: Severity::Warning,
-                        line: arg.start_position().row,
-                        column: arg.start_position().column,
-                        end_column: Some(arg.end_position().column),
+                        line: node.start_position().row,
+                        column: node.start_position().column,
+                        end_column: Some(node.end_position().column),
                         fix: None,
                         context_lines: None,
                     });
@@ -160,49 +240,26 @@ fn check_call(
     }
 }
 
-/// Resolve the type of an identifier by looking up its local variable declaration
-/// in the enclosing function body. Returns `InferredType` based on the type annotation.
-fn resolve_local_type(node: &Node, source: &str) -> Option<InferredType> {
-    if node.kind() != "identifier" {
+/// Resolve the type of an identifier argument by looking up its local variable declaration.
+fn resolve_local_type(arg: &GdExpr, func_body: &[GdStmt]) -> Option<InferredType> {
+    let GdExpr::Ident { name, node, .. } = arg else {
         return None;
-    }
-    let src = source.as_bytes();
-    let name = node.utf8_text(src).ok()?;
+    };
 
-    // Find enclosing function
-    let func = find_enclosing_function(node)?;
-    let body = func.child_by_field_name("body")?;
     let target_line = node.start_position().row;
-
-    // Search for `var <name>: <type>` before the target line
-    let mut cursor = body.walk();
-    for child in body.children(&mut cursor) {
-        if child.start_position().row >= target_line {
+    for stmt in func_body {
+        if stmt.node().start_position().row >= target_line {
             break;
         }
-        if child.kind() == "variable_statement"
-            && let Some(name_node) = child.child_by_field_name("name")
-            && let Ok(var_name) = name_node.utf8_text(src)
-            && var_name == name
-            && let Some(type_node) = child.child_by_field_name("type")
-            && type_node.kind() != "inferred_type"
-            && let Ok(type_text) = type_node.utf8_text(src)
+        if let GdStmt::Var(var) = stmt
+            && var.name == *name
+            && let Some(type_ann) = &var.type_ann
+            && !type_ann.is_inferred
         {
-            return Some(classify_array_type(type_text));
+            return Some(classify_array_type(type_ann.name));
         }
     }
     None
-}
-
-/// Walk up the tree to find the enclosing function definition.
-fn find_enclosing_function<'a>(node: &'a Node<'a>) -> Option<Node<'a>> {
-    let mut current = node.parent()?;
-    loop {
-        if current.kind() == "function_definition" || current.kind() == "constructor_definition" {
-            return Some(current);
-        }
-        current = current.parent()?;
-    }
 }
 
 /// Classify a type annotation string into an `InferredType`.

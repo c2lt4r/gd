@@ -1,6 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{GdDecl, GdExpr, GdExtends, GdFile, GdStmt};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -20,21 +19,23 @@ impl LintRule for UseBeforeAssign {
         false // opt-in — cross-function analysis, can have false positives
     }
 
-    fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
-        let root = file.node;
-
-        let members = collect_member_vars(root, source);
+    fn check(&self, file: &GdFile<'_>, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+        let members = collect_member_vars(file);
         if members.is_empty() {
             return Vec::new();
         }
 
-        let func_info = collect_function_info(root, source, &members);
+        let func_info = collect_function_info(file, &members);
 
         // For Node subclasses, members assigned in _ready() or _init() (directly
         // or transitively through called methods) are guaranteed initialized
         // before any other user method runs.
-        let ready_assigned = extract_extends_class(root, source)
-            .filter(|cls| crate::class_db::inherits(cls, "Node") || cls == "Node")
+        let extends_class = match file.extends {
+            Some(GdExtends::Class(cls)) => Some(cls),
+            _ => None,
+        };
+        let ready_assigned = extends_class
+            .filter(|cls| crate::class_db::inherits(cls, "Node") || *cls == "Node")
             .map(|_| {
                 let mut assigned = transitive_assigns("_ready", &func_info);
                 assigned.extend(transitive_assigns("_init", &func_info));
@@ -43,49 +44,25 @@ impl LintRule for UseBeforeAssign {
             .unwrap_or_default();
 
         let mut diags = Vec::new();
-        check_functions(
-            root,
-            source,
-            &members,
-            &func_info,
-            &ready_assigned,
-            &mut diags,
-        );
+        check_functions(file, &members, &func_info, &ready_assigned, &mut diags);
         diags
     }
 }
 
 /// Collect class-level member variable names that have no initializer or `= null`.
-fn collect_member_vars(root: Node, source: &str) -> HashSet<String> {
+fn collect_member_vars(file: &GdFile) -> HashSet<String> {
     let mut members = HashSet::new();
-    let mut cursor = root.walk();
-    if !cursor.goto_first_child() {
-        return members;
-    }
-    loop {
-        let node = cursor.node();
-        if node.kind() == "variable_statement" {
-            let text = &source[node.start_byte()..].trim_start();
-            if text.starts_with("const") {
-                if !cursor.goto_next_sibling() {
-                    break;
-                }
-                continue;
+    for decl in &file.declarations {
+        if let GdDecl::Var(var) = decl
+            && !var.is_const
+        {
+            let has_non_null_init = var
+                .value
+                .as_ref()
+                .is_some_and(|v| !matches!(v, GdExpr::Null { .. }));
+            if !has_non_null_init {
+                members.insert(var.name.to_string());
             }
-
-            if let Some(name_node) = node.child_by_field_name("name")
-                && let Ok(name) = name_node.utf8_text(source.as_bytes())
-            {
-                let has_non_null_init = node
-                    .child_by_field_name("value")
-                    .is_some_and(|v| v.kind() != "null");
-                if !has_non_null_init {
-                    members.insert(name.to_string());
-                }
-            }
-        }
-        if !cursor.goto_next_sibling() {
-            break;
         }
     }
     members
@@ -97,124 +74,144 @@ struct FuncInfo {
     calls: HashSet<String>,
 }
 
-fn collect_function_info(
-    root: Node,
-    source: &str,
-    members: &HashSet<String>,
-) -> HashMap<String, FuncInfo> {
+fn collect_function_info(file: &GdFile, members: &HashSet<String>) -> HashMap<String, FuncInfo> {
     let mut info = HashMap::new();
-    let mut cursor = root.walk();
-    if !cursor.goto_first_child() {
-        return info;
-    }
-    loop {
-        let node = cursor.node();
-        let kind = node.kind();
-        // Handle both regular functions and _init() (constructor_definition)
-        if kind == "function_definition" || kind == "constructor_definition" {
-            let func_name = if kind == "constructor_definition" {
-                Some("_init")
-            } else {
-                node.child_by_field_name("name")
-                    .and_then(|n| n.utf8_text(source.as_bytes()).ok())
-            };
-            if let Some(func_name) = func_name
-                && let Some(body) = node.child_by_field_name("body")
-            {
-                let mut assigned = HashSet::new();
-                let mut reads = HashSet::new();
-                let mut null_checked = HashSet::new();
-                let mut calls = HashSet::new();
-                scan_body_for_member_access(
-                    body,
-                    source,
-                    members,
-                    &mut assigned,
-                    &mut reads,
-                    &mut null_checked,
-                );
-                collect_calls_in_body(body, source, &mut calls);
-                // Members that are null-checked (bare identifier reads) within the
-                // function are assumed to be properly guarded before dereference.
-                for m in &null_checked {
-                    reads.remove(m);
-                }
-                info.insert(
-                    func_name.to_string(),
-                    FuncInfo {
-                        reads_before_assign: reads,
-                        assigns: assigned,
-                        calls,
-                    },
-                );
+    for decl in &file.declarations {
+        if let GdDecl::Func(func) = decl {
+            let mut assigned = HashSet::new();
+            let mut reads = HashSet::new();
+            let mut null_checked = HashSet::new();
+            let mut calls = HashSet::new();
+            scan_stmts_for_member_access(
+                &func.body,
+                members,
+                &mut assigned,
+                &mut reads,
+                &mut null_checked,
+            );
+            collect_calls_in_stmts(&func.body, &mut calls);
+            // Members that are null-checked (bare identifier reads) within the
+            // function are assumed to be properly guarded before dereference.
+            for m in &null_checked {
+                reads.remove(m);
             }
-        }
-        if !cursor.goto_next_sibling() {
-            break;
+            info.insert(
+                func.name.to_string(),
+                FuncInfo {
+                    reads_before_assign: reads,
+                    assigns: assigned,
+                    calls,
+                },
+            );
         }
     }
     info
 }
 
-/// Collect all function names called within a body (for transitive assignment tracking).
-fn collect_calls_in_body(node: Node, source: &str, calls: &mut HashSet<String>) {
-    let kind = node.kind();
-    // Plain call: func_name()
-    if kind == "call"
-        && let Some(func_id) = node.named_child(0)
-        && func_id.kind() == "identifier"
-        && let Ok(callee) = func_id.utf8_text(source.as_bytes())
-    {
-        calls.insert(callee.to_string());
-    }
-    // self.func_name()
-    if kind == "attribute"
-        && let Some(first) = node.named_child(0)
-        && first.kind() == "identifier"
-        && first.utf8_text(source.as_bytes()).ok() == Some("self")
-    {
-        let mut c = node.walk();
-        for child in node.children(&mut c) {
-            if child.kind() == "attribute_call"
-                && let Some(method_id) = child.named_child(0)
-                && method_id.kind() == "identifier"
-                && let Ok(callee) = method_id.utf8_text(source.as_bytes())
-            {
-                calls.insert(callee.to_string());
+/// Collect all function names called within statements (for transitive assignment tracking).
+fn collect_calls_in_stmts(stmts: &[GdStmt], calls: &mut HashSet<String>) {
+    for stmt in stmts {
+        collect_calls_in_expr_tree(stmt, calls);
+        // Recurse into control flow bodies
+        match stmt {
+            GdStmt::If(if_stmt) => {
+                collect_calls_in_stmts(&if_stmt.body, calls);
+                for (_, branch) in &if_stmt.elif_branches {
+                    collect_calls_in_stmts(branch, calls);
+                }
+                if let Some(else_body) = &if_stmt.else_body {
+                    collect_calls_in_stmts(else_body, calls);
+                }
             }
-        }
-    }
-    // Recurse
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            collect_calls_in_body(cursor.node(), source, calls);
-            if !cursor.goto_next_sibling() {
-                break;
+            GdStmt::For { body, .. } | GdStmt::While { body, .. } => {
+                collect_calls_in_stmts(body, calls);
             }
+            GdStmt::Match { arms, .. } => {
+                for arm in arms {
+                    collect_calls_in_stmts(&arm.body, calls);
+                }
+            }
+            _ => {}
         }
     }
 }
 
-/// Extract the class name from `extends ClassName` at the top of the file.
-fn extract_extends_class(root: Node, source: &str) -> Option<String> {
-    let mut cursor = root.walk();
-    for child in root.children(&mut cursor) {
-        if child.kind() == "extends_statement" {
-            // The class name is in a "type" or "identifier" named child
-            let mut c = child.walk();
-            for sub in child.children(&mut c) {
-                if sub.kind() == "type" || sub.kind() == "identifier" {
-                    return sub.utf8_text(source.as_bytes()).ok().map(String::from);
-                }
+/// Extract call names from all expressions in a statement.
+fn collect_calls_in_expr_tree(stmt: &GdStmt, calls: &mut HashSet<String>) {
+    match stmt {
+        GdStmt::Expr { expr, .. } => collect_calls_in_expr(expr, calls),
+        GdStmt::Var(var) => {
+            if let Some(value) = &var.value {
+                collect_calls_in_expr(value, calls);
             }
         }
+        GdStmt::Assign { value, .. } | GdStmt::AugAssign { value, .. } => {
+            collect_calls_in_expr(value, calls);
+        }
+        GdStmt::Return { value: Some(v), .. } => collect_calls_in_expr(v, calls),
+        _ => {}
     }
-    None
+}
+
+fn collect_calls_in_expr(expr: &GdExpr, calls: &mut HashSet<String>) {
+    match expr {
+        // Plain call: func_name()
+        GdExpr::Call { callee, args, .. } => {
+            if let GdExpr::Ident { name, .. } = callee.as_ref() {
+                calls.insert((*name).to_string());
+            }
+            collect_calls_in_expr(callee, calls);
+            for a in args {
+                collect_calls_in_expr(a, calls);
+            }
+        }
+        // self.method()
+        GdExpr::MethodCall { receiver, method, args, .. } => {
+            if let GdExpr::Ident { name: "self", .. } = receiver.as_ref() {
+                calls.insert((*method).to_string());
+            }
+            collect_calls_in_expr(receiver, calls);
+            for a in args {
+                collect_calls_in_expr(a, calls);
+            }
+        }
+        GdExpr::BinOp { left, right, .. } => {
+            collect_calls_in_expr(left, calls);
+            collect_calls_in_expr(right, calls);
+        }
+        GdExpr::UnaryOp { operand, .. } => collect_calls_in_expr(operand, calls),
+        GdExpr::PropertyAccess { receiver, .. } => collect_calls_in_expr(receiver, calls),
+        GdExpr::Subscript { receiver, index, .. } => {
+            collect_calls_in_expr(receiver, calls);
+            collect_calls_in_expr(index, calls);
+        }
+        GdExpr::Ternary { condition, true_val, false_val, .. } => {
+            collect_calls_in_expr(condition, calls);
+            collect_calls_in_expr(true_val, calls);
+            collect_calls_in_expr(false_val, calls);
+        }
+        GdExpr::Array { elements, .. } => {
+            for e in elements {
+                collect_calls_in_expr(e, calls);
+            }
+        }
+        GdExpr::Dict { pairs, .. } => {
+            for (k, v) in pairs {
+                collect_calls_in_expr(k, calls);
+                collect_calls_in_expr(v, calls);
+            }
+        }
+        GdExpr::Cast { expr: inner, .. }
+        | GdExpr::Is { expr: inner, .. }
+        | GdExpr::Await { expr: inner, .. } => {
+            collect_calls_in_expr(inner, calls);
+        }
+        _ => {}
+    }
 }
 
 /// Compute the transitive set of member assignments reachable from a function
-/// by following its call graph (BFS). E.g. `_ready → _build_ui → _build_move_panel`
+/// by following its call graph (BFS). E.g. `_ready -> _build_ui -> _build_move_panel`
 /// will collect assigns from all three functions.
 fn transitive_assigns(start: &str, func_info: &HashMap<String, FuncInfo>) -> HashSet<String> {
     let mut result = HashSet::new();
@@ -241,407 +238,501 @@ fn transitive_assigns(start: &str, func_info: &HashMap<String, FuncInfo>) -> Has
     result
 }
 
-fn scan_body_for_member_access(
-    body: Node,
-    source: &str,
+fn scan_stmts_for_member_access(
+    stmts: &[GdStmt],
     members: &HashSet<String>,
     assigned: &mut HashSet<String>,
     reads_before_assign: &mut HashSet<String>,
     null_checked: &mut HashSet<String>,
 ) {
-    let mut cursor = body.walk();
-    for child in body.children(&mut cursor) {
-        scan_statement(
-            child,
-            source,
-            members,
-            assigned,
-            reads_before_assign,
-            null_checked,
-        );
+    for stmt in stmts {
+        scan_statement(stmt, members, assigned, reads_before_assign, null_checked);
     }
 }
 
 fn scan_statement(
-    node: Node,
-    source: &str,
+    stmt: &GdStmt,
     members: &HashSet<String>,
     assigned: &mut HashSet<String>,
     reads_before_assign: &mut HashSet<String>,
     null_checked: &mut HashSet<String>,
 ) {
-    if node.kind() == "expression_statement" {
-        let mut c = node.walk();
-        for child in node.children(&mut c) {
-            if child.kind() == "assignment"
-                && let Some(member) = extract_member_assign(&child, source, members)
-            {
-                if let Some(rhs) = child.named_child(1) {
-                    collect_member_reads(
-                        rhs,
-                        source,
-                        members,
-                        assigned,
-                        reads_before_assign,
-                        null_checked,
-                    );
-                }
-                assigned.insert(member);
-                return;
-            }
-        }
+    // Check for member assignment: member = ... or self.member = ...
+    if let GdStmt::Assign { target, value, .. } = stmt
+        && let Some(member) = extract_member_assign(target, members)
+    {
+        collect_member_reads_expr(value, members, assigned, reads_before_assign, null_checked);
+        assigned.insert(member);
+        return;
     }
 
-    collect_member_reads(
-        node,
-        source,
-        members,
-        assigned,
-        reads_before_assign,
-        null_checked,
-    );
-
-    match node.kind() {
-        "if_statement" | "for_statement" | "while_statement" | "match_statement" => {
-            let mut c = node.walk();
-            for child in node.children(&mut c) {
-                if child.kind() == "body" || child.kind() == "match_body" {
-                    scan_body_for_member_access(
-                        child,
-                        source,
-                        members,
-                        assigned,
-                        reads_before_assign,
-                        null_checked,
-                    );
-                }
-                if (child.kind() == "elif_branch" || child.kind() == "else_branch")
-                    && let Some(b) = child.child_by_field_name("body")
-                {
-                    scan_body_for_member_access(
-                        b,
-                        source,
-                        members,
-                        assigned,
-                        reads_before_assign,
-                        null_checked,
-                    );
-                }
+    // Collect member reads from expressions in this statement
+    match stmt {
+        GdStmt::Expr { expr, .. } => {
+            collect_member_reads_expr(expr, members, assigned, reads_before_assign, null_checked);
+        }
+        GdStmt::Var(var) => {
+            if let Some(value) = &var.value {
+                collect_member_reads_expr(
+                    value,
+                    members,
+                    assigned,
+                    reads_before_assign,
+                    null_checked,
+                );
             }
         }
-        _ => {}
-    }
-}
-
-fn extract_member_assign(node: &Node, source: &str, members: &HashSet<String>) -> Option<String> {
-    let lhs = node.named_child(0)?;
-    match lhs.kind() {
-        "identifier" => {
-            let name = lhs.utf8_text(source.as_bytes()).ok()?;
-            if members.contains(name) {
-                Some(name.to_string())
-            } else {
-                None
-            }
+        GdStmt::Assign { target, value, .. } | GdStmt::AugAssign { target, value, .. } => {
+            collect_member_reads_expr(target, members, assigned, reads_before_assign, null_checked);
+            collect_member_reads_expr(value, members, assigned, reads_before_assign, null_checked);
         }
-        "attribute" => {
-            let first = lhs.named_child(0)?;
-            if first.kind() != "identifier" || first.utf8_text(source.as_bytes()).ok()? != "self" {
-                return None;
-            }
-            let mut c = lhs.walk();
-            for child in lhs.children(&mut c) {
-                if child.kind() == "identifier" && child != first {
-                    let name = child.utf8_text(source.as_bytes()).ok()?;
-                    if members.contains(name) {
-                        return Some(name.to_string());
-                    }
-                }
-            }
-            None
-        }
-        _ => None,
-    }
-}
-
-fn collect_member_reads(
-    node: Node,
-    source: &str,
-    members: &HashSet<String>,
-    assigned: &HashSet<String>,
-    reads_before_assign: &mut HashSet<String>,
-    null_checked: &mut HashSet<String>,
-) {
-    match node.kind() {
-        "identifier" => {
-            // Bare identifier reads are safe (null checks, comparisons, args)
-            // but record them as evidence the function is null-aware about this member.
-            if let Ok(name) = node.utf8_text(source.as_bytes())
-                && members.contains(name)
-                && !assigned.contains(name)
-            {
-                null_checked.insert(name.to_string());
-            }
-            return;
-        }
-        "attribute" => {
-            if let Some(first) = node.named_child(0)
-                && first.kind() == "identifier"
-            {
-                if first.utf8_text(source.as_bytes()).ok() == Some("self") {
-                    // self.member — flag member reads via self
-                    let mut c = node.walk();
-                    for child in node.children(&mut c) {
-                        if child.kind() == "identifier"
-                            && child != first
-                            && let Ok(name) = child.utf8_text(source.as_bytes())
-                            && members.contains(name)
-                            && !assigned.contains(name)
-                        {
-                            reads_before_assign.insert(name.to_string());
-                        }
-                    }
-                    return;
-                }
-                // member.something — dereferencing a possibly-unassigned member
-                if let Ok(name) = first.utf8_text(source.as_bytes())
-                    && members.contains(name)
-                    && !assigned.contains(name)
-                {
-                    reads_before_assign.insert(name.to_string());
-                    return;
-                }
-            }
-        }
-        "subscript" => {
-            // member[index] — dereferencing a possibly-unassigned member
-            if let Some(first) = node.named_child(0)
-                && first.kind() == "identifier"
-                && let Ok(name) = first.utf8_text(source.as_bytes())
-                && members.contains(name)
-                && !assigned.contains(name)
-            {
-                reads_before_assign.insert(name.to_string());
-                return;
-            }
+        GdStmt::Return { value: Some(v), .. } => {
+            collect_member_reads_expr(v, members, assigned, reads_before_assign, null_checked);
         }
         _ => {}
     }
 
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            collect_member_reads(
-                cursor.node(),
-                source,
+    // Recurse into control flow bodies
+    match stmt {
+        GdStmt::If(if_stmt) => {
+            collect_member_reads_expr(
+                &if_stmt.condition,
                 members,
                 assigned,
                 reads_before_assign,
                 null_checked,
             );
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
-    }
-}
-
-fn check_functions(
-    root: Node,
-    source: &str,
-    members: &HashSet<String>,
-    func_info: &HashMap<String, FuncInfo>,
-    ready_assigned: &HashSet<String>,
-    diags: &mut Vec<LintDiagnostic>,
-) {
-    let mut cursor = root.walk();
-    if !cursor.goto_first_child() {
-        return;
-    }
-    loop {
-        let node = cursor.node();
-        let kind = node.kind();
-        if kind == "function_definition" || kind == "constructor_definition" {
-            let func_name = if kind == "constructor_definition" {
-                Some("_init")
-            } else {
-                node.child_by_field_name("name")
-                    .and_then(|n| n.utf8_text(source.as_bytes()).ok())
-            };
-            if let Some(func_name) = func_name
-                && let Some(body) = node.child_by_field_name("body")
-            {
-                // For non-_ready/_init functions in Node subclasses, pre-populate
-                // with members that _ready() and _init() guarantee are assigned.
-                let mut assigned_so_far = if func_name == "_ready" || func_name == "_init" {
-                    HashSet::new()
-                } else {
-                    ready_assigned.clone()
-                };
-                check_body_calls(
-                    body,
-                    source,
+            scan_stmts_for_member_access(
+                &if_stmt.body,
+                members,
+                assigned,
+                reads_before_assign,
+                null_checked,
+            );
+            for (cond, branch) in &if_stmt.elif_branches {
+                collect_member_reads_expr(
+                    cond,
                     members,
-                    func_info,
-                    func_name,
-                    &mut assigned_so_far,
-                    diags,
+                    assigned,
+                    reads_before_assign,
+                    null_checked,
+                );
+                scan_stmts_for_member_access(
+                    branch,
+                    members,
+                    assigned,
+                    reads_before_assign,
+                    null_checked,
+                );
+            }
+            if let Some(else_body) = &if_stmt.else_body {
+                scan_stmts_for_member_access(
+                    else_body,
+                    members,
+                    assigned,
+                    reads_before_assign,
+                    null_checked,
                 );
             }
         }
-        if !cursor.goto_next_sibling() {
-            break;
+        GdStmt::For { body, .. } | GdStmt::While { body, .. } => {
+            scan_stmts_for_member_access(
+                body,
+                members,
+                assigned,
+                reads_before_assign,
+                null_checked,
+            );
         }
-    }
-}
-
-fn check_body_calls(
-    body: Node,
-    source: &str,
-    members: &HashSet<String>,
-    func_info: &HashMap<String, FuncInfo>,
-    caller_name: &str,
-    assigned_so_far: &mut HashSet<String>,
-    diags: &mut Vec<LintDiagnostic>,
-) {
-    let mut cursor = body.walk();
-    for child in body.children(&mut cursor) {
-        process_statement_for_calls(
-            child,
-            source,
-            members,
-            func_info,
-            caller_name,
-            assigned_so_far,
-            diags,
-        );
-    }
-}
-
-fn process_statement_for_calls(
-    node: Node,
-    source: &str,
-    members: &HashSet<String>,
-    func_info: &HashMap<String, FuncInfo>,
-    caller_name: &str,
-    assigned_so_far: &mut HashSet<String>,
-    diags: &mut Vec<LintDiagnostic>,
-) {
-    if node.kind() == "expression_statement" {
-        let mut c = node.walk();
-        for child in node.children(&mut c) {
-            if child.kind() == "assignment"
-                && let Some(member) = extract_member_assign(&child, source, members)
-            {
-                assigned_so_far.insert(member);
-            }
-        }
-    }
-
-    find_calls_in_node(node, source, func_info, caller_name, assigned_so_far, diags);
-
-    match node.kind() {
-        "if_statement" | "for_statement" | "while_statement" | "match_statement" => {
-            let mut c = node.walk();
-            for child in node.children(&mut c) {
-                if child.kind() == "body" || child.kind() == "match_body" {
-                    check_body_calls(
-                        child,
-                        source,
-                        members,
-                        func_info,
-                        caller_name,
-                        assigned_so_far,
-                        diags,
-                    );
-                }
-                if (child.kind() == "elif_branch" || child.kind() == "else_branch")
-                    && let Some(b) = child.child_by_field_name("body")
-                {
-                    check_body_calls(
-                        b,
-                        source,
-                        members,
-                        func_info,
-                        caller_name,
-                        assigned_so_far,
-                        diags,
-                    );
-                }
+        GdStmt::Match { arms, .. } => {
+            for arm in arms {
+                scan_stmts_for_member_access(
+                    &arm.body,
+                    members,
+                    assigned,
+                    reads_before_assign,
+                    null_checked,
+                );
             }
         }
         _ => {}
     }
 }
 
-fn find_calls_in_node(
-    node: Node,
-    source: &str,
+/// Check if an assignment target is a member variable. Returns the member name.
+fn extract_member_assign(target: &GdExpr, members: &HashSet<String>) -> Option<String> {
+    match target {
+        // member = value
+        GdExpr::Ident { name, .. } if members.contains(*name) => Some((*name).to_string()),
+        // self.member = value
+        GdExpr::PropertyAccess { receiver, property, .. }
+            if matches!(receiver.as_ref(), GdExpr::Ident { name: "self", .. })
+                && members.contains(*property) =>
+        {
+            Some((*property).to_string())
+        }
+        _ => None,
+    }
+}
+
+/// Recursively collect member reads from an expression tree.
+fn collect_member_reads_expr(
+    expr: &GdExpr,
+    members: &HashSet<String>,
+    assigned: &HashSet<String>,
+    reads_before_assign: &mut HashSet<String>,
+    null_checked: &mut HashSet<String>,
+) {
+    match expr {
+        // Bare identifier reads are safe (null checks, comparisons, args)
+        // but record them as evidence the function is null-aware about this member.
+        GdExpr::Ident { name, .. } if members.contains(*name) && !assigned.contains(*name) => {
+            null_checked.insert((*name).to_string());
+        }
+
+        // self.member — flag member reads via self
+        GdExpr::PropertyAccess { receiver, property, .. }
+            if matches!(receiver.as_ref(), GdExpr::Ident { name: "self", .. })
+                && members.contains(*property)
+                && !assigned.contains(*property) =>
+        {
+            reads_before_assign.insert((*property).to_string());
+        }
+
+        // member.something / member.method() / member[index] — dereferencing a possibly-unassigned member
+        GdExpr::PropertyAccess { receiver, .. }
+        | GdExpr::MethodCall { receiver, .. }
+        | GdExpr::Subscript { receiver, .. } => {
+            if let GdExpr::Ident { name, .. } = receiver.as_ref()
+                && members.contains(*name)
+                && !assigned.contains(*name)
+            {
+                reads_before_assign.insert((*name).to_string());
+            } else {
+                recurse_member_reads(expr, members, assigned, reads_before_assign, null_checked);
+            }
+        }
+
+        // Recurse into sub-expressions
+        _ => {
+            recurse_member_reads(expr, members, assigned, reads_before_assign, null_checked);
+        }
+    }
+}
+
+fn recurse_member_reads(
+    expr: &GdExpr,
+    members: &HashSet<String>,
+    assigned: &HashSet<String>,
+    reads_before_assign: &mut HashSet<String>,
+    null_checked: &mut HashSet<String>,
+) {
+    match expr {
+        GdExpr::Call { callee, args, .. } => {
+            collect_member_reads_expr(callee, members, assigned, reads_before_assign, null_checked);
+            for a in args {
+                collect_member_reads_expr(a, members, assigned, reads_before_assign, null_checked);
+            }
+        }
+        GdExpr::MethodCall { receiver, args, .. } => {
+            collect_member_reads_expr(
+                receiver,
+                members,
+                assigned,
+                reads_before_assign,
+                null_checked,
+            );
+            for a in args {
+                collect_member_reads_expr(a, members, assigned, reads_before_assign, null_checked);
+            }
+        }
+        GdExpr::PropertyAccess { receiver, .. } => {
+            collect_member_reads_expr(
+                receiver,
+                members,
+                assigned,
+                reads_before_assign,
+                null_checked,
+            );
+        }
+        GdExpr::BinOp { left, right, .. } => {
+            collect_member_reads_expr(left, members, assigned, reads_before_assign, null_checked);
+            collect_member_reads_expr(right, members, assigned, reads_before_assign, null_checked);
+        }
+        GdExpr::UnaryOp { operand, .. } => {
+            collect_member_reads_expr(
+                operand,
+                members,
+                assigned,
+                reads_before_assign,
+                null_checked,
+            );
+        }
+        GdExpr::Subscript { receiver, index, .. } => {
+            collect_member_reads_expr(
+                receiver,
+                members,
+                assigned,
+                reads_before_assign,
+                null_checked,
+            );
+            collect_member_reads_expr(index, members, assigned, reads_before_assign, null_checked);
+        }
+        GdExpr::Ternary { condition, true_val, false_val, .. } => {
+            collect_member_reads_expr(
+                condition,
+                members,
+                assigned,
+                reads_before_assign,
+                null_checked,
+            );
+            collect_member_reads_expr(
+                true_val,
+                members,
+                assigned,
+                reads_before_assign,
+                null_checked,
+            );
+            collect_member_reads_expr(
+                false_val,
+                members,
+                assigned,
+                reads_before_assign,
+                null_checked,
+            );
+        }
+        GdExpr::Array { elements, .. } => {
+            for e in elements {
+                collect_member_reads_expr(e, members, assigned, reads_before_assign, null_checked);
+            }
+        }
+        GdExpr::Dict { pairs, .. } => {
+            for (k, v) in pairs {
+                collect_member_reads_expr(k, members, assigned, reads_before_assign, null_checked);
+                collect_member_reads_expr(v, members, assigned, reads_before_assign, null_checked);
+            }
+        }
+        GdExpr::Cast { expr: inner, .. }
+        | GdExpr::Is { expr: inner, .. }
+        | GdExpr::Await { expr: inner, .. } => {
+            collect_member_reads_expr(inner, members, assigned, reads_before_assign, null_checked);
+        }
+        _ => {}
+    }
+}
+
+fn check_functions(
+    file: &GdFile,
+    members: &HashSet<String>,
     func_info: &HashMap<String, FuncInfo>,
-    caller_name: &str,
-    assigned_so_far: &HashSet<String>,
+    ready_assigned: &HashSet<String>,
     diags: &mut Vec<LintDiagnostic>,
 ) {
-    if node.kind() == "call"
-        && let Some(func_id) = node.named_child(0)
-        && func_id.kind() == "identifier"
-        && let Ok(callee) = func_id.utf8_text(source.as_bytes())
-    {
-        check_callee(
-            callee,
-            &node,
-            func_info,
-            caller_name,
-            assigned_so_far,
-            diags,
-        );
+    for decl in &file.declarations {
+        if let GdDecl::Func(func) = decl {
+            // For non-_ready/_init functions in Node subclasses, pre-populate
+            // with members that _ready() and _init() guarantee are assigned.
+            let mut assigned_so_far = if func.name == "_ready" || func.name == "_init" {
+                HashSet::new()
+            } else {
+                ready_assigned.clone()
+            };
+            check_stmts_for_calls(
+                &func.body,
+                members,
+                func_info,
+                func.name,
+                &mut assigned_so_far,
+                diags,
+            );
+        }
     }
+}
 
-    if node.kind() == "attribute"
-        && let Some(first) = node.named_child(0)
-        && first.kind() == "identifier"
-        && first.utf8_text(source.as_bytes()).ok() == Some("self")
-    {
-        let mut c = node.walk();
-        for child in node.children(&mut c) {
-            if child.kind() == "attribute_call"
-                && let Some(method_id) = child.named_child(0)
-                && method_id.kind() == "identifier"
-                && let Ok(callee) = method_id.utf8_text(source.as_bytes())
-            {
-                check_callee(
-                    callee,
-                    &node,
+fn check_stmts_for_calls(
+    stmts: &[GdStmt],
+    members: &HashSet<String>,
+    func_info: &HashMap<String, FuncInfo>,
+    caller_name: &str,
+    assigned_so_far: &mut HashSet<String>,
+    diags: &mut Vec<LintDiagnostic>,
+) {
+    for stmt in stmts {
+        // Track member assignments
+        if let GdStmt::Assign { target, .. } = stmt
+            && let Some(member) = extract_member_assign(target, members)
+        {
+            assigned_so_far.insert(member);
+        }
+
+        // Check for calls
+        find_calls_in_stmt(stmt, func_info, caller_name, assigned_so_far, diags);
+
+        // Recurse into control flow bodies
+        match stmt {
+            GdStmt::If(if_stmt) => {
+                check_stmts_for_calls(
+                    &if_stmt.body,
+                    members,
+                    func_info,
+                    caller_name,
+                    assigned_so_far,
+                    diags,
+                );
+                for (_, branch) in &if_stmt.elif_branches {
+                    check_stmts_for_calls(
+                        branch,
+                        members,
+                        func_info,
+                        caller_name,
+                        assigned_so_far,
+                        diags,
+                    );
+                }
+                if let Some(else_body) = &if_stmt.else_body {
+                    check_stmts_for_calls(
+                        else_body,
+                        members,
+                        func_info,
+                        caller_name,
+                        assigned_so_far,
+                        diags,
+                    );
+                }
+            }
+            GdStmt::For { body, .. } | GdStmt::While { body, .. } => {
+                check_stmts_for_calls(
+                    body,
+                    members,
                     func_info,
                     caller_name,
                     assigned_so_far,
                     diags,
                 );
             }
+            GdStmt::Match { arms, .. } => {
+                for arm in arms {
+                    check_stmts_for_calls(
+                        &arm.body,
+                        members,
+                        func_info,
+                        caller_name,
+                        assigned_so_far,
+                        diags,
+                    );
+                }
+            }
+            _ => {}
         }
     }
+}
 
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            find_calls_in_node(
-                cursor.node(),
-                source,
+/// Check all expressions in a statement for calls to functions that read unassigned members.
+fn find_calls_in_stmt(
+    stmt: &GdStmt,
+    func_info: &HashMap<String, FuncInfo>,
+    caller_name: &str,
+    assigned_so_far: &HashSet<String>,
+    diags: &mut Vec<LintDiagnostic>,
+) {
+    match stmt {
+        GdStmt::Expr { expr, .. } => {
+            find_calls_in_expr(expr, func_info, caller_name, assigned_so_far, diags);
+        }
+        GdStmt::Var(var) => {
+            if let Some(value) = &var.value {
+                find_calls_in_expr(value, func_info, caller_name, assigned_so_far, diags);
+            }
+        }
+        GdStmt::Assign { value, .. } | GdStmt::AugAssign { value, .. } => {
+            find_calls_in_expr(value, func_info, caller_name, assigned_so_far, diags);
+        }
+        GdStmt::Return { value: Some(v), .. } => {
+            find_calls_in_expr(v, func_info, caller_name, assigned_so_far, diags);
+        }
+        GdStmt::If(if_stmt) => {
+            find_calls_in_expr(
+                &if_stmt.condition,
                 func_info,
                 caller_name,
                 assigned_so_far,
                 diags,
             );
-            if !cursor.goto_next_sibling() {
-                break;
+        }
+        _ => {}
+    }
+}
+
+fn find_calls_in_expr(
+    expr: &GdExpr,
+    func_info: &HashMap<String, FuncInfo>,
+    caller_name: &str,
+    assigned_so_far: &HashSet<String>,
+    diags: &mut Vec<LintDiagnostic>,
+) {
+    match expr {
+        // Plain call: func_name()
+        GdExpr::Call { callee, args, node, .. } => {
+            if let GdExpr::Ident { name, .. } = callee.as_ref() {
+                check_callee(name, node, func_info, caller_name, assigned_so_far, diags);
+            }
+            find_calls_in_expr(callee, func_info, caller_name, assigned_so_far, diags);
+            for a in args {
+                find_calls_in_expr(a, func_info, caller_name, assigned_so_far, diags);
             }
         }
+        // self.method()
+        GdExpr::MethodCall { receiver, method, args, node, .. } => {
+            if let GdExpr::Ident { name: "self", .. } = receiver.as_ref() {
+                check_callee(method, node, func_info, caller_name, assigned_so_far, diags);
+            }
+            find_calls_in_expr(receiver, func_info, caller_name, assigned_so_far, diags);
+            for a in args {
+                find_calls_in_expr(a, func_info, caller_name, assigned_so_far, diags);
+            }
+        }
+        GdExpr::BinOp { left, right, .. } => {
+            find_calls_in_expr(left, func_info, caller_name, assigned_so_far, diags);
+            find_calls_in_expr(right, func_info, caller_name, assigned_so_far, diags);
+        }
+        GdExpr::UnaryOp { operand, .. } => {
+            find_calls_in_expr(operand, func_info, caller_name, assigned_so_far, diags);
+        }
+        GdExpr::PropertyAccess { receiver, .. } => {
+            find_calls_in_expr(receiver, func_info, caller_name, assigned_so_far, diags);
+        }
+        GdExpr::Subscript { receiver, index, .. } => {
+            find_calls_in_expr(receiver, func_info, caller_name, assigned_so_far, diags);
+            find_calls_in_expr(index, func_info, caller_name, assigned_so_far, diags);
+        }
+        GdExpr::Ternary { condition, true_val, false_val, .. } => {
+            find_calls_in_expr(condition, func_info, caller_name, assigned_so_far, diags);
+            find_calls_in_expr(true_val, func_info, caller_name, assigned_so_far, diags);
+            find_calls_in_expr(false_val, func_info, caller_name, assigned_so_far, diags);
+        }
+        GdExpr::Array { elements, .. } => {
+            for e in elements {
+                find_calls_in_expr(e, func_info, caller_name, assigned_so_far, diags);
+            }
+        }
+        GdExpr::Dict { pairs, .. } => {
+            for (k, v) in pairs {
+                find_calls_in_expr(k, func_info, caller_name, assigned_so_far, diags);
+                find_calls_in_expr(v, func_info, caller_name, assigned_so_far, diags);
+            }
+        }
+        GdExpr::Cast { expr: inner, .. }
+        | GdExpr::Is { expr: inner, .. }
+        | GdExpr::Await { expr: inner, .. } => {
+            find_calls_in_expr(inner, func_info, caller_name, assigned_so_far, diags);
+        }
+        _ => {}
     }
 }
 
 fn check_callee(
     callee: &str,
-    call_node: &Node,
+    call_node: &tree_sitter::Node,
     func_info: &HashMap<String, FuncInfo>,
     caller_name: &str,
     assigned_so_far: &HashSet<String>,

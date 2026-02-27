@@ -1,5 +1,4 @@
-use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{self, GdDecl, GdExpr, GdFile, GdFunc, GdStmt, GdVar};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::class_db;
@@ -33,69 +32,82 @@ impl LintRule for InferUnknownMember {
         symbols: &SymbolTable,
     ) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        check_node(file.node, source, symbols, &mut diags);
+        gd_ast::visit_decls(file, &mut |decl| {
+            match decl {
+                GdDecl::Func(func) => {
+                    check_stmts_for_inferred(&func.body, Some(func), source, symbols, &mut diags);
+                }
+                GdDecl::Var(var) => {
+                    check_inferred_var(var, None, &[], source, symbols, &mut diags);
+                }
+                _ => {}
+            }
+        });
         diags
     }
 }
 
-fn check_node(node: Node, source: &str, symbols: &SymbolTable, diags: &mut Vec<LintDiagnostic>) {
-    if node.kind() == "variable_statement" {
-        check_variable(node, source, symbols, diags);
-    }
-
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            check_node(cursor.node(), source, symbols, diags);
-            if !cursor.goto_next_sibling() {
-                break;
+/// Recursively search statements for `:=` variable declarations with member access.
+fn check_stmts_for_inferred(
+    stmts: &[GdStmt],
+    func: Option<&GdFunc>,
+    source: &str,
+    symbols: &SymbolTable,
+    diags: &mut Vec<LintDiagnostic>,
+) {
+    for stmt in stmts {
+        if let GdStmt::Var(var) = stmt {
+            let func_body = func.map_or(&[] as &[GdStmt], |f| f.body.as_slice());
+            check_inferred_var(var, func, func_body, source, symbols, diags);
+        }
+        // Recurse into control flow
+        match stmt {
+            GdStmt::If(if_stmt) => {
+                check_stmts_for_inferred(&if_stmt.body, func, source, symbols, diags);
+                for (_, branch) in &if_stmt.elif_branches {
+                    check_stmts_for_inferred(branch, func, source, symbols, diags);
+                }
+                if let Some(else_body) = &if_stmt.else_body {
+                    check_stmts_for_inferred(else_body, func, source, symbols, diags);
+                }
             }
+            GdStmt::For { body, .. } | GdStmt::While { body, .. } => {
+                check_stmts_for_inferred(body, func, source, symbols, diags);
+            }
+            GdStmt::Match { arms, .. } => {
+                for arm in arms {
+                    check_stmts_for_inferred(&arm.body, func, source, symbols, diags);
+                }
+            }
+            _ => {}
         }
     }
 }
 
-fn check_variable(
-    node: Node,
+/// Check a single variable declaration for the `:= obj.unknown_member` pattern.
+fn check_inferred_var(
+    var: &GdVar,
+    func: Option<&GdFunc>,
+    func_body: &[GdStmt],
     source: &str,
     symbols: &SymbolTable,
     diags: &mut Vec<LintDiagnostic>,
 ) {
     // Only check := (inferred type)
-    let is_inferred = node
-        .child_by_field_name("type")
-        .is_some_and(|t| t.kind() == "inferred_type");
-    if !is_inferred {
-        return;
-    }
-
-    let Some(value) = node.child_by_field_name("value") else {
+    let Some(type_ann) = &var.type_ann else {
         return;
     };
+    if !type_ann.is_inferred {
+        return;
+    }
 
     // RHS must be a member access: obj.member
-    if value.kind() != "attribute" {
-        return;
-    }
-
-    let Some(object_node) = value.named_child(0) else {
+    let Some(GdExpr::PropertyAccess { receiver, property, .. }) = &var.value else {
         return;
     };
 
-    // Find the member name — second identifier child (after the object)
-    let mut member_name = None;
-    let mut cursor = value.walk();
-    for child in value.children(&mut cursor) {
-        if child.kind() == "identifier" && child != object_node {
-            member_name = child.utf8_text(source.as_bytes()).ok();
-            break;
-        }
-    }
-    let Some(member_name) = member_name else {
-        return;
-    };
-
-    // Resolve the type of the object
-    let Some(obj_type) = resolve_object_type(&object_node, source, symbols) else {
+    // Resolve the type of the receiver object
+    let Some(obj_type) = resolve_object_type(receiver, func, func_body, source, symbols) else {
         return;
     };
 
@@ -105,130 +117,79 @@ fn check_variable(
     }
 
     // Check if member exists as a property, method, or signal on the resolved type
-    if class_db::property_exists(&obj_type, member_name)
-        || class_db::method_exists(&obj_type, member_name)
-        || class_db::signal_exists(&obj_type, member_name)
+    if class_db::property_exists(&obj_type, property)
+        || class_db::method_exists(&obj_type, property)
+        || class_db::signal_exists(&obj_type, property)
     {
         return;
     }
 
-    let var_name = node
-        .child_by_field_name("name")
-        .and_then(|n| n.utf8_text(source.as_bytes()).ok())
-        .unwrap_or("?");
-
     diags.push(LintDiagnostic {
         rule: "infer-unknown-member",
         message: format!(
-            "`:=` cannot infer type — `{member_name}` is not a known member of `{obj_type}`; \
-             use an explicit type annotation for `{var_name}`"
+            "`:=` cannot infer type — `{property}` is not a known member of `{obj_type}`; \
+             use an explicit type annotation for `{}`",
+            var.name
         ),
         severity: Severity::Warning,
-        line: node.start_position().row,
-        column: node.start_position().column,
+        line: var.node.start_position().row,
+        column: var.node.start_position().column,
         end_column: None,
         fix: None,
         context_lines: None,
     });
 }
 
-/// Resolve the type of an expression node from the symbol table.
-/// Returns the class name if it can be determined.
-fn resolve_object_type(node: &Node, source: &str, symbols: &SymbolTable) -> Option<String> {
-    match node.kind() {
-        "identifier" => {
-            let name = node.utf8_text(source.as_bytes()).ok()?;
-
-            // Check class-level variable declarations
-            for var in &symbols.variables {
-                if var.name == name {
-                    return var
-                        .type_ann
-                        .as_ref()
-                        .filter(|t| !t.is_inferred)
-                        .map(|t| t.name.clone());
-                }
-            }
-
-            // Check function parameters in the enclosing function
-            let func_node = find_enclosing_function(node)?;
-            let name_node = func_node.child_by_field_name("name")?;
-            let func_name = name_node.utf8_text(source.as_bytes()).ok()?;
-
-            for func in &symbols.functions {
-                if func.name == func_name {
-                    for param in &func.params {
-                        if param.name == name {
-                            return param
-                                .type_ann
-                                .as_ref()
-                                .filter(|t| !t.is_inferred)
-                                .map(|t| t.name.clone());
-                        }
-                    }
-                }
-            }
-
-            // Check local variable declarations before this line
-            resolve_local_var_type(node, name, source)
-        }
-        _ => None,
-    }
-}
-
-/// Walk up the tree to find the enclosing function definition.
-fn find_enclosing_function<'a>(node: &'a Node<'a>) -> Option<Node<'a>> {
-    let mut current = node.parent()?;
-    loop {
-        if current.kind() == "function_definition" || current.kind() == "constructor_definition" {
-            return Some(current);
-        }
-        current = current.parent()?;
-    }
-}
-
-/// Look for a local variable declaration with an explicit type annotation
-/// in the same function body, before the current node's line.
-fn resolve_local_var_type(node: &Node, name: &str, source: &str) -> Option<String> {
-    let func_node = find_enclosing_function(node)?;
-    let body = func_node.child_by_field_name("body")?;
-    let target_line = node.start_position().row;
-
-    find_typed_var_in_body(body, name, source, target_line)
-}
-
-fn find_typed_var_in_body(
-    body: Node,
-    name: &str,
+/// Resolve the type of a receiver expression from the symbol table.
+/// Handles identifiers by checking class-level vars, function params, and local vars.
+fn resolve_object_type(
+    receiver: &GdExpr,
+    func: Option<&GdFunc>,
+    func_body: &[GdStmt],
     source: &str,
-    before_line: usize,
+    symbols: &SymbolTable,
 ) -> Option<String> {
-    let mut cursor = body.walk();
-    if !cursor.goto_first_child() {
+    let GdExpr::Ident { name, node, .. } = receiver else {
         return None;
+    };
+
+    // Check class-level variable declarations
+    for var in &symbols.variables {
+        if var.name == *name {
+            return var
+                .type_ann
+                .as_ref()
+                .filter(|t| !t.is_inferred)
+                .map(|t| t.name.clone());
+        }
     }
 
-    loop {
-        let child = cursor.node();
-        if child.start_position().row >= before_line {
+    // Check function parameters (no parent walking needed — we have the func directly)
+    if let Some(func) = func {
+        for param in &func.params {
+            if param.name == *name {
+                return param
+                    .type_ann
+                    .as_ref()
+                    .filter(|t| !t.is_inferred)
+                    .map(|t| t.name.to_string());
+            }
+        }
+    }
+
+    // Check local variable declarations before this line
+    let _ = source; // used for consistency with original API
+    let target_line = node.start_position().row;
+    for stmt in func_body {
+        if stmt.node().start_position().row >= target_line {
             break;
         }
-
-        if child.kind() == "variable_statement"
-            && let Some(var_name) = child.child_by_field_name("name")
-            && let Ok(vn) = var_name.utf8_text(source.as_bytes())
-            && vn == name
-            && let Some(type_node) = child.child_by_field_name("type")
-            && type_node.kind() != "inferred_type"
+        if let GdStmt::Var(var) = stmt
+            && var.name == *name
+            && let Some(type_ann) = &var.type_ann
+            && !type_ann.is_inferred
         {
-            return type_node
-                .utf8_text(source.as_bytes())
-                .ok()
-                .map(String::from);
-        }
-
-        if !cursor.goto_next_sibling() {
-            break;
+            return Some(type_ann.name.to_string());
         }
     }
 
