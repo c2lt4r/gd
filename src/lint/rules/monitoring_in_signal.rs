@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{self, GdDecl, GdFile};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -44,7 +44,18 @@ impl LintRule for MonitoringInSignal {
         // We don't add these to signal_callbacks because we check them below.
 
         // 3. Check each matching function body for direct monitoring/monitorable assignment
-        check_functions(file.node, source, &signal_callbacks, &mut diags);
+        gd_ast::visit_decls(file, &mut |decl| {
+            if let GdDecl::Func(func) = decl {
+                let is_connected = signal_callbacks.contains(func.name);
+                let is_auto = is_auto_connected_signal_handler(func.name);
+
+                if (is_connected || is_auto)
+                    && let Some(body) = func.node.child_by_field_name("body")
+                {
+                    check_body_for_monitoring(body, source, func.name, &mut diags);
+                }
+            }
+        });
 
         diags
     }
@@ -121,46 +132,6 @@ fn extract_signal_connect(node: &Node, source: &str) -> Option<String> {
     }
 
     None
-}
-
-/// Check function bodies for direct monitoring/monitorable assignments.
-fn check_functions(
-    node: Node,
-    source: &str,
-    signal_callbacks: &HashSet<String>,
-    diags: &mut Vec<LintDiagnostic>,
-) {
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            let child = cursor.node();
-            match child.kind() {
-                "function_definition" => {
-                    if let Some(name_node) = child.child_by_field_name("name")
-                        && let Ok(func_name) = name_node.utf8_text(source.as_bytes())
-                    {
-                        let is_connected = signal_callbacks.contains(func_name);
-                        let is_auto = is_auto_connected_signal_handler(func_name);
-
-                        if (is_connected || is_auto)
-                            && let Some(body) = child.child_by_field_name("body")
-                        {
-                            check_body_for_monitoring(body, source, func_name, diags);
-                        }
-                    }
-                }
-                "class_definition" => {
-                    if let Some(body) = child.child_by_field_name("body") {
-                        check_functions(body, source, signal_callbacks, diags);
-                    }
-                }
-                _ => {}
-            }
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
-    }
 }
 
 /// Check if function name matches Godot auto-connect pattern: _on_*_<signal>

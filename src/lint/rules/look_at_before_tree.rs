@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{self, GdDecl, GdFile};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -22,33 +22,14 @@ impl LintRule for LookAtBeforeTree {
 
     fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        find_functions(file.node, source, &mut diags);
+        gd_ast::visit_decls(file, &mut |decl| {
+            if let GdDecl::Func(func) = decl
+                && let Some(body) = func.node.child_by_field_name("body")
+            {
+                check_function_body(body, source, &mut diags);
+            }
+        });
         diags
-    }
-}
-
-fn find_functions(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            let child = cursor.node();
-            match child.kind() {
-                "function_definition" | "constructor_definition" => {
-                    if let Some(body) = child.child_by_field_name("body") {
-                        check_function_body(body, source, diags);
-                    }
-                }
-                "class_definition" => {
-                    if let Some(body) = child.child_by_field_name("body") {
-                        find_functions(body, source, diags);
-                    }
-                }
-                _ => {}
-            }
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
     }
 }
 

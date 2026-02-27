@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{self, GdDecl, GdFile};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -19,20 +19,18 @@ impl LintRule for NullableCurrentScene {
 
     fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        let root = file.node;
 
         // Check direct chained access: get_tree().current_scene.xxx()
-        check_direct_access(root, source, &mut diags);
+        check_direct_access(file.node, source, &mut diags);
 
         // Check aliased access in each function body
-        let mut cursor = root.walk();
-        for child in root.children(&mut cursor) {
-            if (child.kind() == "function_definition" || child.kind() == "constructor_definition")
-                && let Some(body) = child.child_by_field_name("body")
+        gd_ast::visit_decls(file, &mut |decl| {
+            if let GdDecl::Func(func) = decl
+                && let Some(body) = func.node.child_by_field_name("body")
             {
                 check_aliased_access(body, source, &mut diags);
             }
-        }
+        });
 
         diags
     }
