@@ -1,6 +1,6 @@
 [package]
 name = "gd"
-version = "0.3.13"
+version = "0.3.14"
 edition = "2024"
 description = "A comprehensive Godot toolchain - format, lint, build, run, and manage Godot projects"
 license = "MIT"

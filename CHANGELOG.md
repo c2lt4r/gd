@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.14] - 2026-02-27
+
+### Internal
+- **Split `check_cmd.rs` into directory module** — the largest file in the project (6,152 lines) is now organized into 7 focused submodules (`structural`, `classdb`, `types`, `args`, `identifiers`, `builtins`, `tests`), following the established module split pattern used by `debug_cmd/`, `scene_cmd/`, and `test_cmd/`. Pure reorganization with no behavioral changes.
+
 ## [0.3.13] - 2026-02-27
 
 ### Improved
