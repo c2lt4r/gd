@@ -1,5 +1,4 @@
-use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{self, GdDecl, GdFile};
 
 use super::{Fix, LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -15,99 +14,68 @@ impl LintRule for EnumNaming {
         LintCategory::Style
     }
 
-    fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, file: &GdFile<'_>, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        let root = file.node;
-        check_node(root, source, &mut diags);
-        diags
-    }
-}
+        gd_ast::visit_decls(file, &mut |decl| {
+            if let GdDecl::Enum(e) = decl {
+                // Check enum name is PascalCase
+                if !e.name.is_empty() && !is_pascal_case(e.name) {
+                    let fixed = to_pascal_case(e.name);
+                    let name_node = e.node.child_by_field_name("name");
+                    let (line, col, end_col) = name_node.map_or(
+                        (e.node.start_position().row, e.node.start_position().column, None),
+                        |n| (n.start_position().row, n.start_position().column, Some(n.end_position().column)),
+                    );
+                    let fix = name_node.map(|n| Fix {
+                        byte_start: n.start_byte(),
+                        byte_end: n.end_byte(),
+                        replacement: fixed.clone(),
+                    });
+                    diags.push(LintDiagnostic {
+                        rule: "enum-naming",
+                        message: format!("enum `{}` should use PascalCase: `{fixed}`", e.name),
+                        severity: Severity::Warning,
+                        line,
+                        column: col,
+                        end_column: end_col,
+                        fix,
+                        context_lines: None,
+                    });
+                }
 
-fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    if node.kind() == "enum_definition" {
-        // Check enum name is PascalCase
-        if let Some(name_node) = node.child_by_field_name("name") {
-            let name = &source[name_node.byte_range()];
-            if !is_pascal_case(name) {
-                let fixed = to_pascal_case(name);
-                diags.push(LintDiagnostic {
-                    rule: "enum-naming",
-                    message: format!("enum `{name}` should use PascalCase: `{fixed}`"),
-                    severity: Severity::Warning,
-                    line: name_node.start_position().row,
-                    column: name_node.start_position().column,
-                    end_column: Some(name_node.end_position().column),
-                    fix: Some(Fix {
-                        byte_start: name_node.start_byte(),
-                        byte_end: name_node.end_byte(),
-                        replacement: fixed,
-                    }),
-                    context_lines: None,
-                });
-            }
-        }
-
-        // Check enum values are UPPER_SNAKE_CASE
-        check_enum_values(node, source, diags);
-    }
-
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            check_node(cursor.node(), source, diags);
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
-    }
-}
-
-fn check_enum_values(enum_node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    let mut cursor = enum_node.walk();
-    if !cursor.goto_first_child() {
-        return;
-    }
-    loop {
-        let child = cursor.node();
-        if child.kind() == "enumerator_list" {
-            let mut list_cursor = child.walk();
-            if list_cursor.goto_first_child() {
-                loop {
-                    let item = list_cursor.node();
-                    if item.kind() == "enumerator" {
-                        // First child of enumerator is the name identifier
-                        if let Some(name_node) = item.child(0) {
-                            let name = &source[name_node.byte_range()];
-                            if !is_upper_snake_case(name) {
-                                let fixed = to_upper_snake_case(name);
-                                diags.push(LintDiagnostic {
-                                    rule: "enum-naming",
-                                    message: format!(
-                                        "enum value `{name}` should use UPPER_SNAKE_CASE: `{fixed}`"
-                                    ),
-                                    severity: Severity::Warning,
-                                    line: name_node.start_position().row,
-                                    column: name_node.start_position().column,
-                                    end_column: Some(name_node.end_position().column),
-                                    fix: Some(Fix {
-                                        byte_start: name_node.start_byte(),
-                                        byte_end: name_node.end_byte(),
-                                        replacement: fixed,
-                                    }),
-                                    context_lines: None,
-                                });
-                            }
-                        }
-                    }
-                    if !list_cursor.goto_next_sibling() {
-                        break;
+                // Check enum member values are UPPER_SNAKE_CASE
+                for member in &e.members {
+                    if !is_upper_snake_case(member.name) {
+                        let fixed = to_upper_snake_case(member.name);
+                        // First child of enumerator node is the name identifier
+                        let name_node = member.node.child(0);
+                        let (line, col, end_col) = name_node.map_or(
+                            (member.node.start_position().row, member.node.start_position().column, None),
+                            |n| (n.start_position().row, n.start_position().column, Some(n.end_position().column)),
+                        );
+                        let fix = name_node.map(|n| Fix {
+                            byte_start: n.start_byte(),
+                            byte_end: n.end_byte(),
+                            replacement: fixed.clone(),
+                        });
+                        diags.push(LintDiagnostic {
+                            rule: "enum-naming",
+                            message: format!(
+                                "enum value `{}` should use UPPER_SNAKE_CASE: `{fixed}`",
+                                member.name,
+                            ),
+                            severity: Severity::Warning,
+                            line,
+                            column: col,
+                            end_column: end_col,
+                            fix,
+                            context_lines: None,
+                        });
                     }
                 }
             }
-        }
-        if !cursor.goto_next_sibling() {
-            break;
-        }
+        });
+        diags
     }
 }
 

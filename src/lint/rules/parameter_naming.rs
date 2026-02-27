@@ -1,5 +1,4 @@
-use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{self, GdDecl, GdFile};
 
 use super::{Fix, LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -15,81 +14,43 @@ impl LintRule for ParameterNaming {
         LintCategory::Style
     }
 
-    fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, file: &GdFile<'_>, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        let root = file.node;
-        check_node(root, source, &mut diags);
-        diags
-    }
-}
-
-fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    if node.kind() == "function_definition"
-        && let Some(params) = node.child_by_field_name("parameters")
-    {
-        check_parameters(params, source, diags);
-    }
-
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            check_node(cursor.node(), source, diags);
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
-    }
-}
-
-fn check_parameters(params_node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    let mut cursor = params_node.walk();
-    if !cursor.goto_first_child() {
-        return;
-    }
-    loop {
-        let child = cursor.node();
-        match child.kind() {
-            // Plain parameter: `func foo(myParam):`
-            "identifier" => {
-                check_param_name(child, source, diags);
-            }
-            // Typed: `func foo(myParam: int):`
-            // Default: `func foo(myParam = 5):`
-            // Typed default: `func foo(myParam: int = 5):`
-            "typed_parameter" | "default_parameter" | "typed_default_parameter" => {
-                if let Some(name_node) = child.child(0)
-                    && name_node.kind() == "identifier"
-                {
-                    check_param_name(name_node, source, diags);
+        gd_ast::visit_decls(file, &mut |decl| {
+            if let GdDecl::Func(func) = decl {
+                for param in &func.params {
+                    if !is_snake_case(param.name) {
+                        let fixed = to_snake_case(param.name);
+                        // Get name identifier node for fix byte range
+                        let name_node = if param.node.kind() == "identifier" {
+                            Some(param.node)
+                        } else {
+                            param.node.child(0).filter(|n| n.kind() == "identifier")
+                        };
+                        let (line, col, end_col) = name_node.map_or(
+                            (param.node.start_position().row, param.node.start_position().column, None),
+                            |n| (n.start_position().row, n.start_position().column, Some(n.end_position().column)),
+                        );
+                        let fix = name_node.map(|n| Fix {
+                            byte_start: n.start_byte(),
+                            byte_end: n.end_byte(),
+                            replacement: fixed.clone(),
+                        });
+                        diags.push(LintDiagnostic {
+                            rule: "parameter-naming",
+                            message: format!("parameter `{}` should use snake_case: `{fixed}`", param.name),
+                            severity: Severity::Warning,
+                            line,
+                            column: col,
+                            end_column: end_col,
+                            fix,
+                            context_lines: None,
+                        });
+                    }
                 }
             }
-            _ => {}
-        }
-        if !cursor.goto_next_sibling() {
-            break;
-        }
-    }
-}
-
-fn check_param_name(name_node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    let name = &source[name_node.byte_range()];
-    // Allow leading underscores for unused params
-    if !is_snake_case(name) {
-        let fixed = to_snake_case(name);
-        diags.push(LintDiagnostic {
-            rule: "parameter-naming",
-            message: format!("parameter `{name}` should use snake_case: `{fixed}`"),
-            severity: Severity::Warning,
-            line: name_node.start_position().row,
-            column: name_node.start_position().column,
-            end_column: Some(name_node.end_position().column),
-            fix: Some(Fix {
-                byte_start: name_node.start_byte(),
-                byte_end: name_node.end_byte(),
-                replacement: fixed,
-            }),
-            context_lines: None,
         });
+        diags
     }
 }
 

@@ -1,5 +1,4 @@
-use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{self, GdDecl, GdFile};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -19,118 +18,66 @@ impl LintRule for EnumVariantNames {
         false
     }
 
-    fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, file: &GdFile<'_>, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        check_node(file.node, source, &mut diags);
+        gd_ast::visit_decls(file, &mut |decl| {
+            if let GdDecl::Enum(e) = decl {
+                let enum_name = if e.name.is_empty() { None } else { Some(e.name) };
+                let variant_names: Vec<&str> = e.members.iter().map(|m| m.name).collect();
+                if variant_names.len() < 2 {
+                    return;
+                }
+
+                // Check common prefix (by _-separated segments)
+                if let Some(prefix) = common_underscore_prefix(&variant_names)
+                    && prefix_relates_to_enum(&prefix, enum_name)
+                {
+                    diags.push(LintDiagnostic {
+                        rule: "enum-variant-names",
+                        message: format!(
+                            "all variants of `{}` have prefix `{prefix}_`; consider removing it",
+                            enum_name.unwrap_or("<anonymous>"),
+                        ),
+                        severity: Severity::Warning,
+                        line: e.node.start_position().row,
+                        column: e.node.start_position().column,
+                        end_column: None,
+                        fix: None,
+                        context_lines: None,
+                    });
+                    return; // Don't double-report prefix and suffix
+                }
+
+                // Check common suffix
+                if let Some(suffix) = common_underscore_suffix(&variant_names)
+                    && suffix_relates_to_enum(&suffix, enum_name)
+                {
+                    diags.push(LintDiagnostic {
+                        rule: "enum-variant-names",
+                        message: format!(
+                            "all variants of `{}` have suffix `_{suffix}`; consider removing it",
+                            enum_name.unwrap_or("<anonymous>"),
+                        ),
+                        severity: Severity::Warning,
+                        line: e.node.start_position().row,
+                        column: e.node.start_position().column,
+                        end_column: None,
+                        fix: None,
+                        context_lines: None,
+                    });
+                }
+            }
+        });
         diags
     }
 }
 
-fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    if node.kind() == "enum_definition" {
-        check_enum(node, source, diags);
-    }
-
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            check_node(cursor.node(), source, diags);
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
-    }
-}
-
-fn check_enum(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    let enum_name = node
-        .child_by_field_name("name")
-        .map(|n| source[n.byte_range()].to_string());
-
-    let variant_names = collect_variant_names(node, source);
-    if variant_names.len() < 2 {
-        return;
-    }
-
-    // Check common prefix (by _-separated segments)
-    if let Some(prefix) = common_underscore_prefix(&variant_names)
-        && prefix_relates_to_enum(&prefix, enum_name.as_deref())
-    {
-        diags.push(LintDiagnostic {
-            rule: "enum-variant-names",
-            message: format!(
-                "all variants of `{}` have prefix `{prefix}_`; consider removing it",
-                enum_name.as_deref().unwrap_or("<anonymous>")
-            ),
-            severity: Severity::Warning,
-            line: node.start_position().row,
-            column: node.start_position().column,
-            end_column: None,
-            fix: None,
-            context_lines: None,
-        });
-        return; // Don't double-report prefix and suffix
-    }
-
-    // Check common suffix
-    if let Some(suffix) = common_underscore_suffix(&variant_names)
-        && suffix_relates_to_enum(&suffix, enum_name.as_deref())
-    {
-        diags.push(LintDiagnostic {
-            rule: "enum-variant-names",
-            message: format!(
-                "all variants of `{}` have suffix `_{suffix}`; consider removing it",
-                enum_name.as_deref().unwrap_or("<anonymous>")
-            ),
-            severity: Severity::Warning,
-            line: node.start_position().row,
-            column: node.start_position().column,
-            end_column: None,
-            fix: None,
-            context_lines: None,
-        });
-    }
-}
-
-fn collect_variant_names(enum_node: Node, source: &str) -> Vec<String> {
-    let mut names = Vec::new();
-    let mut cursor = enum_node.walk();
-    if !cursor.goto_first_child() {
-        return names;
-    }
-    loop {
-        let child = cursor.node();
-        if child.kind() == "enumerator_list" {
-            let mut list_cursor = child.walk();
-            if list_cursor.goto_first_child() {
-                loop {
-                    let item = list_cursor.node();
-                    if item.kind() == "enumerator"
-                        && let Some(name_node) = item.child(0)
-                    {
-                        names.push(source[name_node.byte_range()].to_string());
-                    }
-                    if !list_cursor.goto_next_sibling() {
-                        break;
-                    }
-                }
-            }
-        }
-        if !cursor.goto_next_sibling() {
-            break;
-        }
-    }
-    names
-}
-
 /// Find the longest common prefix of underscore-separated segments.
 /// Returns the prefix segments joined with `_` (e.g. "COLOR" for COLOR_RED, COLOR_GREEN).
-fn common_underscore_prefix(names: &[String]) -> Option<String> {
+fn common_underscore_prefix(names: &[&str]) -> Option<String> {
     let split: Vec<Vec<&str>> = names.iter().map(|n| n.split('_').collect()).collect();
     let min_segments = split.iter().map(Vec::len).min().unwrap_or(0);
     if min_segments < 2 {
-        // Need at least 2 segments per name for a prefix to be meaningful
-        // (prefix + remainder)
         return None;
     }
 
@@ -152,7 +99,7 @@ fn common_underscore_prefix(names: &[String]) -> Option<String> {
 }
 
 /// Find the longest common suffix of underscore-separated segments.
-fn common_underscore_suffix(names: &[String]) -> Option<String> {
+fn common_underscore_suffix(names: &[&str]) -> Option<String> {
     let split: Vec<Vec<&str>> = names.iter().map(|n| n.split('_').collect()).collect();
     let min_segments = split.iter().map(Vec::len).min().unwrap_or(0);
     if min_segments < 2 {
@@ -178,15 +125,12 @@ fn common_underscore_suffix(names: &[String]) -> Option<String> {
 }
 
 /// Check if a prefix relates to the enum name.
-/// Convert both to a comparable form (uppercase, no underscores) and check containment.
 fn prefix_relates_to_enum(prefix: &str, enum_name: Option<&str>) -> bool {
     let Some(name) = enum_name else {
-        // Anonymous enum — still warn if 2+ segment prefix
         return prefix.contains('_') || prefix.len() >= 2;
     };
     let norm_prefix = prefix.replace('_', "").to_uppercase();
     let norm_name = to_upper_no_sep(name);
-    // Prefix matches or contains the enum name, or enum name contains the prefix
     norm_prefix == norm_name || norm_prefix.contains(&norm_name) || norm_name.contains(&norm_prefix)
 }
 
@@ -201,7 +145,6 @@ fn suffix_relates_to_enum(suffix: &str, enum_name: Option<&str>) -> bool {
 }
 
 /// Convert PascalCase or snake_case to uppercase without separators.
-/// "ItemType" -> "ITEMTYPE", "ITEM_TYPE" -> "ITEMTYPE"
 fn to_upper_no_sep(name: &str) -> String {
     name.replace('_', "").to_uppercase()
 }
