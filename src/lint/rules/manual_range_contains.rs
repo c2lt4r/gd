@@ -1,5 +1,4 @@
-use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{self, GdExpr, GdFile};
 
 use super::{Fix, LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -21,82 +20,51 @@ impl LintRule for ManualRangeContains {
 
     fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        check_node(file.node, source, &mut diags);
+        gd_ast::visit_exprs(file, &mut |expr| {
+            if let GdExpr::BinOp { node, op, left, right, .. } = expr {
+                match *op {
+                    "and" => check_and_range(node, left, right, source, &mut diags),
+                    "or" => check_or_range(node, left, right, source, &mut diags),
+                    _ => {}
+                }
+            }
+        });
         diags
     }
 }
 
-fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    if node.kind() == "binary_operator"
-        && let Some(op_node) = node.child_by_field_name("op")
-    {
-        let op = &source[op_node.byte_range()];
-        match op {
-            "and" => check_and_range(node, source, diags),
-            "or" => check_or_range(node, source, diags),
-            _ => {}
-        }
-    }
-
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            check_node(cursor.node(), source, diags);
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
-    }
-}
-
-/// A comparison half: variable, operator, bound expression.
-struct ComparisonParts<'a> {
+/// A comparison: (variable, operator, bound).
+struct CmpParts<'a> {
     variable: &'a str,
     op: &'a str,
     bound: &'a str,
 }
 
-/// Try to extract a comparison of the form `x >= a` or `a <= x` (lower bound)
-/// or `x < b` or `b > x` (upper bound) from a binary_operator node.
-fn parse_comparison<'a>(node: Node<'a>, source: &'a str) -> Option<ComparisonParts<'a>> {
-    if node.kind() != "binary_operator" {
-        return None;
+/// Extract comparison parts from a BinOp expression.
+fn parse_cmp<'a>(expr: &GdExpr<'a>, source: &'a str) -> Option<CmpParts<'a>> {
+    if let GdExpr::BinOp { op, left, right, .. } = expr {
+        Some(CmpParts {
+            variable: &source[left.node().byte_range()],
+            op,
+            bound: &source[right.node().byte_range()],
+        })
+    } else {
+        None
     }
-    let op_node = node.child_by_field_name("op")?;
-    let op = &source[op_node.byte_range()];
-    let left = node.child_by_field_name("left")?;
-    let right = node.child_by_field_name("right")?;
-    let left_text = &source[left.byte_range()];
-    let right_text = &source[right.byte_range()];
-
-    Some(ComparisonParts {
-        variable: left_text,
-        op,
-        bound: right_text,
-    })
 }
 
-/// Check `x >= a and x < b` pattern (inclusive lower, exclusive upper).
-fn check_and_range(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    let Some(left) = node.child_by_field_name("left") else {
-        return;
-    };
-    let Some(right) = node.child_by_field_name("right") else {
-        return;
-    };
+/// Check `x >= a and x < b` pattern.
+fn check_and_range(
+    node: &tree_sitter::Node<'_>,
+    left: &GdExpr<'_>,
+    right: &GdExpr<'_>,
+    source: &str,
+    diags: &mut Vec<LintDiagnostic>,
+) {
+    let Some(l) = parse_cmp(left, source) else { return };
+    let Some(r) = parse_cmp(right, source) else { return };
 
-    let Some(left_cmp) = parse_comparison(left, source) else {
-        return;
-    };
-    let Some(right_cmp) = parse_comparison(right, source) else {
-        return;
-    };
-
-    // Try to match: (x >= a) and (x < b)
-    // Normalized forms:
-    //   left: x >= a  or  a <= x
-    //   right: x < b  or  b > x
-    if let Some((var, lower, upper)) = match_and_pattern(&left_cmp, &right_cmp) {
+    if let Some((var, lower, upper)) = match_and_pattern(&l, &r) {
         let suggestion = format!("{var} in range({lower}, {upper})");
         diags.push(LintDiagnostic {
             rule: "manual-range-contains",
@@ -116,23 +84,17 @@ fn check_and_range(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
 }
 
 /// Check `x < a or x >= b` pattern (negated range).
-fn check_or_range(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    let Some(left) = node.child_by_field_name("left") else {
-        return;
-    };
-    let Some(right) = node.child_by_field_name("right") else {
-        return;
-    };
+fn check_or_range(
+    node: &tree_sitter::Node<'_>,
+    left: &GdExpr<'_>,
+    right: &GdExpr<'_>,
+    source: &str,
+    diags: &mut Vec<LintDiagnostic>,
+) {
+    let Some(l) = parse_cmp(left, source) else { return };
+    let Some(r) = parse_cmp(right, source) else { return };
 
-    let Some(left_cmp) = parse_comparison(left, source) else {
-        return;
-    };
-    let Some(right_cmp) = parse_comparison(right, source) else {
-        return;
-    };
-
-    // Try to match: (x < a) or (x >= b)  — negation of `x in range(a, b)`
-    if let Some((var, lower, upper)) = match_or_pattern(&left_cmp, &right_cmp) {
+    if let Some((var, lower, upper)) = match_or_pattern(&l, &r) {
         let suggestion = format!("{var} not in range({lower}, {upper})");
         diags.push(LintDiagnostic {
             rule: "manual-range-contains",
@@ -152,42 +114,34 @@ fn check_or_range(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
 }
 
 /// Match `(x >= a) and (x < b)` in all normalized forms.
-/// Returns (variable, lower_bound, upper_bound).
 fn match_and_pattern<'a>(
-    left: &ComparisonParts<'a>,
-    right: &ComparisonParts<'a>,
+    left: &CmpParts<'a>,
+    right: &CmpParts<'a>,
 ) -> Option<(&'a str, &'a str, &'a str)> {
-    // Form 1: x >= a and x < b
-    if (left.op == ">=" && right.op == "<") && left.variable == right.variable {
+    if left.op == ">=" && right.op == "<" && left.variable == right.variable {
         return Some((left.variable, left.bound, right.bound));
     }
-    // Form 2: a <= x and x < b
-    if (left.op == "<=" && right.op == "<") && left.bound == right.variable {
+    if left.op == "<=" && right.op == "<" && left.bound == right.variable {
         return Some((left.bound, left.variable, right.bound));
     }
-    // Form 3: x >= a and b > x
-    if (left.op == ">=" && right.op == ">") && left.variable == right.bound {
+    if left.op == ">=" && right.op == ">" && left.variable == right.bound {
         return Some((left.variable, left.bound, right.variable));
     }
-    // Form 4: a <= x and b > x
-    if (left.op == "<=" && right.op == ">") && left.bound == right.bound {
+    if left.op == "<=" && right.op == ">" && left.bound == right.bound {
         return Some((left.bound, left.variable, right.variable));
     }
     None
 }
 
-/// Match `(x < a) or (x >= b)` — negated range pattern.
-/// Returns (variable, lower_bound, upper_bound).
+/// Match `(x < a) or (x >= b)` — negated range.
 fn match_or_pattern<'a>(
-    left: &ComparisonParts<'a>,
-    right: &ComparisonParts<'a>,
+    left: &CmpParts<'a>,
+    right: &CmpParts<'a>,
 ) -> Option<(&'a str, &'a str, &'a str)> {
-    // Form 1: x < a or x >= b
-    if (left.op == "<" && right.op == ">=") && left.variable == right.variable {
+    if left.op == "<" && right.op == ">=" && left.variable == right.variable {
         return Some((left.variable, left.bound, right.bound));
     }
-    // Form 2: a > x or x >= b
-    if (left.op == ">" && right.op == ">=") && left.bound == right.variable {
+    if left.op == ">" && right.op == ">=" && left.bound == right.variable {
         return Some((left.bound, left.variable, right.bound));
     }
     None
@@ -249,14 +203,12 @@ mod tests {
 
     #[test]
     fn no_warning_exclusive_lower_bound() {
-        // x > 0 and x < 10 is not the standard range pattern (> not >=)
         let source = "func f(x):\n\tif x > 0 and x < 10:\n\t\tpass\n";
         assert!(check(source).is_empty());
     }
 
     #[test]
     fn no_warning_inclusive_upper_bound() {
-        // x >= 0 and x <= 10 is not the standard range pattern (<= not <)
         let source = "func f(x):\n\tif x >= 0 and x <= 10:\n\t\tpass\n";
         assert!(check(source).is_empty());
     }

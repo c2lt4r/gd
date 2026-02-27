@@ -1,5 +1,4 @@
-use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{self, GdExpr, GdFile};
 
 use super::{Fix, LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -21,121 +20,62 @@ impl LintRule for PreferIsInstance {
 
     fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        check_node(file.node, source, &mut diags);
+        gd_ast::visit_exprs(file, &mut |expr| {
+            if let GdExpr::BinOp { node, op, left, right } = expr
+                && (*op == "==" || *op == "!=")
+            {
+                // Try both orders: typeof(x) == TYPE_* and TYPE_* == typeof(x)
+                let result = extract_typeof_and_type(left, right, source)
+                    .or_else(|| extract_typeof_and_type(right, left, source));
+
+                if let Some((typeof_arg, type_constant)) = result
+                    && let Some(type_name) = type_constant_to_type(type_constant)
+                {
+                    let replacement = if *op == "==" {
+                        format!("{typeof_arg} is {type_name}")
+                    } else {
+                        format!("not {typeof_arg} is {type_name}")
+                    };
+
+                    let full_text = &source[node.byte_range()];
+
+                    diags.push(LintDiagnostic {
+                        rule: "prefer-is-instance",
+                        message: format!("use `{replacement}` instead of `{full_text}`"),
+                        severity: Severity::Warning,
+                        line: node.start_position().row,
+                        column: node.start_position().column,
+                        end_column: Some(node.end_position().column),
+                        fix: Some(Fix {
+                            byte_start: node.start_byte(),
+                            byte_end: node.end_byte(),
+                            replacement,
+                        }),
+                        context_lines: None,
+                    });
+                }
+            }
+        });
         diags
     }
 }
 
-fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    if node.kind() == "binary_operator" {
-        check_typeof_comparison(node, source, diags);
-    }
-
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            check_node(cursor.node(), source, diags);
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
-    }
-}
-
-fn check_typeof_comparison(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    let Some(op_node) = node.child_by_field_name("op") else {
-        return;
-    };
-    let op = &source[op_node.byte_range()];
-
-    if op != "==" && op != "!=" {
-        return;
-    }
-
-    let Some(left) = node.child_by_field_name("left") else {
-        return;
-    };
-    let Some(right) = node.child_by_field_name("right") else {
-        return;
-    };
-
-    // Try both orders: typeof(x) == TYPE_* and TYPE_* == typeof(x)
-    let (typeof_arg, type_constant) = if let Some(arg) = extract_typeof_arg(left, source) {
-        // left is typeof(x), right should be TYPE_*
-        let type_text = &source[right.byte_range()];
-        (arg, type_text)
-    } else if let Some(arg) = extract_typeof_arg(right, source) {
-        // right is typeof(x), left should be TYPE_*
-        let type_text = &source[left.byte_range()];
-        (arg, type_text)
+/// Extract (typeof_argument_text, type_constant_text) if `call_side` is `typeof(x)`.
+fn extract_typeof_and_type<'a>(
+    call_side: &GdExpr<'a>,
+    type_side: &GdExpr<'a>,
+    source: &'a str,
+) -> Option<(&'a str, &'a str)> {
+    if let GdExpr::Call { callee, args, .. } = call_side
+        && let GdExpr::Ident { name: "typeof", .. } = callee.as_ref()
+        && args.len() == 1
+    {
+        let arg_text = &source[args[0].node().byte_range()];
+        let type_text = &source[type_side.node().byte_range()];
+        Some((arg_text, type_text))
     } else {
-        return;
-    };
-
-    let Some(type_name) = type_constant_to_type(type_constant) else {
-        return;
-    };
-
-    let replacement = if op == "==" {
-        format!("{typeof_arg} is {type_name}")
-    } else {
-        format!("not {typeof_arg} is {type_name}")
-    };
-
-    let full_text = &source[node.byte_range()];
-
-    diags.push(LintDiagnostic {
-        rule: "prefer-is-instance",
-        message: format!("use `{replacement}` instead of `{full_text}`"),
-        severity: Severity::Warning,
-        line: node.start_position().row,
-        column: node.start_position().column,
-        end_column: Some(node.end_position().column),
-        fix: Some(Fix {
-            byte_start: node.start_byte(),
-            byte_end: node.end_byte(),
-            replacement,
-        }),
-        context_lines: None,
-    });
-}
-
-/// Extract the argument from a `typeof(x)` call.
-fn extract_typeof_arg<'a>(node: Node<'a>, source: &'a str) -> Option<&'a str> {
-    if node.kind() != "call" {
-        return None;
+        None
     }
-
-    let src = source.as_bytes();
-    let callee = node
-        .children(&mut node.walk())
-        .find(|c| c.kind() == "identifier")
-        .and_then(|n| n.utf8_text(src).ok())?;
-
-    if callee != "typeof" {
-        return None;
-    }
-
-    let args = node.child_by_field_name("arguments")?;
-    let mut named = Vec::new();
-    let mut cursor = args.walk();
-    if cursor.goto_first_child() {
-        loop {
-            let child = cursor.node();
-            if child.is_named() {
-                named.push(child);
-            }
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
-    }
-
-    if named.len() != 1 {
-        return None;
-    }
-
-    Some(&source[named[0].byte_range()])
 }
 
 /// Map TYPE_* constants to their GDScript type names.

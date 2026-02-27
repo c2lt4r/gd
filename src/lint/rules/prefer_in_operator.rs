@@ -1,5 +1,4 @@
-use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{self, GdExpr, GdFile};
 
 use super::{Fix, LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -21,130 +20,82 @@ impl LintRule for PreferInOperator {
 
     fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        check_node(file.node, source, &mut diags);
+        gd_ast::visit_exprs(file, &mut |expr| {
+            if let GdExpr::BinOp { node, op: "or", .. } = expr {
+                // Only trigger on the top-level `or` — skip if parent is also `or`
+                if let Some(parent) = node.parent()
+                    && parent.kind() == "binary_operator"
+                    && parent.child_by_field_name("op").is_some_and(|o| &source[o.byte_range()] == "or")
+                {
+                    return;
+                }
+
+                let Some(comparisons) = collect_or_chain(expr, source) else {
+                    return;
+                };
+
+                if comparisons.len() < 2 {
+                    return;
+                }
+
+                // All left-hand sides must be the same
+                let variable = comparisons[0].0;
+                if !comparisons.iter().all(|c| c.0 == variable) {
+                    return;
+                }
+
+                let values: Vec<&str> = comparisons.iter().map(|c| c.1).collect();
+                let values_str = values.join(", ");
+                let replacement = format!("{variable} in [{values_str}]");
+
+                diags.push(LintDiagnostic {
+                    rule: "prefer-in-operator",
+                    message: format!("use `{replacement}` instead of chained `==`/`or` comparisons"),
+                    severity: Severity::Warning,
+                    line: node.start_position().row,
+                    column: node.start_position().column,
+                    end_column: Some(node.end_position().column),
+                    fix: Some(Fix {
+                        byte_start: node.start_byte(),
+                        byte_end: node.end_byte(),
+                        replacement,
+                    }),
+                    context_lines: None,
+                });
+            }
+        });
         diags
     }
 }
 
-fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    if node.kind() == "binary_operator" {
-        check_or_chain(node, source, diags);
-    }
-
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            check_node(cursor.node(), source, diags);
-            if !cursor.goto_next_sibling() {
-                break;
-            }
+/// Collect all `==` comparisons from a chain of `or` BinOps.
+/// Returns Vec of (variable, value) pairs.
+fn collect_or_chain<'a>(expr: &GdExpr<'a>, source: &'a str) -> Option<Vec<(&'a str, &'a str)>> {
+    match expr {
+        GdExpr::BinOp { op: "or", left, right, .. } => {
+            let mut comps = collect_or_chain(left, source)?;
+            let eq = parse_eq(right, source)?;
+            comps.push(eq);
+            Some(comps)
         }
+        GdExpr::BinOp { op: "==", left, right, .. } => {
+            let lhs = &source[left.node().byte_range()];
+            let rhs = &source[right.node().byte_range()];
+            Some(vec![(lhs, rhs)])
+        }
+        _ => None,
     }
 }
 
-/// Represents one equality comparison: `x == value`.
-struct EqComparison<'a> {
-    variable: &'a str,
-    value: &'a str,
-}
-
-/// Try to extract `x == value` from a binary_operator node.
-fn parse_eq<'a>(node: Node<'a>, source: &'a str) -> Option<EqComparison<'a>> {
-    if node.kind() != "binary_operator" {
-        return None;
-    }
-    let op_node = node.child_by_field_name("op")?;
-    let op = &source[op_node.byte_range()];
-    if op != "==" {
-        return None;
-    }
-    let left = node.child_by_field_name("left")?;
-    let right = node.child_by_field_name("right")?;
-    Some(EqComparison {
-        variable: &source[left.byte_range()],
-        value: &source[right.byte_range()],
-    })
-}
-
-/// Collect all `==` comparisons from a chain of `or` binary operators.
-/// Returns None if the chain contains non-`or` operators or non-`==` leaves.
-fn collect_or_chain<'a>(node: Node<'a>, source: &'a str) -> Option<Vec<EqComparison<'a>>> {
-    if node.kind() != "binary_operator" {
-        return None;
-    }
-
-    let op_node = node.child_by_field_name("op")?;
-    let op = &source[op_node.byte_range()];
-
-    if op == "or" {
-        let left = node.child_by_field_name("left")?;
-        let right = node.child_by_field_name("right")?;
-
-        let mut comparisons = collect_or_chain(left, source)?;
-        // Right side should be a single == comparison
-        let right_eq = parse_eq(right, source)?;
-        comparisons.push(right_eq);
-        Some(comparisons)
-    } else if op == "==" {
-        let eq = parse_eq(node, source)?;
-        Some(vec![eq])
+/// Extract (variable, value) from an `==` BinOp.
+fn parse_eq<'a>(expr: &GdExpr<'a>, source: &'a str) -> Option<(&'a str, &'a str)> {
+    if let GdExpr::BinOp { op: "==", left, right, .. } = expr {
+        let lhs = &source[left.node().byte_range()];
+        let rhs = &source[right.node().byte_range()];
+        Some((lhs, rhs))
     } else {
         None
     }
-}
-
-fn check_or_chain(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    let Some(op_node) = node.child_by_field_name("op") else {
-        return;
-    };
-    let op = &source[op_node.byte_range()];
-    if op != "or" {
-        return;
-    }
-
-    // Only trigger on the top-level `or` — avoid re-checking inner `or` nodes.
-    // We detect this by checking if the parent is also an `or` binary_operator.
-    if let Some(parent) = node.parent()
-        && parent.kind() == "binary_operator"
-        && let Some(parent_op) = parent.child_by_field_name("op")
-        && &source[parent_op.byte_range()] == "or"
-    {
-        return;
-    }
-
-    let Some(comparisons) = collect_or_chain(node, source) else {
-        return;
-    };
-
-    // Need at least 2 comparisons
-    if comparisons.len() < 2 {
-        return;
-    }
-
-    // All left-hand sides must be the same
-    let variable = comparisons[0].variable;
-    if !comparisons.iter().all(|c| c.variable == variable) {
-        return;
-    }
-
-    let values: Vec<&str> = comparisons.iter().map(|c| c.value).collect();
-    let values_str = values.join(", ");
-    let replacement = format!("{variable} in [{values_str}]");
-
-    diags.push(LintDiagnostic {
-        rule: "prefer-in-operator",
-        message: format!("use `{replacement}` instead of chained `==`/`or` comparisons"),
-        severity: Severity::Warning,
-        line: node.start_position().row,
-        column: node.start_position().column,
-        end_column: Some(node.end_position().column),
-        fix: Some(Fix {
-            byte_start: node.start_byte(),
-            byte_end: node.end_byte(),
-            replacement,
-        }),
-        context_lines: None,
-    });
 }
 
 #[cfg(test)]
@@ -237,7 +188,6 @@ mod tests {
 
     #[test]
     fn only_one_diagnostic_for_chain() {
-        // Should not emit one diagnostic per inner `or` node
         let source = "func f(x):\n\tif x == 1 or x == 2 or x == 3:\n\t\tpass\n";
         let diags = check(source);
         assert_eq!(diags.len(), 1);

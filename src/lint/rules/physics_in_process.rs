@@ -1,5 +1,4 @@
-use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{GdDecl, GdExpr, GdFile, GdStmt};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -27,98 +26,142 @@ impl LintRule for PhysicsInProcess {
         LintCategory::Performance
     }
 
-    fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, file: &GdFile<'_>, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        let root = file.node;
-        find_process_functions(root, source, &mut diags);
+        find_process_functions(&file.declarations, &mut diags);
         diags
     }
 }
 
-fn find_process_functions(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            let child = cursor.node();
-            if child.kind() == "function_definition"
-                && let Some(name_node) = child.child_by_field_name("name")
-            {
-                let name = name_node.utf8_text(source.as_bytes()).unwrap_or("");
-                if name == "_process"
-                    && let Some(body) = child.child_by_field_name("body")
-                {
-                    find_physics_calls(body, source, diags);
-                }
-            }
-
-            // Recurse into class bodies
-            if child.kind() == "class_definition"
-                && let Some(body) = child.child_by_field_name("body")
-            {
-                find_process_functions(body, source, diags);
-            }
-
-            if !cursor.goto_next_sibling() {
-                break;
-            }
+fn find_process_functions(decls: &[GdDecl<'_>], diags: &mut Vec<LintDiagnostic>) {
+    for decl in decls {
+        if let GdDecl::Func(func) = decl
+            && func.name == "_process"
+        {
+            find_physics_in_stmts(&func.body, diags);
+        }
+        if let GdDecl::Class(class) = decl {
+            find_process_functions(&class.declarations, diags);
         }
     }
 }
 
-fn find_physics_calls(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    let src = source.as_bytes();
+fn find_physics_in_stmts(stmts: &[GdStmt<'_>], diags: &mut Vec<LintDiagnostic>) {
+    for stmt in stmts {
+        find_physics_in_stmt(stmt, diags);
+    }
+}
 
-    // Bare call: move_and_slide() (implicit self)
-    if node.kind() == "call" {
-        let callee = node
-            .children(&mut node.walk())
-            .find(|c| c.kind() == "identifier")
-            .and_then(|n| n.utf8_text(src).ok())
-            .unwrap_or("");
-        if PHYSICS_METHODS.contains(&callee) {
-            diags.push(make_diagnostic(callee, node));
+fn find_physics_in_stmt(stmt: &GdStmt<'_>, diags: &mut Vec<LintDiagnostic>) {
+    // Check expressions in this statement for physics calls
+    visit_stmt_exprs(stmt, &mut |expr| {
+        check_physics_expr(expr, diags);
+    });
+
+    // Recurse into nested statement bodies (but not into nested functions)
+    match stmt {
+        GdStmt::If(gif) => {
+            find_physics_in_stmts(&gif.body, diags);
+            for (_, branch_body) in &gif.elif_branches {
+                find_physics_in_stmts(branch_body, diags);
+            }
+            if let Some(else_body) = &gif.else_body {
+                find_physics_in_stmts(else_body, diags);
+            }
         }
+        GdStmt::For { body, .. } | GdStmt::While { body, .. } => {
+            find_physics_in_stmts(body, diags);
+        }
+        GdStmt::Match { arms, .. } => {
+            for arm in arms {
+                find_physics_in_stmts(&arm.body, diags);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn visit_stmt_exprs<'a>(stmt: &GdStmt<'a>, f: &mut impl FnMut(&GdExpr<'a>)) {
+    match stmt {
+        GdStmt::Expr { expr, .. } => visit_expr(expr, f),
+        GdStmt::Var(var) => {
+            if let Some(val) = &var.value { visit_expr(val, f); }
+        }
+        GdStmt::Assign { target, value, .. }
+        | GdStmt::AugAssign { target, value, .. } => {
+            visit_expr(target, f);
+            visit_expr(value, f);
+        }
+        GdStmt::Return { value: Some(val), .. } => visit_expr(val, f),
+        GdStmt::If(gif) => {
+            visit_expr(&gif.condition, f);
+        }
+        GdStmt::For { iter, .. } => visit_expr(iter, f),
+        GdStmt::While { condition, .. } => visit_expr(condition, f),
+        _ => {}
+    }
+}
+
+fn visit_expr<'a>(expr: &GdExpr<'a>, f: &mut impl FnMut(&GdExpr<'a>)) {
+    f(expr);
+    match expr {
+        GdExpr::Call { callee, args, .. } => {
+            visit_expr(callee, f);
+            for arg in args { visit_expr(arg, f); }
+        }
+        GdExpr::MethodCall { receiver, args, .. } => {
+            visit_expr(receiver, f);
+            for arg in args { visit_expr(arg, f); }
+        }
+        GdExpr::BinOp { left, right, .. } => {
+            visit_expr(left, f);
+            visit_expr(right, f);
+        }
+        GdExpr::UnaryOp { operand, .. } => visit_expr(operand, f),
+        GdExpr::PropertyAccess { receiver, .. } => visit_expr(receiver, f),
+        GdExpr::Subscript { receiver, index, .. } => {
+            visit_expr(receiver, f);
+            visit_expr(index, f);
+        }
+        GdExpr::Array { elements, .. } => {
+            for e in elements { visit_expr(e, f); }
+        }
+        GdExpr::Dict { pairs, .. } => {
+            for (k, v) in pairs { visit_expr(k, f); visit_expr(v, f); }
+        }
+        GdExpr::Ternary { true_val, condition, false_val, .. } => {
+            visit_expr(true_val, f);
+            visit_expr(condition, f);
+            visit_expr(false_val, f);
+        }
+        GdExpr::Await { expr: inner, .. }
+        | GdExpr::Cast { expr: inner, .. }
+        | GdExpr::Is { expr: inner, .. } => visit_expr(inner, f),
+        GdExpr::SuperCall { args, .. } => {
+            for arg in args { visit_expr(arg, f); }
+        }
+        _ => {}
+    }
+}
+
+fn check_physics_expr(expr: &GdExpr<'_>, diags: &mut Vec<LintDiagnostic>) {
+    // Bare call: move_and_slide() (implicit self)
+    if let GdExpr::Call { node, callee, .. } = expr
+        && let GdExpr::Ident { name, .. } = callee.as_ref()
+        && PHYSICS_METHODS.contains(name)
+    {
+        diags.push(make_diagnostic(name, node));
     }
 
     // Method call: self.move_and_slide() or body.apply_force(...)
-    // Parsed as: attribute > [identifier, attribute_call > [identifier, arguments]]
-    if node.kind() == "attribute" {
-        check_attribute_physics_call(node, source, diags);
-    }
-
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            let child = cursor.node();
-            // Don't recurse into nested function definitions or lambdas
-            if child.kind() != "function_definition" && child.kind() != "lambda" {
-                find_physics_calls(child, source, diags);
-            }
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
+    if let GdExpr::MethodCall { node, method, .. } = expr
+        && PHYSICS_METHODS.contains(method)
+    {
+        diags.push(make_diagnostic(method, node));
     }
 }
 
-fn check_attribute_physics_call(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    let src = source.as_bytes();
-
-    for child in node.children(&mut node.walk()) {
-        if child.kind() == "attribute_call" {
-            let method = child
-                .children(&mut child.walk())
-                .find(|c| c.kind() == "identifier")
-                .and_then(|n| n.utf8_text(src).ok())
-                .unwrap_or("");
-            if PHYSICS_METHODS.contains(&method) {
-                diags.push(make_diagnostic(method, node));
-            }
-        }
-    }
-}
-
-fn make_diagnostic(method: &str, node: Node) -> LintDiagnostic {
+fn make_diagnostic(method: &str, node: &tree_sitter::Node<'_>) -> LintDiagnostic {
     LintDiagnostic {
         rule: "physics-in-process",
         message: format!("`{method}()` should be called in _physics_process(), not _process()"),
