@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{self, GdDecl, GdFile};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -18,27 +18,13 @@ impl LintRule for CallableNullCheck {
 
     fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        let root = file.node;
         let src = source.as_bytes();
-        check_functions(root, src, &mut diags);
-        diags
-    }
-}
-
-fn check_functions(node: Node, src: &[u8], diags: &mut Vec<LintDiagnostic>) {
-    if node.kind() == "function_definition" || node.kind() == "constructor_definition" {
-        check_function_body(node, src, diags);
-        return;
-    }
-
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            check_functions(cursor.node(), src, diags);
-            if !cursor.goto_next_sibling() {
-                break;
+        gd_ast::visit_decls(file, &mut |decl| {
+            if let GdDecl::Func(func) = decl {
+                check_function_body(func.node, src, &mut diags);
             }
-        }
+        });
+        diags
     }
 }
 

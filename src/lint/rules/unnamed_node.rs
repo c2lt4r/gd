@@ -1,5 +1,5 @@
 use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{self, GdDecl, GdFile};
 
 use super::{LintCategory, LintDiagnostic, LintRule};
 use crate::core::config::LintConfig;
@@ -24,28 +24,14 @@ impl LintRule for UnnamedNode {
 
     fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        let root = file.node;
-        check_functions(&root, source, &mut diags);
+        gd_ast::visit_decls(file, &mut |decl| {
+            if let GdDecl::Func(func) = decl
+                && let Some(body) = func.node.child_by_field_name("body")
+            {
+                check_body(&body, source, &mut diags);
+            }
+        });
         diags
-    }
-}
-
-/// Walk all function bodies looking for add_child patterns.
-fn check_functions(root: &Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    let mut cursor = root.walk();
-    for child in root.children(&mut cursor) {
-        match child.kind() {
-            "function_definition" | "constructor_definition" => {
-                if let Some(body) = child.child_by_field_name("body") {
-                    check_body(&body, source, diags);
-                }
-            }
-            "class_definition" => {
-                // Recurse into inner classes
-                check_functions(&child, source, diags);
-            }
-            _ => {}
-        }
     }
 }
 

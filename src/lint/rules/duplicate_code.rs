@@ -1,5 +1,5 @@
 use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{self, GdDecl, GdFile};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -26,7 +26,7 @@ impl LintRule for DuplicateCode {
             .and_then(|r| r.similarity_threshold)
             .unwrap_or(80);
 
-        let functions = collect_functions(file.node, source);
+        let functions = collect_functions(file, source);
         find_duplicates(&functions, min_statements, threshold)
     }
 }
@@ -39,47 +39,22 @@ struct FunctionInfo<'a> {
 }
 
 /// Collect all functions in the file with their normalized fingerprints.
-fn collect_functions<'a>(root: Node<'a>, source: &'a str) -> Vec<FunctionInfo<'a>> {
+fn collect_functions<'a>(file: &GdFile<'a>, _source: &'a str) -> Vec<FunctionInfo<'a>> {
     let mut functions = Vec::new();
-    collect_functions_recursive(root, source, &mut functions);
-    functions
-}
-
-fn collect_functions_recursive<'a>(
-    node: Node<'a>,
-    source: &'a str,
-    functions: &mut Vec<FunctionInfo<'a>>,
-) {
-    if matches!(
-        node.kind(),
-        "function_definition" | "constructor_definition"
-    ) {
-        let name = node
-            .child_by_field_name("name")
-            .map_or("<unknown>", |n| &source[n.byte_range()]);
-        let line = node.start_position().row;
-
-        let mut fingerprint = Vec::new();
-        if let Some(body) = node.child_by_field_name("body") {
-            normalize_body(body, &mut fingerprint);
-        }
-
-        functions.push(FunctionInfo {
-            name,
-            line,
-            fingerprint,
-        });
-    }
-
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            collect_functions_recursive(cursor.node(), source, functions);
-            if !cursor.goto_next_sibling() {
-                break;
+    gd_ast::visit_decls(file, &mut |decl| {
+        if let GdDecl::Func(func) = decl {
+            let mut fingerprint = Vec::new();
+            if let Some(body) = func.node.child_by_field_name("body") {
+                normalize_body(body, &mut fingerprint);
             }
+            functions.push(FunctionInfo {
+                name: func.name,
+                line: func.node.start_position().row,
+                fingerprint,
+            });
         }
-    }
+    });
+    functions
 }
 
 /// Walk a body node and produce a canonical sequence of node kinds.
