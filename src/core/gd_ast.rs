@@ -16,6 +16,7 @@ use tree_sitter::{Node, Tree};
 pub struct GdFile<'a> {
     pub node: Node<'a>,
     pub class_name: Option<&'a str>,
+    pub class_name_node: Option<Node<'a>>,
     pub extends: Option<GdExtends<'a>>,
     pub is_tool: bool,
     pub declarations: Vec<GdDecl<'a>>,
@@ -616,6 +617,7 @@ pub fn convert<'a>(tree: &'a Tree, source: &'a str) -> GdFile<'a> {
     let mut file = GdFile {
         node: root,
         class_name: None,
+        class_name_node: None,
         extends: None,
         is_tool: false,
         declarations: Vec::new(),
@@ -633,9 +635,9 @@ pub fn convert<'a>(tree: &'a Tree, source: &'a str) -> GdFile<'a> {
         }
         match child.kind() {
             "class_name_statement" => {
-                file.class_name = child
-                    .child_by_field_name("name")
-                    .and_then(|n| n.utf8_text(bytes).ok());
+                let name_node = child.child_by_field_name("name");
+                file.class_name = name_node.and_then(|n| n.utf8_text(bytes).ok());
+                file.class_name_node = name_node;
             }
             "extends_statement" => {
                 file.extends = convert_extends(child, source);

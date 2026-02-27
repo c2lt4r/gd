@@ -1,4 +1,4 @@
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{self, GdDecl, GdFile, GdStmt};
 
 use super::{Fix, LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -14,155 +14,142 @@ impl LintRule for NamingConvention {
         LintCategory::Style
     }
 
-    fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, file: &GdFile<'_>, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        let root = file.node;
-        let mut cursor = root.walk();
 
-        check_node(root, source, &mut diags, &mut cursor);
+        // class_name check
+        if let Some(class_name) = file.class_name
+            && !is_pascal_case(class_name)
+        {
+            let fixed = to_pascal_case(class_name);
+            let (line, col, end_col, fix) = name_fix(file.class_name_node, file.node, &fixed);
+            diags.push(LintDiagnostic {
+                rule: "naming-convention",
+                message: format!("class_name `{class_name}` should use PascalCase: `{fixed}`"),
+                severity: Severity::Warning,
+                line, column: col, end_column: end_col, fix,
+                context_lines: None,
+            });
+        }
+
+        // Declarations: functions, vars, consts, classes
+        gd_ast::visit_decls(file, &mut |decl| {
+            check_decl(decl, &mut diags);
+        });
+
+        // Local variables inside function bodies
+        gd_ast::visit_stmts(file, &mut |stmt| {
+            check_local_var(stmt, &mut diags);
+        });
 
         diags
     }
 }
 
-#[allow(clippy::too_many_lines)]
-fn check_node(
-    node: tree_sitter::Node,
-    source: &str,
-    diags: &mut Vec<LintDiagnostic>,
-    cursor: &mut tree_sitter::TreeCursor,
-) {
-    match node.kind() {
-        "function_definition" => {
-            if let Some(name_node) = node.child_by_field_name("name") {
-                let name = &source[name_node.byte_range()];
-                // Skip Godot built-in overridden methods
-                if !is_godot_builtin(name) && !is_snake_case(name) {
-                    let fixed = to_snake_case(name);
-                    diags.push(LintDiagnostic {
-                        rule: "naming-convention",
-                        message: format!("function `{name}` should use snake_case: `{fixed}`"),
-                        severity: Severity::Warning,
-                        line: name_node.start_position().row,
-                        column: name_node.start_position().column,
-                        end_column: Some(name_node.end_position().column),
-                        fix: Some(Fix {
-                            byte_start: name_node.start_byte(),
-                            byte_end: name_node.end_byte(),
-                            replacement: fixed,
-                        }),
-                        context_lines: None,
-                    });
-                }
+fn check_decl(decl: &GdDecl<'_>, diags: &mut Vec<LintDiagnostic>) {
+    match decl {
+        GdDecl::Func(func) => {
+            if !is_godot_builtin(func.name) && !is_snake_case(func.name) {
+                let fixed = to_snake_case(func.name);
+                let (line, col, end_col, fix) = name_fix(func.name_node, func.node, &fixed);
+                diags.push(LintDiagnostic {
+                    rule: "naming-convention",
+                    message: format!("function `{}` should use snake_case: `{fixed}`", func.name),
+                    severity: Severity::Warning,
+                    line, column: col, end_column: end_col, fix,
+                    context_lines: None,
+                });
             }
         }
-        "const_statement" => {
-            if let Some(name_node) = node.child_by_field_name("name") {
-                let name = &source[name_node.byte_range()];
-                if !is_upper_snake_case(name) {
-                    let fixed = to_upper_snake_case(name);
+        GdDecl::Var(var) => {
+            if var.is_const {
+                if !is_upper_snake_case(var.name) {
+                    let fixed = to_upper_snake_case(var.name);
+                    let (line, col, end_col, fix) = name_fix(var.name_node, var.node, &fixed);
                     diags.push(LintDiagnostic {
                         rule: "naming-convention",
-                        message: format!(
-                            "constant `{name}` should use UPPER_SNAKE_CASE: `{fixed}`"
-                        ),
+                        message: format!("constant `{}` should use UPPER_SNAKE_CASE: `{fixed}`", var.name),
                         severity: Severity::Warning,
-                        line: name_node.start_position().row,
-                        column: name_node.start_position().column,
-                        end_column: Some(name_node.end_position().column),
-                        fix: Some(Fix {
-                            byte_start: name_node.start_byte(),
-                            byte_end: name_node.end_byte(),
-                            replacement: fixed,
-                        }),
+                        line, column: col, end_column: end_col, fix,
                         context_lines: None,
                     });
                 }
+            } else if !is_snake_case(var.name) {
+                let fixed = to_snake_case(var.name);
+                let (line, col, end_col, fix) = name_fix(var.name_node, var.node, &fixed);
+                diags.push(LintDiagnostic {
+                    rule: "naming-convention",
+                    message: format!("variable `{}` should use snake_case: `{fixed}`", var.name),
+                    severity: Severity::Warning,
+                    line, column: col, end_column: end_col, fix,
+                    context_lines: None,
+                });
             }
         }
-        "variable_statement" => {
-            // Only check local variables (inside a body) and class-level vars
-            if let Some(name_node) = node.child_by_field_name("name") {
-                let name = &source[name_node.byte_range()];
-                if !is_snake_case(name) {
-                    let fixed = to_snake_case(name);
-                    diags.push(LintDiagnostic {
-                        rule: "naming-convention",
-                        message: format!("variable `{name}` should use snake_case: `{fixed}`"),
-                        severity: Severity::Warning,
-                        line: name_node.start_position().row,
-                        column: name_node.start_position().column,
-                        end_column: Some(name_node.end_position().column),
-                        fix: Some(Fix {
-                            byte_start: name_node.start_byte(),
-                            byte_end: name_node.end_byte(),
-                            replacement: fixed,
-                        }),
-                        context_lines: None,
-                    });
-                }
-            }
-        }
-        "class_name_statement" => {
-            if let Some(name_node) = node.child_by_field_name("name") {
-                let name = &source[name_node.byte_range()];
-                if !is_pascal_case(name) {
-                    let fixed = to_pascal_case(name);
-                    diags.push(LintDiagnostic {
-                        rule: "naming-convention",
-                        message: format!("class_name `{name}` should use PascalCase: `{fixed}`"),
-                        severity: Severity::Warning,
-                        line: name_node.start_position().row,
-                        column: name_node.start_position().column,
-                        end_column: Some(name_node.end_position().column),
-                        fix: Some(Fix {
-                            byte_start: name_node.start_byte(),
-                            byte_end: name_node.end_byte(),
-                            replacement: fixed,
-                        }),
-                        context_lines: None,
-                    });
-                }
-            }
-        }
-        "class_definition" => {
-            // Inner class: `class Foo:` - the name child
-            if let Some(name_node) = node.child_by_field_name("name") {
-                let name = &source[name_node.byte_range()];
-                if !is_pascal_case(name) {
-                    let fixed = to_pascal_case(name);
-                    diags.push(LintDiagnostic {
-                        rule: "naming-convention",
-                        message: format!("class `{name}` should use PascalCase: `{fixed}`"),
-                        severity: Severity::Warning,
-                        line: name_node.start_position().row,
-                        column: name_node.start_position().column,
-                        end_column: Some(name_node.end_position().column),
-                        fix: Some(Fix {
-                            byte_start: name_node.start_byte(),
-                            byte_end: name_node.end_byte(),
-                            replacement: fixed,
-                        }),
-                        context_lines: None,
-                    });
-                }
+        GdDecl::Class(class) => {
+            if !is_pascal_case(class.name) {
+                let fixed = to_pascal_case(class.name);
+                let name_node = class.node.child_by_field_name("name");
+                let (line, col, end_col, fix) = name_fix(name_node, class.node, &fixed);
+                diags.push(LintDiagnostic {
+                    rule: "naming-convention",
+                    message: format!("class `{}` should use PascalCase: `{fixed}`", class.name),
+                    severity: Severity::Warning,
+                    line, column: col, end_column: end_col, fix,
+                    context_lines: None,
+                });
             }
         }
         _ => {}
     }
+}
 
-    // Recurse into children
-    if cursor.goto_first_child() {
-        loop {
-            let child = cursor.node();
-            // Use a temporary cursor for the subtree
-            let mut child_cursor = child.walk();
-            check_node(child, source, diags, &mut child_cursor);
-            if !cursor.goto_next_sibling() {
-                break;
-            }
+fn check_local_var(stmt: &GdStmt<'_>, diags: &mut Vec<LintDiagnostic>) {
+    let GdStmt::Var(var) = stmt else { return };
+    if var.is_const {
+        if !is_upper_snake_case(var.name) {
+            let fixed = to_upper_snake_case(var.name);
+            let (line, col, end_col, fix) = name_fix(var.name_node, var.node, &fixed);
+            diags.push(LintDiagnostic {
+                rule: "naming-convention",
+                message: format!("constant `{}` should use UPPER_SNAKE_CASE: `{fixed}`", var.name),
+                severity: Severity::Warning,
+                line, column: col, end_column: end_col, fix,
+                context_lines: None,
+            });
         }
-        cursor.goto_parent();
+    } else if !is_snake_case(var.name) {
+        let fixed = to_snake_case(var.name);
+        let (line, col, end_col, fix) = name_fix(var.name_node, var.node, &fixed);
+        diags.push(LintDiagnostic {
+            rule: "naming-convention",
+            message: format!("variable `{}` should use snake_case: `{fixed}`", var.name),
+            severity: Severity::Warning,
+            line, column: col, end_column: end_col, fix,
+            context_lines: None,
+        });
+    }
+}
+
+/// Build position + fix from an optional name node, falling back to the decl node.
+fn name_fix(
+    name_node: Option<tree_sitter::Node<'_>>,
+    decl_node: tree_sitter::Node<'_>,
+    replacement: &str,
+) -> (usize, usize, Option<usize>, Option<Fix>) {
+    match name_node {
+        Some(n) => (
+            n.start_position().row,
+            n.start_position().column,
+            Some(n.end_position().column),
+            Some(Fix { byte_start: n.start_byte(), byte_end: n.end_byte(), replacement: replacement.to_string() }),
+        ),
+        None => (
+            decl_node.start_position().row,
+            decl_node.start_position().column,
+            None,
+            None,
+        ),
     }
 }
 
