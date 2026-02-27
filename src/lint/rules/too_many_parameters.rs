@@ -1,5 +1,4 @@
-use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{self, GdDecl, GdFile};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -15,73 +14,35 @@ impl LintRule for TooManyParameters {
         LintCategory::Complexity
     }
 
-    fn check(&self, file: &GdFile<'_>, source: &str, config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, file: &GdFile<'_>, _source: &str, config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        let root = file.node;
         let max_params = config
             .rules
             .get("too-many-parameters")
             .and_then(|r| r.max_params)
             .unwrap_or(config.max_function_params);
-        check_node(root, source, max_params, &mut diags);
+        gd_ast::visit_decls(file, &mut |decl| {
+            if let GdDecl::Func(func) = decl {
+                let count = func.params.len();
+                if count > max_params {
+                    diags.push(LintDiagnostic {
+                        rule: "too-many-parameters",
+                        message: format!(
+                            "function `{}` has {count} parameters (max {max_params})",
+                            func.name,
+                        ),
+                        severity: Severity::Warning,
+                        line: func.node.start_position().row,
+                        column: func.node.start_position().column,
+                        fix: None,
+                        end_column: None,
+                        context_lines: None,
+                    });
+                }
+            }
+        });
         diags
     }
-}
-
-fn check_node(node: Node, source: &str, max_params: usize, diags: &mut Vec<LintDiagnostic>) {
-    if node.kind() == "function_definition" {
-        let count = param_count(node);
-        if count > max_params {
-            let func_name = node
-                .child_by_field_name("name")
-                .map_or("<unknown>", |n| &source[n.byte_range()]);
-            diags.push(LintDiagnostic {
-                rule: "too-many-parameters",
-                message: format!(
-                    "function `{func_name}` has {count} parameters (max {max_params})"
-                ),
-                severity: Severity::Warning,
-                line: node.start_position().row,
-                column: node.start_position().column,
-                fix: None,
-                end_column: None,
-                context_lines: None,
-            });
-        }
-    }
-
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            check_node(cursor.node(), source, max_params, diags);
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
-    }
-}
-
-fn param_count(func: Node) -> usize {
-    let Some(params) = func.child_by_field_name("parameters") else {
-        return 0;
-    };
-
-    let mut count = 0;
-    let mut cursor = params.walk();
-    if cursor.goto_first_child() {
-        loop {
-            if matches!(
-                cursor.node().kind(),
-                "identifier" | "typed_parameter" | "default_parameter" | "typed_default_parameter"
-            ) {
-                count += 1;
-            }
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
-    }
-    count
 }
 
 #[cfg(test)]

@@ -1,5 +1,4 @@
-use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{GdDecl, GdFile};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -19,13 +18,12 @@ impl LintRule for MaxPublicMethods {
         false
     }
 
-    fn check(&self, file: &GdFile<'_>, source: &str, config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, file: &GdFile<'_>, _source: &str, config: &LintConfig) -> Vec<LintDiagnostic> {
         let max_methods = config.max_public_methods;
         let mut diags = Vec::new();
-        let root = file.node;
 
         // Check top-level scope (the script itself acts as a class)
-        let top_level_count = count_public_methods(root, source);
+        let top_level_count = count_public_methods(&file.declarations);
         if top_level_count > max_methods {
             diags.push(LintDiagnostic {
                 rule: "max-public-methods",
@@ -39,74 +37,44 @@ impl LintRule for MaxPublicMethods {
             });
         }
 
-        // Check inner class_definition nodes
-        check_classes(root, source, max_methods, &mut diags);
+        // Check inner classes
+        check_classes(&file.declarations, max_methods, &mut diags);
 
         diags
     }
 }
 
-/// Count direct child function_definition nodes whose name doesn't start with "_".
-fn count_public_methods(node: Node, source: &str) -> usize {
-    let mut count = 0;
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            let child = cursor.node();
-            if child.kind() == "function_definition"
-                && let Some(name_node) = child.child_by_field_name("name")
-            {
-                let name = &source[name_node.byte_range()];
-                if !name.starts_with('_') {
-                    count += 1;
-                }
-            }
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
-    }
-    count
+/// Count functions whose name doesn't start with "_" in a scope.
+fn count_public_methods(decls: &[GdDecl<'_>]) -> usize {
+    decls
+        .iter()
+        .filter(|d| matches!(d, GdDecl::Func(f) if !f.name.starts_with('_')))
+        .count()
 }
 
-/// Recursively find class_definition nodes and check their public method count.
-fn check_classes(node: Node, source: &str, max_methods: usize, diags: &mut Vec<LintDiagnostic>) {
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            let child = cursor.node();
-            if child.kind() == "class_definition" {
-                let class_name = child
-                    .child_by_field_name("name")
-                    .map_or("<unknown>", |n| &source[n.byte_range()]);
-
-                // Count public methods in the class body
-                if let Some(body) = child.child_by_field_name("body") {
-                    let count = count_public_methods(body, source);
-                    if count > max_methods {
-                        diags.push(LintDiagnostic {
-                            rule: "max-public-methods",
-                            message: format!(
-                                "class `{class_name}` has {count} public methods (max {max_methods})"
-                            ),
-                            severity: Severity::Warning,
-                            line: child.start_position().row,
-                            column: child.start_position().column,
-                            fix: None,
-                            end_column: None,
-                            context_lines: None,
-                        });
-                    }
-                }
-
-                // Check nested classes
-                if let Some(body) = child.child_by_field_name("body") {
-                    check_classes(body, source, max_methods, diags);
-                }
+/// Recursively find inner classes and check their public method count.
+fn check_classes(decls: &[GdDecl<'_>], max_methods: usize, diags: &mut Vec<LintDiagnostic>) {
+    for decl in decls {
+        if let GdDecl::Class(class) = decl {
+            let count = count_public_methods(&class.declarations);
+            if count > max_methods {
+                diags.push(LintDiagnostic {
+                    rule: "max-public-methods",
+                    message: format!(
+                        "class `{}` has {count} public methods (max {max_methods})",
+                        class.name,
+                    ),
+                    severity: Severity::Warning,
+                    line: class.node.start_position().row,
+                    column: class.node.start_position().column,
+                    fix: None,
+                    end_column: None,
+                    context_lines: None,
+                });
             }
-            if !cursor.goto_next_sibling() {
-                break;
-            }
+
+            // Check nested classes
+            check_classes(&class.declarations, max_methods, diags);
         }
     }
 }

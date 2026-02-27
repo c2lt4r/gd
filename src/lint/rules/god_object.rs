@@ -1,5 +1,4 @@
-use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{GdDecl, GdFile};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -25,10 +24,9 @@ impl LintRule for GodObject {
         let max_lines = config.max_god_object_lines;
 
         let mut diags = Vec::new();
-        let root = file.node;
 
         // Check the top-level script as a class
-        let (funcs, members) = count_definitions(root, source);
+        let (funcs, members) = count_definitions(&file.declarations);
         let lines = source.lines().count();
         let mut reasons = Vec::new();
 
@@ -56,108 +54,70 @@ impl LintRule for GodObject {
         }
 
         // Check inner classes
-        check_classes(
-            root,
-            source,
-            max_functions,
-            max_members,
-            max_lines,
-            &mut diags,
-        );
+        check_classes(&file.declarations, max_functions, max_members, max_lines, &mut diags);
 
         diags
     }
 }
 
-/// Count direct child function definitions and variable statements.
-fn count_definitions(scope: Node, source: &str) -> (usize, usize) {
+/// Count direct child function definitions and variable statements in a scope.
+fn count_definitions(decls: &[GdDecl<'_>]) -> (usize, usize) {
     let mut functions = 0;
     let mut members = 0;
-    let mut cursor = scope.walk();
-    if cursor.goto_first_child() {
-        loop {
-            let child = cursor.node();
-            match child.kind() {
-                "function_definition" | "constructor_definition" => functions += 1,
-                "variable_statement" => members += 1,
-                // Count enum members as part of the class complexity
-                "enum_definition" => {
-                    if let Some(body) = child.child_by_field_name("body") {
-                        members += body
-                            .children(&mut body.walk())
-                            .filter(|c| c.kind() == "enumerator")
-                            .count();
-                    }
-                }
-                _ => {}
-            }
-            if !cursor.goto_next_sibling() {
-                break;
-            }
+    for decl in decls {
+        match decl {
+            GdDecl::Func(_) => functions += 1,
+            GdDecl::Var(_) => members += 1,
+            GdDecl::Enum(e) => members += e.members.len(),
+            _ => {}
         }
     }
-    // Ignore source in signature to avoid warning
-    let _ = source;
     (functions, members)
 }
 
 /// Recursively check inner classes for god-object violations.
 fn check_classes(
-    node: Node,
-    source: &str,
+    decls: &[GdDecl<'_>],
     max_functions: usize,
     max_members: usize,
     max_lines: usize,
     diags: &mut Vec<LintDiagnostic>,
 ) {
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            let child = cursor.node();
-            if child.kind() == "class_definition" {
-                let class_name = child
-                    .child_by_field_name("name")
-                    .map_or("<unknown>", |n| &source[n.byte_range()]);
+    for decl in decls {
+        if let GdDecl::Class(class) = decl {
+            let (funcs, members) = count_definitions(&class.declarations);
+            let class_lines = class.node.end_position().row - class.node.start_position().row + 1;
+            let mut reasons = Vec::new();
 
-                if let Some(body) = child.child_by_field_name("body") {
-                    let (funcs, members) = count_definitions(body, source);
-                    let class_lines = child.end_position().row - child.start_position().row + 1;
-                    let mut reasons = Vec::new();
-
-                    if funcs > max_functions {
-                        reasons.push(format!("{funcs} functions (max {max_functions})"));
-                    }
-                    if members > max_members {
-                        reasons.push(format!("{members} member variables (max {max_members})"));
-                    }
-                    if class_lines > max_lines {
-                        reasons.push(format!("{class_lines} lines (max {max_lines})"));
-                    }
-
-                    if !reasons.is_empty() {
-                        diags.push(LintDiagnostic {
-                            rule: "god-object",
-                            message: format!(
-                                "class `{}` is too large: {}",
-                                class_name,
-                                reasons.join(", ")
-                            ),
-                            severity: Severity::Warning,
-                            line: child.start_position().row,
-                            column: child.start_position().column,
-                            end_column: None,
-                            fix: None,
-                            context_lines: None,
-                        });
-                    }
-
-                    // Recurse for nested classes
-                    check_classes(body, source, max_functions, max_members, max_lines, diags);
-                }
+            if funcs > max_functions {
+                reasons.push(format!("{funcs} functions (max {max_functions})"));
             }
-            if !cursor.goto_next_sibling() {
-                break;
+            if members > max_members {
+                reasons.push(format!("{members} member variables (max {max_members})"));
             }
+            if class_lines > max_lines {
+                reasons.push(format!("{class_lines} lines (max {max_lines})"));
+            }
+
+            if !reasons.is_empty() {
+                diags.push(LintDiagnostic {
+                    rule: "god-object",
+                    message: format!(
+                        "class `{}` is too large: {}",
+                        class.name,
+                        reasons.join(", ")
+                    ),
+                    severity: Severity::Warning,
+                    line: class.node.start_position().row,
+                    column: class.node.start_position().column,
+                    end_column: None,
+                    fix: None,
+                    context_lines: None,
+                });
+            }
+
+            // Recurse for nested classes
+            check_classes(&class.declarations, max_functions, max_members, max_lines, diags);
         }
     }
 }

@@ -1,6 +1,5 @@
 use std::collections::HashMap;
-use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{GdDecl, GdFile};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -16,59 +15,46 @@ impl LintRule for DuplicateSignal {
         LintCategory::Correctness
     }
 
-    fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, file: &GdFile<'_>, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        let root = file.node;
-        check_scope(root, source, &mut diags);
+        check_scope(&file.declarations, &mut diags);
         diags
     }
 }
 
-/// Check a single scope (top-level or class body) for duplicate signal names.
-fn check_scope(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    // Map signal name -> first occurrence line
-    let mut signals: HashMap<String, usize> = HashMap::new();
+/// Check a single scope for duplicate signal names.
+fn check_scope(decls: &[GdDecl<'_>], diags: &mut Vec<LintDiagnostic>) {
+    let mut signals: HashMap<&str, usize> = HashMap::new();
 
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            let child = cursor.node();
-            if child.kind() == "signal_statement"
-                && let Some(name_node) = child.child_by_field_name("name")
-            {
-                let name = source[name_node.byte_range()].to_string();
-                let line = name_node.start_position().row;
+    for decl in decls {
+        if let GdDecl::Signal(sig) = decl {
+            let line = sig.node.start_position().row;
+            let name_node = sig.node.child_by_field_name("name");
+            let col = name_node.map_or(sig.node.start_position().column, |n| n.start_position().column);
 
-                if let Some(&first_line) = signals.get(&name) {
-                    diags.push(LintDiagnostic {
-                        rule: "duplicate-signal",
-                        message: format!(
-                            "signal `{}` already declared on line {}",
-                            name,
-                            first_line + 1,
-                        ),
-                        severity: Severity::Error,
-                        line,
-                        column: name_node.start_position().column,
-                        fix: None,
-                        end_column: None,
-                        context_lines: None,
-                    });
-                } else {
-                    signals.insert(name, line);
-                }
+            if let Some(&first_line) = signals.get(sig.name) {
+                diags.push(LintDiagnostic {
+                    rule: "duplicate-signal",
+                    message: format!(
+                        "signal `{}` already declared on line {}",
+                        sig.name,
+                        first_line + 1,
+                    ),
+                    severity: Severity::Error,
+                    line,
+                    column: col,
+                    fix: None,
+                    end_column: None,
+                    context_lines: None,
+                });
+            } else {
+                signals.insert(sig.name, line);
             }
+        }
 
-            // Recurse into class definitions to check nested scopes
-            if child.kind() == "class_definition"
-                && let Some(body) = child.child_by_field_name("body")
-            {
-                check_scope(body, source, diags);
-            }
-
-            if !cursor.goto_next_sibling() {
-                break;
-            }
+        // Recurse into inner classes (separate scope)
+        if let GdDecl::Class(class) = decl {
+            check_scope(&class.declarations, diags);
         }
     }
 }

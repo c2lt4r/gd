@@ -1,5 +1,4 @@
-use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{self, GdDecl, GdFile};
 
 use super::{Fix, LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -15,48 +14,36 @@ impl LintRule for SignalNameConvention {
         LintCategory::Style
     }
 
-    fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, file: &GdFile<'_>, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        let root = file.node;
-        check_node(root, source, &mut diags);
-        diags
-    }
-}
-
-fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    if node.kind() == "signal_statement"
-        && let Some(name_node) = node.child_by_field_name("name")
-    {
-        let name = &source[name_node.byte_range()];
-        if let Some(fixed) = name.strip_prefix("on_") {
-            // Remove "on_" prefix
-
-            diags.push(LintDiagnostic {
-                rule: "signal-name-convention",
-                message: format!(
-                    "signal names shouldn't use \"on_\" prefix, use \"{fixed}\" instead",
-                ),
-                severity: Severity::Warning,
-                line: name_node.start_position().row,
-                column: name_node.start_position().column,
-                end_column: Some(name_node.end_position().column),
-                fix: Some(Fix {
-                    byte_start: name_node.start_byte(),
-                    byte_end: name_node.end_byte(),
+        gd_ast::visit_decls(file, &mut |decl| {
+            if let GdDecl::Signal(sig) = decl
+                && let Some(fixed) = sig.name.strip_prefix("on_")
+            {
+                let name_node = sig.node.child_by_field_name("name");
+                let (line, col, end_col) = name_node.map_or(
+                    (sig.node.start_position().row, sig.node.start_position().column, None),
+                    |n| (n.start_position().row, n.start_position().column, Some(n.end_position().column)),
+                );
+                let fix = name_node.map(|n| Fix {
+                    byte_start: n.start_byte(),
+                    byte_end: n.end_byte(),
                     replacement: fixed.to_string(),
-                }),
-                context_lines: None,
-            });
-        }
-    }
-
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            check_node(cursor.node(), source, diags);
-            if !cursor.goto_next_sibling() {
-                break;
+                });
+                diags.push(LintDiagnostic {
+                    rule: "signal-name-convention",
+                    message: format!(
+                        "signal names shouldn't use \"on_\" prefix, use \"{fixed}\" instead",
+                    ),
+                    severity: Severity::Warning,
+                    line,
+                    column: col,
+                    end_column: end_col,
+                    fix,
+                    context_lines: None,
+                });
             }
-        }
+        });
+        diags
     }
 }
