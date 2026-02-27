@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::core::gd_ast::{GdDecl, GdFile};
+use crate::core::gd_ast::{GdDecl, GdExpr, GdFile, GdStmt};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -20,26 +20,23 @@ impl LintRule for UnusedParameter {
         false
     }
 
-    fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, file: &GdFile<'_>, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        check_decls(&file.declarations, source.as_bytes(), &mut diags);
+        check_decls(&file.declarations, &mut diags);
         diags
     }
 }
 
-fn check_decls(decls: &[GdDecl<'_>], src: &[u8], diags: &mut Vec<LintDiagnostic>) {
+fn check_decls(decls: &[GdDecl<'_>], diags: &mut Vec<LintDiagnostic>) {
     for decl in decls {
         if let GdDecl::Func(func) = decl {
             if func.params.is_empty() {
                 continue;
             }
 
-            // Collect all identifier references in the function body (raw tree-sitter)
-            let Some(body_node) = func.node.child_by_field_name("body") else {
-                continue;
-            };
-            let mut references: HashSet<String> = HashSet::new();
-            collect_references(body_node, src, &mut references);
+            // Collect all identifier references in the function body
+            let mut references: HashSet<&str> = HashSet::new();
+            collect_refs_from_stmts(&func.body, &mut references);
 
             // Report unused parameters
             let mut unused: Vec<_> = func
@@ -66,34 +63,111 @@ fn check_decls(decls: &[GdDecl<'_>], src: &[u8], diags: &mut Vec<LintDiagnostic>
             }
         }
         if let GdDecl::Class(class) = decl {
-            check_decls(&class.declarations, src, diags);
+            check_decls(&class.declarations, diags);
         }
     }
 }
 
-/// Collect all identifier references using raw tree-sitter traversal.
-/// Skips nested function definitions and lambdas (separate scope).
-fn collect_references(node: tree_sitter::Node<'_>, src: &[u8], references: &mut HashSet<String>) {
-    if node.kind() == "identifier"
-        && let Ok(text) = node.utf8_text(src)
-        && !text.is_empty()
-    {
-        references.insert(text.to_string());
+/// Collect all identifier references from statements. Stops at lambda boundaries.
+fn collect_refs_from_stmts<'a>(stmts: &[GdStmt<'a>], refs: &mut HashSet<&'a str>) {
+    for stmt in stmts {
+        match stmt {
+            GdStmt::Var(var) => {
+                if let Some(value) = &var.value {
+                    collect_refs_from_expr(value, refs);
+                }
+            }
+            GdStmt::Expr { expr, .. } => collect_refs_from_expr(expr, refs),
+            GdStmt::Assign { target, value, .. } | GdStmt::AugAssign { target, value, .. } => {
+                collect_refs_from_expr(target, refs);
+                collect_refs_from_expr(value, refs);
+            }
+            GdStmt::Return { value: Some(v), .. } => {
+                collect_refs_from_expr(v, refs);
+            }
+            GdStmt::If(gif) => {
+                collect_refs_from_expr(&gif.condition, refs);
+                collect_refs_from_stmts(&gif.body, refs);
+                for (cond, branch) in &gif.elif_branches {
+                    collect_refs_from_expr(cond, refs);
+                    collect_refs_from_stmts(branch, refs);
+                }
+                if let Some(else_body) = &gif.else_body {
+                    collect_refs_from_stmts(else_body, refs);
+                }
+            }
+            GdStmt::For { iter, body, .. } => {
+                collect_refs_from_expr(iter, refs);
+                collect_refs_from_stmts(body, refs);
+            }
+            GdStmt::While { condition, body, .. } => {
+                collect_refs_from_expr(condition, refs);
+                collect_refs_from_stmts(body, refs);
+            }
+            GdStmt::Match { value, arms, .. } => {
+                collect_refs_from_expr(value, refs);
+                for arm in arms {
+                    for pat in &arm.patterns {
+                        collect_refs_from_expr(pat, refs);
+                    }
+                    if let Some(guard) = &arm.guard {
+                        collect_refs_from_expr(guard, refs);
+                    }
+                    collect_refs_from_stmts(&arm.body, refs);
+                }
+            }
+            _ => {}
+        }
     }
+}
 
-    // Don't recurse into nested function definitions or lambdas (separate scope)
-    if node.kind() == "function_definition" || node.kind() == "lambda" {
+/// Collect all identifier references from an expression tree.
+/// Stops at lambda boundaries (separate scope).
+fn collect_refs_from_expr<'a>(expr: &GdExpr<'a>, refs: &mut HashSet<&'a str>) {
+    if matches!(expr, GdExpr::Lambda { .. }) {
         return;
     }
-
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            collect_references(cursor.node(), src, references);
-            if !cursor.goto_next_sibling() {
-                break;
+    match expr {
+        GdExpr::Ident { name, .. } => { refs.insert(name); }
+        GdExpr::BinOp { left, right, .. } => {
+            collect_refs_from_expr(left, refs);
+            collect_refs_from_expr(right, refs);
+        }
+        GdExpr::UnaryOp { operand, .. } | GdExpr::Cast { expr: operand, .. }
+        | GdExpr::Is { expr: operand, .. } | GdExpr::Await { expr: operand, .. } => {
+            collect_refs_from_expr(operand, refs);
+        }
+        GdExpr::Call { callee, args, .. } => {
+            collect_refs_from_expr(callee, refs);
+            for a in args { collect_refs_from_expr(a, refs); }
+        }
+        GdExpr::MethodCall { receiver, args, .. } => {
+            collect_refs_from_expr(receiver, refs);
+            for a in args { collect_refs_from_expr(a, refs); }
+        }
+        GdExpr::SuperCall { args, .. } => {
+            for a in args { collect_refs_from_expr(a, refs); }
+        }
+        GdExpr::PropertyAccess { receiver, .. } => collect_refs_from_expr(receiver, refs),
+        GdExpr::Subscript { receiver, index, .. } => {
+            collect_refs_from_expr(receiver, refs);
+            collect_refs_from_expr(index, refs);
+        }
+        GdExpr::Ternary { true_val, condition, false_val, .. } => {
+            collect_refs_from_expr(true_val, refs);
+            collect_refs_from_expr(condition, refs);
+            collect_refs_from_expr(false_val, refs);
+        }
+        GdExpr::Array { elements, .. } => {
+            for e in elements { collect_refs_from_expr(e, refs); }
+        }
+        GdExpr::Dict { pairs, .. } => {
+            for (k, v) in pairs {
+                collect_refs_from_expr(k, refs);
+                collect_refs_from_expr(v, refs);
             }
         }
+        _ => {}
     }
 }
 

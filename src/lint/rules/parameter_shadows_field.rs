@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::core::gd_ast::{GdDecl, GdFile};
+use crate::core::gd_ast::{GdDecl, GdExpr, GdFile, GdStmt};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -16,14 +16,14 @@ impl LintRule for ParameterShadowsField {
         LintCategory::Style
     }
 
-    fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, file: &GdFile<'_>, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        check_scope(&file.declarations, source, &mut diags);
+        check_scope(&file.declarations, &mut diags);
         diags
     }
 }
 
-fn check_scope(decls: &[GdDecl<'_>], source: &str, diags: &mut Vec<LintDiagnostic>) {
+fn check_scope(decls: &[GdDecl<'_>], diags: &mut Vec<LintDiagnostic>) {
     // Collect field names at this scope level
     let fields: HashSet<&str> = decls
         .iter()
@@ -45,24 +45,22 @@ fn check_scope(decls: &[GdDecl<'_>], source: &str, diags: &mut Vec<LintDiagnosti
                     continue;
                 }
                 for param in &func.params {
-                    if fields.contains(param.name) {
-                        // Check if body uses self.field (intentional DI pattern)
-                        let uses_self = body_uses_self_field(func.node, source.as_bytes(), param.name);
-                        if !uses_self {
-                            diags.push(LintDiagnostic {
-                                rule: "parameter-shadows-field",
-                                message: format!(
-                                    "parameter `{}` shadows an instance variable",
-                                    param.name
-                                ),
-                                severity: Severity::Warning,
-                                line: param.node.start_position().row,
-                                column: param.node.start_position().column,
-                                end_column: Some(param.node.end_position().column),
-                                fix: None,
-                                context_lines: None,
-                            });
-                        }
+                    if fields.contains(param.name)
+                        && !body_uses_self_field(&func.body, param.name)
+                    {
+                        diags.push(LintDiagnostic {
+                            rule: "parameter-shadows-field",
+                            message: format!(
+                                "parameter `{}` shadows an instance variable",
+                                param.name
+                            ),
+                            severity: Severity::Warning,
+                            line: param.node.start_position().row,
+                            column: param.node.start_position().column,
+                            end_column: Some(param.node.end_position().column),
+                            fix: None,
+                            context_lines: None,
+                        });
                     }
                 }
             }
@@ -72,57 +70,107 @@ fn check_scope(decls: &[GdDecl<'_>], source: &str, diags: &mut Vec<LintDiagnosti
     // Recurse into inner classes (separate scope)
     for decl in decls {
         if let GdDecl::Class(class) = decl {
-            check_scope(&class.declarations, source, diags);
+            check_scope(&class.declarations, diags);
         }
     }
 }
 
-/// Check if the function body contains `self.<field_name>`.
-/// Uses raw tree-sitter traversal since attribute access chains aren't fully in typed AST.
-fn body_uses_self_field(func_node: tree_sitter::Node<'_>, src: &[u8], field_name: &str) -> bool {
-    let Some(body) = func_node.child_by_field_name("body") else {
-        return false;
-    };
-    scan_for_self_field(body, src, field_name)
-}
-
-fn scan_for_self_field(node: tree_sitter::Node<'_>, src: &[u8], field_name: &str) -> bool {
-    if node.kind() == "attribute" {
-        let mut cursor = node.walk();
-        let children: Vec<_> = node.children(&mut cursor).collect();
-        if let Some(first) = children.first()
-            && first.kind() == "identifier"
-            && first.utf8_text(src).ok() == Some("self")
-        {
-            for child in &children[1..] {
-                if child.kind() == "identifier" && child.utf8_text(src).ok() == Some(field_name) {
-                    return true;
-                }
-                if child.kind() == "attribute_call"
-                    && let Some(id) = child
-                        .children(&mut child.walk())
-                        .find(|c| c.kind() == "identifier")
-                    && id.utf8_text(src).ok() == Some(field_name)
-                {
-                    return true;
-                }
-            }
+/// Check if the function body contains `self.<field_name>` access.
+fn body_uses_self_field(body: &[GdStmt], field_name: &str) -> bool {
+    for stmt in body {
+        if stmts_have_self_field(stmt, field_name) {
+            return true;
         }
     }
-
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            if scan_for_self_field(cursor.node(), src, field_name) {
-                return true;
-            }
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
-    }
-
     false
+}
+
+fn stmts_have_self_field(stmt: &GdStmt, field_name: &str) -> bool {
+    match stmt {
+        GdStmt::Expr { expr, .. } => expr_has_self_field(expr, field_name),
+        GdStmt::Var(var) => {
+            var.value.as_ref().is_some_and(|v| expr_has_self_field(v, field_name))
+        }
+        GdStmt::Assign { target, value, .. } | GdStmt::AugAssign { target, value, .. } => {
+            expr_has_self_field(target, field_name) || expr_has_self_field(value, field_name)
+        }
+        GdStmt::Return { value: Some(v), .. } => expr_has_self_field(v, field_name),
+        GdStmt::If(gif) => {
+            expr_has_self_field(&gif.condition, field_name)
+                || gif.body.iter().any(|s| stmts_have_self_field(s, field_name))
+                || gif.elif_branches.iter().any(|(c, b)| {
+                    expr_has_self_field(c, field_name)
+                        || b.iter().any(|s| stmts_have_self_field(s, field_name))
+                })
+                || gif.else_body.as_ref().is_some_and(|b| {
+                    b.iter().any(|s| stmts_have_self_field(s, field_name))
+                })
+        }
+        GdStmt::For { iter, body, .. } => {
+            expr_has_self_field(iter, field_name)
+                || body.iter().any(|s| stmts_have_self_field(s, field_name))
+        }
+        GdStmt::While { condition, body, .. } => {
+            expr_has_self_field(condition, field_name)
+                || body.iter().any(|s| stmts_have_self_field(s, field_name))
+        }
+        GdStmt::Match { value, arms, .. } => {
+            expr_has_self_field(value, field_name)
+                || arms.iter().any(|a| a.body.iter().any(|s| stmts_have_self_field(s, field_name)))
+        }
+        _ => false,
+    }
+}
+
+fn expr_has_self_field(expr: &GdExpr, field_name: &str) -> bool {
+    match expr {
+        // self.field_name — the target pattern
+        GdExpr::PropertyAccess { receiver, property, .. }
+            if matches!(receiver.as_ref(), GdExpr::Ident { name: "self", .. })
+                && *property == field_name =>
+        {
+            true
+        }
+        // self.field_name() — method call on self with matching name
+        GdExpr::MethodCall { receiver, method, .. }
+            if matches!(receiver.as_ref(), GdExpr::Ident { name: "self", .. })
+                && *method == field_name =>
+        {
+            true
+        }
+        // Recurse into sub-expressions
+        GdExpr::BinOp { left, right, .. } => {
+            expr_has_self_field(left, field_name) || expr_has_self_field(right, field_name)
+        }
+        GdExpr::UnaryOp { operand, .. } | GdExpr::Cast { expr: operand, .. }
+        | GdExpr::Is { expr: operand, .. } | GdExpr::Await { expr: operand, .. } => {
+            expr_has_self_field(operand, field_name)
+        }
+        GdExpr::Call { callee, args, .. } => {
+            expr_has_self_field(callee, field_name)
+                || args.iter().any(|a| expr_has_self_field(a, field_name))
+        }
+        GdExpr::MethodCall { receiver, args, .. } => {
+            expr_has_self_field(receiver, field_name)
+                || args.iter().any(|a| expr_has_self_field(a, field_name))
+        }
+        GdExpr::PropertyAccess { receiver, .. } => expr_has_self_field(receiver, field_name),
+        GdExpr::Subscript { receiver, index, .. } => {
+            expr_has_self_field(receiver, field_name) || expr_has_self_field(index, field_name)
+        }
+        GdExpr::Ternary { true_val, condition, false_val, .. } => {
+            expr_has_self_field(true_val, field_name)
+                || expr_has_self_field(condition, field_name)
+                || expr_has_self_field(false_val, field_name)
+        }
+        GdExpr::Array { elements, .. } => {
+            elements.iter().any(|e| expr_has_self_field(e, field_name))
+        }
+        GdExpr::Dict { pairs, .. } => {
+            pairs.iter().any(|(k, v)| expr_has_self_field(k, field_name) || expr_has_self_field(v, field_name))
+        }
+        _ => false,
+    }
 }
 
 #[cfg(test)]
