@@ -1,5 +1,4 @@
-use tree_sitter::Node;
-use crate::core::gd_ast::{self, GdDecl, GdFile};
+use crate::core::gd_ast::{self, GdDecl, GdFile, GdStmt};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -44,9 +43,7 @@ fn collect_functions<'a>(file: &GdFile<'a>, _source: &'a str) -> Vec<FunctionInf
     gd_ast::visit_decls(file, &mut |decl| {
         if let GdDecl::Func(func) = decl {
             let mut fingerprint = Vec::new();
-            if let Some(body) = func.node.child_by_field_name("body") {
-                normalize_body(body, &mut fingerprint);
-            }
+            normalize_stmts(&func.body, &mut fingerprint);
             functions.push(FunctionInfo {
                 name: func.name,
                 line: func.node.start_position().row,
@@ -57,72 +54,47 @@ fn collect_functions<'a>(file: &GdFile<'a>, _source: &'a str) -> Vec<FunctionInf
     functions
 }
 
-/// Walk a body node and produce a canonical sequence of node kinds.
-fn normalize_body(node: Node, out: &mut Vec<&'static str>) {
-    let mut cursor = node.walk();
-    if !cursor.goto_first_child() {
-        return;
-    }
-
-    loop {
-        let child = cursor.node();
-        if !child.is_named() {
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-            continue;
-        }
-
-        match child.kind() {
-            "if_statement" | "for_statement" | "while_statement" | "match_statement"
-            | "elif_branch" | "else_branch" | "pattern_section" => {
-                out.push(child.kind());
-                normalize_children(child, out);
-            }
-            "return_statement"
-            | "variable_statement"
-            | "expression_statement"
-            | "assignment"
-            | "pass_statement"
-            | "break_statement"
-            | "continue_statement" => out.push(child.kind()),
-            "body" => normalize_body(child, out),
-            _ => {}
-        }
-
-        if !cursor.goto_next_sibling() {
-            break;
-        }
-    }
-}
-
-/// Recurse into children of control flow nodes to capture nesting structure.
-fn normalize_children(node: Node, out: &mut Vec<&'static str>) {
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            let child = cursor.node();
-            if child.is_named() {
-                match child.kind() {
-                    "body" => normalize_body(child, out),
-                    "elif_branch" => {
-                        out.push("elif_branch");
-                        normalize_children(child, out);
-                    }
-                    "else_branch" => {
-                        out.push("else_branch");
-                        normalize_children(child, out);
-                    }
-                    "pattern_section" => {
-                        out.push("pattern_section");
-                        normalize_children(child, out);
-                    }
-                    _ => {}
+/// Walk typed AST statements and produce a canonical sequence of statement kinds
+/// for structural fingerprinting. Control flow nodes push their kind then recurse
+/// into their bodies; leaf statements just push their kind.
+fn normalize_stmts(stmts: &[GdStmt], out: &mut Vec<&'static str>) {
+    for stmt in stmts {
+        match stmt {
+            GdStmt::If(if_stmt) => {
+                out.push("if_statement");
+                normalize_stmts(&if_stmt.body, out);
+                for (_, branch) in &if_stmt.elif_branches {
+                    out.push("elif_branch");
+                    normalize_stmts(branch, out);
+                }
+                if let Some(else_body) = &if_stmt.else_body {
+                    out.push("else_branch");
+                    normalize_stmts(else_body, out);
                 }
             }
-            if !cursor.goto_next_sibling() {
-                break;
+            GdStmt::For { body, .. } => {
+                out.push("for_statement");
+                normalize_stmts(body, out);
             }
+            GdStmt::While { body, .. } => {
+                out.push("while_statement");
+                normalize_stmts(body, out);
+            }
+            GdStmt::Match { arms, .. } => {
+                out.push("match_statement");
+                for arm in arms {
+                    out.push("pattern_section");
+                    normalize_stmts(&arm.body, out);
+                }
+            }
+            GdStmt::Return { .. } => out.push("return_statement"),
+            GdStmt::Var(_) => out.push("variable_statement"),
+            GdStmt::Expr { .. } => out.push("expression_statement"),
+            GdStmt::Assign { .. } => out.push("assignment"),
+            GdStmt::Pass { .. } => out.push("pass_statement"),
+            GdStmt::Break { .. } => out.push("break_statement"),
+            GdStmt::Continue { .. } => out.push("continue_statement"),
+            _ => {}
         }
     }
 }

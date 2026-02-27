@@ -1,7 +1,6 @@
 use std::collections::HashSet;
 
-use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{self, GdDecl, GdExpr, GdFile, GdStmt};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -107,14 +106,17 @@ impl LintRule for MagicNumber {
 
         let min_value = rule_config.and_then(|rc| rc.min_value).unwrap_or(0.0);
 
-        let mut diags = Vec::new();
-        let root = file.node;
         let ctx = CheckContext {
             allowed: &allowed,
             allowed_contexts: &allowed_contexts,
             min_value,
         };
-        check_node(root, source, &mut diags, false, &ctx);
+        let mut diags = Vec::new();
+        gd_ast::visit_decls(file, &mut |decl| {
+            if let GdDecl::Func(func) = decl {
+                check_stmts(&func.body, source, &ctx, &mut diags);
+            }
+        });
         diags
     }
 }
@@ -143,64 +145,188 @@ impl std::hash::Hash for OrderedF64 {
     }
 }
 
-fn check_node(
-    node: Node,
-    source: &str,
-    diags: &mut Vec<LintDiagnostic>,
-    in_function_body: bool,
-    ctx: &CheckContext,
-) {
-    // If we're entering a function body, mark it
-    if node.kind() == "function_definition"
-        && let Some(body_node) = node.child_by_field_name("body")
-    {
-        check_node(body_node, source, diags, true, ctx);
-        return;
-    }
+/// Walk function body statements checking for magic numbers.
+/// Variable/const definitions are skipped entirely (numbers in definitions are fine).
+fn check_stmts(stmts: &[GdStmt], source: &str, ctx: &CheckContext, diags: &mut Vec<LintDiagnostic>) {
+    for stmt in stmts {
+        match stmt {
+            // Variable/const definitions — numbers are fine here.
+            // Listed explicitly so the intent is clear (not just a wildcard fallthrough).
+            #[allow(clippy::match_same_arms)]
+            GdStmt::Var(_) => {}
 
-    // Only check numeric literals inside function bodies
-    if in_function_body && (node.kind() == "integer" || node.kind() == "float") {
-        // Skip if inside a variable/const definition (right-hand side)
-        if !is_in_variable_or_const_definition(&node) {
-            let value_text = &source[node.byte_range()];
+            GdStmt::Expr { expr, .. } => check_expr(expr, source, ctx, false, false, diags),
+            GdStmt::Assign { value, .. } | GdStmt::AugAssign { value, .. } => {
+                check_expr(value, source, ctx, false, false, diags);
+            }
+            GdStmt::Return { value: Some(v), .. } => check_expr(v, source, ctx, false, false, diags),
 
-            if let Ok(value) = parse_numeric(value_text) {
-                let abs_value = value.abs();
-
-                // Check min_value threshold
-                if abs_value >= ctx.min_value
-                    && !ctx.allowed.contains(&OrderedF64(value))
-                    && !is_in_allowed_context(&node, source, ctx)
-                    && !is_in_array_index(&node)
-                    && !is_modulo_operand(&node, source)
-                    && !is_comparison_to_zero_or_one(&node, source)
-                {
-                    diags.push(LintDiagnostic {
-                        rule: "magic-number",
-                        message: format!(
-                            "consider extracting magic number {value_text} to a named constant",
-                        ),
-                        severity: Severity::Warning,
-                        line: node.start_position().row,
-                        column: node.start_position().column,
-                        fix: None,
-                        end_column: None,
-                        context_lines: None,
-                    });
+            GdStmt::If(if_stmt) => {
+                check_expr(&if_stmt.condition, source, ctx, false, false, diags);
+                check_stmts(&if_stmt.body, source, ctx, diags);
+                for (cond, branch) in &if_stmt.elif_branches {
+                    check_expr(cond, source, ctx, false, false, diags);
+                    check_stmts(branch, source, ctx, diags);
+                }
+                if let Some(else_body) = &if_stmt.else_body {
+                    check_stmts(else_body, source, ctx, diags);
                 }
             }
+            GdStmt::For { iter, body, .. } => {
+                check_expr(iter, source, ctx, false, false, diags);
+                check_stmts(body, source, ctx, diags);
+            }
+            GdStmt::While { condition, body, .. } => {
+                check_expr(condition, source, ctx, false, false, diags);
+                check_stmts(body, source, ctx, diags);
+            }
+            GdStmt::Match { value, arms, .. } => {
+                check_expr(value, source, ctx, false, false, diags);
+                for arm in arms {
+                    for pat in &arm.patterns {
+                        check_expr(pat, source, ctx, false, false, diags);
+                    }
+                    if let Some(guard) = &arm.guard {
+                        check_expr(guard, source, ctx, false, false, diags);
+                    }
+                    check_stmts(&arm.body, source, ctx, diags);
+                }
+            }
+            _ => {}
         }
     }
+}
 
-    // Recurse into children
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            check_node(cursor.node(), source, diags, in_function_body, ctx);
-            if !cursor.goto_next_sibling() {
-                break;
+/// Check an expression for magic numbers. Context flags are pushed down through
+/// the tree instead of walking up parents:
+/// - `in_allowed_ctx`: inside an allowed function/constructor call's arguments
+/// - `in_subscript`: inside a subscript index (array access)
+fn check_expr(
+    expr: &GdExpr,
+    source: &str,
+    ctx: &CheckContext,
+    in_allowed_ctx: bool,
+    in_subscript: bool,
+    diags: &mut Vec<LintDiagnostic>,
+) {
+    match expr {
+        GdExpr::IntLiteral { node, value } | GdExpr::FloatLiteral { node, value } => {
+            if in_allowed_ctx || in_subscript {
+                return;
+            }
+            if let Ok(parsed) = parse_numeric(value)
+                && parsed.abs() >= ctx.min_value
+                && !ctx.allowed.contains(&OrderedF64(parsed))
+            {
+                diags.push(LintDiagnostic {
+                    rule: "magic-number",
+                    message: format!(
+                        "consider extracting magic number {value} to a named constant",
+                    ),
+                    severity: Severity::Warning,
+                    line: node.start_position().row,
+                    column: node.start_position().column,
+                    fix: None,
+                    end_column: None,
+                    context_lines: None,
+                });
             }
         }
+
+        GdExpr::Call { callee, args, .. } => {
+            let func_name = callee_name(callee);
+            let args_allowed =
+                in_allowed_ctx || func_name.is_some_and(|n| ctx.allowed_contexts.contains(n));
+            check_expr(callee, source, ctx, in_allowed_ctx, in_subscript, diags);
+            for arg in args {
+                check_expr(arg, source, ctx, args_allowed, false, diags);
+            }
+        }
+        GdExpr::MethodCall { receiver, method, args, .. } => {
+            let args_allowed = in_allowed_ctx || ctx.allowed_contexts.contains(method);
+            check_expr(receiver, source, ctx, in_allowed_ctx, in_subscript, diags);
+            for arg in args {
+                check_expr(arg, source, ctx, args_allowed, false, diags);
+            }
+        }
+
+        GdExpr::BinOp { op, left, right, .. } => {
+            if *op == "%" {
+                // Left side checked normally; right side of modulo is always allowed
+                check_expr(left, source, ctx, in_allowed_ctx, in_subscript, diags);
+            } else if is_comparison_op(op) {
+                // In comparisons, skip 0/1 literals (common idioms like `size() == 0`)
+                check_comparison_side(left, source, ctx, in_allowed_ctx, in_subscript, diags);
+                check_comparison_side(right, source, ctx, in_allowed_ctx, in_subscript, diags);
+            } else {
+                check_expr(left, source, ctx, in_allowed_ctx, in_subscript, diags);
+                check_expr(right, source, ctx, in_allowed_ctx, in_subscript, diags);
+            }
+        }
+
+        GdExpr::Subscript { receiver, index, .. } => {
+            check_expr(receiver, source, ctx, in_allowed_ctx, false, diags);
+            check_expr(index, source, ctx, in_allowed_ctx, true, diags);
+        }
+
+        GdExpr::UnaryOp { operand, .. } => {
+            check_expr(operand, source, ctx, in_allowed_ctx, in_subscript, diags);
+        }
+        GdExpr::PropertyAccess { receiver, .. } => {
+            check_expr(receiver, source, ctx, in_allowed_ctx, in_subscript, diags);
+        }
+        GdExpr::Ternary { condition, true_val, false_val, .. } => {
+            check_expr(condition, source, ctx, in_allowed_ctx, in_subscript, diags);
+            check_expr(true_val, source, ctx, in_allowed_ctx, in_subscript, diags);
+            check_expr(false_val, source, ctx, in_allowed_ctx, in_subscript, diags);
+        }
+        GdExpr::Array { elements, .. } => {
+            for e in elements {
+                check_expr(e, source, ctx, in_allowed_ctx, in_subscript, diags);
+            }
+        }
+        GdExpr::Dict { pairs, .. } => {
+            for (k, v) in pairs {
+                check_expr(k, source, ctx, in_allowed_ctx, in_subscript, diags);
+                check_expr(v, source, ctx, in_allowed_ctx, in_subscript, diags);
+            }
+        }
+        GdExpr::Cast { expr: inner, .. }
+        | GdExpr::Is { expr: inner, .. }
+        | GdExpr::Await { expr: inner, .. } => {
+            check_expr(inner, source, ctx, in_allowed_ctx, in_subscript, diags);
+        }
+
+        _ => {} // Ident, StringLiteral, Bool, Null, Self_, Lambda, etc.
+    }
+}
+
+/// Extract the function/constructor name from a call callee expression.
+fn callee_name<'a>(callee: &GdExpr<'a>) -> Option<&'a str> {
+    match callee {
+        GdExpr::Ident { name, .. } => Some(name),
+        GdExpr::PropertyAccess { property, .. } => Some(property),
+        _ => None,
+    }
+}
+
+fn is_comparison_op(op: &str) -> bool {
+    matches!(op, "==" | "!=" | "<" | ">" | "<=" | ">=")
+}
+
+/// Check one side of a comparison expression, skipping 0/1 literals.
+fn check_comparison_side(
+    expr: &GdExpr,
+    source: &str,
+    ctx: &CheckContext,
+    in_allowed_ctx: bool,
+    in_subscript: bool,
+    diags: &mut Vec<LintDiagnostic>,
+) {
+    match expr {
+        GdExpr::IntLiteral { value, .. } | GdExpr::FloatLiteral { value, .. }
+            if matches!(*value, "0" | "1" | "0.0" | "1.0") => {}
+        _ => check_expr(expr, source, ctx, in_allowed_ctx, in_subscript, diags),
     }
 }
 
@@ -222,108 +348,6 @@ fn parse_numeric(text: &str) -> Result<f64, ()> {
     // Standard integer or float (may contain underscores)
     let clean = text.replace('_', "");
     clean.parse::<f64>().map_err(|_| ())
-}
-
-/// Check if a node is inside a variable_statement or const_statement.
-fn is_in_variable_or_const_definition(node: &Node) -> bool {
-    let mut current = node.parent();
-    while let Some(parent) = current {
-        let kind = parent.kind();
-        if kind == "variable_statement" || kind == "const_statement" {
-            return true;
-        }
-        if kind == "function_definition" {
-            return false;
-        }
-        current = parent.parent();
-    }
-    false
-}
-
-/// Check if this number is an argument inside an allowed function/constructor call.
-fn is_in_allowed_context(node: &Node, source: &str, ctx: &CheckContext) -> bool {
-    let mut current = node.parent();
-    while let Some(parent) = current {
-        match parent.kind() {
-            "call" => {
-                // tree-sitter-gdscript: no `function` field on bare calls, use named_child(0)
-                if let Some(func_node) = parent
-                    .child_by_field_name("function")
-                    .or_else(|| parent.named_child(0))
-                {
-                    let func_text = &source[func_node.byte_range()];
-                    // Handle method calls like `obj.lerp(...)` — extract the method name
-                    let func_name = func_text.rsplit('.').next().unwrap_or(func_text);
-                    if ctx.allowed_contexts.contains(func_name) {
-                        return true;
-                    }
-                }
-            }
-            "attribute_call" => {
-                // `attribute` > `attribute_call` for method calls
-                if let Some(method_node) = parent.child_by_field_name("method") {
-                    let method_name = &source[method_node.byte_range()];
-                    if ctx.allowed_contexts.contains(method_name) {
-                        return true;
-                    }
-                }
-            }
-            // Stop searching at function boundary
-            "function_definition" => return false,
-            _ => {}
-        }
-        current = parent.parent();
-    }
-    false
-}
-
-/// Check if the number is used as an array/dictionary index: `arr[0]`, `arr[-1]`.
-fn is_in_array_index(node: &Node) -> bool {
-    let Some(parent) = node.parent() else {
-        return false;
-    };
-    // Direct subscript: `arr[0]`
-    if parent.kind() == "subscript" {
-        return true;
-    }
-    // Negative index: `arr[-1]` — the `-1` is a `unary_operator` inside a `subscript`
-    if parent.kind() == "unary_operator"
-        && let Some(grandparent) = parent.parent()
-    {
-        return grandparent.kind() == "subscript";
-    }
-    false
-}
-
-/// Check if the number is the right-hand side of a modulo operation: `x % 2`.
-fn is_modulo_operand(node: &Node, source: &str) -> bool {
-    let Some(parent) = node.parent() else {
-        return false;
-    };
-    if parent.kind() == "binary_operator"
-        && let Some(op_node) = parent.child_by_field_name("op")
-    {
-        let op = &source[op_node.byte_range()];
-        return op == "%";
-    }
-    false
-}
-
-/// Check if the number is being compared to 0 or 1 (common idioms like `size() == 0`).
-fn is_comparison_to_zero_or_one(node: &Node, source: &str) -> bool {
-    let Some(parent) = node.parent() else {
-        return false;
-    };
-    if (parent.kind() == "comparison_operator" || parent.kind() == "binary_operator")
-        && let Some(op_node) = parent.child_by_field_name("op")
-    {
-        let op = &source[op_node.byte_range()];
-        if matches!(op, "==" | "!=" | "<" | ">" | "<=" | ">=") {
-            let value_text = &source[node.byte_range()];
-            return matches!(value_text, "0" | "1" | "0.0" | "1.0");
-        }
-    }
-    false
 }
 
 #[cfg(test)]
