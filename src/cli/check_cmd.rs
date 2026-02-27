@@ -85,6 +85,7 @@ pub fn exec(args: &CheckArgs) -> Result<()> {
 
     for root in &roots {
         let files = collect_gdscript_files(root)?;
+        let root_project = find_project_root(root).unwrap_or_else(|| ignore_base.clone());
         for file in &files {
             if matches_ignore_pattern(file, &ignore_base, &config.lint.ignore_patterns) {
                 continue;
@@ -96,7 +97,7 @@ pub fn exec(args: &CheckArgs) -> Result<()> {
                     let has_parse_errors = root_node.has_error();
                     let symbols = symbol_table::build(&tree, &source);
                     let structural =
-                        validate_structure(&root_node, &source, &symbols, Some(&ignore_base));
+                        validate_structure(&root_node, &source, &symbols, Some(&root_project));
                     let classdb =
                         check_classdb_errors(&root_node, &source, &symbols, &project_index);
                     let duplicates = check_duplicates(&tree, &source);

@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.11] - 2026-02-27
+
+### Fixed
+- **`gd check` preload resolution**: when checking external targets (`gd check /other/project/`), `preload("res://...")` paths now resolve against each file's own project root instead of the current working directory
+
 ## [0.3.10] - 2026-02-26
 
 ### Improved
