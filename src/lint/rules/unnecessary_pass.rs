@@ -1,5 +1,4 @@
-use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{GdClass, GdDecl, GdFile, GdFunc, GdIf, GdMatchArm, GdStmt};
 
 use super::{Fix, LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -17,59 +16,91 @@ impl LintRule for UnnecessaryPass {
 
     fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        let root = file.node;
-        check_node(root, source.as_bytes(), source, &mut diags);
+        for decl in &file.declarations {
+            check_decl(decl, source, &mut diags);
+        }
         diags
     }
 }
 
-#[allow(clippy::only_used_in_recursion)]
-fn check_node(node: Node, source_bytes: &[u8], source: &str, diags: &mut Vec<LintDiagnostic>) {
-    // Check body nodes: if they have more than one non-comment named child and one is pass_statement
-    if node.kind() == "body" || node.kind() == "block" {
-        let named_count = node.named_child_count();
-        // Don't count comments as "other statements" — a setter with just `pass  # Read-only`
-        // should not trigger this rule since pass is the only real statement.
-        let statement_count = (0..named_count)
-            .filter(|&i| node.named_child(i).is_some_and(|c| c.kind() != "comment"))
-            .count();
-        if statement_count > 1 {
-            for i in 0..named_count {
-                if let Some(child) = node.named_child(i)
-                    && child.kind() == "pass_statement"
-                {
-                    let fix = generate_fix(&child, source_bytes);
-
-                    diags.push(LintDiagnostic {
-                        rule: "unnecessary-pass",
-                        message: "`pass` is unnecessary when the body contains other statements"
-                            .to_string(),
-                        severity: Severity::Warning,
-                        line: child.start_position().row,
-                        column: child.start_position().column,
-                        end_column: Some(child.end_position().column),
-                        fix: Some(fix),
-                        context_lines: None,
-                    });
-                }
-            }
-        }
-    }
-
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            check_node(cursor.node(), source_bytes, source, diags);
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
+fn check_decl(decl: &GdDecl, source: &str, diags: &mut Vec<LintDiagnostic>) {
+    match decl {
+        GdDecl::Func(func) => check_func(func, source, diags),
+        GdDecl::Class(cls) => check_class(cls, source, diags),
+        _ => {}
     }
 }
 
-fn generate_fix(node: &Node, source_bytes: &[u8]) -> Fix {
-    let mut byte_start = node.start_byte();
-    let mut byte_end = node.end_byte();
+fn check_func(func: &GdFunc, source: &str, diags: &mut Vec<LintDiagnostic>) {
+    check_body(&func.body, source, diags);
+}
+
+fn check_class(cls: &GdClass, source: &str, diags: &mut Vec<LintDiagnostic>) {
+    for decl in &cls.declarations {
+        check_decl(decl, source, diags);
+    }
+}
+
+/// Check a statement list for unnecessary `pass` — if the body has more than one statement
+/// and one of them is `pass`, the `pass` is redundant.
+fn check_body(stmts: &[GdStmt], source: &str, diags: &mut Vec<LintDiagnostic>) {
+    if stmts.len() > 1 {
+        for stmt in stmts {
+            if let GdStmt::Pass { node } = stmt {
+                let fix = generate_fix(node.start_byte(), node.end_byte(), source.as_bytes());
+                diags.push(LintDiagnostic {
+                    rule: "unnecessary-pass",
+                    message: "`pass` is unnecessary when the body contains other statements"
+                        .to_string(),
+                    severity: Severity::Warning,
+                    line: node.start_position().row,
+                    column: node.start_position().column,
+                    end_column: Some(node.end_position().column),
+                    fix: Some(fix),
+                    context_lines: None,
+                });
+            }
+        }
+    }
+
+    // Recurse into nested blocks
+    for stmt in stmts {
+        check_stmt(stmt, source, diags);
+    }
+}
+
+fn check_stmt(stmt: &GdStmt, source: &str, diags: &mut Vec<LintDiagnostic>) {
+    match stmt {
+        GdStmt::If(if_stmt) => check_if(if_stmt, source, diags),
+        GdStmt::For { body, .. } | GdStmt::While { body, .. } => {
+            check_body(body, source, diags);
+        }
+        GdStmt::Match { arms, .. } => {
+            for arm in arms {
+                check_match_arm(arm, source, diags);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn check_if(if_stmt: &GdIf, source: &str, diags: &mut Vec<LintDiagnostic>) {
+    check_body(&if_stmt.body, source, diags);
+    for (_, branch) in &if_stmt.elif_branches {
+        check_body(branch, source, diags);
+    }
+    if let Some(else_body) = &if_stmt.else_body {
+        check_body(else_body, source, diags);
+    }
+}
+
+fn check_match_arm(arm: &GdMatchArm, source: &str, diags: &mut Vec<LintDiagnostic>) {
+    check_body(&arm.body, source, diags);
+}
+
+fn generate_fix(start_byte: usize, end_byte: usize, source_bytes: &[u8]) -> Fix {
+    let mut byte_start = start_byte;
+    let mut byte_end = end_byte;
 
     // Extend to include trailing newline if present
     if byte_end < source_bytes.len() && source_bytes[byte_end] == b'\n' {
@@ -103,11 +134,7 @@ mod tests {
     use crate::core::config::LintConfig;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
-        let mut parser = tree_sitter::Parser::new();
-        parser
-            .set_language(&tree_sitter_gdscript::LANGUAGE.into())
-            .unwrap();
-        let tree = parser.parse(source, None).unwrap();
+        let tree = crate::core::parser::parse(source).unwrap();
         let file = crate::core::gd_ast::convert(&tree, source);
         UnnecessaryPass.check(&file, source, &LintConfig::default())
     }
@@ -128,6 +155,7 @@ mod tests {
     #[test]
     fn no_warning_on_pass_with_comment() {
         // Read-only setter pattern: pass + comment should not trigger
+        // Note: typed AST strips comments from body, so body.len() == 1 (just pass)
         let source = "\
 var scores: Dictionary:
 \tset(value):

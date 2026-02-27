@@ -1,27 +1,9 @@
-use tree_sitter::Node;
 use crate::core::gd_ast::GdFile;
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
 
 pub struct TodoComment;
-
-impl LintRule for TodoComment {
-    fn name(&self) -> &'static str {
-        "todo-comment"
-    }
-
-    fn category(&self) -> LintCategory {
-        LintCategory::Maintenance
-    }
-
-    fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
-        let mut diags = Vec::new();
-        let root = file.node;
-        check_node(root, source, &mut diags);
-        diags
-    }
-}
 
 /// Markers to detect in comments. Matches Godot's editor highlight keywords.
 const MARKERS: &[&str] = &[
@@ -33,6 +15,82 @@ const MARKERS: &[&str] = &[
     "DEPRECATED",
     "WARNING",
 ];
+
+impl LintRule for TodoComment {
+    fn name(&self) -> &'static str {
+        "todo-comment"
+    }
+
+    fn category(&self) -> LintCategory {
+        LintCategory::Maintenance
+    }
+
+    fn check(&self, _file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+        let mut diags = Vec::new();
+        // Scan source lines for comments — tree-sitter not needed since
+        // GDScript comments always start with `#` outside of strings.
+        // We track string state to avoid false positives in string literals.
+        let mut in_multiline_string = false;
+        for (line_no, line) in source.lines().enumerate() {
+            // Track triple-quoted multiline strings
+            let triple_count = line.matches("\"\"\"").count();
+            if in_multiline_string {
+                if triple_count % 2 == 1 {
+                    in_multiline_string = false;
+                }
+                continue;
+            }
+            if triple_count % 2 == 1 {
+                in_multiline_string = true;
+                continue;
+            }
+
+            // Find the first `#` that isn't inside a string
+            if let Some(comment_col) = find_comment_start(line) {
+                let comment_text = &line[comment_col..];
+                for marker in MARKERS {
+                    if contains_marker_word(comment_text, marker) {
+                        diags.push(LintDiagnostic {
+                            rule: "todo-comment",
+                            message: format!("comment contains {marker} marker"),
+                            severity: Severity::Info,
+                            line: line_no,
+                            column: comment_col,
+                            end_column: Some(line.len()),
+                            fix: None,
+                            context_lines: None,
+                        });
+                        // Only report the first marker per comment
+                        break;
+                    }
+                }
+            }
+        }
+        diags
+    }
+}
+
+/// Find the byte offset of the first `#` that starts a comment (not inside a string).
+fn find_comment_start(line: &str) -> Option<usize> {
+    let mut in_double = false;
+    let mut in_single = false;
+    let bytes = line.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let ch = bytes[i];
+        match ch {
+            b'"' if !in_single => in_double = !in_double,
+            b'\'' if !in_double => in_single = !in_single,
+            b'\\' if in_double || in_single => {
+                i += 1; // skip escaped char
+            }
+            b'#' if !in_double && !in_single => return Some(i),
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
 
 /// Check if a marker appears as a standalone word in the comment text.
 /// The marker must be preceded by `#`, whitespace, or start of string,
@@ -52,38 +110,6 @@ fn contains_marker_word(text: &str, marker: &str) -> bool {
         start = abs + 1;
     }
     false
-}
-
-fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    if node.kind() == "comment" {
-        let text = node.utf8_text(source.as_bytes()).unwrap_or("");
-        for marker in MARKERS {
-            if contains_marker_word(text, marker) {
-                diags.push(LintDiagnostic {
-                    rule: "todo-comment",
-                    message: format!("comment contains {marker} marker"),
-                    severity: Severity::Info,
-                    line: node.start_position().row,
-                    column: node.start_position().column,
-                    end_column: Some(node.end_position().column),
-                    fix: None,
-                    context_lines: None,
-                });
-                // Only report the first marker per comment
-                break;
-            }
-        }
-    }
-
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            check_node(cursor.node(), source, diags);
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
-    }
 }
 
 #[cfg(test)]
@@ -273,5 +299,13 @@ mod tests {
         let source = "# some text TODO more text\n";
         let diags = check(source);
         assert_eq!(diags.len(), 1);
+    }
+
+    // ── String literal exclusion ──────────────────────────────────────
+
+    #[test]
+    fn no_warning_hash_in_string() {
+        let source = "var s = \"# TODO: not a real comment\"\n";
+        assert!(check(source).is_empty());
     }
 }
