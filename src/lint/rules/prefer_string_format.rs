@@ -1,5 +1,4 @@
-use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{self, GdExpr, GdFile};
 
 use super::{Fix, LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -21,24 +20,69 @@ impl LintRule for PreferStringFormat {
 
     fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        check_node(file.node, source, &mut diags);
-        diags
-    }
-}
+        gd_ast::visit_exprs(file, &mut |expr| {
+            if let GdExpr::BinOp { node, op: "+", .. } = expr {
+                // Only trigger on the top-level `+` — skip if parent is also a `+` binary_operator
+                if let Some(parent) = node.parent()
+                    && parent.kind() == "binary_operator"
+                    && parent
+                        .child_by_field_name("op")
+                        .is_some_and(|o| &source[o.byte_range()] == "+")
+                {
+                    return;
+                }
 
-fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    if node.kind() == "binary_operator" {
-        check_concat_chain(node, source, diags);
-    }
+                let Some(segments) = collect_concat_segments(expr, source) else {
+                    return;
+                };
 
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            check_node(cursor.node(), source, diags);
-            if !cursor.goto_next_sibling() {
-                break;
+                // Must have at least one str() call
+                if !segments.iter().any(|s| matches!(s, Segment::StrCall(_))) {
+                    return;
+                }
+
+                // Build the format string and argument array
+                let mut format_parts = String::new();
+                let mut args = Vec::new();
+
+                for segment in &segments {
+                    match segment {
+                        Segment::Literal(text) => {
+                            format_parts.push_str(&text.replace('%', "%%"));
+                        }
+                        Segment::StrCall(expr_text) => {
+                            format_parts.push_str("%s");
+                            args.push(*expr_text);
+                        }
+                    }
+                }
+
+                let replacement = if args.len() == 1 {
+                    format!("\"{format_parts}\" % {}", args[0])
+                } else {
+                    let args_str = args.join(", ");
+                    format!("\"{format_parts}\" % [{args_str}]")
+                };
+
+                diags.push(LintDiagnostic {
+                    rule: "prefer-string-format",
+                    message: format!(
+                        "use format string `{replacement}` instead of string concatenation"
+                    ),
+                    severity: Severity::Warning,
+                    line: node.start_position().row,
+                    column: node.start_position().column,
+                    end_column: Some(node.end_position().column),
+                    fix: Some(Fix {
+                        byte_start: node.start_byte(),
+                        byte_end: node.end_byte(),
+                        replacement,
+                    }),
+                    context_lines: None,
+                });
             }
-        }
+        });
+        diags
     }
 }
 
@@ -50,143 +94,37 @@ enum Segment<'a> {
     StrCall(&'a str),
 }
 
-/// Check if a node is a `+` concatenation chain containing at least one `str()` call.
-fn check_concat_chain(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    let Some(op_node) = node.child_by_field_name("op") else {
-        return;
-    };
-    if &source[op_node.byte_range()] != "+" {
-        return;
-    }
-
-    // Only trigger on the top-level `+` — skip if parent is also a `+` binary_operator
-    if let Some(parent) = node.parent()
-        && parent.kind() == "binary_operator"
-        && let Some(parent_op) = parent.child_by_field_name("op")
-        && &source[parent_op.byte_range()] == "+"
-    {
-        return;
-    }
-
-    // Collect all segments from the concatenation chain
-    let Some(segments) = collect_concat_segments(node, source) else {
-        return;
-    };
-
-    // Must have at least one str() call
-    let has_str_call = segments.iter().any(|s| matches!(s, Segment::StrCall(_)));
-    if !has_str_call {
-        return;
-    }
-
-    // Build the format string and argument array
-    let mut format_parts = String::new();
-    let mut args = Vec::new();
-
-    for segment in &segments {
-        match segment {
-            Segment::Literal(text) => {
-                // Escape any existing % in the literal
-                format_parts.push_str(&text.replace('%', "%%"));
-            }
-            Segment::StrCall(expr) => {
-                format_parts.push_str("%s");
-                args.push(*expr);
-            }
-        }
-    }
-
-    let replacement = if args.len() == 1 {
-        format!("\"{format_parts}\" % {}", args[0])
-    } else {
-        let args_str = args.join(", ");
-        format!("\"{format_parts}\" % [{args_str}]")
-    };
-
-    diags.push(LintDiagnostic {
-        rule: "prefer-string-format",
-        message: format!("use format string `{replacement}` instead of string concatenation"),
-        severity: Severity::Warning,
-        line: node.start_position().row,
-        column: node.start_position().column,
-        end_column: Some(node.end_position().column),
-        fix: Some(Fix {
-            byte_start: node.start_byte(),
-            byte_end: node.end_byte(),
-            replacement,
-        }),
-        context_lines: None,
-    });
-}
-
 /// Recursively collect segments from a `+` concatenation chain.
-/// Returns None if any part is not a string literal or str() call.
-fn collect_concat_segments<'a>(node: Node<'a>, source: &'a str) -> Option<Vec<Segment<'a>>> {
-    if node.kind() == "binary_operator" {
-        let op_node = node.child_by_field_name("op")?;
-        if &source[op_node.byte_range()] == "+" {
-            let left = node.child_by_field_name("left")?;
-            let right = node.child_by_field_name("right")?;
-
-            let mut segments = collect_concat_segments(left, source)?;
-            let right_segments = collect_concat_segments(right, source)?;
-            segments.extend(right_segments);
-            return Some(segments);
-        }
+fn collect_concat_segments<'a>(
+    expr: &GdExpr<'a>,
+    source: &'a str,
+) -> Option<Vec<Segment<'a>>> {
+    if let GdExpr::BinOp { op: "+", left, right, .. } = expr {
+        let mut segments = collect_concat_segments(left, source)?;
+        let right_segments = collect_concat_segments(right, source)?;
+        segments.extend(right_segments);
+        return Some(segments);
     }
 
     // Single node: must be a string literal or str() call
-    if let Some(segment) = parse_single_segment(node, source) {
-        Some(vec![segment])
-    } else {
-        None
-    }
+    parse_single_segment(expr, source).map(|s| vec![s])
 }
 
-/// Parse a single node as either a string literal or a str() call.
-fn parse_single_segment<'a>(node: Node<'a>, source: &'a str) -> Option<Segment<'a>> {
+/// Parse a single expression as either a string literal or a str() call.
+fn parse_single_segment<'a>(expr: &GdExpr<'a>, source: &'a str) -> Option<Segment<'a>> {
     // String literal
-    if node.kind() == "string" {
-        let text = &source[node.byte_range()];
-        let content = extract_string_content(text)?;
+    if let GdExpr::StringLiteral { value, .. } = expr {
+        let content = extract_string_content(value)?;
         return Some(Segment::Literal(content));
     }
 
     // str() call
-    if node.kind() == "call" {
-        let src = source.as_bytes();
-        let callee = node
-            .children(&mut node.walk())
-            .find(|c| c.kind() == "identifier")
-            .and_then(|n| n.utf8_text(src).ok())?;
-
-        if callee == "str" {
-            let args = node.child_by_field_name("arguments")?;
-            let mut named = Vec::new();
-            let mut cursor = args.walk();
-            if cursor.goto_first_child() {
-                loop {
-                    let child = cursor.node();
-                    if child.is_named() {
-                        named.push(child);
-                    }
-                    if !cursor.goto_next_sibling() {
-                        break;
-                    }
-                }
-            }
-
-            if named.len() == 1 {
-                return Some(Segment::StrCall(&source[named[0].byte_range()]));
-            }
-        }
-    }
-
-    // Parenthesized expression — unwrap and try again
-    if node.kind() == "parenthesized_expression"
-        && let Some(inner) = node.named_child(0)
+    if let GdExpr::Call { callee, args, .. } = expr
+        && let GdExpr::Ident { name: "str", .. } = callee.as_ref()
+        && args.len() == 1
     {
-        return parse_single_segment(inner, source);
+        let arg_text = &source[args[0].node().byte_range()];
+        return Some(Segment::StrCall(arg_text));
     }
 
     None
@@ -278,7 +216,8 @@ mod tests {
 
     #[test]
     fn only_one_diagnostic_for_chain() {
-        let source = "func f(a, b, c):\n\tvar msg = str(a) + \"/\" + str(b) + \"/\" + str(c)\n";
+        let source =
+            "func f(a, b, c):\n\tvar msg = str(a) + \"/\" + str(b) + \"/\" + str(c)\n";
         let diags = check(source);
         assert_eq!(diags.len(), 1);
     }

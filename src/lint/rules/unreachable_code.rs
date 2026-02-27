@@ -1,5 +1,4 @@
-use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{GdDecl, GdExpr, GdFile, GdStmt};
 
 use super::{Fix, LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -17,160 +16,137 @@ impl LintRule for UnreachableCode {
 
     fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        let root = file.node;
-        check_node(root, source, &mut diags);
+        check_decls(&file.declarations, source, &mut diags);
         diags
     }
 }
 
-fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    // Check body/block nodes for statements after return/break/continue
-    if is_body_node(node.kind()) {
-        check_body_for_unreachable(node, source, diags);
-    }
-
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            check_node(cursor.node(), source, diags);
-            if !cursor.goto_next_sibling() {
-                break;
-            }
+fn check_decls(decls: &[GdDecl<'_>], source: &str, diags: &mut Vec<LintDiagnostic>) {
+    for decl in decls {
+        if let GdDecl::Func(func) = decl {
+            check_stmt_list(&func.body, source, diags);
+        }
+        if let GdDecl::Class(class) = decl {
+            check_decls(&class.declarations, source, diags);
         }
     }
 }
 
-fn is_body_node(kind: &str) -> bool {
-    matches!(kind, "body" | "block")
-}
+/// Check a list of statements for unreachable code after return/break/continue.
+fn check_stmt_list(stmts: &[GdStmt<'_>], source: &str, diags: &mut Vec<LintDiagnostic>) {
+    let mut terminator_idx: Option<(usize, &str)> = None;
 
-fn is_terminator(kind: &str) -> bool {
-    matches!(
-        kind,
-        "return_statement" | "break_statement" | "continue_statement"
-    )
-}
-
-fn check_body_for_unreachable(body: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    let source_bytes = source.as_bytes();
-    let mut found_terminator: Option<&str> = None;
-    let mut first_unreachable_start: Option<usize> = None;
-    let mut last_unreachable_end: usize = 0;
-    let mut first_unreachable_pos: Option<(usize, usize)> = None;
-
-    let mut cursor = body.walk();
-    if !cursor.goto_first_child() {
-        return;
-    }
-
-    loop {
-        let child = cursor.node();
-        if !child.is_named() || child.kind() == "comment" {
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-            continue;
-        }
-
-        if found_terminator.is_some() {
-            if first_unreachable_start.is_none() {
-                // Extend backward to include leading whitespace on the line
-                let mut start = child.start_byte();
-                while start > 0 {
-                    let prev = start - 1;
-                    let ch = source_bytes[prev];
-                    if ch == b' ' || ch == b'\t' {
-                        start = prev;
-                    } else {
-                        break;
-                    }
-                }
-                first_unreachable_start = Some(start);
-                first_unreachable_pos =
-                    Some((child.start_position().row, child.start_position().column));
-            }
-            last_unreachable_end = child.end_byte();
-        }
-
-        if is_terminator(child.kind()) && found_terminator.is_none() {
-            // Skip return statements that follow a pending() call (GUT test-skip pattern)
-            if child.kind() == "return_statement" && is_after_pending_call(child, source) {
-                if !cursor.goto_next_sibling() {
-                    break;
-                }
-                continue;
-            }
-            found_terminator = Some(match child.kind() {
-                "return_statement" => "return",
-                "break_statement" => "break",
-                "continue_statement" => "continue",
-                _ => unreachable!(),
-            });
-        }
-
-        if !cursor.goto_next_sibling() {
+    for (i, stmt) in stmts.iter().enumerate() {
+        if let Some((_, term_name)) = terminator_idx {
+            // Found unreachable code: report from this statement to the end
+            emit_unreachable(stmts, i, term_name, source, diags);
             break;
         }
-    }
 
-    if let (Some(term), Some(byte_start), Some((line, col))) = (
-        found_terminator,
-        first_unreachable_start,
-        first_unreachable_pos,
-    ) {
-        // Extend to include trailing newline
-        let mut byte_end = last_unreachable_end;
-        if byte_end < source_bytes.len() && source_bytes[byte_end] == b'\n' {
-            byte_end += 1;
+        match stmt {
+            GdStmt::Return { .. } => {
+                // Skip return statements that follow a pending() call (GUT test-skip pattern)
+                if !is_after_pending(stmts, i) {
+                    terminator_idx = Some((i, "return"));
+                }
+            }
+            GdStmt::Break { .. } => terminator_idx = Some((i, "break")),
+            GdStmt::Continue { .. } => terminator_idx = Some((i, "continue")),
+            _ => {}
         }
 
-        diags.push(LintDiagnostic {
-            rule: "unreachable-code",
-            message: format!("unreachable code after `{term}`"),
-            severity: Severity::Warning,
-            line,
-            column: col,
-            end_column: None,
-            fix: Some(Fix {
-                byte_start,
-                byte_end,
-                replacement: String::new(),
-            }),
-            context_lines: None,
-        });
+        // Recurse into nested statement bodies
+        visit_nested_bodies(stmt, source, diags);
     }
 }
 
-/// Check if a return_statement is immediately preceded by a `pending()` call (skipping comments).
-/// This is a GUT test-skip pattern: `pending("reason") / return`.
-fn is_after_pending_call(node: Node, source: &str) -> bool {
-    let mut prev = node.prev_named_sibling();
-    // Skip comment nodes
-    while let Some(p) = prev {
-        if p.kind() != "comment" {
-            return is_pending_call(p, source);
-        }
-        prev = p.prev_named_sibling();
+/// Check if a return statement at index `idx` is immediately preceded by a `pending()` call.
+fn is_after_pending(stmts: &[GdStmt<'_>], idx: usize) -> bool {
+    if idx == 0 {
+        return false;
+    }
+    // In the typed AST, comments aren't included, so stmts[idx-1] is the actual previous statement
+    let prev = &stmts[idx - 1];
+    if let GdStmt::Expr { expr, .. } = prev
+        && let GdExpr::Call { callee, .. } = expr
+        && let GdExpr::Ident { name: "pending", .. } = callee.as_ref()
+    {
+        return true;
     }
     false
 }
 
-/// Check if a node is an `expression_statement` containing a `pending(...)` call.
-fn is_pending_call(node: Node, source: &str) -> bool {
-    if node.kind() != "expression_statement" {
-        return false;
+/// Emit a diagnostic for unreachable code from `start_idx` to end of `stmts`.
+fn emit_unreachable(
+    stmts: &[GdStmt<'_>],
+    start_idx: usize,
+    term_name: &str,
+    source: &str,
+    diags: &mut Vec<LintDiagnostic>,
+) {
+    let first = &stmts[start_idx];
+    let last = &stmts[stmts.len() - 1];
+
+    let first_node = first.node();
+    let last_node = last.node();
+
+    // Extend backward to include leading whitespace on the line
+    let source_bytes = source.as_bytes();
+    let mut byte_start = first_node.start_byte();
+    while byte_start > 0 {
+        let prev = byte_start - 1;
+        let ch = source_bytes[prev];
+        if ch == b' ' || ch == b'\t' {
+            byte_start = prev;
+        } else {
+            break;
+        }
     }
-    let Some(call) = node.named_child(0) else {
-        return false;
-    };
-    if call.kind() != "call" {
-        return false;
+
+    // Extend forward to include trailing newline
+    let mut byte_end = last_node.end_byte();
+    if byte_end < source_bytes.len() && source_bytes[byte_end] == b'\n' {
+        byte_end += 1;
     }
-    let Some(name_node) = call.named_child(0) else {
-        return false;
-    };
-    name_node.kind() == "identifier"
-        && name_node.utf8_text(source.as_bytes()).unwrap_or("") == "pending"
+
+    diags.push(LintDiagnostic {
+        rule: "unreachable-code",
+        message: format!("unreachable code after `{term_name}`"),
+        severity: Severity::Warning,
+        line: first_node.start_position().row,
+        column: first_node.start_position().column,
+        end_column: None,
+        fix: Some(Fix {
+            byte_start,
+            byte_end,
+            replacement: String::new(),
+        }),
+        context_lines: None,
+    });
+}
+
+/// Recurse into nested statement bodies to check for unreachable code.
+fn visit_nested_bodies(stmt: &GdStmt<'_>, source: &str, diags: &mut Vec<LintDiagnostic>) {
+    match stmt {
+        GdStmt::If(gif) => {
+            check_stmt_list(&gif.body, source, diags);
+            for (_, branch_body) in &gif.elif_branches {
+                check_stmt_list(branch_body, source, diags);
+            }
+            if let Some(else_body) = &gif.else_body {
+                check_stmt_list(else_body, source, diags);
+            }
+        }
+        GdStmt::For { body, .. } | GdStmt::While { body, .. } => {
+            check_stmt_list(body, source, diags);
+        }
+        GdStmt::Match { arms, .. } => {
+            for arm in arms {
+                check_stmt_list(&arm.body, source, diags);
+            }
+        }
+        _ => {}
+    }
 }
 
 #[cfg(test)]

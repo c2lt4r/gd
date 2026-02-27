@@ -1,5 +1,4 @@
-use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{self, GdExpr, GdFile};
 
 use super::{Fix, LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -19,66 +18,43 @@ impl LintRule for PreferGetNodeSyntax {
         false
     }
 
-    fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, file: &GdFile<'_>, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        check_node(file.node, source, &mut diags);
+        gd_ast::visit_exprs(file, &mut |expr| {
+            if let GdExpr::GetNode { node, path } = expr
+                && path.starts_with('$')
+            {
+                let inner = &path[1..]; // Strip leading $
+                let inner = if inner.starts_with('"') && inner.ends_with('"') {
+                    &inner[1..inner.len() - 1]
+                } else {
+                    inner
+                };
+
+                if inner.is_empty() {
+                    return;
+                }
+
+                let replacement = format!("get_node(\"{inner}\")");
+
+                diags.push(LintDiagnostic {
+                    rule: "prefer-get-node-syntax",
+                    message: format!("use `{replacement}` instead of `{path}`"),
+                    severity: Severity::Warning,
+                    line: node.start_position().row,
+                    column: node.start_position().column,
+                    end_column: Some(node.end_position().column),
+                    fix: Some(Fix {
+                        byte_start: node.start_byte(),
+                        byte_end: node.end_byte(),
+                        replacement,
+                    }),
+                    context_lines: None,
+                });
+            }
+        });
         diags
     }
-}
-
-fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    // tree-sitter parses $Sprite2D and $"Path" as `get_node` node kind
-    if node.kind() == "get_node" {
-        check_dollar_syntax(node, source, diags);
-    }
-
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            check_node(cursor.node(), source, diags);
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
-    }
-}
-
-fn check_dollar_syntax(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    let text = &source[node.byte_range()];
-
-    // Must start with $ (not %, which is unique node syntax)
-    if !text.starts_with('$') {
-        return;
-    }
-
-    // Extract path from $Sprite2D or $"Player/Camera"
-    let path = &text[1..]; // Strip leading $
-    let path = if path.starts_with('"') && path.ends_with('"') {
-        &path[1..path.len() - 1]
-    } else {
-        path
-    };
-
-    if path.is_empty() {
-        return;
-    }
-
-    let replacement = format!("get_node(\"{path}\")");
-
-    diags.push(LintDiagnostic {
-        rule: "prefer-get-node-syntax",
-        message: format!("use `{replacement}` instead of `{text}`"),
-        severity: Severity::Warning,
-        line: node.start_position().row,
-        column: node.start_position().column,
-        end_column: Some(node.end_position().column),
-        fix: Some(Fix {
-            byte_start: node.start_byte(),
-            byte_end: node.end_byte(),
-            replacement,
-        }),
-        context_lines: None,
-    });
 }
 
 #[cfg(test)]
