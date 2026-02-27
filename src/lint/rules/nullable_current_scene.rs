@@ -221,43 +221,102 @@ fn find_alias_access(
 /// Recursively search statement expressions for `alias.xxx` access.
 fn find_alias_in_expr_tree(
     stmt: &GdStmt,
-    source: &str,
+    _source: &str,
     alias: &str,
     guarded_lines: &HashSet<usize>,
 ) -> Option<(usize, usize)> {
-    let mut result = None;
-    // Use the raw tree-sitter node to find attribute accesses on the alias
-    find_alias_in_node(stmt.node(), source, alias, guarded_lines, &mut result);
-    result
+    find_alias_in_stmt(stmt, alias, guarded_lines)
 }
 
-fn find_alias_in_node(
-    node: tree_sitter::Node,
-    source: &str,
+fn find_alias_in_stmt(
+    stmt: &GdStmt,
     alias: &str,
     guarded_lines: &HashSet<usize>,
-    result: &mut Option<(usize, usize)>,
-) {
-    if result.is_some() {
-        return;
-    }
-
-    if node.kind() == "attribute"
-        && let Some(obj) = node.named_child(0)
-        && obj.kind() == "identifier"
-        && obj.utf8_text(source.as_bytes()).ok() == Some(alias)
-        && !guarded_lines.contains(&node.start_position().row)
-    {
-        *result = Some((node.start_position().row, node.start_position().column));
-        return;
-    }
-
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        find_alias_in_node(child, source, alias, guarded_lines, result);
-        if result.is_some() {
-            return;
+) -> Option<(usize, usize)> {
+    match stmt {
+        GdStmt::Expr { expr, .. } => find_alias_in_expr(expr, alias, guarded_lines),
+        GdStmt::Var(var) => {
+            var.value.as_ref().and_then(|v| find_alias_in_expr(v, alias, guarded_lines))
         }
+        GdStmt::Assign { target, value, .. } | GdStmt::AugAssign { target, value, .. } => {
+            find_alias_in_expr(target, alias, guarded_lines)
+                .or_else(|| find_alias_in_expr(value, alias, guarded_lines))
+        }
+        GdStmt::Return { value: Some(v), .. } => find_alias_in_expr(v, alias, guarded_lines),
+        GdStmt::If(gif) => {
+            find_alias_in_expr(&gif.condition, alias, guarded_lines)
+                .or_else(|| gif.body.iter().find_map(|s| find_alias_in_stmt(s, alias, guarded_lines)))
+                .or_else(|| gif.elif_branches.iter().find_map(|(c, b)| {
+                    find_alias_in_expr(c, alias, guarded_lines)
+                        .or_else(|| b.iter().find_map(|s| find_alias_in_stmt(s, alias, guarded_lines)))
+                }))
+                .or_else(|| gif.else_body.as_ref().and_then(|b| {
+                    b.iter().find_map(|s| find_alias_in_stmt(s, alias, guarded_lines))
+                }))
+        }
+        GdStmt::For { iter, body, .. } => {
+            find_alias_in_expr(iter, alias, guarded_lines)
+                .or_else(|| body.iter().find_map(|s| find_alias_in_stmt(s, alias, guarded_lines)))
+        }
+        GdStmt::While { condition, body, .. } => {
+            find_alias_in_expr(condition, alias, guarded_lines)
+                .or_else(|| body.iter().find_map(|s| find_alias_in_stmt(s, alias, guarded_lines)))
+        }
+        GdStmt::Match { value, arms, .. } => {
+            find_alias_in_expr(value, alias, guarded_lines)
+                .or_else(|| arms.iter().find_map(|a| {
+                    a.body.iter().find_map(|s| find_alias_in_stmt(s, alias, guarded_lines))
+                }))
+        }
+        _ => None,
+    }
+}
+
+fn find_alias_in_expr(
+    expr: &GdExpr,
+    alias: &str,
+    guarded_lines: &HashSet<usize>,
+) -> Option<(usize, usize)> {
+    // Match alias.xxx or alias.method() patterns
+    match expr {
+        GdExpr::PropertyAccess { node, receiver, .. }
+        | GdExpr::MethodCall { node, receiver, .. }
+            if matches!(receiver.as_ref(), GdExpr::Ident { name, .. } if *name == alias)
+                && !guarded_lines.contains(&node.start_position().row) =>
+        {
+            Some((node.start_position().row, node.start_position().column))
+        }
+        // Recurse into sub-expressions
+        GdExpr::BinOp { left, right, .. } => {
+            find_alias_in_expr(left, alias, guarded_lines)
+                .or_else(|| find_alias_in_expr(right, alias, guarded_lines))
+        }
+        GdExpr::UnaryOp { operand, .. } | GdExpr::Cast { expr: operand, .. }
+        | GdExpr::Is { expr: operand, .. } | GdExpr::Await { expr: operand, .. } => {
+            find_alias_in_expr(operand, alias, guarded_lines)
+        }
+        GdExpr::Call { callee, args, .. } => {
+            find_alias_in_expr(callee, alias, guarded_lines)
+                .or_else(|| args.iter().find_map(|a| find_alias_in_expr(a, alias, guarded_lines)))
+        }
+        GdExpr::MethodCall { receiver, args, .. } => {
+            find_alias_in_expr(receiver, alias, guarded_lines)
+                .or_else(|| args.iter().find_map(|a| find_alias_in_expr(a, alias, guarded_lines)))
+        }
+        GdExpr::PropertyAccess { receiver, .. } => find_alias_in_expr(receiver, alias, guarded_lines),
+        GdExpr::Subscript { receiver, index, .. } => {
+            find_alias_in_expr(receiver, alias, guarded_lines)
+                .or_else(|| find_alias_in_expr(index, alias, guarded_lines))
+        }
+        GdExpr::Ternary { true_val, condition, false_val, .. } => {
+            find_alias_in_expr(true_val, alias, guarded_lines)
+                .or_else(|| find_alias_in_expr(condition, alias, guarded_lines))
+                .or_else(|| find_alias_in_expr(false_val, alias, guarded_lines))
+        }
+        GdExpr::Array { elements, .. } => {
+            elements.iter().find_map(|e| find_alias_in_expr(e, alias, guarded_lines))
+        }
+        _ => None,
     }
 }
 
