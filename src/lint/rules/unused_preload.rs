@@ -1,5 +1,4 @@
 use std::collections::{HashMap, HashSet};
-use tree_sitter::Node;
 use crate::core::gd_ast::{self, GdDecl, GdExpr, GdFile};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
@@ -16,11 +15,11 @@ impl LintRule for UnusedPreload {
         LintCategory::Maintenance
     }
 
-    fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, file: &GdFile<'_>, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
 
-        // Collect all `var X = preload(...)` or `var X = load(...)` declarations via typed AST
-        let mut preloads: HashMap<String, (usize, usize, usize)> = HashMap::new();
+        // Collect all `var X = preload(...)` or `var X = load(...)` declarations
+        let mut preloads: HashMap<&str, (usize, usize, usize)> = HashMap::new();
         gd_ast::visit_decls(file, &mut |decl| {
             if let GdDecl::Var(var) = decl {
                 let is_preload = matches!(&var.value, Some(GdExpr::Preload { .. }));
@@ -37,10 +36,9 @@ impl LintRule for UnusedPreload {
                     let line = name_pos.map_or(var.node.start_position().row, |n| {
                         n.start_position().row
                     });
-                    preloads.insert(
-                        var.name.to_string(),
-                        (line, col, col + var.name.len()),
-                    );
+                    preloads
+                        .entry(var.name)
+                        .or_insert((line, col, col + var.name.len()));
                 }
             }
         });
@@ -49,13 +47,17 @@ impl LintRule for UnusedPreload {
             return diags;
         }
 
-        // Collect all identifier references across the entire file (CST for full tree scan)
-        let mut references: HashSet<String> = HashSet::new();
-        collect_all_references(file.node, source.as_bytes(), &mut references);
+        // Collect all identifier references in expression context
+        let mut references: HashSet<&str> = HashSet::new();
+        gd_ast::visit_exprs(file, &mut |expr| {
+            if let GdExpr::Ident { name, .. } = expr {
+                references.insert(name);
+            }
+        });
 
         // Report preloaded vars that are never referenced elsewhere
         for (name, (line, col, end_col)) in &preloads {
-            if !references.contains(name.as_str()) {
+            if !references.contains(name) {
                 diags.push(LintDiagnostic {
                     rule: "unused-preload",
                     message: format!("preloaded variable `{name}` is never used"),
@@ -70,38 +72,6 @@ impl LintRule for UnusedPreload {
         }
 
         diags
-    }
-}
-
-/// Collect all identifier references, skipping declaration name positions.
-fn collect_all_references(node: Node, src: &[u8], refs: &mut HashSet<String>) {
-    match node.kind() {
-        "variable_statement" => {
-            // Skip the name field (that's the declaration), but check value and type
-            if let Some(value) = node.child_by_field_name("value") {
-                collect_all_references(value, src, refs);
-            }
-            if let Some(ty) = node.child_by_field_name("type") {
-                collect_all_references(ty, src, refs);
-            }
-        }
-        "identifier" => {
-            let name = node.utf8_text(src).unwrap_or("");
-            if !name.is_empty() {
-                refs.insert(name.to_string());
-            }
-        }
-        _ => {
-            let mut cursor = node.walk();
-            if cursor.goto_first_child() {
-                loop {
-                    collect_all_references(cursor.node(), src, refs);
-                    if !cursor.goto_next_sibling() {
-                        break;
-                    }
-                }
-            }
-        }
     }
 }
 

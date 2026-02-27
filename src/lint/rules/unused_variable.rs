@@ -1,6 +1,5 @@
-use std::collections::HashMap;
-use tree_sitter::Node;
-use crate::core::gd_ast::{self, GdDecl, GdFile};
+use std::collections::{HashMap, HashSet};
+use crate::core::gd_ast::{self, GdDecl, GdExpr, GdFile, GdStmt};
 
 use super::{Fix, LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -16,15 +15,13 @@ impl LintRule for UnusedVariable {
         LintCategory::Maintenance
     }
 
-    fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, file: &GdFile<'_>, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
 
-        // Iterate function bodies via typed AST declarations
+        // Check each function body independently
         gd_ast::visit_decls(file, &mut |decl| {
-            if let GdDecl::Func(func) = decl
-                && let Some(body) = func.node.child_by_field_name("body")
-            {
-                check_function_body(body, source, &mut diags);
+            if let GdDecl::Func(func) = decl {
+                check_function_body(&func.body, &mut diags);
             }
         });
 
@@ -33,20 +30,18 @@ impl LintRule for UnusedVariable {
 }
 
 /// Track variable declarations and references within a function body.
-fn check_function_body(body: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    // Collect local variable declarations: name -> (line, col, name_byte_start)
-    let mut declarations: HashMap<String, (usize, usize, usize)> = HashMap::new();
-    // Collect all identifier references (not declarations)
-    let mut references: std::collections::HashSet<String> = std::collections::HashSet::new();
+fn check_function_body(body: &[GdStmt], diags: &mut Vec<LintDiagnostic>) {
+    // name -> (line, col, name_byte_start)
+    let mut declarations: HashMap<&str, (usize, usize, usize)> = HashMap::new();
+    let mut references: HashSet<&str> = HashSet::new();
 
-    collect_declarations_and_refs(body, source, &mut declarations, &mut references);
+    collect_decls_and_refs(body, &mut declarations, &mut references);
 
     for (name, (line, col, name_byte_start)) in &declarations {
-        // Skip variables starting with _ (intentionally unused)
         if name.starts_with('_') {
             continue;
         }
-        if !references.contains(name.as_str()) {
+        if !references.contains(name) {
             diags.push(LintDiagnostic {
                 rule: "unused-variable",
                 message: format!("variable `{name}` is assigned but never used"),
@@ -65,85 +60,140 @@ fn check_function_body(body: Node, source: &str, diags: &mut Vec<LintDiagnostic>
     }
 }
 
-fn collect_declarations_and_refs(
-    node: Node,
-    source: &str,
-    declarations: &mut HashMap<String, (usize, usize, usize)>,
-    references: &mut std::collections::HashSet<String>,
+/// Walk function body statements, collecting local variable declarations and
+/// identifier references. Does not recurse into nested lambdas (separate scope).
+fn collect_decls_and_refs<'a>(
+    stmts: &[GdStmt<'a>],
+    declarations: &mut HashMap<&'a str, (usize, usize, usize)>,
+    references: &mut HashSet<&'a str>,
 ) {
-    match node.kind() {
-        "variable_statement" => {
-            // This is a local var declaration
-            if let Some(name_node) = node.child_by_field_name("name") {
-                let name = source[name_node.byte_range()].to_string();
-                declarations.insert(
-                    name,
-                    (
-                        name_node.start_position().row,
-                        name_node.start_position().column,
-                        name_node.start_byte(),
-                    ),
-                );
-            }
-            // The value expression may reference other vars
-            if let Some(value) = node.child_by_field_name("value") {
-                collect_refs_only(value, source, references);
-            }
-        }
-        "assignment" | "augmented_assignment" => {
-            // The right side is a reference, but the left side identifier is a write
-            // For assignments to local vars, we count this as a use of the RHS identifiers
-            // The LHS is not a "reference" for unused detection unless it's complex
-            // (subscript, attribute, etc.)
-            let child_count = node.child_count();
-            if child_count >= 3 {
-                // left = node.child(0), right = last named child
-                let left = node.child(0);
-                let right = node.child(child_count - 1);
-                if let Some(right) = right {
-                    collect_refs_only(right, source, references);
-                }
-                // If left is a complex expression (attribute, subscript), count identifiers as refs
-                if let Some(left) = left
-                    && left.kind() != "identifier"
-                {
-                    collect_refs_only(left, source, references);
+    for stmt in stmts {
+        match stmt {
+            GdStmt::Var(var) => {
+                // Record local variable declaration
+                let name_node = var.node.child_by_field_name("name");
+                let (line, col, byte_start) = if let Some(n) = name_node {
+                    (n.start_position().row, n.start_position().column, n.start_byte())
+                } else {
+                    let pos = var.node.start_position();
+                    (pos.row, pos.column, var.node.start_byte())
+                };
+                declarations.insert(var.name, (line, col, byte_start));
+                // Value expression may reference other vars
+                if let Some(value) = &var.value {
+                    collect_refs_from_expr(value, references);
                 }
             }
-        }
-        "identifier" => {
-            let name = source[node.byte_range()].to_string();
-            references.insert(name);
-        }
-        // Don't descend into nested function definitions (separate scope)
-        "function_definition" | "lambda" => {}
-        _ => {
-            let mut cursor = node.walk();
-            if cursor.goto_first_child() {
-                loop {
-                    collect_declarations_and_refs(cursor.node(), source, declarations, references);
-                    if !cursor.goto_next_sibling() {
-                        break;
+            GdStmt::Assign { target, value, .. } => {
+                // RHS: always collect references
+                collect_refs_from_expr(value, references);
+                // LHS: only collect refs if it's complex (not a simple identifier write)
+                if !matches!(target, GdExpr::Ident { .. }) {
+                    collect_refs_from_expr(target, references);
+                }
+            }
+            GdStmt::AugAssign { target, value, .. } => {
+                collect_refs_from_expr(value, references);
+                // LHS of augmented assignment: same treatment as regular assignment
+                if !matches!(target, GdExpr::Ident { .. }) {
+                    collect_refs_from_expr(target, references);
+                }
+            }
+            GdStmt::Expr { expr, .. } => {
+                collect_refs_from_expr(expr, references);
+            }
+            GdStmt::Return { value, .. } => {
+                if let Some(v) = value {
+                    collect_refs_from_expr(v, references);
+                }
+            }
+            GdStmt::If(if_stmt) => {
+                collect_refs_from_expr(&if_stmt.condition, references);
+                collect_decls_and_refs(&if_stmt.body, declarations, references);
+                for (cond, branch) in &if_stmt.elif_branches {
+                    collect_refs_from_expr(cond, references);
+                    collect_decls_and_refs(branch, declarations, references);
+                }
+                if let Some(else_body) = &if_stmt.else_body {
+                    collect_decls_and_refs(else_body, declarations, references);
+                }
+            }
+            GdStmt::For { iter, body, .. } => {
+                collect_refs_from_expr(iter, references);
+                collect_decls_and_refs(body, declarations, references);
+            }
+            GdStmt::While { condition, body, .. } => {
+                collect_refs_from_expr(condition, references);
+                collect_decls_and_refs(body, declarations, references);
+            }
+            GdStmt::Match { value, arms, .. } => {
+                collect_refs_from_expr(value, references);
+                for arm in arms {
+                    for pat in &arm.patterns {
+                        collect_refs_from_expr(pat, references);
                     }
+                    if let Some(guard) = &arm.guard {
+                        collect_refs_from_expr(guard, references);
+                    }
+                    collect_decls_and_refs(&arm.body, declarations, references);
                 }
             }
+            GdStmt::Pass { .. } | GdStmt::Break { .. } | GdStmt::Continue { .. }
+            | GdStmt::Breakpoint { .. } | GdStmt::Invalid { .. } => {}
         }
     }
 }
 
-fn collect_refs_only(node: Node, source: &str, references: &mut std::collections::HashSet<String>) {
-    if node.kind() == "identifier" {
-        let name = source[node.byte_range()].to_string();
-        references.insert(name);
+/// Collect all identifier references from an expression tree.
+/// Stops at lambda boundaries (separate scope).
+fn collect_refs_from_expr<'a>(expr: &GdExpr<'a>, refs: &mut HashSet<&'a str>) {
+    // Don't recurse into lambdas — they have their own scope
+    if matches!(expr, GdExpr::Lambda { .. }) {
+        return;
     }
-
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            collect_refs_only(cursor.node(), source, references);
-            if !cursor.goto_next_sibling() {
-                break;
+    match expr {
+        GdExpr::Ident { name, .. } => { refs.insert(name); }
+        GdExpr::BinOp { left, right, .. } => {
+            collect_refs_from_expr(left, refs);
+            collect_refs_from_expr(right, refs);
+        }
+        GdExpr::UnaryOp { operand, .. } | GdExpr::Cast { expr: operand, .. }
+        | GdExpr::Is { expr: operand, .. } | GdExpr::Await { expr: operand, .. } => {
+            collect_refs_from_expr(operand, refs);
+        }
+        GdExpr::Call { callee, args, .. } => {
+            collect_refs_from_expr(callee, refs);
+            for a in args { collect_refs_from_expr(a, refs); }
+        }
+        GdExpr::MethodCall { receiver, args, .. } => {
+            collect_refs_from_expr(receiver, refs);
+            for a in args { collect_refs_from_expr(a, refs); }
+        }
+        GdExpr::SuperCall { args, .. } => {
+            for a in args { collect_refs_from_expr(a, refs); }
+        }
+        GdExpr::PropertyAccess { receiver, .. } => {
+            collect_refs_from_expr(receiver, refs);
+        }
+        GdExpr::Subscript { receiver, index, .. } => {
+            collect_refs_from_expr(receiver, refs);
+            collect_refs_from_expr(index, refs);
+        }
+        GdExpr::Ternary { true_val, condition, false_val, .. } => {
+            collect_refs_from_expr(true_val, refs);
+            collect_refs_from_expr(condition, refs);
+            collect_refs_from_expr(false_val, refs);
+        }
+        GdExpr::Array { elements, .. } => {
+            for e in elements { collect_refs_from_expr(e, refs); }
+        }
+        GdExpr::Dict { pairs, .. } => {
+            for (k, v) in pairs {
+                collect_refs_from_expr(k, refs);
+                collect_refs_from_expr(v, refs);
             }
         }
+        // Literals, GetNode, Preload, StringName, Invalid — no identifier refs
+        _ => {}
     }
 }

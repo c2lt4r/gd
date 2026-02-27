@@ -1,6 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use tree_sitter::Node;
-use crate::core::gd_ast::{self, GdDecl, GdFile};
+use crate::core::gd_ast::{self, GdDecl, GdExpr, GdFile};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -20,17 +19,15 @@ impl LintRule for SignalNotConnected {
         false
     }
 
-    fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, file: &GdFile<'_>, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
 
-        // Collect signal declarations via typed AST
-        let mut signals: HashMap<String, (usize, usize)> = HashMap::new();
+        // Collect signal declarations
+        let mut signals: HashMap<&str, (usize, usize)> = HashMap::new();
         gd_ast::visit_decls(file, &mut |decl| {
             if let GdDecl::Signal(sig) = decl {
-                let pos = sig.node.child_by_field_name("name").unwrap_or(sig.node);
-                signals
-                    .entry(sig.name.to_string())
-                    .or_insert((pos.start_position().row, pos.start_position().column));
+                let pos = sig.node.start_position();
+                signals.entry(sig.name).or_insert((pos.row, pos.column));
             }
         });
 
@@ -38,10 +35,12 @@ impl LintRule for SignalNotConnected {
             return diags;
         }
 
-        // Collect signals that are emitted and connected (CST for attribute chains)
-        let mut emitted: HashSet<String> = HashSet::new();
-        let mut connected: HashSet<String> = HashSet::new();
-        collect_usage(file.node, source.as_bytes(), &mut emitted, &mut connected);
+        // Track which signals are emitted vs connected
+        let mut emitted: HashSet<&str> = HashSet::new();
+        let mut connected: HashSet<&str> = HashSet::new();
+        gd_ast::visit_exprs(file, &mut |expr| {
+            collect_signal_usage(expr, &mut emitted, &mut connected);
+        });
 
         // Report signals that are emitted but never connected in this file
         for (name, (line, column)) in &signals {
@@ -63,154 +62,76 @@ impl LintRule for SignalNotConnected {
     }
 }
 
-fn collect_usage(
-    node: Node,
-    src: &[u8],
-    emitted: &mut HashSet<String>,
-    connected: &mut HashSet<String>,
+fn collect_signal_usage<'a>(
+    expr: &GdExpr<'a>,
+    emitted: &mut HashSet<&'a str>,
+    connected: &mut HashSet<&'a str>,
 ) {
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            let child = cursor.node();
-
-            // Modern GDScript: signal_name.emit() / .connect() / .disconnect()
-            if child.kind() == "attribute" {
-                check_signal_method(child, src, emitted, connected);
-            }
-
-            // Legacy: emit_signal("name") / connect("name", ...)
-            if child.kind() == "call" {
-                check_legacy_call(child, src, emitted, connected);
-            }
-
-            collect_usage(child, src, emitted, connected);
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
-    }
-}
-
-fn check_signal_method(
-    node: Node,
-    src: &[u8],
-    emitted: &mut HashSet<String>,
-    connected: &mut HashSet<String>,
-) {
-    let mut identifiers: Vec<String> = Vec::new();
-    let mut method_name = None;
-
-    let mut cursor = node.walk();
-    if !cursor.goto_first_child() {
-        return;
-    }
-
-    loop {
-        let child = cursor.node();
-
-        if child.kind() == "identifier"
-            && let Ok(text) = child.utf8_text(src)
-        {
-            identifiers.push(text.to_string());
-        }
-
-        if child.kind() == "attribute_call"
-            && let Some(method_node) = child
-                .children(&mut child.walk())
-                .find(|c| c.kind() == "identifier")
-            && let Ok(method) = method_node.utf8_text(src)
-        {
-            method_name = Some(method.to_string());
-        }
-
-        if !cursor.goto_next_sibling() {
-            break;
-        }
-    }
-
-    if let Some(ref method) = method_name
-        && let Some(signal_name) = identifiers.last()
-        && signal_name != "self"
-    {
-        match method.as_str() {
-            "emit" => {
-                emitted.insert(signal_name.clone());
-            }
-            "connect" | "disconnect" => {
-                connected.insert(signal_name.clone());
-            }
-            _ => {}
-        }
-    } else if method_name.is_none()
-        && identifiers.len() >= 2
-        && matches!(
-            identifiers.last().map(String::as_str),
-            Some("emit" | "connect" | "disconnect")
-        )
-    {
-        // Bare callable reference: signal_name.emit (no parentheses)
-        let signal_idx = identifiers.len() - 2;
-        let name = &identifiers[signal_idx];
-        if name != "self" {
-            match identifiers.last().map(String::as_str) {
-                Some("emit") => {
-                    emitted.insert(name.clone());
+    match expr {
+        // signal_name.emit/connect/disconnect()
+        GdExpr::MethodCall { receiver, method, .. } => {
+            if let Some(name) = signal_name_from_receiver(receiver) {
+                match *method {
+                    "emit" => { emitted.insert(name); }
+                    "connect" | "disconnect" => { connected.insert(name); }
+                    _ => {}
                 }
-                Some("connect" | "disconnect") => {
-                    connected.insert(name.clone());
+            }
+        }
+        // Bare callable reference: signal_name.emit (no parentheses)
+        GdExpr::PropertyAccess { receiver, property, .. } => {
+            if let Some(name) = signal_name_from_receiver(receiver) {
+                match *property {
+                    "emit" => { emitted.insert(name); }
+                    "connect" | "disconnect" => { connected.insert(name); }
+                    _ => {}
+                }
+            }
+        }
+        // Legacy: emit_signal("name") / connect("name", ...)
+        GdExpr::Call { callee, args, .. } => {
+            let callee_name = match callee.as_ref() {
+                GdExpr::Ident { name, .. } => Some(*name),
+                _ => None,
+            };
+            match callee_name {
+                Some("emit_signal") => {
+                    if let Some(sig_name) = extract_string_arg(args) {
+                        emitted.insert(sig_name);
+                    }
+                }
+                Some("connect") => {
+                    if let Some(sig_name) = extract_string_arg(args) {
+                        connected.insert(sig_name);
+                    }
                 }
                 _ => {}
             }
         }
+        _ => {}
     }
 }
 
-fn check_legacy_call(
-    node: Node,
-    src: &[u8],
-    emitted: &mut HashSet<String>,
-    connected: &mut HashSet<String>,
-) {
-    let func_name = node
-        .children(&mut node.walk())
-        .find(|c| c.kind() == "identifier")
-        .and_then(|n| n.utf8_text(src).ok())
-        .unwrap_or("");
-
-    let is_emit = func_name == "emit_signal";
-    let is_connect = func_name == "connect";
-
-    if !is_emit && !is_connect {
-        return;
+fn signal_name_from_receiver<'a>(receiver: &GdExpr<'a>) -> Option<&'a str> {
+    match receiver {
+        GdExpr::Ident { name, .. } if *name != "self" => Some(name),
+        GdExpr::PropertyAccess { receiver: inner, property, .. }
+            if matches!(inner.as_ref(), GdExpr::Ident { name: "self", .. }) =>
+        {
+            Some(property)
+        }
+        _ => None,
     }
+}
 
-    let Some(args) = node
-        .children(&mut node.walk())
-        .find(|c| c.kind() == "arguments")
-    else {
-        return;
-    };
-
-    // First string argument is the signal name
-    for child in args.children(&mut args.walk()) {
-        if child.kind() == "string" {
-            let text = child.utf8_text(src).unwrap_or("");
-            let stripped = text
-                .trim_start_matches('"')
-                .trim_end_matches('"')
-                .trim_start_matches('\'')
-                .trim_end_matches('\'');
-            if !stripped.is_empty() {
-                if is_emit {
-                    emitted.insert(stripped.to_string());
-                } else {
-                    connected.insert(stripped.to_string());
-                }
-            }
-            break;
+fn extract_string_arg<'a>(args: &[GdExpr<'a>]) -> Option<&'a str> {
+    if let Some(GdExpr::StringLiteral { value, .. }) = args.first() {
+        let stripped = value.trim_matches('"').trim_matches('\'');
+        if !stripped.is_empty() {
+            return Some(stripped);
         }
     }
+    None
 }
 
 #[cfg(test)]

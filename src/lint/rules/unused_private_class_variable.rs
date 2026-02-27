@@ -1,5 +1,4 @@
-use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{self, GdExpr, GdFile};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -27,19 +26,25 @@ impl LintRule for UnusedPrivateClassVariable {
     fn check_with_symbols(
         &self,
         file: &GdFile<'_>,
-        source: &str,
+        _source: &str,
         _config: &LintConfig,
         symbols: &SymbolTable,
     ) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
 
+        // Collect all identifier references in expression context
+        let mut referenced = std::collections::HashSet::new();
+        gd_ast::visit_exprs(file, &mut |expr| {
+            if let GdExpr::Ident { name, .. } = expr {
+                referenced.insert(*name);
+            }
+        });
+
         for var in &symbols.variables {
             if !var.name.starts_with('_') || var.is_constant {
                 continue;
             }
-            // Check if the variable name appears anywhere else in the source
-            // besides its declaration
-            if !is_used_elsewhere(file.node, source, &var.name, var.line) {
+            if !referenced.contains(var.name.as_str()) {
                 diags.push(LintDiagnostic {
                     rule: "unused-private-class-variable",
                     message: format!(
@@ -58,35 +63,6 @@ impl LintRule for UnusedPrivateClassVariable {
 
         diags
     }
-}
-
-/// Search the AST for any `identifier` node matching `name` that is NOT
-/// on the declaration line itself.
-fn is_used_elsewhere(root: Node, source: &str, name: &str, decl_line: usize) -> bool {
-    let bytes = source.as_bytes();
-    search_node(root, bytes, name, decl_line)
-}
-
-fn search_node(node: Node, source: &[u8], name: &str, decl_line: usize) -> bool {
-    if node.kind() == "identifier"
-        && node.start_position().row != decl_line
-        && node.utf8_text(source).ok() == Some(name)
-    {
-        return true;
-    }
-
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            if search_node(cursor.node(), source, name, decl_line) {
-                return true;
-            }
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
-    }
-    false
 }
 
 #[cfg(test)]

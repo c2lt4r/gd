@@ -1,6 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use tree_sitter::Node;
-use crate::core::gd_ast::{self, GdDecl, GdFile};
+use crate::core::gd_ast::{self, GdDecl, GdExpr, GdFile};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -16,17 +15,15 @@ impl LintRule for UnusedSignal {
         LintCategory::Maintenance
     }
 
-    fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, file: &GdFile<'_>, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
 
-        // First pass: collect all signal declarations via typed AST
-        let mut signals: HashMap<String, (usize, usize)> = HashMap::new();
+        // Collect signal declarations
+        let mut signals: HashMap<&str, (usize, usize)> = HashMap::new();
         gd_ast::visit_decls(file, &mut |decl| {
             if let GdDecl::Signal(sig) = decl {
-                let pos = sig.node.child_by_field_name("name").unwrap_or(sig.node);
-                signals
-                    .entry(sig.name.to_string())
-                    .or_insert((pos.start_position().row, pos.start_position().column));
+                let pos = sig.node.start_position();
+                signals.entry(sig.name).or_insert((pos.row, pos.column));
             }
         });
 
@@ -40,9 +37,11 @@ impl LintRule for UnusedSignal {
             return diags;
         }
 
-        // Second pass: find all referenced signals (CST for attribute chain inspection)
-        let mut referenced: HashSet<String> = HashSet::new();
-        collect_references(file.node, source.as_bytes(), &mut referenced);
+        // Collect signal references via typed AST expression visitor
+        let mut referenced: HashSet<&str> = HashSet::new();
+        gd_ast::visit_exprs(file, &mut |expr| {
+            collect_signal_ref(expr, &mut referenced);
+        });
 
         // Report signals that are never referenced in this file
         for (name, (line, column)) in &signals {
@@ -66,136 +65,60 @@ impl LintRule for UnusedSignal {
     }
 }
 
-/// Find signal references in all forms:
-/// - `signal_name.emit(...)` / `signal_name.connect(...)` / `signal_name.disconnect(...)`
-///   Parsed as: attribute > attribute_call (tree-sitter-gdscript method call syntax)
-/// - `emit_signal("signal_name")` (legacy Godot 3 API)
-///   Parsed as: call > [identifier "emit_signal", arguments > [string]]
-fn collect_references(node: Node, src: &[u8], referenced: &mut HashSet<String>) {
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            let child = cursor.node();
-
-            // Modern GDScript: signal_name.emit() / .connect() / .disconnect()
-            if child.kind() == "attribute" {
-                check_attribute_call(child, src, referenced);
-            }
-
-            // Legacy: emit_signal("signal_name")
-            if child.kind() == "call" {
-                check_legacy_emit(child, src, referenced);
-            }
-
-            collect_references(child, src, referenced);
-
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
-    }
-}
-
-/// Check `attribute` nodes for signal method calls like:
-///   signal_name.emit(...)
-///   signal_name.connect(...)
-///   self.signal_name.emit(...)
-fn check_attribute_call(node: Node, src: &[u8], referenced: &mut HashSet<String>) {
-    let mut cursor = node.walk();
-    if !cursor.goto_first_child() {
-        return;
-    }
-
-    let mut identifiers: Vec<String> = Vec::new();
-    let mut found_signal_method = false;
-
-    loop {
-        let child = cursor.node();
-
-        if child.kind() == "identifier"
-            && let Ok(text) = child.utf8_text(src)
+/// Extract signal name from signal-related expression patterns.
+fn collect_signal_ref<'a>(expr: &GdExpr<'a>, referenced: &mut HashSet<&'a str>) {
+    match expr {
+        // signal_name.emit() / .connect() / .disconnect()
+        GdExpr::MethodCall { receiver, method, .. }
+            if matches!(*method, "emit" | "connect" | "disconnect") =>
         {
-            identifiers.push(text.to_string());
-        }
-
-        if child.kind() == "attribute_call"
-            && let Some(method_node) = child
-                .children(&mut child.walk())
-                .find(|c| c.kind() == "identifier")
-        {
-            let method = method_node.utf8_text(src).unwrap_or("");
-            if matches!(method, "emit" | "connect" | "disconnect") {
-                found_signal_method = true;
+            if let Some(name) = signal_name_from_receiver(receiver) {
+                referenced.insert(name);
             }
         }
-
-        if !cursor.goto_next_sibling() {
-            break;
-        }
-    }
-
-    if found_signal_method {
-        // signal_name.emit() → identifiers = ["signal_name"]
-        // self.signal_name.emit() → identifiers = ["self", "signal_name"]
-        if let Some(name) = identifiers.last()
-            && name != "self"
-        {
-            referenced.insert(name.clone());
-        }
-    } else if identifiers.len() >= 2
-        && matches!(
-            identifiers.last().map(String::as_str),
-            Some("emit" | "connect" | "disconnect")
-        )
-    {
         // Bare callable reference: signal_name.emit (no parentheses)
-        // identifiers = ["signal_name", "emit"]
-        // self.signal_name.emit → identifiers = ["self", "signal_name", "emit"]
-        let signal_idx = identifiers.len() - 2;
-        let name = &identifiers[signal_idx];
-        if name != "self" {
-            referenced.insert(name.clone());
+        GdExpr::PropertyAccess { receiver, property, .. }
+            if matches!(*property, "emit" | "connect" | "disconnect") =>
+        {
+            if let Some(name) = signal_name_from_receiver(receiver) {
+                referenced.insert(name);
+            }
         }
+        // Legacy: emit_signal("signal_name")
+        GdExpr::Call { callee, args, .. }
+            if matches!(callee.as_ref(), GdExpr::Ident { name: "emit_signal", .. }) =>
+        {
+            if let Some(name) = extract_string_arg(args) {
+                referenced.insert(name);
+            }
+        }
+        _ => {}
     }
 }
 
-/// Check legacy `emit_signal("signal_name")` calls.
-/// Tree structure: call > [identifier "emit_signal", arguments > [string "signal_name"]]
-fn check_legacy_emit(node: Node, src: &[u8], referenced: &mut HashSet<String>) {
-    // Find the function name: first named child identifier
-    let func_name = node
-        .children(&mut node.walk())
-        .find(|c| c.kind() == "identifier")
-        .and_then(|n| n.utf8_text(src).ok())
-        .unwrap_or("");
-
-    if func_name != "emit_signal" {
-        return;
+/// Extract signal name from the receiver of a method call or property access.
+fn signal_name_from_receiver<'a>(receiver: &GdExpr<'a>) -> Option<&'a str> {
+    match receiver {
+        GdExpr::Ident { name, .. } if *name != "self" => Some(name),
+        // self.signal_name → property is the signal
+        GdExpr::PropertyAccess { receiver: inner, property, .. }
+            if matches!(inner.as_ref(), GdExpr::Ident { name: "self", .. }) =>
+        {
+            Some(property)
+        }
+        _ => None,
     }
+}
 
-    // Find the arguments node
-    let Some(args) = node
-        .children(&mut node.walk())
-        .find(|c| c.kind() == "arguments")
-    else {
-        return;
-    };
-
-    // Get first string argument (the signal name)
-    for child in args.children(&mut args.walk()) {
-        if child.kind() == "string" {
-            let text = child.utf8_text(src).unwrap_or("");
-            let stripped = text
-                .trim_start_matches('"')
-                .trim_end_matches('"')
-                .trim_start_matches('\'')
-                .trim_end_matches('\'');
-            if !stripped.is_empty() {
-                referenced.insert(stripped.to_string());
-            }
-            break;
+/// Extract the string content from the first argument of a call.
+fn extract_string_arg<'a>(args: &[GdExpr<'a>]) -> Option<&'a str> {
+    if let Some(GdExpr::StringLiteral { value, .. }) = args.first() {
+        let stripped = value.trim_matches('"').trim_matches('\'');
+        if !stripped.is_empty() {
+            return Some(stripped);
         }
     }
+    None
 }
 
 #[cfg(test)]
