@@ -136,6 +136,32 @@ impl ProjectIndex {
         self.classes.get(name)
     }
 
+    /// Resolve an extends value — either a class name or a `res://` path — to
+    /// file symbols. This enables chain-walking through path-based extends like
+    /// `extends "res://player/player_state.gd"`.
+    fn resolve_extends(&self, name: &str) -> Option<&FileSymbols> {
+        // Try class_name first (the common case)
+        if let Some(fs) = self.classes.get(name) {
+            return Some(fs);
+        }
+        // Try res:// path resolution
+        if name.starts_with("res://") {
+            let real_path = resolve_res_path(name, &self.project_root)?;
+            return self.files.iter().find(|f| f.path == real_path);
+        }
+        // Try relative path (extends "base.gd" or extends "../motion.gd")
+        if std::path::Path::new(name)
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("gd"))
+        {
+            return self
+                .files
+                .iter()
+                .find(|f| f.path.to_string_lossy().replace('\\', "/").ends_with(name));
+        }
+        None
+    }
+
     /// Look up file symbols by autoload name.
     #[allow(dead_code)]
     pub fn lookup_autoload(&self, name: &str) -> Option<&FileSymbols> {
@@ -161,7 +187,7 @@ impl ProjectIndex {
         // Limit iterations to avoid cycles
         for _ in 0..64 {
             // Try to find this class in our index
-            let Some(fs) = self.lookup_class(current) else {
+            let Some(fs) = self.resolve_extends(current) else {
                 break; // Not a user class — probably an engine class
             };
 
@@ -184,7 +210,7 @@ impl ProjectIndex {
         // Check user classes first
         let mut current = class;
         for _ in 0..64 {
-            if let Some(fs) = self.lookup_class(current) {
+            if let Some(fs) = self.resolve_extends(current) {
                 if let Some(func) = fs.functions.iter().find(|f| f.name == method) {
                     return func
                         .return_type
@@ -207,7 +233,7 @@ impl ProjectIndex {
     pub fn method_is_static(&self, class: &str, method: &str) -> Option<bool> {
         let mut current = class;
         for _ in 0..64 {
-            if let Some(fs) = self.lookup_class(current) {
+            if let Some(fs) = self.resolve_extends(current) {
                 if let Some(func) = fs.functions.iter().find(|f| f.name == method) {
                     return Some(func.is_static);
                 }
@@ -227,7 +253,7 @@ impl ProjectIndex {
     pub fn method_exists(&self, class: &str, method: &str) -> bool {
         let mut current = class;
         for _ in 0..64 {
-            if let Some(fs) = self.lookup_class(current) {
+            if let Some(fs) = self.resolve_extends(current) {
                 if fs.functions.iter().any(|f| f.name == method) {
                     return true;
                 }
@@ -247,7 +273,7 @@ impl ProjectIndex {
     pub fn variable_type(&self, class: &str, var_name: &str) -> Option<String> {
         let mut current = class;
         for _ in 0..64 {
-            if let Some(fs) = self.lookup_class(current) {
+            if let Some(fs) = self.resolve_extends(current) {
                 if let Some(var) = fs.variables.iter().find(|v| v.name == var_name) {
                     return var.type_name.clone();
                 }
@@ -267,7 +293,7 @@ impl ProjectIndex {
         let mut result = Vec::new();
         let mut current = class;
         for _ in 0..64 {
-            if let Some(fs) = self.lookup_class(current) {
+            if let Some(fs) = self.resolve_extends(current) {
                 result.extend(fs.variables.iter());
                 match fs.extends.as_deref() {
                     Some(parent) => current = parent,
@@ -284,7 +310,7 @@ impl ProjectIndex {
     pub fn has_tool_in_chain(&self, class_or_extends: &str) -> bool {
         let mut current = class_or_extends;
         for _ in 0..64 {
-            if let Some(fs) = self.lookup_class(current) {
+            if let Some(fs) = self.resolve_extends(current) {
                 if fs.has_tool {
                     return true;
                 }

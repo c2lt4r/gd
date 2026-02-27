@@ -1,9 +1,14 @@
 # Changelog
 
-## [0.3.11] - 2026-02-27
+## [0.3.12] - 2026-02-27
 
-### Fixed
-- **`gd check` preload resolution**: when checking external targets (`gd check /other/project/`), `preload("res://...")` paths now resolve against each file's own project root instead of the current working directory
+### Improved
+- **`gd check` — further 25% FP reduction on real projects** (918 → 658 on godot-demo-projects, 79% total reduction from v0.3.9 baseline):
+  - **Untyped function parameters**: bare parameters like `func f(a, b)` now correctly tracked as declared identifiers
+  - **Path-based extends resolution**: `extends "res://base.gd"` and relative path extends now resolve through the project index for inheritance chain walking
+  - **Dictionary dot-access**: `dict.key` no longer falsely flagged as "member not found" — Dictionary supports arbitrary dot-access in GDScript
+  - **`@onready` on project-defined types**: classes extending project-defined types that ultimately inherit Node no longer falsely flagged
+  - **`@GDScript` builtins**: added `Color8`, `is_instance_of`, `print_debug`, `convert`, `inst_to_dict`, `dict_to_inst`, and other `@GDScript` global functions
 
 ## [0.3.10] - 2026-02-26
 

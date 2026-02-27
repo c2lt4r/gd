@@ -245,10 +245,17 @@ fn collect_preceding_annotations(
 
 fn extract_extends(node: &Node, source: &[u8]) -> Option<String> {
     for i in 0..node.named_child_count() {
-        if let Some(type_node) = node.named_child(i)
-            && (type_node.kind() == "type" || type_node.kind() == "identifier")
-        {
-            return type_node.utf8_text(source).ok().map(String::from);
+        if let Some(type_node) = node.named_child(i) {
+            if type_node.kind() == "type" || type_node.kind() == "identifier" {
+                return type_node.utf8_text(source).ok().map(String::from);
+            }
+            // Path-based extends: `extends "res://path.gd"` — store the quoted path
+            if type_node.kind() == "string" {
+                return type_node
+                    .utf8_text(source)
+                    .ok()
+                    .map(|s| s.trim_matches('"').trim_matches('\'').to_string());
+            }
         }
     }
     None

@@ -1076,7 +1076,6 @@ fn check_semantic_errors(
     check_get_node_in_static(root, source, errors);
     check_export_constraints(symbols, errors);
     check_object_constructor(root, source, errors);
-    check_onready_non_node(symbols, errors);
 }
 
 /// C1: Static context violations — using instance vars, `self`, or instance methods
@@ -1553,7 +1552,11 @@ fn check_export_constraints(symbols: &SymbolTable, errors: &mut Vec<StructuralEr
 }
 
 /// E5: `@onready` on a class that doesn't extend Node.
-fn check_onready_non_node(symbols: &SymbolTable, errors: &mut Vec<StructuralError>) {
+fn check_onready_non_node(
+    symbols: &SymbolTable,
+    project: &ProjectIndex,
+    errors: &mut Vec<StructuralError>,
+) {
     let has_onready = symbols
         .variables
         .iter()
@@ -1562,9 +1565,10 @@ fn check_onready_non_node(symbols: &SymbolTable, errors: &mut Vec<StructuralErro
         return;
     }
 
-    // Check if extends chain reaches Node
+    // Check if extends chain reaches Node — resolve through project types
     let extends = symbols.extends.as_deref().unwrap_or("RefCounted");
-    if extends == "Node" || crate::class_db::inherits(extends, "Node") {
+    let classdb_type = resolve_to_classdb_type(extends, project);
+    if classdb_type == "Node" || crate::class_db::inherits(&classdb_type, "Node") {
         return;
     }
 
@@ -1814,6 +1818,7 @@ pub fn check_classdb_errors(
     check_undefined_identifiers(root, source, symbols, project, &mut errors);
     check_builtin_method_not_found(root, source, symbols, &mut errors);
     check_builtin_property_not_found(root, source, symbols, &mut errors);
+    check_onready_non_node(symbols, project, &mut errors);
     errors
 }
 
@@ -4076,6 +4081,7 @@ fn check_builtin_method_in_node(
             && let Some(type_name) = resolve_builtin_type_name(ty)
             && type_inference::is_builtin_type(type_name)
             && !method_name.starts_with('_')
+            && type_name != "Dictionary"
         {
             let exists = crate::lsp::builtins::lookup_member_for(type_name, method_name)
                 .is_some_and(|m| m.kind == crate::lsp::builtins::MemberKind::Method);
@@ -4135,6 +4141,7 @@ fn check_builtin_property_in_node(
             && let Some(type_name) = resolve_builtin_type_name(ty)
             && type_inference::is_builtin_type(type_name)
             && !member_name.starts_with('_')
+            && type_name != "Dictionary"
         {
             let exists = crate::lsp::builtins::lookup_member_for(type_name, member_name).is_some();
             let hardcoded = type_inference::builtin_member_type(type_name, member_name).is_some();
@@ -4518,17 +4525,31 @@ fn check_method_not_found_in_node(
                     | "len"
                     | "assert"
                     | "super"
+                    | "is_instance_valid"
+                    | "is_instance_of"
+                    | "weakref"
+                    | "Color8"
+                    | "print_debug"
+                    | "print_stack"
+                    | "get_stack"
+                    | "inst_to_dict"
+                    | "dict_to_inst"
+                    | "type_string"
+                    | "char"
+                    | "ord"
+                    | "convert"
             )
             || func_name.starts_with('_'); // Virtual callbacks
         if !is_known {
-            // Check ClassDB via extends chain
+            // Check ProjectIndex for cross-file base class methods
             let mut found = symbols
                 .extends
                 .as_ref()
-                .is_some_and(|ext| crate::class_db::method_exists(ext, func_name));
-            // Check ProjectIndex for cross-file base class methods
+                .is_some_and(|ext| project.method_exists(ext, func_name));
+            // Resolve to ClassDB ancestor and check there
             if !found && let Some(ext) = &symbols.extends {
-                found = project.method_exists(ext, func_name);
+                let classdb_ext = resolve_to_classdb_type(ext, project);
+                found = crate::class_db::method_exists(&classdb_ext, func_name);
             }
             if !found {
                 errors.push(StructuralError {
@@ -4600,10 +4621,16 @@ fn check_undefined_identifiers(
             if let Some(params) = child.child_by_field_name("parameters") {
                 let mut pc = params.walk();
                 for param in params.named_children(&mut pc) {
+                    // Typed parameter: `name: Type` — first named child is the identifier
                     if let Some(name_node) = param.named_child(0)
                         && name_node.kind() == "identifier"
                         && let Ok(name) = name_node.utf8_text(source.as_bytes())
                     {
+                        func_known.insert(name.to_string());
+                    } else if param.kind() == "identifier"
+                        && let Ok(name) = param.utf8_text(source.as_bytes())
+                    {
+                        // Untyped parameter: bare `name` — the param node IS the identifier
                         func_known.insert(name.to_string());
                     }
                 }
@@ -4782,20 +4809,24 @@ fn is_identifier_context_ok(
         return true;
     }
 
-    // ClassDB: extends chain for properties, methods, and constants/enums
-    if let Some(ext) = &symbols.extends
-        && (crate::class_db::property_exists(ext, name)
-            || crate::class_db::method_exists(ext, name)
-            || crate::class_db::constant_exists(ext, name))
-    {
-        return true;
-    }
-
     // Cross-file: methods/properties from project-defined base classes
     if let Some(ext) = &symbols.extends
         && (project.method_exists(ext, name) || project.variable_type(ext, name).is_some())
     {
         return true;
+    }
+
+    // ClassDB: extends chain for properties, methods, and constants/enums.
+    // Resolve through project extends chain to find the ClassDB ancestor —
+    // handles both direct ClassDB types and path-based extends.
+    if let Some(ext) = &symbols.extends {
+        let classdb_ext = resolve_to_classdb_type(ext, project);
+        if crate::class_db::property_exists(&classdb_ext, name)
+            || crate::class_db::method_exists(&classdb_ext, name)
+            || crate::class_db::constant_exists(&classdb_ext, name)
+        {
+            return true;
+        }
     }
 
     // Singletons used as identifiers (e.g., passing Input as argument)
@@ -4809,6 +4840,7 @@ fn is_identifier_context_ok(
     }
 
     // Known GDScript global functions not in utility_function registry
+    // Includes @GDScript builtins (Color8, is_instance_of, etc.)
     matches!(
         name,
         "print"
@@ -4826,8 +4858,34 @@ fn is_identifier_context_ok(
             | "preload"
             | "load"
             | "is_instance_valid"
+            | "is_instance_of"
             | "weakref"
+            | "Color8"
+            | "print_debug"
+            | "print_stack"
+            | "get_stack"
+            | "inst_to_dict"
+            | "dict_to_inst"
+            | "type_string"
+            | "char"
+            | "ord"
+            | "convert"
     )
+}
+
+/// Walk the project extends chain from `ext` (class name or `res://` path) until we find
+/// a ClassDB-known type. Returns the ClassDB ancestor or `ext` itself if already in ClassDB.
+fn resolve_to_classdb_type<'a>(ext: &'a str, project: &'a ProjectIndex) -> String {
+    if crate::class_db::class_exists(ext) {
+        return ext.to_string();
+    }
+    let chain = project.extends_chain(ext);
+    for ancestor in &chain {
+        if crate::class_db::class_exists(ancestor) {
+            return (*ancestor).to_string();
+        }
+    }
+    ext.to_string()
 }
 
 /// A1 special: `super.nonexistent_parent_method()` — check method exists in parent class.
@@ -4864,9 +4922,10 @@ fn check_super_method_in_node(
                 let mut found = symbols
                     .extends
                     .as_ref()
-                    .is_some_and(|ext| crate::class_db::method_exists(ext, method_name));
+                    .is_some_and(|ext| project.method_exists(ext, method_name));
                 if !found && let Some(ext) = &symbols.extends {
-                    found = project.method_exists(ext, method_name);
+                    let classdb_ext = resolve_to_classdb_type(ext, project);
+                    found = crate::class_db::method_exists(&classdb_ext, method_name);
                 }
                 if !found {
                     errors.push(StructuralError {
