@@ -1,5 +1,4 @@
-use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{self, GdDecl, GdExpr, GdFile, GdStmt, GdVar};
 
 use super::{Fix, LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -33,69 +32,78 @@ impl LintRule for NarrowingConversion {
         symbols: &SymbolTable,
     ) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        check_node(file.node, source, symbols, &mut diags);
+        // Check top-level variable declarations (GdDecl::Var)
+        gd_ast::visit_decls(file, &mut |decl| {
+            if let GdDecl::Var(var) = decl {
+                check_var_decl(var, source, symbols, &mut diags);
+            }
+        });
+        // Check in-function variable declarations and assignments (GdStmt)
+        gd_ast::visit_stmts(file, &mut |stmt| {
+            check_stmt(stmt, source, symbols, &mut diags);
+        });
         diags
     }
 }
 
-fn check_node(node: Node, source: &str, symbols: &SymbolTable, diags: &mut Vec<LintDiagnostic>) {
-    // Check variable declarations with explicit int type and float value
-    if node.kind() == "variable_statement"
-        && let Some(type_node) = node.child_by_field_name("type")
-        && type_node.kind() != "inferred_type"
-        && let Ok(type_name) = type_node.utf8_text(source.as_bytes())
-        && type_name == "int"
-        && let Some(value) = node.child_by_field_name("value")
+fn check_var_decl(
+    var: &GdVar<'_>,
+    source: &str,
+    symbols: &SymbolTable,
+    diags: &mut Vec<LintDiagnostic>,
+) {
+    if let Some(type_ann) = &var.type_ann
+        && type_ann.name == "int"
+        && let Some(value) = &var.value
         && matches!(
-            infer_expression_type(&value, source, symbols),
+            infer_expression_type(&value.node(), source, symbols),
             Some(InferredType::Builtin("float"))
         )
     {
-        let var_name = node
-            .child_by_field_name("name")
-            .and_then(|n| n.utf8_text(source.as_bytes()).ok())
-            .unwrap_or("?");
-        // Fix: wrap the value with int()
-        let value_text = value.utf8_text(source.as_bytes()).unwrap_or("");
-        let fix = Some(Fix {
-            byte_start: value.start_byte(),
-            byte_end: value.end_byte(),
-            replacement: format!("int({value_text})"),
-        });
+        let value_text = &source[value.node().byte_range()];
         diags.push(LintDiagnostic {
             rule: "narrowing-conversion",
-            message: format!("narrowing conversion: float value assigned to `{var_name}: int`"),
+            message: format!("narrowing conversion: float value assigned to `{}: int`", var.name),
             severity: Severity::Warning,
-            line: node.start_position().row,
-            column: node.start_position().column,
+            line: var.node.start_position().row,
+            column: var.node.start_position().column,
             end_column: None,
-            fix,
+            fix: Some(Fix {
+                byte_start: value.node().start_byte(),
+                byte_end: value.node().end_byte(),
+                replacement: format!("int({value_text})"),
+            }),
             context_lines: None,
         });
     }
+}
 
-    // Check assignments to int-typed variables
-    if node.kind() == "assignment"
-        && let Some(left) = node.child_by_field_name("left")
-        && let Some(right) = node.child_by_field_name("right")
+fn check_stmt(
+    stmt: &GdStmt<'_>,
+    source: &str,
+    symbols: &SymbolTable,
+    diags: &mut Vec<LintDiagnostic>,
+) {
+    // Variable declarations inside functions
+    if let GdStmt::Var(var) = stmt {
+        check_var_decl(var, source, symbols, diags);
+    }
+
+    // Assignments to int-typed variables
+    if let GdStmt::Assign { node, target, value, .. } = stmt
+        && let GdExpr::Ident { name: var_name, .. } = target
     {
-        let var_name = left.utf8_text(source.as_bytes()).ok().unwrap_or("?");
         let is_int_var = symbols
             .variables
             .iter()
-            .any(|v| v.name == var_name && v.type_ann.as_ref().is_some_and(|t| t.name == "int"));
+            .any(|v| v.name == *var_name && v.type_ann.as_ref().is_some_and(|t| t.name == "int"));
         if is_int_var
             && matches!(
-                infer_expression_type(&right, source, symbols),
+                infer_expression_type(&value.node(), source, symbols),
                 Some(InferredType::Builtin("float"))
             )
         {
-            let value_text = right.utf8_text(source.as_bytes()).unwrap_or("");
-            let fix = Some(Fix {
-                byte_start: right.start_byte(),
-                byte_end: right.end_byte(),
-                replacement: format!("int({value_text})"),
-            });
+            let value_text = &source[value.node().byte_range()];
             diags.push(LintDiagnostic {
                 rule: "narrowing-conversion",
                 message: format!("narrowing conversion: float value assigned to `{var_name}: int`"),
@@ -103,19 +111,13 @@ fn check_node(node: Node, source: &str, symbols: &SymbolTable, diags: &mut Vec<L
                 line: node.start_position().row,
                 column: node.start_position().column,
                 end_column: None,
-                fix,
+                fix: Some(Fix {
+                    byte_start: value.node().start_byte(),
+                    byte_end: value.node().end_byte(),
+                    replacement: format!("int({value_text})"),
+                }),
                 context_lines: None,
             });
-        }
-    }
-
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            check_node(cursor.node(), source, symbols, diags);
-            if !cursor.goto_next_sibling() {
-                break;
-            }
         }
     }
 }

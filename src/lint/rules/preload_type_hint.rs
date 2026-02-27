@@ -1,5 +1,4 @@
-use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{GdDecl, GdExpr, GdFile};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -15,91 +14,68 @@ impl LintRule for PreloadTypeHint {
         LintCategory::Performance
     }
 
-    fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, file: &GdFile<'_>, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        let root = file.node;
-        check_node(root, source, &mut diags);
+        check_decls(&file.declarations, &mut diags);
         diags
     }
 }
 
-fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    if node.kind() == "variable_statement" {
-        // Check if it's a const (constants are fine)
-        if let Some(first) = node.child(0)
-            && &source[first.byte_range()] == "const"
-        {
-            // Constants are ok, skip — but recurse into children
-        } else {
-            // Check if there's a type annotation
-            let has_type = node.child_by_field_name("type").is_some();
-
-            if !has_type {
-                // Check if the value is a preload() or load() call
-                if let Some(value_node) = node.child_by_field_name("value")
-                    && is_preload_or_load_call(&value_node, source)
-                {
-                    let var_name = if let Some(name_node) = node.child_by_field_name("name") {
-                        source[name_node.byte_range()].to_string()
-                    } else {
-                        "variable".to_string()
-                    };
-
-                    diags.push(LintDiagnostic {
-                        rule: "preload-type-hint",
-                        message: format!(
-                            "variable `{var_name}` uses preload/load but has no type hint; consider adding a type annotation"
-                        ),
-                        severity: Severity::Warning,
-                        line: node.start_position().row,
-                        column: node.start_position().column,
-                        end_column: None,
-                        fix: None,
-                        context_lines: None,
-                    });
-                }
+fn check_decls(decls: &[GdDecl<'_>], diags: &mut Vec<LintDiagnostic>) {
+    for decl in decls {
+        if let GdDecl::Var(var) = decl {
+            // Constants are fine
+            if var.is_const {
+                continue;
+            }
+            // Already has type annotation
+            if var.type_ann.is_some() {
+                continue;
+            }
+            // Check if the value is a preload() or load() call
+            if let Some(value) = &var.value
+                && is_preload_or_load(value)
+            {
+                diags.push(LintDiagnostic {
+                    rule: "preload-type-hint",
+                    message: format!(
+                        "variable `{}` uses preload/load but has no type hint; consider adding a type annotation",
+                        var.name
+                    ),
+                    severity: Severity::Warning,
+                    line: var.node.start_position().row,
+                    column: var.node.start_position().column,
+                    end_column: None,
+                    fix: None,
+                    context_lines: None,
+                });
             }
         }
-    }
-
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            check_node(cursor.node(), source, diags);
-            if !cursor.goto_next_sibling() {
-                break;
-            }
+        if let GdDecl::Class(class) = decl {
+            check_decls(&class.declarations, diags);
         }
     }
 }
 
-fn is_preload_or_load_call(node: &Node, source: &str) -> bool {
-    if node.kind() == "call" {
-        // Try field name first, fall back to first named child
-        // (tree-sitter-gdscript doesn't always set the "function" field for builtins)
-        let func_node = node
-            .child_by_field_name("function")
-            .or_else(|| node.named_child(0));
-        if let Some(func) = func_node {
-            let func_name = &source[func.byte_range()];
-            return func_name == "preload" || func_name == "load";
+fn is_preload_or_load(expr: &GdExpr<'_>) -> bool {
+    match expr {
+        GdExpr::Preload { .. } => true,
+        GdExpr::Call { callee, .. } => {
+            matches!(callee.as_ref(), GdExpr::Ident { name: "load", .. })
         }
+        _ => false,
     }
-    false
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::config::LintConfig;
+    use crate::core::parser;
+    use crate::core::gd_ast;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
-        let mut parser = tree_sitter::Parser::new();
-        parser
-            .set_language(&tree_sitter_gdscript::LANGUAGE.into())
-            .unwrap();
-        let tree = parser.parse(source, None).unwrap();
-        let file = crate::core::gd_ast::convert(&tree, source);
+        let tree = parser::parse(source).unwrap();
+        let file = gd_ast::convert(&tree, source);
         PreloadTypeHint.check(&file, source, &LintConfig::default())
     }
 

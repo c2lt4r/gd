@@ -1,5 +1,4 @@
-use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{GdDecl, GdExpr, GdFile, GdStmt};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -17,119 +16,171 @@ impl LintRule for NodeReadyOrder {
 
     fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        let root = file.node;
-        find_init_functions(root, source, &mut diags);
+        find_init_functions(&file.declarations, source, &mut diags);
         diags
     }
 }
 
-/// Find `_init()` functions and check for node access inside them.
-fn find_init_functions(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            let child = cursor.node();
-
-            // tree-sitter-gdscript parses _init() as constructor_definition
-            if (child.kind() == "function_definition" || child.kind() == "constructor_definition")
-                && let Some(body) = child.child_by_field_name("body")
-            {
-                // For function_definition, check the name field
-                // For constructor_definition, the name is implicitly _init
-                let is_init = if child.kind() == "constructor_definition" {
-                    true
-                } else if let Some(name_node) = child.child_by_field_name("name") {
-                    name_node.utf8_text(source.as_bytes()).unwrap_or("") == "_init"
-                } else {
-                    false
-                };
-
-                if is_init {
-                    find_node_access(body, source, diags);
-                }
-            }
-
-            // Recurse into class bodies
-            if child.kind() == "class_definition"
-                && let Some(body) = child.child_by_field_name("body")
-            {
-                find_init_functions(body, source, diags);
-            }
-
-            if !cursor.goto_next_sibling() {
-                break;
-            }
+fn find_init_functions(decls: &[GdDecl<'_>], source: &str, diags: &mut Vec<LintDiagnostic>) {
+    for decl in decls {
+        if let GdDecl::Func(func) = decl
+            && (func.name == "_init" || func.is_constructor)
+        {
+            scan_stmts_for_get_node(&func.body, source, diags);
+        }
+        if let GdDecl::Class(class) = decl {
+            find_init_functions(&class.declarations, source, diags);
         }
     }
 }
 
-/// Find `$NodePath` (get_node shorthand) and `get_node()` calls.
-fn find_node_access(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    match node.kind() {
-        // $NodePath syntax is parsed as `get_node` node in tree-sitter-gdscript
-        "get_node" => {
-            let text = node.utf8_text(source.as_bytes()).unwrap_or("$...");
-            diags.push(LintDiagnostic {
-                rule: "node-ready-order",
-                message: format!(
-                    "`{text}` in _init() may fail; nodes are not ready until _ready()"
-                ),
-                severity: Severity::Warning,
-                line: node.start_position().row,
-                column: node.start_position().column,
-                end_column: Some(node.end_position().column),
-                fix: None,
-                context_lines: None,
-            });
+fn scan_stmts_for_get_node(stmts: &[GdStmt<'_>], source: &str, diags: &mut Vec<LintDiagnostic>) {
+    for stmt in stmts {
+        visit_stmt_exprs(stmt, &mut |expr| {
+            check_node_access(expr, source, diags);
+        });
+
+        // Recurse into nested bodies (but not nested functions/lambdas)
+        match stmt {
+            GdStmt::If(gif) => {
+                scan_stmts_for_get_node(&gif.body, source, diags);
+                for (_, branch_body) in &gif.elif_branches {
+                    scan_stmts_for_get_node(branch_body, source, diags);
+                }
+                if let Some(else_body) = &gif.else_body {
+                    scan_stmts_for_get_node(else_body, source, diags);
+                }
+            }
+            GdStmt::For { body, .. } | GdStmt::While { body, .. } => {
+                scan_stmts_for_get_node(body, source, diags);
+            }
+            GdStmt::Match { arms, .. } => {
+                for arm in arms {
+                    scan_stmts_for_get_node(&arm.body, source, diags);
+                }
+            }
+            _ => {}
         }
-        "call" => {
-            // Check for get_node("...") or get_node_or_null("...") calls
-            if let Some(func) = call_function_name(node, source)
-                && (func == "get_node"
-                    || func == "get_node_or_null"
-                    || func.ends_with(".get_node")
-                    || func.ends_with(".get_node_or_null"))
-            {
-                diags.push(LintDiagnostic {
-                    rule: "node-ready-order",
-                    message: format!(
-                        "`{func}(...)` in _init() may fail; nodes are not ready until _ready()"
-                    ),
-                    severity: Severity::Warning,
-                    line: node.start_position().row,
-                    column: node.start_position().column,
-                    end_column: None,
-                    fix: None,
-                    context_lines: None,
-                });
+    }
+}
+
+fn visit_stmt_exprs<'a>(stmt: &GdStmt<'a>, f: &mut impl FnMut(&GdExpr<'a>)) {
+    match stmt {
+        GdStmt::Expr { expr, .. } => visit_expr(expr, f),
+        GdStmt::Var(var) => {
+            if let Some(val) = &var.value {
+                visit_expr(val, f);
             }
         }
-        // Don't recurse into nested function definitions (separate scope)
+        GdStmt::Assign { target, value, .. }
+        | GdStmt::AugAssign { target, value, .. } => {
+            visit_expr(target, f);
+            visit_expr(value, f);
+        }
+        GdStmt::Return { value: Some(val), .. } => visit_expr(val, f),
+        GdStmt::If(gif) => visit_expr(&gif.condition, f),
+        GdStmt::For { iter, .. } => visit_expr(iter, f),
+        GdStmt::While { condition, .. } => visit_expr(condition, f),
         _ => {}
     }
+}
 
-    // Recurse into children (unless we already returned for function/lambda)
-    if !matches!(
-        node.kind(),
-        "function_definition" | "constructor_definition" | "lambda"
-    ) {
-        let mut cursor = node.walk();
-        if cursor.goto_first_child() {
-            loop {
-                find_node_access(cursor.node(), source, diags);
-                if !cursor.goto_next_sibling() {
-                    break;
-                }
-            }
+fn visit_expr<'a>(expr: &GdExpr<'a>, f: &mut impl FnMut(&GdExpr<'a>)) {
+    f(expr);
+    match expr {
+        GdExpr::Call { callee, args, .. } => {
+            visit_expr(callee, f);
+            for arg in args { visit_expr(arg, f); }
         }
+        GdExpr::MethodCall { receiver, args, .. } => {
+            visit_expr(receiver, f);
+            for arg in args { visit_expr(arg, f); }
+        }
+        GdExpr::BinOp { left, right, .. } => {
+            visit_expr(left, f);
+            visit_expr(right, f);
+        }
+        GdExpr::UnaryOp { operand, .. } => visit_expr(operand, f),
+        GdExpr::PropertyAccess { receiver, .. } => visit_expr(receiver, f),
+        GdExpr::Subscript { receiver, index, .. } => {
+            visit_expr(receiver, f);
+            visit_expr(index, f);
+        }
+        GdExpr::Array { elements, .. } => {
+            for e in elements { visit_expr(e, f); }
+        }
+        GdExpr::Dict { pairs, .. } => {
+            for (k, v) in pairs { visit_expr(k, f); visit_expr(v, f); }
+        }
+        GdExpr::Ternary { true_val, condition, false_val, .. } => {
+            visit_expr(true_val, f);
+            visit_expr(condition, f);
+            visit_expr(false_val, f);
+        }
+        GdExpr::Await { expr: inner, .. }
+        | GdExpr::Cast { expr: inner, .. }
+        | GdExpr::Is { expr: inner, .. } => visit_expr(inner, f),
+        GdExpr::SuperCall { args, .. } => {
+            for arg in args { visit_expr(arg, f); }
+        }
+        _ => {}
     }
 }
 
-/// Get the function name from a call node, trying field name first, then named_child(0).
-fn call_function_name<'a>(node: Node<'a>, source: &'a str) -> Option<&'a str> {
-    node.child_by_field_name("function")
-        .or_else(|| node.named_child(0))
-        .map(|n| &source[n.byte_range()])
+fn check_node_access(expr: &GdExpr<'_>, source: &str, diags: &mut Vec<LintDiagnostic>) {
+    // $NodePath syntax
+    if let GdExpr::GetNode { node, path } = expr {
+        diags.push(LintDiagnostic {
+            rule: "node-ready-order",
+            message: format!(
+                "`{path}` in _init() may fail; nodes are not ready until _ready()"
+            ),
+            severity: Severity::Warning,
+            line: node.start_position().row,
+            column: node.start_position().column,
+            end_column: Some(node.end_position().column),
+            fix: None,
+            context_lines: None,
+        });
+    }
+
+    // Bare call: get_node(...) or get_node_or_null(...)
+    if let GdExpr::Call { node, callee, .. } = expr
+        && let GdExpr::Ident { name, .. } = callee.as_ref()
+        && matches!(*name, "get_node" | "get_node_or_null")
+    {
+        diags.push(LintDiagnostic {
+            rule: "node-ready-order",
+            message: format!(
+                "`{name}(...)` in _init() may fail; nodes are not ready until _ready()"
+            ),
+            severity: Severity::Warning,
+            line: node.start_position().row,
+            column: node.start_position().column,
+            end_column: None,
+            fix: None,
+            context_lines: None,
+        });
+    }
+
+    // Method call: obj.get_node(...) or obj.get_node_or_null(...)
+    if let GdExpr::MethodCall { node, method, .. } = expr
+        && matches!(*method, "get_node" | "get_node_or_null")
+    {
+        let full_text = &source[node.byte_range()];
+        diags.push(LintDiagnostic {
+            rule: "node-ready-order",
+            message: format!(
+                "`{full_text}` in _init() may fail; nodes are not ready until _ready()"
+            ),
+            severity: Severity::Warning,
+            line: node.start_position().row,
+            column: node.start_position().column,
+            end_column: None,
+            fix: None,
+            context_lines: None,
+        });
+    }
 }
 
 #[cfg(test)]
@@ -138,11 +189,7 @@ mod tests {
     use crate::core::config::LintConfig;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
-        let mut parser = tree_sitter::Parser::new();
-        parser
-            .set_language(&tree_sitter_gdscript::LANGUAGE.into())
-            .unwrap();
-        let tree = parser.parse(source, None).unwrap();
+        let tree = crate::core::parser::parse(source).unwrap();
         let file = crate::core::gd_ast::convert(&tree, source);
         NodeReadyOrder.check(&file, source, &LintConfig::default())
     }

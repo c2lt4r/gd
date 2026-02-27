@@ -1,9 +1,7 @@
-use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{GdDecl, GdExpr, GdFile};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
-use crate::core::symbol_table::SymbolTable;
 
 pub struct GetNodeDefaultWithoutOnready;
 
@@ -20,94 +18,54 @@ impl LintRule for GetNodeDefaultWithoutOnready {
         false
     }
 
-    fn check(&self, _file: &GdFile<'_>, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
-        Vec::new()
-    }
-
-    fn check_with_symbols(
-        &self,
-        file: &GdFile<'_>,
-        source: &str,
-        _config: &LintConfig,
-        symbols: &SymbolTable,
-    ) -> Vec<LintDiagnostic> {
+    fn check(&self, file: &GdFile<'_>, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        check_vars(file.node, source, symbols, &mut diags);
+        check_decls(&file.declarations, &mut diags);
         diags
     }
 }
 
-/// Walk top-level `variable_statement` nodes and check if the default value
-/// uses `$Path` or `get_node()` without an `@onready` annotation.
-fn check_vars(root: Node, source: &str, symbols: &SymbolTable, diags: &mut Vec<LintDiagnostic>) {
-    let bytes = source.as_bytes();
-    let mut cursor = root.walk();
-    for child in root.children(&mut cursor) {
-        if child.kind() != "variable_statement" {
-            continue;
+fn check_decls(decls: &[GdDecl<'_>], diags: &mut Vec<LintDiagnostic>) {
+    for decl in decls {
+        if let GdDecl::Var(var) = decl {
+            let Some(value) = &var.value else { continue };
+            if !uses_get_node(value) {
+                continue;
+            }
+            let has_onready = var.annotations.iter().any(|a| a.name == "onready");
+            if !has_onready {
+                diags.push(LintDiagnostic {
+                    rule: "get-node-default-without-onready",
+                    message: format!(
+                        "`{}` uses `$`/`get_node()` as default but lacks `@onready` — node tree isn't ready at variable initialization time",
+                        var.name
+                    ),
+                    severity: Severity::Error,
+                    line: var.node.start_position().row,
+                    column: var.node.start_position().column,
+                    end_column: None,
+                    fix: None,
+                    context_lines: None,
+                });
+            }
         }
-        let Some(value) = child.child_by_field_name("value") else {
-            continue;
-        };
-        if !uses_get_node(&value, bytes) {
-            continue;
-        }
-        let Some(name_node) = child.child_by_field_name("name") else {
-            continue;
-        };
-        let Ok(var_name) = name_node.utf8_text(bytes) else {
-            continue;
-        };
-
-        // Check if this variable has @onready in the symbol table
-        let has_onready = symbols
-            .variables
-            .iter()
-            .any(|v| v.name == var_name && v.annotations.iter().any(|a| a == "onready"));
-
-        if !has_onready {
-            diags.push(LintDiagnostic {
-                rule: "get-node-default-without-onready",
-                message: format!(
-                    "`{var_name}` uses `$`/`get_node()` as default but lacks `@onready` — node tree isn't ready at variable initialization time"
-                ),
-                severity: Severity::Error,
-                line: child.start_position().row,
-                column: child.start_position().column,
-                end_column: None,
-                fix: None,
-                context_lines: None,
-            });
+        if let GdDecl::Class(class) = decl {
+            check_decls(&class.declarations, diags);
         }
     }
 }
 
-/// Check if a value expression uses `$Path` (`get_node`) or `get_node()`.
-fn uses_get_node(node: &Node, source: &[u8]) -> bool {
-    if node.kind() == "get_node" {
-        return true;
-    }
-    // get_node("Path") as a direct call
-    if node.kind() == "call"
-        && let Some(id) = node.named_child(0)
-        && id.kind() == "identifier"
-        && id.utf8_text(source).ok() == Some("get_node")
-    {
-        return true;
-    }
-    // Recurse into children (e.g. for expressions like $Sprite.texture)
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            if uses_get_node(&cursor.node(), source) {
-                return true;
-            }
-            if !cursor.goto_next_sibling() {
-                break;
-            }
+fn uses_get_node(expr: &GdExpr<'_>) -> bool {
+    match expr {
+        GdExpr::GetNode { .. } => true,
+        GdExpr::Call { callee, .. } => {
+            matches!(callee.as_ref(), GdExpr::Ident { name: "get_node", .. })
         }
+        // Recurse into property access (e.g. $Sprite.texture)
+        GdExpr::PropertyAccess { receiver, .. }
+        | GdExpr::MethodCall { receiver, .. } => uses_get_node(receiver),
+        _ => false,
     }
-    false
 }
 
 #[cfg(test)]
@@ -115,14 +73,12 @@ mod tests {
     use super::*;
     use crate::core::parser;
     use crate::core::gd_ast;
-    use crate::core::symbol_table;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();
         let file = gd_ast::convert(&tree, source);
-        let symbols = symbol_table::build(&tree, source);
         let config = LintConfig::default();
-        GetNodeDefaultWithoutOnready.check_with_symbols(&file, source, &config, &symbols)
+        GetNodeDefaultWithoutOnready.check(&file, source, &config)
     }
 
     #[test]
