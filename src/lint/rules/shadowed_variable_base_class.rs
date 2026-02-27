@@ -1,5 +1,4 @@
-use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{self, GdFile, GdStmt};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -28,7 +27,7 @@ impl LintRule for ShadowedVariableBaseClass {
     fn check_with_project(
         &self,
         file: &GdFile<'_>,
-        source: &str,
+        _source: &str,
         _config: &LintConfig,
         symbols: &SymbolTable,
         project: &ProjectIndex,
@@ -47,97 +46,43 @@ impl LintRule for ShadowedVariableBaseClass {
 
         let base_names: Vec<&str> = base_vars.iter().map(|v| v.name.as_str()).collect();
 
-        // Check function bodies for local variables that shadow base class members
-        check_functions(file.node, source, &base_names, extends, &mut diags);
+        // Check function bodies for local variables and loop iterators that shadow base members
+        gd_ast::visit_stmts(file, &mut |stmt| {
+            match stmt {
+                GdStmt::Var(var) if base_names.contains(&var.name) => {
+                    diags.push(LintDiagnostic {
+                        rule: "shadowed-variable-base-class",
+                        message: format!(
+                            "local variable `{}` shadows a member of base class `{extends}`",
+                            var.name
+                        ),
+                        severity: Severity::Warning,
+                        line: var.node.start_position().row,
+                        column: var.node.start_position().column,
+                        end_column: None,
+                        fix: None,
+                        context_lines: None,
+                    });
+                }
+                GdStmt::For { node, var, .. } if base_names.contains(var) => {
+                    diags.push(LintDiagnostic {
+                        rule: "shadowed-variable-base-class",
+                        message: format!(
+                            "loop variable `{var}` shadows a member of base class `{extends}`"
+                        ),
+                        severity: Severity::Warning,
+                        line: node.start_position().row,
+                        column: node.start_position().column,
+                        end_column: None,
+                        fix: None,
+                        context_lines: None,
+                    });
+                }
+                _ => {}
+            }
+        });
 
         diags
-    }
-}
-
-fn check_functions(
-    node: Node,
-    source: &str,
-    base_names: &[&str],
-    extends: &str,
-    diags: &mut Vec<LintDiagnostic>,
-) {
-    if matches!(
-        node.kind(),
-        "function_definition" | "constructor_definition"
-    ) {
-        check_function_body(&node, source, base_names, extends, diags);
-    }
-
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        check_functions(child, source, base_names, extends, diags);
-    }
-}
-
-fn check_function_body(
-    func_node: &Node,
-    source: &str,
-    base_names: &[&str],
-    extends: &str,
-    diags: &mut Vec<LintDiagnostic>,
-) {
-    let Some(body) = func_node.child_by_field_name("body") else {
-        return;
-    };
-
-    check_body_for_shadows(body, source, base_names, extends, diags);
-}
-
-fn check_body_for_shadows(
-    node: Node,
-    source: &str,
-    base_names: &[&str],
-    extends: &str,
-    diags: &mut Vec<LintDiagnostic>,
-) {
-    if node.kind() == "variable_statement"
-        && let Some(name_node) = node.child_by_field_name("name")
-        && let Ok(var_name) = name_node.utf8_text(source.as_bytes())
-        && base_names.contains(&var_name)
-    {
-        diags.push(LintDiagnostic {
-            rule: "shadowed-variable-base-class",
-            message: format!(
-                "local variable `{var_name}` shadows a member of base class `{extends}`"
-            ),
-            severity: Severity::Warning,
-            line: node.start_position().row,
-            column: node.start_position().column,
-            end_column: None,
-            fix: None,
-            context_lines: None,
-        });
-    }
-
-    // Also check for-loop iterators
-    if node.kind() == "for_statement"
-        && let Some(iter_node) = node.named_child(0)
-        && iter_node.kind() == "identifier"
-        && let Ok(var_name) = iter_node.utf8_text(source.as_bytes())
-        && base_names.contains(&var_name)
-    {
-        diags.push(LintDiagnostic {
-            rule: "shadowed-variable-base-class",
-            message: format!(
-                "loop variable `{var_name}` shadows a member of base class `{extends}`"
-            ),
-            severity: Severity::Warning,
-            line: node.start_position().row,
-            column: node.start_position().column,
-            end_column: None,
-            fix: None,
-            context_lines: None,
-        });
-    }
-
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        check_body_for_shadows(child, source, base_names, extends, diags);
     }
 }
 

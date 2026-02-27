@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{self, GdDecl, GdFile};
 
 use super::{Fix, LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -18,30 +18,17 @@ impl LintRule for UnusedVariable {
 
     fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        let root = file.node;
 
-        // Find all function definitions and check each scope
-        collect_functions(root, source, &mut diags);
+        // Iterate function bodies via typed AST declarations
+        gd_ast::visit_decls(file, &mut |decl| {
+            if let GdDecl::Func(func) = decl
+                && let Some(body) = func.node.child_by_field_name("body")
+            {
+                check_function_body(body, source, &mut diags);
+            }
+        });
 
         diags
-    }
-}
-
-fn collect_functions(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    if node.kind() == "function_definition"
-        && let Some(body) = node.child_by_field_name("body")
-    {
-        check_function_body(body, source, diags);
-    }
-
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            collect_functions(cursor.node(), source, diags);
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
     }
 }
 
