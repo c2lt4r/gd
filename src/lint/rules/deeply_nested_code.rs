@@ -1,5 +1,5 @@
 use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{self, GdDecl, GdFile};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -17,35 +17,19 @@ impl LintRule for DeeplyNestedCode {
 
     fn check(&self, file: &GdFile<'_>, source: &str, config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        let root = file.node;
         let max_depth = config
             .rules
             .get("deeply-nested-code")
             .and_then(|r| r.max_depth)
             .unwrap_or(config.max_nesting_depth);
-        collect_functions(root, source, max_depth, &mut diags);
-        diags
-    }
-}
-
-fn collect_functions(node: Node, source: &str, max_depth: usize, diags: &mut Vec<LintDiagnostic>) {
-    if node.kind() == "function_definition"
-        && let Some(body) = node.child_by_field_name("body")
-    {
-        let func_name = node
-            .child_by_field_name("name")
-            .map_or("<unknown>", |n| &source[n.byte_range()]);
-        let _ = check_depth(body, source, func_name, 0, max_depth, diags);
-    }
-
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            collect_functions(cursor.node(), source, max_depth, diags);
-            if !cursor.goto_next_sibling() {
-                break;
+        gd_ast::visit_decls(file, &mut |decl| {
+            if let GdDecl::Func(func) = decl
+                && let Some(body) = func.node.child_by_field_name("body")
+            {
+                let _ = check_depth(body, source, func.name, 0, max_depth, &mut diags);
             }
-        }
+        });
+        diags
     }
 }
 

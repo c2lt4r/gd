@@ -1,5 +1,5 @@
 use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{self, GdDecl, GdFile};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -21,25 +21,12 @@ impl LintRule for DuplicateDelegate {
 
     fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        let root = file.node;
-        check_node(root, source, &mut diags);
-        diags
-    }
-}
-
-fn check_node(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    if node.kind() == "function_definition" {
-        check_function(node, source, diags);
-    }
-
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            check_node(cursor.node(), source, diags);
-            if !cursor.goto_next_sibling() {
-                break;
+        gd_ast::visit_decls(file, &mut |decl| {
+            if let GdDecl::Func(func) = decl {
+                check_function(func.node, source, &mut diags);
             }
-        }
+        });
+        diags
     }
 }
 

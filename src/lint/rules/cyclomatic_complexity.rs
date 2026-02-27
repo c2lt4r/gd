@@ -1,5 +1,5 @@
 use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{self, GdDecl, GdFile};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -17,52 +17,32 @@ impl LintRule for CyclomaticComplexity {
 
     fn check(&self, file: &GdFile<'_>, source: &str, config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        let root = file.node;
         let max_complexity = config
             .rules
             .get("cyclomatic-complexity")
             .and_then(|r| r.max_complexity)
             .unwrap_or(config.max_cyclomatic_complexity);
-        collect_functions(root, source, max_complexity, &mut diags);
-        diags
-    }
-}
-
-fn collect_functions(
-    node: Node,
-    source: &str,
-    max_complexity: usize,
-    diags: &mut Vec<LintDiagnostic>,
-) {
-    if node.kind() == "function_definition" {
-        let complexity = compute_complexity(node, source);
-        if complexity > max_complexity {
-            let func_name = node
-                .child_by_field_name("name")
-                .map_or("<unknown>", |n| &source[n.byte_range()]);
-            diags.push(LintDiagnostic {
-                rule: "cyclomatic-complexity",
-                message: format!(
-                    "function `{func_name}` has cyclomatic complexity of {complexity} (max {max_complexity})"
-                ),
-                severity: Severity::Warning,
-                line: node.start_position().row,
-                column: node.start_position().column,
-                fix: None,
-                end_column: None,
-                context_lines: None,
-            });
-        }
-    }
-
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            collect_functions(cursor.node(), source, max_complexity, diags);
-            if !cursor.goto_next_sibling() {
-                break;
+        gd_ast::visit_decls(file, &mut |decl| {
+            if let GdDecl::Func(func) = decl {
+                let complexity = compute_complexity(func.node, source);
+                if complexity > max_complexity {
+                    diags.push(LintDiagnostic {
+                        rule: "cyclomatic-complexity",
+                        message: format!(
+                            "function `{}` has cyclomatic complexity of {complexity} (max {max_complexity})",
+                            func.name
+                        ),
+                        severity: Severity::Warning,
+                        line: func.node.start_position().row,
+                        column: func.node.start_position().column,
+                        fix: None,
+                        end_column: None,
+                        context_lines: None,
+                    });
+                }
             }
-        }
+        });
+        diags
     }
 }
 
