@@ -1,5 +1,4 @@
-use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{GdDecl, GdExpr, GdFile, GdStmt};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -15,221 +14,84 @@ impl LintRule for MissingReturn {
         LintCategory::Correctness
     }
 
-    fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(&self, file: &GdFile<'_>, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        let root = file.node;
-        find_typed_functions(root, source, &mut diags);
+        check_decls(&file.declarations, &mut diags);
         diags
     }
 }
 
-fn find_typed_functions(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            let child = cursor.node();
-            if child.kind() == "function_definition" {
-                check_function(child, source, diags);
-            }
-
-            // Recurse into class bodies
-            if child.kind() == "class_definition"
-                && let Some(body) = child.child_by_field_name("body")
+fn check_decls(decls: &[GdDecl<'_>], diags: &mut Vec<LintDiagnostic>) {
+    for decl in decls {
+        if let GdDecl::Func(func) = decl {
+            // Must have a non-void return type
+            if let Some(ret_type) = &func.return_type
+                && ret_type.name != "void"
+                && !body_always_returns(&func.body)
             {
-                find_typed_functions(body, source, diags);
+                diags.push(LintDiagnostic {
+                    rule: "missing-return",
+                    message: format!(
+                        "function `{}` has a return type but may not return a value",
+                        func.name
+                    ),
+                    severity: Severity::Warning,
+                    line: func.node.start_position().row,
+                    column: func.node.start_position().column,
+                    end_column: None,
+                    fix: None,
+                    context_lines: None,
+                });
             }
-
-            if !cursor.goto_next_sibling() {
-                break;
-            }
+        }
+        if let GdDecl::Class(class) = decl {
+            check_decls(&class.declarations, diags);
         }
     }
 }
 
-fn check_function(func: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    let src = source.as_bytes();
-
-    // Must have a return type annotation
-    let Some(return_type) = func.child_by_field_name("return_type") else {
-        return;
-    };
-
-    let type_text = return_type.utf8_text(src).unwrap_or("");
-    if type_text == "void" {
-        return;
-    }
-
-    // Get the function body
-    let Some(body) = func.child_by_field_name("body") else {
-        return;
-    };
-
-    if body_always_returns(body, source) {
-        return;
-    }
-
-    emit_warning(func, source, diags);
-}
-
-/// Check if a body node always returns on every code path.
-fn body_always_returns(body: Node, source: &str) -> bool {
-    let Some(last) = last_statement(body) else {
+/// Check if a statement list always returns on every code path.
+fn body_always_returns(stmts: &[GdStmt<'_>]) -> bool {
+    let Some(last) = stmts.last() else {
         return false;
     };
-
-    node_always_returns(last, source)
+    stmt_always_returns(last)
 }
 
-/// Check if a node (the last statement in a body) always returns.
-fn node_always_returns(node: Node, source: &str) -> bool {
-    match node.kind() {
-        "return_statement" => true,
-        "if_statement" => if_always_returns(node, source),
-        "match_statement" => match_always_returns(node, source),
-        _ => false,
-    }
-}
-
-/// Check if an if/elif/else chain always returns (needs an else branch
-/// and every branch must return).
-fn if_always_returns(node: Node, source: &str) -> bool {
-    // The if body
-    let Some(if_body) = node.child_by_field_name("body") else {
-        return false;
-    };
-    if !body_always_returns(if_body, source) {
-        return false;
-    }
-
-    // Walk children looking for elif_clause and else_clause
-    let mut has_else = false;
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            let child = cursor.node();
-            match child.kind() {
-                "elif_clause" => {
-                    if let Some(body) = child.child_by_field_name("body") {
-                        if !body_always_returns(body, source) {
-                            return false;
-                        }
-                    } else {
-                        return false;
-                    }
-                }
-                "else_clause" => {
-                    has_else = true;
-                    if let Some(body) = child.child_by_field_name("body") {
-                        if !body_always_returns(body, source) {
-                            return false;
-                        }
-                    } else {
-                        return false;
-                    }
-                }
-                _ => {}
+/// Check if a statement always returns.
+fn stmt_always_returns(stmt: &GdStmt<'_>) -> bool {
+    match stmt {
+        GdStmt::Return { .. } => true,
+        GdStmt::If(gif) => {
+            // If body must return
+            if !body_always_returns(&gif.body) {
+                return false;
             }
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
-    }
-
-    // Without an else branch, the if can fall through
-    has_else
-}
-
-/// Check if a match statement always returns (needs a wildcard arm
-/// and every arm must return).
-fn match_always_returns(node: Node, source: &str) -> bool {
-    let match_body = node
-        .children(&mut node.walk())
-        .find(|c| c.kind() == "match_body");
-    let Some(match_body) = match_body else {
-        return false;
-    };
-
-    let mut has_wildcard = false;
-    let mut cursor = match_body.walk();
-    if cursor.goto_first_child() {
-        loop {
-            let child = cursor.node();
-            if child.kind() == "pattern_section" {
-                // Check for wildcard pattern (_)
-                if has_wildcard_pattern(child, source) {
-                    has_wildcard = true;
-                }
-                // Check the arm's body returns
-                if let Some(body) = child.child_by_field_name("body") {
-                    if !body_always_returns(body, source) {
-                        return false;
-                    }
-                } else {
+            // All elif branches must return
+            for (_, branch_body) in &gif.elif_branches {
+                if !body_always_returns(branch_body) {
                     return false;
                 }
             }
-            if !cursor.goto_next_sibling() {
-                break;
-            }
+            // Must have an else that returns (otherwise can fall through)
+            gif.else_body
+                .as_ref()
+                .is_some_and(|else_body| body_always_returns(else_body))
         }
-    }
-
-    // Without a wildcard, the match can fall through
-    has_wildcard
-}
-
-/// Check if a pattern_section contains a wildcard (_) pattern.
-fn has_wildcard_pattern(section: Node, source: &str) -> bool {
-    let mut cursor = section.walk();
-    if cursor.goto_first_child() {
-        loop {
-            let child = cursor.node();
-            // The wildcard is an identifier node with text "_"
-            if child.kind() == "identifier"
-                && child.utf8_text(source.as_bytes()).unwrap_or("") == "_"
-            {
-                return true;
+        GdStmt::Match { arms, .. } => {
+            // Every arm must return
+            if arms.iter().any(|arm| !body_always_returns(&arm.body)) {
+                return false;
             }
-            // Stop at the body — patterns come before it
-            if child.kind() == "body" {
-                break;
-            }
-            if !cursor.goto_next_sibling() {
-                break;
-            }
+            // Must have a wildcard arm (otherwise can fall through)
+            arms.iter().any(|arm| {
+                arm.patterns.iter().any(|pat| {
+                    matches!(pat, GdExpr::Ident { name: "_", .. })
+                })
+            })
         }
+        _ => false,
     }
-    false
-}
-
-/// Get the last non-comment named child of a body node.
-fn last_statement(body: Node) -> Option<Node> {
-    let count = body.named_child_count();
-    for i in (0..count).rev() {
-        if let Some(child) = body.named_child(i)
-            && child.kind() != "comment"
-        {
-            return Some(child);
-        }
-    }
-    None
-}
-
-fn emit_warning(func: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    let name = func
-        .child_by_field_name("name")
-        .map_or("?", |n| n.utf8_text(source.as_bytes()).unwrap_or("?"));
-
-    diags.push(LintDiagnostic {
-        rule: "missing-return",
-        message: format!("function `{name}` has a return type but may not return a value",),
-        severity: Severity::Warning,
-        line: func.start_position().row,
-        column: func.start_position().column,
-        end_column: None,
-        fix: None,
-        context_lines: None,
-    });
 }
 
 #[cfg(test)]

@@ -1,6 +1,6 @@
-use std::collections::{HashMap, HashSet};
-use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+use std::collections::HashSet;
+
+use crate::core::gd_ast::{GdDecl, GdFile};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -22,131 +22,63 @@ impl LintRule for UnusedParameter {
 
     fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        let root = file.node;
-        collect_functions(root, source, &mut diags);
+        check_decls(&file.declarations, source.as_bytes(), &mut diags);
         diags
     }
 }
 
-fn collect_functions(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    if node.kind() == "function_definition" {
-        check_function(node, source, diags);
-    }
-
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            collect_functions(cursor.node(), source, diags);
-            if !cursor.goto_next_sibling() {
-                break;
+fn check_decls(decls: &[GdDecl<'_>], src: &[u8], diags: &mut Vec<LintDiagnostic>) {
+    for decl in decls {
+        if let GdDecl::Func(func) = decl {
+            if func.params.is_empty() {
+                continue;
             }
+
+            // Collect all identifier references in the function body (raw tree-sitter)
+            let Some(body_node) = func.node.child_by_field_name("body") else {
+                continue;
+            };
+            let mut references: HashSet<String> = HashSet::new();
+            collect_references(body_node, src, &mut references);
+
+            // Report unused parameters
+            let mut unused: Vec<_> = func
+                .params
+                .iter()
+                .filter(|p| !p.name.starts_with('_') && !references.contains(p.name))
+                .collect();
+            unused.sort_by_key(|p| (p.node.start_position().row, p.node.start_position().column));
+
+            for param in unused {
+                diags.push(LintDiagnostic {
+                    rule: "unused-parameter",
+                    message: format!(
+                        "parameter `{}` is never used; prefix with `_` if intentional",
+                        param.name
+                    ),
+                    severity: Severity::Warning,
+                    line: param.node.start_position().row,
+                    column: param.node.start_position().column,
+                    end_column: Some(param.node.start_position().column + param.name.len()),
+                    fix: None,
+                    context_lines: None,
+                });
+            }
+        }
+        if let GdDecl::Class(class) = decl {
+            check_decls(&class.declarations, src, diags);
         }
     }
 }
 
-fn check_function(node: Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    let src = source.as_bytes();
-
-    // Collect parameter names
-    let Some(params_node) = node.child_by_field_name("parameters") else {
-        return;
-    };
-
-    let mut params: HashMap<String, (usize, usize, usize)> = HashMap::new();
-    collect_parameters(params_node, src, &mut params);
-
-    if params.is_empty() {
-        return;
-    }
-
-    // Collect all identifier references in the function body
-    let Some(body) = node.child_by_field_name("body") else {
-        return;
-    };
-
-    let mut references: HashSet<String> = HashSet::new();
-    collect_references(body, src, &mut references);
-
-    // Report unused parameters
-    // Sort by position for deterministic output
-    let mut unused: Vec<_> = params
-        .iter()
-        .filter(|(name, _)| !name.starts_with('_') && !references.contains(name.as_str()))
-        .collect();
-    unused.sort_by_key(|(_, (line, col, _))| (*line, *col));
-
-    for (name, (line, col, _byte_start)) in unused {
-        diags.push(LintDiagnostic {
-            rule: "unused-parameter",
-            message: format!("parameter `{name}` is never used; prefix with `_` if intentional"),
-            severity: Severity::Warning,
-            line: *line,
-            column: *col,
-            end_column: Some(*col + name.len()),
-            fix: None,
-            context_lines: None,
-        });
-    }
-}
-
-fn collect_parameters(
-    params_node: Node,
-    src: &[u8],
-    params: &mut HashMap<String, (usize, usize, usize)>,
-) {
-    let mut cursor = params_node.walk();
-    if !cursor.goto_first_child() {
-        return;
-    }
-
-    loop {
-        let child = cursor.node();
-        match child.kind() {
-            // Untyped parameter: just an identifier
-            "identifier" => {
-                let name = child.utf8_text(src).unwrap_or("").to_string();
-                if !name.is_empty() {
-                    params.insert(
-                        name,
-                        (
-                            child.start_position().row,
-                            child.start_position().column,
-                            child.start_byte(),
-                        ),
-                    );
-                }
-            }
-            // Typed, default, or typed+default: name is first child (identifier)
-            "typed_parameter" | "default_parameter" | "typed_default_parameter" => {
-                if let Some(name_node) = child.child(0)
-                    && name_node.kind() == "identifier"
-                {
-                    let name = name_node.utf8_text(src).unwrap_or("").to_string();
-                    if !name.is_empty() {
-                        params.insert(
-                            name,
-                            (
-                                name_node.start_position().row,
-                                name_node.start_position().column,
-                                name_node.start_byte(),
-                            ),
-                        );
-                    }
-                }
-            }
-            _ => {}
-        }
-
-        if !cursor.goto_next_sibling() {
-            break;
-        }
-    }
-}
-
-fn collect_references(node: Node, src: &[u8], references: &mut HashSet<String>) {
-    if node.kind() == "identifier" {
-        let name = node.utf8_text(src).unwrap_or("").to_string();
-        references.insert(name);
+/// Collect all identifier references using raw tree-sitter traversal.
+/// Skips nested function definitions and lambdas (separate scope).
+fn collect_references(node: tree_sitter::Node<'_>, src: &[u8], references: &mut HashSet<String>) {
+    if node.kind() == "identifier"
+        && let Ok(text) = node.utf8_text(src)
+        && !text.is_empty()
+    {
+        references.insert(text.to_string());
     }
 
     // Don't recurse into nested function definitions or lambdas (separate scope)
@@ -231,9 +163,6 @@ mod tests {
 
     #[test]
     fn lambda_capture_flagged_as_unused() {
-        // Known limitation: lambda/closure captures aren't detected as usage.
-        // collect_references skips nested function bodies, so `x` inside the
-        // lambda is invisible. Acceptable false positive for an opt-in rule.
         let source = "func f(x: int) -> void:\n\tvar fn := func(): return x\n";
         let diags = check(source);
         assert_eq!(diags.len(), 1);

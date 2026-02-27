@@ -1,6 +1,6 @@
 use std::collections::HashSet;
-use tree_sitter::Node;
-use crate::core::gd_ast::GdFile;
+
+use crate::core::gd_ast::{GdDecl, GdFile};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -18,153 +18,75 @@ impl LintRule for ParameterShadowsField {
 
     fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        let root = file.node;
-        let src = source.as_bytes();
-
-        // Collect top-level instance variable names
-        let mut fields: HashSet<String> = HashSet::new();
-        collect_fields(root, src, &mut fields);
-
-        if !fields.is_empty() {
-            check_functions(root, src, &fields, &mut diags);
-        }
-
-        // Check inner classes (they have their own fields)
-        check_classes(root, src, &mut diags);
-
+        check_scope(&file.declarations, source, &mut diags);
         diags
     }
 }
 
-/// Collect direct child `variable_statement` names from a scope.
-fn collect_fields(scope: Node, src: &[u8], fields: &mut HashSet<String>) {
-    let mut cursor = scope.walk();
-    if cursor.goto_first_child() {
-        loop {
-            let child = cursor.node();
-            if child.kind() == "variable_statement"
-                && let Some(name_node) = child.child_by_field_name("name")
-                && let Ok(name) = name_node.utf8_text(src)
-            {
-                fields.insert(name.to_string());
+fn check_scope(decls: &[GdDecl<'_>], source: &str, diags: &mut Vec<LintDiagnostic>) {
+    // Collect field names at this scope level
+    let fields: HashSet<&str> = decls
+        .iter()
+        .filter_map(|d| {
+            if let GdDecl::Var(var) = d {
+                Some(var.name)
+            } else {
+                None
             }
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
-    }
-}
+        })
+        .collect();
 
-/// Check if a function node has a `static` keyword child.
-fn is_static_func(node: Node) -> bool {
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            if cursor.node().kind() == "static_keyword" {
-                return true;
-            }
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
-    }
-    false
-}
-
-/// Check direct child functions for parameter-shadows-field.
-fn check_functions(
-    scope: Node,
-    src: &[u8],
-    fields: &HashSet<String>,
-    diags: &mut Vec<LintDiagnostic>,
-) {
-    let mut cursor = scope.walk();
-    if cursor.goto_first_child() {
-        loop {
-            let child = cursor.node();
-            if (child.kind() == "function_definition" || child.kind() == "constructor_definition")
-                && !is_static_func(child)
-                && let Some(params) = child.child_by_field_name("parameters")
-            {
-                let body = child.child_by_field_name("body");
-                check_params(params, body, src, fields, diags);
-            }
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
-    }
-}
-
-/// Check inner classes: each class has its own fields + parent fields.
-fn check_classes(node: Node, src: &[u8], diags: &mut Vec<LintDiagnostic>) {
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            let child = cursor.node();
-            if child.kind() == "class_definition"
-                && let Some(body) = child.child_by_field_name("body")
-            {
-                let mut class_fields = HashSet::new();
-                collect_fields(body, src, &mut class_fields);
-                if !class_fields.is_empty() {
-                    check_functions(body, src, &class_fields, diags);
+    if !fields.is_empty() {
+        // Check functions at this scope level
+        for decl in decls {
+            if let GdDecl::Func(func) = decl {
+                // Skip static functions (no instance context)
+                if func.is_static {
+                    continue;
                 }
-                // Recurse for nested classes
-                check_classes(body, src, diags);
-            }
-            if !cursor.goto_next_sibling() {
-                break;
+                for param in &func.params {
+                    if fields.contains(param.name) {
+                        // Check if body uses self.field (intentional DI pattern)
+                        let uses_self = body_uses_self_field(func.node, source.as_bytes(), param.name);
+                        if !uses_self {
+                            diags.push(LintDiagnostic {
+                                rule: "parameter-shadows-field",
+                                message: format!(
+                                    "parameter `{}` shadows an instance variable",
+                                    param.name
+                                ),
+                                severity: Severity::Warning,
+                                line: param.node.start_position().row,
+                                column: param.node.start_position().column,
+                                end_column: Some(param.node.end_position().column),
+                                fix: None,
+                                context_lines: None,
+                            });
+                        }
+                    }
+                }
             }
         }
     }
-}
 
-fn check_params(
-    params_node: Node,
-    body: Option<Node>,
-    src: &[u8],
-    fields: &HashSet<String>,
-    diags: &mut Vec<LintDiagnostic>,
-) {
-    let mut cursor = params_node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            let child = cursor.node();
-            let name_node = match child.kind() {
-                "identifier" => Some(child),
-                "typed_parameter" | "default_parameter" | "typed_default_parameter" => {
-                    child.child(0)
-                }
-                _ => None,
-            };
-            if let Some(name_node) = name_node
-                && let Ok(name) = name_node.utf8_text(src)
-                && fields.contains(name)
-                && !body.is_some_and(|b| body_uses_self_field(b, src, name))
-            {
-                diags.push(LintDiagnostic {
-                    rule: "parameter-shadows-field",
-                    message: format!("parameter `{name}` shadows an instance variable"),
-                    severity: Severity::Warning,
-                    line: name_node.start_position().row,
-                    column: name_node.start_position().column,
-                    end_column: Some(name_node.end_position().column),
-                    fix: None,
-                    context_lines: None,
-                });
-            }
-            if !cursor.goto_next_sibling() {
-                break;
-            }
+    // Recurse into inner classes (separate scope)
+    for decl in decls {
+        if let GdDecl::Class(class) = decl {
+            check_scope(&class.declarations, source, diags);
         }
     }
 }
 
 /// Check if the function body contains `self.<field_name>`.
-/// If so, the shadowing is intentional (DI / initialization pattern).
-fn body_uses_self_field(node: Node, src: &[u8], field_name: &str) -> bool {
-    // Look for attribute nodes: self.field_name
+/// Uses raw tree-sitter traversal since attribute access chains aren't fully in typed AST.
+fn body_uses_self_field(func_node: tree_sitter::Node<'_>, src: &[u8], field_name: &str) -> bool {
+    let Some(body) = func_node.child_by_field_name("body") else {
+        return false;
+    };
+    scan_for_self_field(body, src, field_name)
+}
+
+fn scan_for_self_field(node: tree_sitter::Node<'_>, src: &[u8], field_name: &str) -> bool {
     if node.kind() == "attribute" {
         let mut cursor = node.walk();
         let children: Vec<_> = node.children(&mut cursor).collect();
@@ -188,11 +110,10 @@ fn body_uses_self_field(node: Node, src: &[u8], field_name: &str) -> bool {
         }
     }
 
-    // Recurse into children
     let mut cursor = node.walk();
     if cursor.goto_first_child() {
         loop {
-            if body_uses_self_field(cursor.node(), src, field_name) {
+            if scan_for_self_field(cursor.node(), src, field_name) {
                 return true;
             }
             if !cursor.goto_next_sibling() {
@@ -235,7 +156,6 @@ mod tests {
 
     #[test]
     fn no_warning_when_self_used_in_constructor() {
-        // self.health = health is the intentional DI pattern
         let source =
             "var health: int\n\nfunc _init(health: int) -> void:\n\tself.health = health\n";
         assert!(check(source).is_empty());
@@ -243,7 +163,6 @@ mod tests {
 
     #[test]
     fn detects_in_constructor_without_self() {
-        // health = health is likely a bug (assigns param to itself)
         let source = "var health: int\n\nfunc _init(health: int) -> void:\n\thealth = health\n";
         let diags = check(source);
         assert_eq!(diags.len(), 1);
@@ -279,17 +198,14 @@ mod tests {
 
     #[test]
     fn no_cross_class_warning() {
-        // Top-level field should not trigger for inner class functions
         let source =
             "var speed: float\n\nclass Inner:\n\tfunc f(speed: float) -> void:\n\t\tpass\n";
         let diags = check(source);
-        // Inner class doesn't have 'speed' as its own field, so no warning
         assert!(diags.is_empty());
     }
 
     #[test]
     fn no_warning_static_factory() {
-        // Static factory methods intentionally match field names — no self exists
         let source = "var blocker_id: int\nvar tick: int\n\nstatic func from_box(blocker_id: int, tick: int) -> void:\n\tvar record = DynamicBlockerRecord.new()\n\trecord.blocker_id = blocker_id\n\trecord.tick = tick\n";
         assert!(check(source).is_empty());
     }
