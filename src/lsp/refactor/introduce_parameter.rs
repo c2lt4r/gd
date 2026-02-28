@@ -115,10 +115,12 @@ pub fn introduce_parameter(
 
         // 2. Re-parse to get updated function node for parameter insertion
         let new_tree = crate::core::parser::parse(&new_source)?;
-        let new_root = new_tree.root_node();
+        let new_gd_file = crate::core::gd_ast::convert(&new_tree, &new_source);
 
         // Find the function again
-        let new_func = find_function_by_name(new_root, &new_source, &func_name)
+        let new_func = new_gd_file
+            .find_func(&func_name)
+            .map(|f| f.node)
             .ok_or_else(|| miette::miette!("cannot find function after edit"))?;
 
         // Find the parameters node
@@ -177,21 +179,6 @@ fn find_expression_at(
     }
 }
 
-fn find_function_by_name<'a>(root: Node<'a>, source: &str, name: &str) -> Option<Node<'a>> {
-    let mut cursor = root.walk();
-    for child in root.children(&mut cursor) {
-        if child.kind() == "constructor_definition" && name == "_init" {
-            return Some(child);
-        }
-        if child.kind() == "function_definition"
-            && let Some(n) = child.child_by_field_name("name")
-            && n.utf8_text(source.as_bytes()).ok() == Some(name)
-        {
-            return Some(child);
-        }
-    }
-    None
-}
 
 #[cfg(test)]
 mod tests {

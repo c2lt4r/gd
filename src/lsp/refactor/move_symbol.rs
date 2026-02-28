@@ -25,7 +25,6 @@ pub fn move_symbol(
     let source = std::fs::read_to_string(from_file)
         .map_err(|e| miette::miette!("cannot read source file: {e}"))?;
     let tree = crate::core::parser::parse(&source)?;
-    let root = tree.root_node();
     let file = gd_ast::convert(&tree, &source);
 
     // Find the declaration (possibly within a class)
@@ -162,7 +161,13 @@ pub fn move_symbol(
     let preloads = find_preloads_to_file(&from_res, &workspace, project_root);
 
     // Collect all top-level symbol names in the source file (for caller analysis)
-    let source_symbols = collect_source_file_symbols(root, &source);
+    let source_symbols: Vec<String> = file
+        .declarations
+        .iter()
+        .filter(|d| d.is_declaration())
+        .map(|d| d.name().to_string())
+        .filter(|n| !n.is_empty())
+        .collect();
 
     let mut callers_updated = Vec::new();
 
@@ -420,19 +425,6 @@ fn find_preloads_in_tree(
 
 // ── Caller update logic ─────────────────────────────────────────────────────
 
-/// Collect all top-level declaration names from a source file (excluding the moved symbol).
-fn collect_source_file_symbols(root: Node, source: &str) -> Vec<String> {
-    let mut names = Vec::new();
-    let mut cursor = root.walk();
-    for child in root.children(&mut cursor) {
-        if DECLARATION_KINDS.contains(&child.kind())
-            && let Some(decl_name) = get_declaration_name(child, source)
-        {
-            names.push(decl_name);
-        }
-    }
-    names
-}
 
 /// Result of updating a single caller file.
 struct CallerFileUpdate {

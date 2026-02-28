@@ -4,8 +4,8 @@ use miette::Result;
 use serde::Serialize;
 
 use super::{
-    DECLARATION_KINDS, declaration_full_range, declaration_kind_str, find_declaration_by_name,
-    get_declaration_name, normalize_blank_lines,
+    declaration_full_range, declaration_kind_str, find_declaration_by_name, get_declaration_name,
+    normalize_blank_lines,
 };
 use crate::core::gd_ast;
 
@@ -73,7 +73,6 @@ pub fn pull_up_member(
     let parent_source = std::fs::read_to_string(parent_file)
         .map_err(|e| miette::miette!("cannot read parent file: {e}"))?;
     let parent_tree = crate::core::parser::parse(&parent_source)?;
-    let parent_root = parent_tree.root_node();
     let parent_gd_file = gd_ast::convert(&parent_tree, &parent_source);
 
     if find_declaration_by_name(&parent_gd_file, name).is_some() {
@@ -95,7 +94,7 @@ pub fn pull_up_member(
     let mut warnings = Vec::new();
     let self_refs = collect_self_references(decl, &child_source);
     for member in &self_refs {
-        if !parent_has_member(parent_root, &parent_source, member) {
+        if parent_gd_file.find_decl_by_name(member).is_none() {
             warnings.push(format!(
                 "self.{member} referenced but '{member}' not found in parent class '{extends}'"
             ));
@@ -103,8 +102,12 @@ pub fn pull_up_member(
     }
 
     // Check for references to child-only members (non-self references)
-    let child_only_refs =
-        collect_child_only_references(decl, &child_source, parent_root, &parent_source);
+    let child_only_refs = collect_child_only_references(
+        decl,
+        &child_source,
+        &child_gd_file,
+        &parent_gd_file,
+    );
     for member in &child_only_refs {
         warnings.push(format!(
             "'{member}' referenced in moved symbol but not found in parent class '{extends}'"
@@ -211,53 +214,33 @@ fn collect_self_refs_recursive(node: tree_sitter::Node, source: &str, members: &
     }
 }
 
-/// Check if the parent's root scope has a member with the given name.
-fn parent_has_member(parent_root: tree_sitter::Node, source: &str, name: &str) -> bool {
-    let mut cursor = parent_root.walk();
-    for child in parent_root.children(&mut cursor) {
-        if DECLARATION_KINDS.contains(&child.kind())
-            && let Some(decl_name) = get_declaration_name(child, source)
-            && decl_name == name
-        {
-            return true;
-        }
-    }
-    false
-}
-
 /// Collect identifiers used in the declaration body that reference top-level
 /// members in the child file but don't exist in the parent file.
 /// Excludes `self.x` (handled separately) and local variables/parameters.
 fn collect_child_only_references(
     decl: tree_sitter::Node,
     child_source: &str,
-    parent_root: tree_sitter::Node,
-    parent_source: &str,
+    child_gd_file: &gd_ast::GdFile,
+    parent_gd_file: &gd_ast::GdFile,
 ) -> Vec<String> {
     // Gather top-level member names from the child (excluding the declaration itself)
-    let child_root = decl.parent().unwrap_or(decl);
-    let mut child_members = std::collections::HashSet::new();
-    let mut cursor = child_root.walk();
     let decl_name = get_declaration_name(decl, child_source);
-    for child in child_root.children(&mut cursor) {
-        if DECLARATION_KINDS.contains(&child.kind())
-            && let Some(name) = get_declaration_name(child, child_source)
-            && decl_name.as_deref() != Some(name.as_str())
-        {
-            child_members.insert(name);
-        }
-    }
+    let child_members: std::collections::HashSet<String> = child_gd_file
+        .declarations
+        .iter()
+        .filter(|d| d.is_declaration())
+        .map(|d| d.name().to_string())
+        .filter(|n| !n.is_empty() && decl_name.as_deref() != Some(n.as_str()))
+        .collect();
 
     // Gather parent member names
-    let mut parent_members = std::collections::HashSet::new();
-    let mut pcursor = parent_root.walk();
-    for child in parent_root.children(&mut pcursor) {
-        if DECLARATION_KINDS.contains(&child.kind())
-            && let Some(name) = get_declaration_name(child, parent_source)
-        {
-            parent_members.insert(name);
-        }
-    }
+    let parent_members: std::collections::HashSet<String> = parent_gd_file
+        .declarations
+        .iter()
+        .filter(|d| d.is_declaration())
+        .map(|d| d.name().to_string())
+        .filter(|n| !n.is_empty())
+        .collect();
 
     // Collect local names (parameters + local vars) to exclude
     let locals = collect_local_names(decl, child_source);
