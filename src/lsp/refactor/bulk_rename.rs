@@ -54,7 +54,6 @@ pub fn bulk_rename(
         let source =
             std::fs::read_to_string(file).map_err(|e| miette::miette!("cannot read file: {e}"))?;
         let tree = crate::core::parser::parse(&source)?;
-        let _root = tree.root_node();
         let gd_file = gd_ast::convert(&tree, &source);
 
         let Some(decl) = find_declaration_by_name(&gd_file, old_name) else {
@@ -75,11 +74,11 @@ pub fn bulk_rename(
             continue;
         }
 
-        let name_node = if decl.kind() == "class_name_statement" {
-            decl.child(1)
-        } else {
-            decl.child_by_field_name("name")
-        };
+        // Use typed AST name_node when available, fall back to class_name_node
+        let name_node = gd_file
+            .find_decl_by_name(old_name)
+            .and_then(gd_ast::GdDecl::name_node)
+            .or(gd_file.class_name_node);
 
         let Some(name_node) = name_node else {
             skipped.push(BulkRenameSkipped {

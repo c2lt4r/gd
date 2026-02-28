@@ -5,6 +5,8 @@ use tower_lsp::lsp_types::{
     SignatureHelp, SignatureInformation,
 };
 
+use crate::core::gd_ast::{self, GdExtends};
+
 use super::workspace::WorkspaceIndex;
 
 /// Provide signature help for the function call enclosing the cursor.
@@ -17,8 +19,10 @@ pub fn provide_signature_help(
 
     // Parse the source to build a symbol table for signature resolution.
     let tree = crate::core::parser::parse(source).ok()?;
+    let file = gd_ast::convert(&tree, source);
 
-    let signature = resolve_signature(&func_name, receiver.as_deref(), source, &tree, workspace)?;
+    let signature =
+        resolve_signature(&func_name, receiver.as_deref(), source, &tree, &file, workspace)?;
 
     Some(SignatureHelp {
         signatures: vec![signature],
@@ -123,11 +127,12 @@ fn resolve_signature(
     receiver: Option<&str>,
     source: &str,
     tree: &tree_sitter::Tree,
+    file: &gd_ast::GdFile,
     workspace: Option<&WorkspaceIndex>,
 ) -> Option<SignatureInformation> {
     // 1. If there is a receiver, try to resolve the method on that type.
     if let Some(recv) = receiver {
-        return resolve_method_signature(func_name, recv, source, tree, workspace);
+        return resolve_method_signature(func_name, recv, source, tree, file, workspace);
     }
 
     // 2. Check same-file function declarations.
@@ -164,15 +169,21 @@ fn resolve_method_signature(
     receiver: &str,
     source: &str,
     tree: &tree_sitter::Tree,
+    file: &gd_ast::GdFile,
     workspace: Option<&WorkspaceIndex>,
 ) -> Option<SignatureInformation> {
     // Resolve the receiver's class name.
-    let position = Position::new(0, 0);
     let class_name = if receiver == "self" || receiver == "super" {
-        super::completion::find_extends_class(tree.root_node(), source)
+        match file.extends {
+            Some(GdExtends::Class(name)) if crate::class_db::class_exists(name) => {
+                Some(name.to_string())
+            }
+            _ => None,
+        }
     } else if crate::class_db::class_exists(receiver) {
         Some(receiver.to_string())
     } else {
+        let position = Position::new(0, 0);
         super::completion::resolve_simple_receiver(receiver, source, position, workspace)
     };
 

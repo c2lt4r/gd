@@ -4,12 +4,9 @@ use std::path::Path;
 use miette::Result;
 use serde::Serialize;
 
-use crate::core::gd_ast;
+use crate::core::gd_ast::{self, GdExtends};
 
-use super::{
-    declaration_full_range, declaration_kind_str, find_declaration_by_name, get_declaration_name,
-    normalize_blank_lines,
-};
+use super::{declaration_full_range, find_declaration_by_name, normalize_blank_lines};
 
 #[derive(Serialize, Debug)]
 pub struct ExtractSuperclassOutput {
@@ -47,26 +44,40 @@ pub fn extract_superclass(
     let source =
         std::fs::read_to_string(file).map_err(|e| miette::miette!("cannot read file: {e}"))?;
     let tree = crate::core::parser::parse(&source)?;
-    let root = tree.root_node();
     let gd_file = gd_ast::convert(&tree, &source);
 
     let from_relative = crate::core::fs::relative_slash(file, project_root);
     let to_relative = crate::core::fs::relative_slash(to_file, project_root);
 
     // Resolve the original extends and class_name
-    let (orig_extends, orig_extends_range) = find_extends(&source, root);
+    let orig_extends = match gd_file.extends {
+        Some(GdExtends::Class(name)) => Some(name.to_string()),
+        Some(GdExtends::Path(path)) => Some(format!("\"{path}\"")),
+        None => None,
+    };
+    let orig_extends_range = gd_file.extends_node.map(|n| {
+        let start = n.start_byte();
+        let mut end = n.end_byte();
+        // Include trailing newline
+        if end < source.len() && source.as_bytes()[end] == b'\n' {
+            end += 1;
+        }
+        (start, end)
+    });
 
     // Find all declarations to extract
     let mut extractions: Vec<(String, String, usize, usize, String)> = Vec::new();
     let mut not_found = Vec::new();
 
     for name in names {
-        let Some(decl) = find_declaration_by_name(&gd_file, name) else {
+        let Some(decl_node) = find_declaration_by_name(&gd_file, name) else {
             not_found.push(name.clone());
             continue;
         };
-        let kind = declaration_kind_str(decl.kind()).to_string();
-        let (start, end) = declaration_full_range(decl, &source);
+        let kind = gd_file
+            .find_decl_by_name(name)
+            .map_or_else(|| "class_name".to_string(), |d| d.kind_str().to_string());
+        let (start, end) = declaration_full_range(decl_node, &source);
         let text = source[start..end].to_string();
         extractions.push((name.clone(), kind, start, end, text));
     }
@@ -94,7 +105,13 @@ pub fn extract_superclass(
         .collect();
 
     // Scan extracted symbol bodies for references to non-extracted symbols
-    let all_decl_names = collect_all_declaration_names(root, &source);
+    let all_decl_names: Vec<String> = gd_file
+        .declarations
+        .iter()
+        .filter(|d| d.is_declaration())
+        .map(|d| d.name().to_string())
+        .filter(|n| !n.is_empty())
+        .collect();
     for (name, _, start, end, _) in &extractions {
         let body = &source[*start..*end];
         for decl_name in &all_decl_names {
@@ -111,22 +128,21 @@ pub fn extract_superclass(
     }
 
     // Check for non-extracted symbols referencing extracted ones
-    let mut cursor = root.walk();
-    for child in root.children(&mut cursor) {
-        if !super::DECLARATION_KINDS.contains(&child.kind()) {
+    for decl in &gd_file.declarations {
+        if !decl.is_declaration() {
             continue;
         }
-        if let Some(decl_name) = get_declaration_name(child, &source)
-            && !extracted_names.contains(&decl_name.as_str())
-        {
-            let (s, e) = declaration_full_range(child, &source);
-            let body = &source[s..e];
-            for extracted_name in &extracted_names {
-                if body.contains(extracted_name) && is_identifier_reference(body, extracted_name) {
-                    warnings.push(format!(
-                        "'{decl_name}' (staying) references '{extracted_name}' (moving to superclass) — will inherit"
-                    ));
-                }
+        let decl_name = decl.name();
+        if decl_name.is_empty() || extracted_names.contains(&decl_name) {
+            continue;
+        }
+        let (s, e) = declaration_full_range(decl.node(), &source);
+        let body = &source[s..e];
+        for extracted_name in &extracted_names {
+            if body.contains(extracted_name) && is_identifier_reference(body, extracted_name) {
+                warnings.push(format!(
+                    "'{decl_name}' (staying) references '{extracted_name}' (moving to superclass) — will inherit"
+                ));
             }
         }
     }
@@ -256,25 +272,6 @@ pub fn extract_superclass(
     })
 }
 
-/// Find the `extends` statement text and byte range from the source.
-fn find_extends(source: &str, root: tree_sitter::Node) -> (Option<String>, Option<(usize, usize)>) {
-    let mut cursor = root.walk();
-    for child in root.children(&mut cursor) {
-        if child.kind() == "extends_statement" {
-            let text = child.utf8_text(source.as_bytes()).ok().unwrap_or_default();
-            // Extract the class/path after "extends "
-            let extends_value = text.strip_prefix("extends ").unwrap_or(text).trim();
-            let start = child.start_byte();
-            let mut end = child.end_byte();
-            // Include trailing newline
-            if end < source.len() && source.as_bytes()[end] == b'\n' {
-                end += 1;
-            }
-            return (Some(extends_value.to_string()), Some((start, end)));
-        }
-    }
-    (None, None)
-}
 
 /// Determine blank-line spacing before inserting a declaration.
 fn insertion_spacing(decl_kind: &str, target_source: &str) -> String {
@@ -307,19 +304,6 @@ fn insertion_spacing(decl_kind: &str, target_source: &str) -> String {
     }
 }
 
-/// Collect all top-level declaration names.
-fn collect_all_declaration_names(root: tree_sitter::Node, source: &str) -> Vec<String> {
-    let mut names = Vec::new();
-    let mut cursor = root.walk();
-    for child in root.children(&mut cursor) {
-        if super::DECLARATION_KINDS.contains(&child.kind())
-            && let Some(name) = get_declaration_name(child, source)
-        {
-            names.push(name);
-        }
-    }
-    names
-}
 
 /// Quick check if `name` appears as an identifier reference (not part of another word).
 fn is_identifier_reference(text: &str, name: &str) -> bool {

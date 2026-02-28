@@ -4,8 +4,7 @@ use miette::Result;
 use serde::Serialize;
 
 use super::{
-    declaration_full_range, declaration_kind_str, find_declaration_by_name, get_declaration_name,
-    normalize_blank_lines,
+    declaration_full_range, declaration_kind_str, find_declaration_by_name, normalize_blank_lines,
 };
 use crate::core::gd_ast;
 
@@ -38,7 +37,6 @@ pub fn extract_class(
     let source =
         std::fs::read_to_string(file).map_err(|e| miette::miette!("cannot read file: {e}"))?;
     let tree = crate::core::parser::parse(&source)?;
-    let root = tree.root_node();
     let gd_file = gd_ast::convert(&tree, &source);
 
     let from_relative = crate::core::fs::relative_slash(file, project_root);
@@ -106,12 +104,17 @@ pub fn extract_class(
             {
                 let ref_line = loc.range.start.line as usize;
                 // Check if this reference is within a non-extracted declaration
-                for decl_check in root.children(&mut root.walk()) {
-                    if super::DECLARATION_KINDS.contains(&decl_check.kind())
-                        && let Some(decl_name) = get_declaration_name(decl_check, &source)
-                        && !extracted_names.contains(&decl_name.as_str())
-                        && decl_check.start_position().row <= ref_line
-                        && ref_line <= decl_check.end_position().row
+                for decl in &gd_file.declarations {
+                    if !decl.is_declaration() {
+                        continue;
+                    }
+                    let decl_name = decl.name();
+                    if decl_name.is_empty() || extracted_names.contains(&decl_name) {
+                        continue;
+                    }
+                    let node = decl.node();
+                    if node.start_position().row <= ref_line
+                        && ref_line <= node.end_position().row
                     {
                         warnings.push(format!(
                             "'{decl_name}' (staying) references '{name}' (moving)"
