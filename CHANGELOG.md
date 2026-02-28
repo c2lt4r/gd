@@ -2,10 +2,24 @@
 
 ## [0.3.14] - 2026-02-28
 
+### Improved
+- **`gd check` — 67% FP reduction on real Godot 4 projects** (4,062 → 1,350 across 4 projects, 100% mutation parity maintained):
+  - **Extends chain variable resolution**: base class variables with inferred types (`:=`) now found via new `variable_exists()` method — previously only explicit type annotations were checked
+  - **Attribute subscript**: `obj.member[index]` no longer falsely flags `member` as undeclared — `attribute_subscript` tree-sitter node now recognized
+  - **Variadic parameters**: `...varargs: Array` parameter syntax now correctly registers the parameter name in scope
+  - **Path-based extends for identifiers**: `extends "res://path.gd"` now resolves through the project index for all identifier, method, and super-method checks (previously only class-name extends worked)
+  - **ClassDB signal resolution**: signals like `visibility_changed`, `pressed`, `finished` now recognized as valid identifiers via `signal_exists()` in the extends chain
+  - **Implicit RefCounted base**: files without an `extends` statement now check ClassDB for `RefCounted` (Godot's implicit default), catching constants like `NOTIFICATION_PREDELETE`
+  - **Type coercion expansions**: `int ↔ float`, `int/float → bool`, `String ↔ StringName/NodePath`, `Array ↔ PackedXXXArray`, `Array ↔ Array[T]`, `Dictionary ↔ Dictionary[K,V]`, `Vector2 ↔ Vector2i`, `Rect2 ↔ Rect2i`, user class subtype covariance
+  - **Override return type normalization**: ClassDB `enum::Error` prefix now stripped for comparison — `-> Error` no longer flagged as mismatching `enum::Error`
+  - **Inner class type annotations**: `ClassName.InnerClass` dot notation now allowed when the base class is known
+  - **Typed Dictionary iteration**: `for key in typed_dict:` no longer flagged as non-iterable
+  - **GDScript keywords in identifier check**: tree-sitter sometimes emits `identifier` nodes for keywords in match bodies — now skipped
+
 ### Internal
 - **Typed AST migration — complete across entire codebase.** All modules now use `GdFile<'_>` from the typed AST layer instead of raw tree-sitter CST for declaration-level work. This includes lint rules, `gd check`, type inference, workspace index, LSP features, and refactoring commands.
 - **Eliminated `symbol_table.rs`** (~1,000 lines deleted). The per-file `SymbolTable` abstraction was fully redundant with `GdFile` and has been removed. 49 files migrated: type inference, 22 lint rules, 7 check_cmd modules, 6 LSP refactor commands, test_cmd, workspace_index, and LSP features (inlay hints, semantic tokens, signature help). The `LintRule` trait no longer takes a `symbols` parameter.
-- **Typed AST enrichment** — added `name_node` fields to `GdFunc`, `GdVar`, `GdSignal`, `GdEnum`, `GdClass` for precise rename/reference locations; `else_node` to `GdIf`; `extends_node` and `class_name_node` to `GdFile`; `doc` comment fields to all declaration types; `has_static_unload` flag; `GdDecl` convenience methods (`as_func()`, `as_var()`, etc.) and `GdFile` iterator helpers (`funcs()`, `vars()`, `signals()`, `enums()`, `inner_classes()`, `extends_class()`).
+- **Typed AST enrichment** — added `name_node` fields to `GdFunc`, `GdVar`, `GdSignal`, `GdEnum`, `GdClass` for precise rename/reference locations; `else_node` to `GdIf`; `extends_node` and `class_name_node` to `GdFile`; `doc` comment fields to all declaration types; `has_static_unload` flag; `GdDecl` convenience methods (`as_func()`, `as_var()`, etc.) and `GdFile` iterator helpers (`funcs()`, `vars()`, `signals()`, `enums()`, `inner_classes()`, `extends_class()`, `extends_str()`).
 - **LSP modules converted to typed AST** — hover, definition, references, implementations, document symbols, call hierarchy, completion, signature help, semantic tokens, inlay hints, and query/analysis all use `GdFile` instead of raw CST helpers. Removed CST helper functions (`find_enum`, `find_signal`, `find_inner_class`, `find_extends_class`, `matches_name`) from completion.rs.
 - **Refactoring commands converted** — move_symbol, pull_up_member, push_down_member, extract_superclass, extract_class, bulk_rename, extract_method, introduce_parameter, introduce_variable, delete_symbol all use typed AST.
 - **Lint rule deep conversion continued** (batches 16–21) — converted remaining rules from CST traversal to typed AST, including `duplicate_code`, `magic_number`, `naming_convention`, `nullable_current_scene`, `unused_parameter`, `parameter_shadows_field`, and 15 others. Added `name_node` fields to eliminate `child_by_field_name` calls in 12 lint rules.

@@ -462,6 +462,15 @@ impl<'a> GdFile<'a> {
         }
     }
 
+    /// Returns the extends value as a string (class name or path).
+    #[must_use]
+    pub fn extends_str(&self) -> Option<&str> {
+        match self.extends {
+            Some(GdExtends::Class(c) | GdExtends::Path(c)) => Some(c),
+            None => None,
+        }
+    }
+
     /// Find a top-level declaration by name.
     #[must_use]
     pub fn find_decl_by_name(&self, name: &str) -> Option<&GdDecl<'a>> {
@@ -851,6 +860,17 @@ pub fn convert<'a>(tree: &'a Tree, source: &'a str) -> GdFile<'a> {
                 let name_node = child.child_by_field_name("name");
                 file.class_name = name_node.and_then(|n| n.utf8_text(bytes).ok());
                 file.class_name_node = name_node;
+                // class_name X extends Y — extract extends from the same node
+                if file.extends.is_none() {
+                    let mut cn_cursor = child.walk();
+                    for cn_child in child.named_children(&mut cn_cursor) {
+                        if cn_child.kind() == "extends_statement" {
+                            file.extends = convert_extends(&cn_child, source);
+                            file.extends_node = Some(cn_child);
+                            break;
+                        }
+                    }
+                }
                 pending_doc = None;
             }
             "extends_statement" => {

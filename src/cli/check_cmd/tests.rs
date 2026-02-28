@@ -496,13 +496,19 @@ fn validate_scene_orphaned_ext_resource() {
 // Batch 2: Declaration constraint checks
 // ====================================================================
 
-// -- G4: _init cannot have return type --
+// -- G4: _init cannot have non-void return type --
 
 #[test]
-fn init_with_return_type() {
-    let source = "func _init() -> void:\n\tpass\n";
+fn init_with_non_void_return_type() {
+    let source = "func _init() -> int:\n\tpass\n";
     let errs = structural_errors(source);
     assert!(errs.iter().any(|e| e.message.contains("_init")));
+}
+
+#[test]
+fn init_with_void_return_type_ok() {
+    let source = "func _init() -> void:\n\tpass\n";
+    assert!(structural_errors(source).is_empty());
 }
 
 #[test]

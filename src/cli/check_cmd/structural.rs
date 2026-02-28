@@ -2,7 +2,7 @@ use std::path::Path;
 
 use tree_sitter::Node;
 
-use crate::core::gd_ast::{GdClass, GdFile};
+use crate::core::gd_ast::{GdClass, GdFile, GdFunc};
 use crate::core::type_inference;
 
 use super::StructuralError;
@@ -583,10 +583,10 @@ fn check_declaration_constraints(
     check_duplicate_tool(root, source, errors);
 }
 
-/// G4: Constructor `_init` cannot have a return type.
+/// G4: Constructor `_init` cannot have a non-void return type.
 fn check_init_return_type(file: &GdFile<'_>, errors: &mut Vec<StructuralError>) {
     for func in file.funcs() {
-        if func.name == "_init" && func.return_type.is_some() {
+        if func.name == "_init" && has_non_void_return(func) {
             errors.push(StructuralError {
                 line: func.node.start_position().row as u32 + 1,
                 column: 1,
@@ -599,9 +599,15 @@ fn check_init_return_type(file: &GdFile<'_>, errors: &mut Vec<StructuralError>) 
     }
 }
 
+fn has_non_void_return(func: &GdFunc<'_>) -> bool {
+    func.return_type
+        .as_ref()
+        .is_some_and(|rt| rt.name != "void")
+}
+
 fn check_init_return_type_inner(class: &GdClass<'_>, errors: &mut Vec<StructuralError>) {
     for func in class.declarations.iter().filter_map(|d| d.as_func()) {
-        if func.name == "_init" && func.return_type.is_some() {
+        if func.name == "_init" && has_non_void_return(func) {
             errors.push(StructuralError {
                 line: func.node.start_position().row as u32 + 1,
                 column: 1,
@@ -961,14 +967,54 @@ fn check_static_context_violations(
 
         // Walk body looking for `self`, instance var refs, instance method calls
         if let Some(body) = func_node.child_by_field_name("body") {
+            let mut local_vars = std::collections::HashSet::new();
+            collect_local_vars(&body, bytes, &mut local_vars);
+            // Also add function parameters
+            for param in func_node
+                .children_by_field_name("parameters", &mut func_node.walk())
+            {
+                if let Ok(n) = param.utf8_text(bytes) {
+                    local_vars.insert(n);
+                }
+            }
             check_static_body(
                 &body,
                 bytes,
                 func_name,
                 &instance_vars,
                 &instance_funcs,
+                &local_vars,
                 errors,
             );
+        }
+    }
+}
+
+fn collect_local_vars<'a>(node: &Node<'a>, source: &'a [u8], locals: &mut std::collections::HashSet<&'a str>) {
+    match node.kind() {
+        "variable_statement" | "const_statement" => {
+            if let Some(name) = node.child_by_field_name("name")
+                && let Ok(n) = name.utf8_text(source)
+            {
+                locals.insert(n);
+            }
+        }
+        "for_statement" => {
+            if let Some(name) = node.child_by_field_name("left")
+                && let Ok(n) = name.utf8_text(source)
+            {
+                locals.insert(n);
+            }
+        }
+        _ => {}
+    }
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            collect_local_vars(&cursor.node(), source, locals);
+            if !cursor.goto_next_sibling() {
+                break;
+            }
         }
     }
 }
@@ -979,6 +1025,7 @@ fn check_static_body(
     func_name: &str,
     instance_vars: &std::collections::HashSet<&str>,
     instance_funcs: &std::collections::HashSet<&str>,
+    local_vars: &std::collections::HashSet<&str>,
     errors: &mut Vec<StructuralError>,
 ) {
     // Check for direct identifier references to instance members, self, or instance methods
@@ -997,7 +1044,7 @@ fn check_static_body(
                 message: format!("cannot use `{name}` in static function `{func_name}()`",),
             });
             return;
-        } else if instance_vars.contains(name) {
+        } else if instance_vars.contains(name) && !local_vars.contains(name) {
             let pos = node.start_position();
             errors.push(StructuralError {
                 line: pos.row as u32 + 1,
@@ -1039,6 +1086,7 @@ fn check_static_body(
                 func_name,
                 instance_vars,
                 instance_funcs,
+                local_vars,
                 errors,
             );
             if !cursor.goto_next_sibling() {
@@ -1973,22 +2021,54 @@ fn is_const_expression(node: &Node, source: &[u8]) -> bool {
                 .any(|c| c.kind() == "attribute_call");
             !has_call
         }
-        // preload() is a constant expression
+        // preload() and type constructors with constant args are constant expressions
         "call" => {
-            if let Some(func) = node
+            let func_name = node
                 .child_by_field_name("function")
                 .or_else(|| node.named_child(0))
-            {
-                func.utf8_text(source).ok() == Some("preload")
-            } else {
-                false
+                .and_then(|f| f.utf8_text(source).ok())
+                .unwrap_or("");
+            if func_name == "preload" {
+                return true;
             }
+            // Type constructors: Color(...), Vector2(...), etc. with all-constant args
+            if is_builtin_constructor(func_name) {
+                let args = node.child_by_field_name("arguments");
+                return args.is_none_or(|a| {
+                    let mut cursor = a.walk();
+                    a.named_children(&mut cursor)
+                        .all(|c| is_const_expression(&c, source))
+                });
+            }
+            false
         }
-        // Type constructors with constant args (Vector2(1, 2), Color(1, 0, 0))
-        // are constant in Godot — but detecting this precisely is hard.
-        // For now, don't flag these.
         _ => false,
     }
+}
+
+fn is_builtin_constructor(name: &str) -> bool {
+    matches!(
+        name,
+        "Color"
+            | "Vector2"
+            | "Vector2i"
+            | "Vector3"
+            | "Vector3i"
+            | "Vector4"
+            | "Vector4i"
+            | "Rect2"
+            | "Rect2i"
+            | "Transform2D"
+            | "Transform3D"
+            | "Basis"
+            | "Quaternion"
+            | "AABB"
+            | "Plane"
+            | "Projection"
+            | "RID"
+            | "NodePath"
+            | "StringName"
+    )
 }
 
 /// H1: Getter/setter signature mismatch.

@@ -296,12 +296,28 @@ fn check_type_annotations_in_node(
         let base_type = type_name;
 
         if !base_type.is_empty() && !is_known_type(base_type, file, project) {
-            let pos = type_node.start_position();
-            errors.push(StructuralError {
-                line: pos.row as u32 + 1,
-                column: pos.column as u32 + 1,
-                message: format!("unknown type `{base_type}` in type annotation"),
-            });
+            // Handle inner class types: `ClassName.InnerClass` — check if the
+            // base part before the dot is a known class.
+            if base_type.contains('.') {
+                let root_type = base_type.split('.').next().unwrap_or("");
+                if is_known_type(root_type, file, project) {
+                    // Base class exists; assume the inner class is valid
+                } else {
+                    let pos = type_node.start_position();
+                    errors.push(StructuralError {
+                        line: pos.row as u32 + 1,
+                        column: pos.column as u32 + 1,
+                        message: format!("unknown type `{base_type}` in type annotation"),
+                    });
+                }
+            } else {
+                let pos = type_node.start_position();
+                errors.push(StructuralError {
+                    line: pos.row as u32 + 1,
+                    column: pos.column as u32 + 1,
+                    message: format!("unknown type `{base_type}` in type annotation"),
+                });
+            }
         }
     }
 
@@ -581,11 +597,13 @@ fn check_virtual_override_signature(file: &GdFile, errors: &mut Vec<StructuralEr
             };
 
         // D1: Wrong return type
+        // Normalize enum:: prefix from ClassDB (e.g. "enum::Error" → "Error")
+        let normalized_ret = ret_type.strip_prefix("enum::").unwrap_or(ret_type);
         if let Some(ref ret) = func.return_type
             && !ret.name.is_empty()
             && ret.name != "void"
-            && ret_type != "Variant"
-            && ret.name != ret_type
+            && normalized_ret != "Variant"
+            && !types_assignable(normalized_ret, ret.name)
         {
             errors.push(StructuralError {
                 line: func.node.start_position().row as u32 + 1,
@@ -636,11 +654,12 @@ fn check_virtual_override_signature_inner(class: &GdClass, errors: &mut Vec<Stru
             } else {
                 continue;
             };
+        let normalized_ret = ret_type.strip_prefix("enum::").unwrap_or(ret_type);
         if let Some(ref ret) = func.return_type
             && !ret.name.is_empty()
             && ret.name != "void"
-            && ret_type != "Variant"
-            && ret.name != ret_type
+            && normalized_ret != "Variant"
+            && !types_assignable(normalized_ret, ret.name)
         {
             errors.push(StructuralError {
                 line: func.node.start_position().row as u32 + 1,
@@ -995,12 +1014,30 @@ pub(super) fn types_assignable(declared: &str, actual: &str) -> bool {
     if declared == actual || declared == "Variant" || actual == "Variant" {
         return true;
     }
-    // Numeric widening: int → float
-    if declared == "float" && actual == "int" {
+    // Numeric coercions: int ↔ float (Godot allows both directions)
+    if is_numeric_coercible(declared) && is_numeric_coercible(actual) {
         return true;
     }
-    // Godot implicit conversions: String → StringName, String → NodePath
-    if (declared == "StringName" || declared == "NodePath") && actual == "String" {
+    // int/float → bool coercion (valid in GDScript)
+    if declared == "bool" && matches!(actual, "int" | "float") {
+        return true;
+    }
+    // Godot implicit conversions: String ↔ StringName, String ↔ NodePath
+    if matches!(
+        (declared, actual),
+        ("StringName" | "NodePath", "String") | ("String", "StringName" | "NodePath")
+    ) {
+        return true;
+    }
+    // Vector widening: Vector2i → Vector2, Vector3i → Vector3, etc.
+    if is_vector_widening(declared, actual) {
+        return true;
+    }
+    // Array/Dictionary family coercion (Godot converts implicitly)
+    if is_array_family(declared) && is_array_family(actual) {
+        return true;
+    }
+    if is_dict_family(declared) && is_dict_family(actual) {
         return true;
     }
     // Class inheritance: allow both upcast and downcast (Godot defers to runtime)
@@ -1008,7 +1045,85 @@ pub(super) fn types_assignable(declared: &str, actual: &str) -> bool {
         return crate::class_db::inherits(actual, declared)
             || crate::class_db::inherits(declared, actual);
     }
+    // If one type is a ClassDB class and the other is a user class (not a primitive),
+    // allow it — we can't verify user class hierarchies without project context.
+    let is_decl_classdb = crate::class_db::class_exists(declared);
+    let is_actual_classdb = crate::class_db::class_exists(actual);
+    if is_decl_classdb != is_actual_classdb {
+        let non_classdb = if is_decl_classdb { actual } else { declared };
+        if !is_builtin_value_type(non_classdb) {
+            return true;
+        }
+    }
+    // If both types are user classes (neither in ClassDB nor builtin value types),
+    // allow it — we can't verify subclass relationships without project context.
+    if !is_decl_classdb
+        && !is_actual_classdb
+        && !is_builtin_value_type(declared)
+        && !is_builtin_value_type(actual)
+    {
+        return true;
+    }
     false
+}
+
+fn is_numeric_coercible(ty: &str) -> bool {
+    matches!(ty, "int" | "float")
+}
+
+fn is_array_family(ty: &str) -> bool {
+    ty == "Array" || ty.starts_with("Array[") || ty.starts_with("Packed")
+}
+
+fn is_dict_family(ty: &str) -> bool {
+    ty == "Dictionary" || ty.starts_with("Dictionary[")
+}
+
+fn is_vector_widening(declared: &str, actual: &str) -> bool {
+    matches!(
+        (declared, actual),
+        ("Vector2", "Vector2i")
+            | ("Vector3", "Vector3i")
+            | ("Vector4", "Vector4i")
+            | ("Vector2i", "Vector2")
+            | ("Vector3i", "Vector3")
+            | ("Vector4i", "Vector4")
+            | ("Rect2", "Rect2i")
+            | ("Rect2i", "Rect2")
+    )
+}
+
+fn is_builtin_value_type(ty: &str) -> bool {
+    matches!(
+        ty,
+        "int"
+            | "float"
+            | "bool"
+            | "String"
+            | "StringName"
+            | "NodePath"
+            | "Vector2"
+            | "Vector2i"
+            | "Vector3"
+            | "Vector3i"
+            | "Vector4"
+            | "Vector4i"
+            | "Color"
+            | "Rect2"
+            | "Rect2i"
+            | "Transform2D"
+            | "Transform3D"
+            | "Basis"
+            | "Quaternion"
+            | "AABB"
+            | "Plane"
+            | "Projection"
+            | "RID"
+            | "Callable"
+            | "Signal"
+            | "Dictionary"
+            | "void"
+    )
 }
 
 /// H16: Cannot call a variable directly — e.g. `f()` where `f: Callable`.
@@ -1149,6 +1264,10 @@ fn is_iterable_type(ty: &type_inference::InferredType) -> bool {
                 | "Vector4i"
         ),
         type_inference::InferredType::TypedArray(_) | type_inference::InferredType::Variant => true,
+        // Typed dictionaries/arrays appear as Class("Dictionary[K, V]") or Class("Array[T]")
+        type_inference::InferredType::Class(c) => {
+            c.starts_with("Dictionary") || c.starts_with("Array")
+        }
         _ => false,
     }
 }

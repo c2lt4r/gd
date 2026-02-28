@@ -56,6 +56,7 @@ pub struct FileSymbols {
     pub variables: Vec<VarSummary>,
     pub signals: Vec<String>,
     pub enums: Vec<String>,
+    pub enum_members: Vec<String>,
 }
 
 /// Project-wide symbol index. Immutable after construction.
@@ -110,6 +111,7 @@ impl ProjectIndex {
                             variables: Vec::new(),
                             signals: Vec::new(),
                             enums: Vec::new(),
+                            enum_members: Vec::new(),
                         },
                     );
                 }
@@ -288,6 +290,25 @@ impl ProjectIndex {
         None
     }
 
+    /// Check if a variable exists on a user-defined class, walking the extends chain.
+    pub fn variable_exists(&self, class: &str, var_name: &str) -> bool {
+        let mut current = class;
+        for _ in 0..64 {
+            if let Some(fs) = self.resolve_extends(current) {
+                if fs.variables.iter().any(|v| v.name == var_name) {
+                    return true;
+                }
+                match fs.extends.as_deref() {
+                    Some(parent) => current = parent,
+                    None => return false,
+                }
+            } else {
+                return false;
+            }
+        }
+        false
+    }
+
     /// Collect all variable names from a class and its user-defined base classes.
     pub fn all_variables(&self, class: &str) -> Vec<&VarSummary> {
         let mut result = Vec::new();
@@ -373,6 +394,10 @@ fn symbols_from_gd_file(path: PathBuf, file: &gd_ast::GdFile) -> FileSymbols {
         variables: file.vars().map(var_summary).collect(),
         signals: file.signals().map(|s| s.name.to_string()).collect(),
         enums: file.enums().map(|e| e.name.to_string()).collect(),
+        enum_members: file
+            .enums()
+            .flat_map(|e| e.members.iter().map(|m| m.name.to_string()))
+            .collect(),
     }
 }
 

@@ -314,77 +314,81 @@ fn infer_binary(node: &Node, source: &str, file: &GdFile) -> Option<InferredType
         return Some(InferredType::Builtin("bool"));
     }
 
-    // String concatenation
-    if op_text == "+" {
-        let left = node
-            .child_by_field_name("left")
-            .or_else(|| node.named_child(0));
-        let right = node
-            .child_by_field_name("right")
-            .or_else(|| node.named_child(1));
-
-        if let (Some(l), Some(r)) = (left, right) {
-            let lt = infer_expression_type(&l, source, file);
-            let rt = infer_expression_type(&r, source, file);
-
-            match (&lt, &rt) {
-                (Some(InferredType::Builtin("String")), Some(InferredType::Builtin("String"))) => {
-                    return Some(InferredType::Builtin("String"));
-                }
-                // Arithmetic promotion: int+float or float+float → float
-                (
-                    Some(InferredType::Builtin("float")),
-                    Some(InferredType::Builtin("int" | "float")),
-                )
-                | (Some(InferredType::Builtin("int")), Some(InferredType::Builtin("float"))) => {
-                    return Some(InferredType::Builtin("float"));
-                }
-                // Same type arithmetic
-                (Some(InferredType::Builtin("int")), Some(InferredType::Builtin("int"))) => {
-                    return Some(InferredType::Builtin("int"));
-                }
-                _ => return lt.or(rt),
-            }
-        }
+    // String concatenation or arithmetic
+    if matches!(op_text, "+" | "-" | "*" | "**") {
+        return infer_arithmetic(node, source, file, op_text);
     }
 
-    // Division always returns float in GDScript (except integer // which is not standard)
+    // Division always returns float in GDScript
     if op_text == "/" {
         return Some(InferredType::Builtin("float"));
     }
 
-    // Modulo, bit ops → int
-    if matches!(op_text, "%" | "<<" | ">>" | "&" | "|" | "^") {
-        return Some(InferredType::Builtin("int"));
-    }
-
-    // General arithmetic: infer from operands
-    if matches!(op_text, "-" | "*" | "**") {
+    // String format operator: "text %s" % value → String
+    if op_text == "%" {
         let left = node
             .child_by_field_name("left")
             .or_else(|| node.named_child(0));
-        let right = node
-            .child_by_field_name("right")
-            .or_else(|| node.named_child(1));
-
-        if let (Some(l), Some(r)) = (left, right) {
-            let lt = infer_expression_type(&l, source, file);
-            let rt = infer_expression_type(&r, source, file);
-
-            match (&lt, &rt) {
-                (Some(InferredType::Builtin("float")), _)
-                | (_, Some(InferredType::Builtin("float"))) => {
-                    return Some(InferredType::Builtin("float"));
-                }
-                (Some(InferredType::Builtin("int")), Some(InferredType::Builtin("int"))) => {
-                    return Some(InferredType::Builtin("int"));
-                }
-                _ => return lt.or(rt),
-            }
+        if let Some(l) = left
+            && (l.kind() == "string"
+                || infer_expression_type(&l, source, file)
+                    == Some(InferredType::Builtin("String")))
+        {
+            return Some(InferredType::Builtin("String"));
         }
+        return Some(InferredType::Builtin("int"));
+    }
+
+    // Bit ops → int
+    if matches!(op_text, "<<" | ">>" | "&" | "|" | "^") {
+        return Some(InferredType::Builtin("int"));
     }
 
     None
+}
+
+/// Infer type from arithmetic operators (+, -, *, **) with promotion rules.
+fn infer_arithmetic(
+    node: &Node,
+    source: &str,
+    file: &GdFile,
+    op_text: &str,
+) -> Option<InferredType> {
+    let left = node
+        .child_by_field_name("left")
+        .or_else(|| node.named_child(0));
+    let right = node
+        .child_by_field_name("right")
+        .or_else(|| node.named_child(1));
+
+    let (Some(l), Some(r)) = (left, right) else {
+        return None;
+    };
+    let lt = infer_expression_type(&l, source, file);
+    let rt = infer_expression_type(&r, source, file);
+
+    // String + String → String
+    if op_text == "+"
+        && matches!(
+            (&lt, &rt),
+            (
+                Some(InferredType::Builtin("String")),
+                Some(InferredType::Builtin("String"))
+            )
+        )
+    {
+        return Some(InferredType::Builtin("String"));
+    }
+
+    match (&lt, &rt) {
+        (Some(InferredType::Builtin("float")), _) | (_, Some(InferredType::Builtin("float"))) => {
+            Some(InferredType::Builtin("float"))
+        }
+        (Some(InferredType::Builtin("int")), Some(InferredType::Builtin("int"))) => {
+            Some(InferredType::Builtin("int"))
+        }
+        _ => lt.or(rt),
+    }
 }
 
 /// Infer type from a cast expression (`x as Node`).

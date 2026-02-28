@@ -117,7 +117,7 @@ fn check_method_not_found_in_node(
             || func_name.starts_with('_'); // Virtual callbacks
         if !is_known {
             // Check ProjectIndex for cross-file base class methods
-            let extends = file.extends_class();
+            let extends = file.extends_str();
             let mut found = extends
                 .is_some_and(|ext| project.method_exists(ext, func_name));
             // Resolve to ClassDB ancestor and check there
@@ -131,7 +131,7 @@ fn check_method_not_found_in_node(
                     column: callee.start_position().column as u32 + 1,
                     message: format!(
                         "function \"{func_name}()\" not found in base {}",
-                        file.extends_class().unwrap_or("self"),
+                        file.extends_str().unwrap_or("self"),
                     ),
                 });
             }
@@ -195,14 +195,20 @@ pub(super) fn check_undefined_identifiers(
             if let Some(params) = child.child_by_field_name("parameters") {
                 let mut pc = params.walk();
                 for param in params.named_children(&mut pc) {
+                    // Unwrap variadic_parameter (`...name: Type`) to get inner param
+                    let effective = if param.kind() == "variadic_parameter" {
+                        param.named_child(0).unwrap_or(param)
+                    } else {
+                        param
+                    };
                     // Typed parameter: `name: Type` — first named child is the identifier
-                    if let Some(name_node) = param.named_child(0)
+                    if let Some(name_node) = effective.named_child(0)
                         && name_node.kind() == "identifier"
                         && let Ok(name) = name_node.utf8_text(source.as_bytes())
                     {
                         func_known.insert(name.to_string());
-                    } else if param.kind() == "identifier"
-                        && let Ok(name) = param.utf8_text(source.as_bytes())
+                    } else if effective.kind() == "identifier"
+                        && let Ok(name) = effective.utf8_text(source.as_bytes())
                     {
                         // Untyped parameter: bare `name` — the param node IS the identifier
                         func_known.insert(name.to_string());
@@ -312,6 +318,10 @@ fn is_identifier_in_declaration_context(node: &Node, source: &str) -> bool {
     {
         return true;
     }
+    // Attribute subscript: `obj.member[index]` — the member name is inside attribute_subscript
+    if parent.kind() == "attribute_subscript" {
+        return true;
+    }
     // Annotation name (e.g. @warning_ignore, @export, @onready)
     if parent.kind() == "annotation" {
         return true;
@@ -331,16 +341,9 @@ fn is_identifier_in_declaration_context(node: &Node, source: &str) -> bool {
     false
 }
 
-/// Check if an identifier is in a context where it doesn't need to be declared.
-fn is_identifier_context_ok(
-    node: &Node,
-    name: &str,
-    source: &str,
-    file: &GdFile,
-    project: &ProjectIndex,
-) -> bool {
-    // Skip builtins and well-known names
-    if matches!(
+/// GDScript keywords and builtins that should never be flagged as undeclared.
+fn is_builtin_or_keyword(name: &str) -> bool {
+    matches!(
         name,
         "self"
             | "super"
@@ -354,7 +357,42 @@ fn is_identifier_context_ok(
             | "OK"
             | "FAILED"
             | "ERR_UNAVAILABLE"
-    ) {
+            | "if"
+            | "elif"
+            | "else"
+            | "for"
+            | "while"
+            | "match"
+            | "break"
+            | "continue"
+            | "pass"
+            | "return"
+            | "var"
+            | "const"
+            | "func"
+            | "class"
+            | "signal"
+            | "enum"
+            | "await"
+            | "yield"
+            | "not"
+            | "and"
+            | "or"
+            | "in"
+            | "is"
+            | "as"
+    )
+}
+
+/// Check if an identifier is in a context where it doesn't need to be declared.
+fn is_identifier_context_ok(
+    node: &Node,
+    name: &str,
+    source: &str,
+    file: &GdFile,
+    project: &ProjectIndex,
+) -> bool {
+    if is_builtin_or_keyword(name) {
         return true;
     }
 
@@ -383,24 +421,36 @@ fn is_identifier_context_ok(
         return true;
     }
 
-    // Cross-file: methods/properties from project-defined base classes
-    if let Some(ext) = file.extends_class()
-        && (project.method_exists(ext, name) || project.variable_type(ext, name).is_some())
+    // Cross-file: methods/properties from project-defined base classes.
+    // Use extends_str() to handle both class names AND path-based extends.
+    if let Some(ext) = file.extends_str() {
+        if project.method_exists(ext, name) || project.variable_exists(ext, name) {
+            return true;
+        }
+        // Also check signals and enum members from base classes
+        if project_has_signal(ext, name, project) || project_has_enum_member(ext, name, project) {
+            return true;
+        }
+    }
+
+    // ClassDB: extends chain for properties, methods, constants, and signals.
+    // Resolve through project extends chain to find the ClassDB ancestor.
+    // If no extends statement, default to RefCounted (Godot's implicit base class).
+    let classdb_ext = match file.extends_str() {
+        Some(ext) => resolve_to_classdb_type(ext, project),
+        None => "RefCounted".to_string(),
+    };
+    if crate::class_db::property_exists(&classdb_ext, name)
+        || crate::class_db::method_exists(&classdb_ext, name)
+        || crate::class_db::constant_exists(&classdb_ext, name)
+        || crate::class_db::signal_exists(&classdb_ext, name)
     {
         return true;
     }
 
-    // ClassDB: extends chain for properties, methods, and constants/enums.
-    // Resolve through project extends chain to find the ClassDB ancestor —
-    // handles both direct ClassDB types and path-based extends.
-    if let Some(ext) = file.extends_class() {
-        let classdb_ext = resolve_to_classdb_type(ext, project);
-        if crate::class_db::property_exists(&classdb_ext, name)
-            || crate::class_db::method_exists(&classdb_ext, name)
-            || crate::class_db::constant_exists(&classdb_ext, name)
-        {
-            return true;
-        }
+    // Autoloads: check if identifier is a known autoload name
+    if project.is_autoload(name) {
+        return true;
     }
 
     // Singletons used as identifiers (e.g., passing Input as argument)
@@ -447,6 +497,44 @@ fn is_identifier_context_ok(
     )
 }
 
+/// Check if a signal exists on a user class or its extends chain.
+fn project_has_signal(class: &str, signal_name: &str, project: &ProjectIndex) -> bool {
+    let mut current = class;
+    for _ in 0..64 {
+        if let Some(fs) = project.lookup_class(current) {
+            if fs.signals.iter().any(|s| s == signal_name) {
+                return true;
+            }
+            match fs.extends.as_deref() {
+                Some(parent) => current = parent,
+                None => return false,
+            }
+        } else {
+            return false;
+        }
+    }
+    false
+}
+
+/// Check if an enum member exists on a user class or its extends chain.
+fn project_has_enum_member(class: &str, member_name: &str, project: &ProjectIndex) -> bool {
+    let mut current = class;
+    for _ in 0..64 {
+        if let Some(fs) = project.lookup_class(current) {
+            if fs.enum_members.iter().any(|m| m == member_name) {
+                return true;
+            }
+            match fs.extends.as_deref() {
+                Some(parent) => current = parent,
+                None => return false,
+            }
+        } else {
+            return false;
+        }
+    }
+    false
+}
+
 /// Walk the project extends chain from `ext` (class name or `res://` path) until we find
 /// a ClassDB-known type. Returns the ClassDB ancestor or `ext` itself if already in ClassDB.
 pub(super) fn resolve_to_classdb_type<'a>(ext: &'a str, project: &'a ProjectIndex) -> String {
@@ -487,7 +575,7 @@ fn check_super_method_in_node(
         && let Ok(recv_name) = receiver.utf8_text(source.as_bytes())
         && recv_name == "super"
     {
-        let extends = file.extends_class();
+        let extends = file.extends_str();
         let mut cursor2 = node.walk();
         for child in node.children(&mut cursor2) {
             if child.kind() == "attribute_call"
@@ -506,7 +594,7 @@ fn check_super_method_in_node(
                         column: method_node.start_position().column as u32 + 1,
                         message: format!(
                             "function \"{method_name}()\" not found in base {}",
-                            file.extends_class().unwrap_or("Node"),
+                            file.extends_str().unwrap_or("Node"),
                         ),
                     });
                 }
