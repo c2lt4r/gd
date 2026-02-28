@@ -3,7 +3,7 @@ use std::sync::OnceLock;
 
 use tree_sitter::{Node, Point};
 
-use super::{DECLARATION_KINDS, get_declaration_name};
+use crate::core::gd_ast::{GdDecl, GdFile};
 
 // ── Collision detection ─────────────────────────────────────────────────────
 
@@ -33,9 +33,14 @@ impl std::fmt::Display for CollisionKind {
 }
 
 /// Collect all names visible at `position` in the file.
-pub fn collect_scope_names(root: Node, source: &str, position: Point) -> ScopeNames {
+pub fn collect_scope_names(
+    root: Node,
+    source: &str,
+    position: Point,
+    file: &GdFile,
+) -> ScopeNames {
     let locals = collect_locals(root, source, position);
-    let file_level = collect_file_level(root, source);
+    let file_level = collect_file_level(file);
     let builtins = gdscript_builtins().clone();
     ScopeNames {
         locals,
@@ -129,27 +134,21 @@ fn collect_body_locals(body: Node, source: &str, max_row: usize, names: &mut Has
 
 // ── File-level names ────────────────────────────────────────────────────────
 
-fn collect_file_level(root: Node, source: &str) -> HashSet<String> {
+fn collect_file_level(file: &GdFile) -> HashSet<String> {
     let mut names = HashSet::new();
-    let mut cursor = root.walk();
-    for child in root.children(&mut cursor) {
-        if !DECLARATION_KINDS.contains(&child.kind()) {
+    for decl in &file.declarations {
+        if !decl.is_declaration() {
             continue;
         }
-        if let Some(name) = get_declaration_name(child, source) {
-            names.insert(name);
+        let name = decl.name();
+        if !name.is_empty() {
+            names.insert(name.to_string());
         }
         // For enums, also collect member names
-        if child.kind() == "enum_definition"
-            && let Some(body) = child.child_by_field_name("body")
-        {
-            let mut ec = body.walk();
-            for member in body.children(&mut ec) {
-                if member.kind() == "enum_member"
-                    && let Some(name_node) = member.child_by_field_name("name")
-                    && let Ok(text) = name_node.utf8_text(source.as_bytes())
-                {
-                    names.insert(text.to_string());
+        if let GdDecl::Enum(e) = decl {
+            for member in &e.members {
+                if !member.name.is_empty() {
+                    names.insert(member.name.to_string());
                 }
             }
         }
@@ -261,6 +260,7 @@ fn gdscript_builtins() -> &'static HashSet<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::gd_ast;
 
     fn parse(source: &str) -> tree_sitter::Tree {
         crate::core::parser::parse(source).unwrap()
@@ -270,7 +270,8 @@ mod tests {
     fn detects_local_collision() {
         let src = "func foo():\n\tvar speed = 10\n\tprint(speed)\n";
         let tree = parse(src);
-        let scope = collect_scope_names(tree.root_node(), src, Point::new(2, 1));
+        let file = gd_ast::convert(&tree, src);
+        let scope = collect_scope_names(tree.root_node(), src, Point::new(2, 1), &file);
         assert_eq!(check_collision("speed", &scope), Some(CollisionKind::Local));
         assert_eq!(check_collision("unused", &scope), None);
     }
@@ -279,7 +280,8 @@ mod tests {
     fn detects_param_collision() {
         let src = "func foo(delta):\n\tpass\n";
         let tree = parse(src);
-        let scope = collect_scope_names(tree.root_node(), src, Point::new(1, 1));
+        let file = gd_ast::convert(&tree, src);
+        let scope = collect_scope_names(tree.root_node(), src, Point::new(1, 1), &file);
         assert_eq!(check_collision("delta", &scope), Some(CollisionKind::Local));
     }
 
@@ -287,7 +289,8 @@ mod tests {
     fn detects_file_level_collision() {
         let src = "var health = 100\nfunc foo():\n\tpass\n";
         let tree = parse(src);
-        let scope = collect_scope_names(tree.root_node(), src, Point::new(2, 1));
+        let file = gd_ast::convert(&tree, src);
+        let scope = collect_scope_names(tree.root_node(), src, Point::new(2, 1), &file);
         assert_eq!(
             check_collision("health", &scope),
             Some(CollisionKind::FileLevel)
@@ -302,7 +305,8 @@ mod tests {
     fn detects_builtin_collision() {
         let src = "func foo():\n\tpass\n";
         let tree = parse(src);
-        let scope = collect_scope_names(tree.root_node(), src, Point::new(1, 1));
+        let file = gd_ast::convert(&tree, src);
+        let scope = collect_scope_names(tree.root_node(), src, Point::new(1, 1), &file);
         assert_eq!(
             check_collision("Vector2", &scope),
             Some(CollisionKind::Builtin)
@@ -321,8 +325,9 @@ mod tests {
     fn locals_respect_position() {
         let src = "func foo():\n\tvar a = 1\n\tvar b = 2\n\tvar c = 3\n";
         let tree = parse(src);
+        let file = gd_ast::convert(&tree, src);
         // At line 2 (0-based), only a and b should be visible (b declared on line 2)
-        let scope = collect_scope_names(tree.root_node(), src, Point::new(2, 1));
+        let scope = collect_scope_names(tree.root_node(), src, Point::new(2, 1), &file);
         assert!(scope.locals.contains("a"));
         assert!(scope.locals.contains("b"));
         // c is declared on line 3 — should not be visible at line 2
@@ -333,7 +338,8 @@ mod tests {
     fn for_iterator_is_local() {
         let src = "func foo():\n\tfor item in items:\n\t\tpass\n";
         let tree = parse(src);
-        let scope = collect_scope_names(tree.root_node(), src, Point::new(2, 2));
+        let file = gd_ast::convert(&tree, src);
+        let scope = collect_scope_names(tree.root_node(), src, Point::new(2, 2), &file);
         assert!(scope.locals.contains("item"));
     }
 
@@ -341,7 +347,8 @@ mod tests {
     fn no_collision_returns_none() {
         let src = "func foo():\n\tvar x = 1\n";
         let tree = parse(src);
-        let scope = collect_scope_names(tree.root_node(), src, Point::new(1, 1));
+        let file = gd_ast::convert(&tree, src);
+        let scope = collect_scope_names(tree.root_node(), src, Point::new(1, 1), &file);
         assert_eq!(check_collision("totally_unique_name", &scope), None);
     }
 
@@ -349,7 +356,8 @@ mod tests {
     fn enum_members_collected() {
         let src = "enum State { IDLE, RUN }\nfunc foo():\n\tpass\n";
         let tree = parse(src);
-        let scope = collect_scope_names(tree.root_node(), src, Point::new(2, 1));
+        let file = gd_ast::convert(&tree, src);
+        let scope = collect_scope_names(tree.root_node(), src, Point::new(2, 1), &file);
         assert!(scope.file_level.contains("State"));
     }
 
@@ -357,7 +365,8 @@ mod tests {
     fn outside_function_no_locals() {
         let src = "var top = 1\n";
         let tree = parse(src);
-        let scope = collect_scope_names(tree.root_node(), src, Point::new(0, 0));
+        let file = gd_ast::convert(&tree, src);
+        let scope = collect_scope_names(tree.root_node(), src, Point::new(0, 0), &file);
         assert!(scope.locals.is_empty());
         assert!(scope.file_level.contains("top"));
     }

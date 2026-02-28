@@ -7,9 +7,8 @@ use crate::core::gd_ast;
 
 use super::{
     DeleteSymbolOutput, LineRange, RefLocation, declaration_full_range, declaration_kind_str,
-    find_class_definition, find_declaration_by_line, find_declaration_by_name,
-    find_declaration_in_class, find_declaration_in_class_by_line, get_declaration_name,
-    line_starts, normalize_blank_lines,
+    find_declaration_by_line, find_declaration_by_name, find_declaration_in_class,
+    get_declaration_name, line_starts, normalize_blank_lines,
 };
 
 #[allow(clippy::too_many_lines)]
@@ -36,17 +35,20 @@ pub fn delete_symbol(
 
     let decl = if let Some(class_name) = class {
         // Look inside an inner class
-        let _class_node = find_class_definition(&gd_file, class_name)
+        let gd_class = gd_file
+            .find_class(class_name)
             .ok_or_else(|| miette::miette!("no inner class named '{class_name}' found"))?;
-        let gd_class = gd_file.find_class(class_name).unwrap();
         if let Some(name) = name {
             find_declaration_in_class(gd_class, name).ok_or_else(|| {
                 miette::miette!("no declaration named '{name}' found in class '{class_name}'")
             })?
         } else if let Some(line) = line {
-            find_declaration_in_class_by_line(gd_class, line - 1).ok_or_else(|| {
-                miette::miette!("no declaration found at line {line} in class '{class_name}'")
-            })?
+            gd_class
+                .find_decl_by_line(line - 1)
+                .map(gd_ast::GdDecl::node)
+                .ok_or_else(|| {
+                    miette::miette!("no declaration found at line {line} in class '{class_name}'")
+                })?
         } else {
             return Err(miette::miette!("either --name or --line is required"));
         }

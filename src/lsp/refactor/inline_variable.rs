@@ -7,9 +7,7 @@ use tree_sitter::Node;
 
 use crate::core::gd_ast;
 
-use super::{
-    collision::collect_scope_names, find_declaration_by_name, line_starts, normalize_blank_lines,
-};
+use super::{find_declaration_by_name, line_starts, normalize_blank_lines};
 
 // ── inline-variable ─────────────────────────────────────────────────────────
 
@@ -120,11 +118,6 @@ pub fn inline_variable(
             "type annotation ': {type_text}' will be lost after inlining"
         ));
     }
-
-    // Collision check: available for future use to warn about shadowing issues
-    // when inlining into different scopes. Currently a no-op since inline-variable
-    // operates within a single scope.
-    let _scope_names = collect_scope_names(root, &source, decl.start_position());
 
     let decl_line = decl.start_position().row as u32 + 1;
     let reference_count = usages.len() as u32;

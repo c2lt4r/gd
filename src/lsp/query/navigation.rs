@@ -202,8 +202,13 @@ pub fn query_rename(
     let mut warnings = Vec::new();
     if let Ok(tree) = crate::core::parser::parse(&source) {
         let point = tree_sitter::Point::new(line - 1, column - 1);
-        let scope_names =
-            crate::lsp::refactor::collision::collect_scope_names(tree.root_node(), &source, point);
+        let gd_file = crate::core::gd_ast::convert(&tree, &source);
+        let scope_names = crate::lsp::refactor::collision::collect_scope_names(
+            tree.root_node(),
+            &source,
+            point,
+            &gd_file,
+        );
         if let Some(kind) = crate::lsp::refactor::collision::check_collision(new_name, &scope_names)
         {
             warnings.push(format!("'{new_name}' collides with a {kind}"));
@@ -274,10 +279,12 @@ pub fn query_rename_by_name(
             first.range.start.line as usize,
             first.range.start.character as usize,
         );
+        let gd_file = crate::core::gd_ast::convert(&tree, &first_source);
         let scope_names = crate::lsp::refactor::collision::collect_scope_names(
             tree.root_node(),
             &first_source,
             point,
+            &gd_file,
         );
         if let Some(kind) = crate::lsp::refactor::collision::check_collision(new_name, &scope_names)
         {

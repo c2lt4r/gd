@@ -33,6 +33,7 @@ pub fn extract_method(
         std::fs::read_to_string(file).map_err(|e| miette::miette!("cannot read file: {e}"))?;
     let tree = crate::core::parser::parse(&source)?;
     let root = tree.root_node();
+    let gd_file = crate::core::gd_ast::convert(&tree, &source);
     let symbols = crate::core::symbol_table::build(&tree, &source);
 
     let start_line_0 = start_line - 1;
@@ -106,7 +107,7 @@ pub fn extract_method(
 
     // Name collision detection
     let mut warnings = Vec::new();
-    let scope_names = super::collision::collect_scope_names(root, &source, point);
+    let scope_names = super::collision::collect_scope_names(root, &source, point, &gd_file);
     if let Some(kind) = super::collision::check_collision(name, &scope_names) {
         warnings.push(format!("'{name}' collides with a {kind}"));
     }

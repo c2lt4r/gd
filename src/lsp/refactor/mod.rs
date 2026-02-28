@@ -416,14 +416,6 @@ pub(super) fn find_declaration_in_class<'a>(
     class.find_decl_by_name(name).map(gd_ast::GdDecl::node)
 }
 
-/// Find a declaration by line within an inner class.
-pub(super) fn find_declaration_in_class_by_line<'a>(
-    class: &GdClass<'a>,
-    line: usize,
-) -> Option<Node<'a>> {
-    class.find_decl_by_line(line).map(gd_ast::GdDecl::node)
-}
-
 /// Re-indent text to a target depth (measured in tabs).
 /// Strips the minimum indentation and replaces it with `target_tabs` tabs.
 pub(super) fn re_indent_to_depth(text: &str, target_tabs: usize) -> String {

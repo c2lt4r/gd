@@ -72,6 +72,7 @@ pub fn introduce_variable(
         std::fs::read_to_string(file).map_err(|e| miette::miette!("cannot read file: {e}"))?;
     let tree = crate::core::parser::parse(&source)?;
     let root = tree.root_node();
+    let gd_file = crate::core::gd_ast::convert(&tree, &source);
 
     let line_0 = line - 1;
     let col_0 = column - 1;
@@ -123,7 +124,7 @@ pub fn introduce_variable(
     let relative_file = crate::core::fs::relative_slash(file, project_root);
 
     let mut warnings = Vec::new();
-    let scope_names = collect_scope_names(root, &source, start_point);
+    let scope_names = collect_scope_names(root, &source, start_point, &gd_file);
     if let Some(kind) = check_collision(name, &scope_names) {
         warnings.push(format!("'{name}' collides with a {kind}"));
     }

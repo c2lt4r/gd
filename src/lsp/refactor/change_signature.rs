@@ -9,7 +9,7 @@ use std::fmt::Write;
 use super::inline_method::{
     ParamInfo, extract_call_arguments, extract_function_params, find_call_at,
 };
-use super::{find_class_definition, find_declaration_by_name, find_declaration_in_class};
+use super::{find_declaration_by_name, find_declaration_in_class};
 use crate::core::gd_ast;
 
 // ── change-signature ────────────────────────────────────────────────────────
@@ -46,9 +46,9 @@ pub fn change_signature(
 
     // Find function definition
     let func_def = if let Some(class_name) = class {
-        let _class_node = find_class_definition(&file_ast, class_name)
+        let inner = file_ast
+            .find_class(class_name)
             .ok_or_else(|| miette::miette!("no inner class named '{class_name}' found"))?;
-        let inner = file_ast.find_class(class_name).unwrap(); // safe: find_class_definition succeeded
         find_declaration_in_class(inner, name)
             .ok_or_else(|| miette::miette!("no function '{name}' in class '{class_name}'"))?
     } else {
