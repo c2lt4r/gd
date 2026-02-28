@@ -1,8 +1,7 @@
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{GdClass, GdDecl, GdFile, GdFunc};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
-use crate::core::symbol_table::SymbolTable;
 
 pub struct NativeMethodOverride;
 
@@ -25,15 +24,16 @@ impl LintRule for NativeMethodOverride {
 
     fn check_with_symbols(
         &self,
-        _file: &GdFile<'_>,
+        file: &GdFile<'_>,
         _source: &str,
         _config: &LintConfig,
-        symbols: &SymbolTable,
     ) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        check_table(symbols, &mut diags);
-        for (_, inner) in &symbols.inner_classes {
-            check_table(inner, &mut diags);
+        if let Some(extends) = file.extends_class() {
+            check_funcs(file.funcs(), extends, &mut diags);
+        }
+        for inner in file.inner_classes() {
+            check_inner_class(inner, &mut diags);
         }
         diags
     }
@@ -50,18 +50,27 @@ fn normalize_type(db_type: &str) -> &str {
     }
 }
 
-fn check_table(symbols: &SymbolTable, diags: &mut Vec<LintDiagnostic>) {
-    let Some(ref extends) = symbols.extends else {
-        return;
+fn check_inner_class(class: &GdClass, diags: &mut Vec<LintDiagnostic>) {
+    let extends = match &class.extends {
+        Some(crate::core::gd_ast::GdExtends::Class(c)) => *c,
+        _ => return,
     };
+    let funcs = class.declarations.iter().filter_map(GdDecl::as_func);
+    check_funcs(funcs, extends, diags);
+}
 
-    for func in &symbols.functions {
+fn check_funcs<'a>(
+    funcs: impl Iterator<Item = &'a GdFunc<'a>>,
+    extends: &str,
+    diags: &mut Vec<LintDiagnostic>,
+) {
+    for func in funcs {
         // Skip virtual methods (prefixed with _) — these are meant to be overridden
         if func.name.starts_with('_') {
             continue;
         }
 
-        let Some(native_sig) = crate::class_db::method_signature(extends, &func.name) else {
+        let Some(native_sig) = crate::class_db::method_signature(extends, func.name) else {
             continue;
         };
 
@@ -129,7 +138,7 @@ fn check_table(symbols: &SymbolTable, diags: &mut Vec<LintDiagnostic>) {
                     func.name
                 ),
                 severity: Severity::Error,
-                line: func.line,
+                line: func.node.start_position().row,
                 column: 0,
                 end_column: None,
                 fix: None,
@@ -145,7 +154,7 @@ fn check_table(symbols: &SymbolTable, diags: &mut Vec<LintDiagnostic>) {
                     func.name, func.name,
                 ),
                 severity: Severity::Error,
-                line: func.line,
+                line: func.node.start_position().row,
                 column: 0,
                 end_column: None,
                 fix: None,
@@ -160,14 +169,12 @@ mod tests {
     use super::*;
     use crate::core::parser;
     use crate::core::gd_ast;
-    use crate::core::symbol_table;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();
         let file = gd_ast::convert(&tree, source);
-        let symbols = symbol_table::build(&tree, source);
         let config = LintConfig::default();
-        NativeMethodOverride.check_with_symbols(&file, source, &config, &symbols)
+        NativeMethodOverride.check_with_symbols(&file, source, &config)
     }
 
     #[test]

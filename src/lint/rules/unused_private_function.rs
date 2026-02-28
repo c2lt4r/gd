@@ -3,7 +3,6 @@ use crate::core::gd_ast::GdFile;
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::class_db;
 use crate::core::config::LintConfig;
-use crate::core::symbol_table::SymbolTable;
 use crate::core::workspace_index::ProjectIndex;
 
 /// Godot virtual methods that are called by the engine, never directly by user code.
@@ -64,29 +63,28 @@ impl LintRule for UnusedPrivateFunction {
 
     fn check_with_project(
         &self,
-        _file: &GdFile<'_>,
+        file: &GdFile<'_>,
         source: &str,
         _config: &LintConfig,
-        symbols: &SymbolTable,
         project: &ProjectIndex,
     ) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
 
-        let extends = symbols.extends.as_deref().unwrap_or("RefCounted");
+        let extends = file.extends_class().unwrap_or("RefCounted");
 
-        for func in &symbols.functions {
+        for func in file.funcs() {
             // Skip Godot virtual methods
-            if GODOT_VIRTUALS.contains(&func.name.as_str()) {
+            if GODOT_VIRTUALS.contains(&func.name) {
                 continue;
             }
 
             // Skip methods that exist on the engine base class (overrides)
-            if class_db::method_exists(extends, &func.name) {
+            if class_db::method_exists(extends, func.name) {
                 continue;
             }
 
             // Check if any other file in the project references this function name
-            if is_referenced_in_project(&func.name, source, project) {
+            if is_referenced_in_project(func.name, source, project) {
                 continue;
             }
 
@@ -94,7 +92,7 @@ impl LintRule for UnusedPrivateFunction {
                 rule: "unused-private-function",
                 message: format!("function `{}` has no cross-file callers", func.name),
                 severity: Severity::Warning,
-                line: func.line,
+                line: func.node.start_position().row,
                 column: 0,
                 end_column: None,
                 fix: None,
@@ -158,7 +156,7 @@ mod tests {
     use super::*;
     use crate::core::workspace_index;
     use crate::core::gd_ast;
-    use crate::core::{parser, symbol_table};
+    use crate::core::parser;
     use std::path::PathBuf;
 
     fn check_with_project(source: &str, project_files: &[(&str, &str)]) -> Vec<LintDiagnostic> {
@@ -171,9 +169,8 @@ mod tests {
 
         let tree = parser::parse(source).unwrap();
         let file = gd_ast::convert(&tree, source);
-        let symbols = symbol_table::build(&tree, source);
         let config = LintConfig::default();
-        UnusedPrivateFunction.check_with_project(&file, source, &config, &symbols, &project)
+        UnusedPrivateFunction.check_with_project(&file, source, &config, &project)
     }
 
     #[test]
@@ -205,13 +202,11 @@ func helper() -> void:
         let project = crate::core::workspace_index::ProjectIndex::build(dir.path());
         let tree = parser::parse(utils_source).unwrap();
         let file = gd_ast::convert(&tree, utils_source);
-        let symbols = symbol_table::build(&tree, utils_source);
         let config = LintConfig::default();
         let diags = UnusedPrivateFunction.check_with_project(
             &file,
             utils_source,
             &config,
-            &symbols,
             &project,
         );
         assert!(diags.is_empty(), "helper is called from main.gd");

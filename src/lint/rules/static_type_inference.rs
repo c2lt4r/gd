@@ -2,7 +2,6 @@ use crate::core::gd_ast::{self, GdDecl, GdFile, GdStmt, GdVar};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
-use crate::core::symbol_table::SymbolTable;
 use crate::core::type_inference::{InferredType, infer_expression_type};
 
 pub struct StaticTypeInference;
@@ -25,17 +24,16 @@ impl LintRule for StaticTypeInference {
         file: &GdFile<'_>,
         source: &str,
         _config: &LintConfig,
-        symbols: &SymbolTable,
     ) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
         gd_ast::visit_decls(file, &mut |decl| {
             if let GdDecl::Var(var) = decl {
-                check_var(var, source, symbols, &mut diags);
+                check_var(var, source, file, &mut diags);
             }
         });
         gd_ast::visit_stmts(file, &mut |stmt| {
             if let GdStmt::Var(var) = stmt {
-                check_var(var, source, symbols, &mut diags);
+                check_var(var, source, file, &mut diags);
             }
         });
         diags
@@ -45,7 +43,7 @@ impl LintRule for StaticTypeInference {
 fn check_var(
     var: &GdVar<'_>,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile,
     diags: &mut Vec<LintDiagnostic>,
 ) {
     // Skip if already has any type annotation (explicit or inferred via :=)
@@ -55,7 +53,7 @@ fn check_var(
 
     let Some(value) = &var.value else { return };
     let value_node = value.node();
-    let Some(inferred) = infer_expression_type(&value_node, source, symbols) else {
+    let Some(inferred) = infer_expression_type(&value_node, source, file) else {
         return;
     };
 
@@ -96,14 +94,13 @@ fn check_var(
 mod tests {
     use super::*;
     use crate::core::gd_ast;
-    use crate::core::{parser, symbol_table};
+    use crate::core::parser;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();
         let file = gd_ast::convert(&tree, source);
-        let symbols = symbol_table::build(&tree, source);
         let config = LintConfig::default();
-        StaticTypeInference.check_with_symbols(&file, source, &config, &symbols)
+        StaticTypeInference.check_with_symbols(&file, source, &config)
     }
 
     #[test]

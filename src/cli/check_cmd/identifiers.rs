@@ -3,7 +3,7 @@ use tree_sitter::Node;
 use super::StructuralError;
 use super::args::{constructor_param_counts, is_builtin_convertible};
 use super::classdb::is_known_type;
-use crate::core::symbol_table::SymbolTable;
+use crate::core::gd_ast::GdFile;
 use crate::core::workspace_index::ProjectIndex;
 
 // ---------------------------------------------------------------------------
@@ -14,17 +14,17 @@ use crate::core::workspace_index::ProjectIndex;
 pub(super) fn check_type_not_found(
     root: &Node,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile,
     project: &ProjectIndex,
     errors: &mut Vec<StructuralError>,
 ) {
-    check_type_not_found_in_node(root, source, symbols, project, errors);
+    check_type_not_found_in_node(root, source, file, project, errors);
 }
 
 fn check_type_not_found_in_node(
     node: &Node,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile,
     project: &ProjectIndex,
     errors: &mut Vec<StructuralError>,
 ) {
@@ -36,7 +36,7 @@ fn check_type_not_found_in_node(
         && let Some(type_node) = node.child_by_field_name("right")
         && type_node.kind() == "identifier"
         && let Ok(type_name) = type_node.utf8_text(source.as_bytes())
-        && !is_known_type(type_name, symbols, project)
+        && !is_known_type(type_name, file, project)
     {
         errors.push(StructuralError {
             line: type_node.start_position().row as u32 + 1,
@@ -48,7 +48,7 @@ fn check_type_not_found_in_node(
     let mut cursor = node.walk();
     if cursor.goto_first_child() {
         loop {
-            check_type_not_found_in_node(&cursor.node(), source, symbols, project, errors);
+            check_type_not_found_in_node(&cursor.node(), source, file, project, errors);
             if !cursor.goto_next_sibling() {
                 break;
             }
@@ -60,17 +60,17 @@ fn check_type_not_found_in_node(
 pub(super) fn check_method_not_found(
     root: &Node,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile,
     project: &ProjectIndex,
     errors: &mut Vec<StructuralError>,
 ) {
-    check_method_not_found_in_node(root, source, symbols, project, errors);
+    check_method_not_found_in_node(root, source, file, project, errors);
 }
 
 fn check_method_not_found_in_node(
     node: &Node,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile,
     project: &ProjectIndex,
     errors: &mut Vec<StructuralError>,
 ) {
@@ -81,7 +81,7 @@ fn check_method_not_found_in_node(
         && let Ok(func_name) = callee.utf8_text(source.as_bytes())
     {
         // Skip known identifiers: user functions, utility functions, constructors, etc.
-        let is_known = symbols.functions.iter().any(|f| f.name == func_name)
+        let is_known = file.funcs().any(|f| f.name == func_name)
             || crate::class_db::utility_function(func_name).is_some()
             || crate::class_db::class_exists(func_name)
             || crate::core::type_inference::is_builtin_type(func_name)
@@ -117,12 +117,11 @@ fn check_method_not_found_in_node(
             || func_name.starts_with('_'); // Virtual callbacks
         if !is_known {
             // Check ProjectIndex for cross-file base class methods
-            let mut found = symbols
-                .extends
-                .as_ref()
+            let extends = file.extends_class();
+            let mut found = extends
                 .is_some_and(|ext| project.method_exists(ext, func_name));
             // Resolve to ClassDB ancestor and check there
-            if !found && let Some(ext) = &symbols.extends {
+            if !found && let Some(ext) = extends {
                 let classdb_ext = resolve_to_classdb_type(ext, project);
                 found = crate::class_db::method_exists(&classdb_ext, func_name);
             }
@@ -132,7 +131,7 @@ fn check_method_not_found_in_node(
                     column: callee.start_position().column as u32 + 1,
                     message: format!(
                         "function \"{func_name}()\" not found in base {}",
-                        symbols.extends.as_deref().unwrap_or("self"),
+                        file.extends_class().unwrap_or("self"),
                     ),
                 });
             }
@@ -142,7 +141,7 @@ fn check_method_not_found_in_node(
     let mut cursor = node.walk();
     if cursor.goto_first_child() {
         loop {
-            check_method_not_found_in_node(&cursor.node(), source, symbols, project, errors);
+            check_method_not_found_in_node(&cursor.node(), source, file, project, errors);
             if !cursor.goto_next_sibling() {
                 break;
             }
@@ -154,7 +153,7 @@ fn check_method_not_found_in_node(
 pub(super) fn check_undefined_identifiers(
     root: &Node,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile,
     project: &ProjectIndex,
     errors: &mut Vec<StructuralError>,
 ) {
@@ -162,27 +161,27 @@ pub(super) fn check_undefined_identifiers(
     let mut known: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     // Class-level variables
-    for v in &symbols.variables {
-        known.insert(v.name.clone());
+    for v in file.vars() {
+        known.insert(v.name.to_string());
     }
     // Functions
-    for f in &symbols.functions {
-        known.insert(f.name.clone());
+    for f in file.funcs() {
+        known.insert(f.name.to_string());
     }
     // Enums and their members
-    for e in &symbols.enums {
-        known.insert(e.name.clone());
+    for e in file.enums() {
+        known.insert(e.name.to_string());
         for member in &e.members {
-            known.insert(member.clone());
+            known.insert(member.name.to_string());
         }
     }
     // Inner classes
-    for (name, _) in &symbols.inner_classes {
-        known.insert(name.clone());
+    for c in file.inner_classes() {
+        known.insert(c.name.to_string());
     }
     // Signals
-    for s in &symbols.signals {
-        known.insert(s.name.clone());
+    for s in file.signals() {
+        known.insert(s.name.to_string());
     }
 
     // Walk function bodies looking for undefined identifiers
@@ -216,7 +215,7 @@ pub(super) fn check_undefined_identifiers(
             {
                 func_known.insert(fname.to_string());
             }
-            check_undefined_in_body(&body, source, symbols, project, &mut func_known, errors);
+            check_undefined_in_body(&body, source, file, project, &mut func_known, errors);
         }
     }
 }
@@ -224,7 +223,7 @@ pub(super) fn check_undefined_identifiers(
 fn check_undefined_in_body(
     node: &Node,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile,
     project: &ProjectIndex,
     known: &mut std::collections::HashSet<String>,
     errors: &mut Vec<StructuralError>,
@@ -249,7 +248,7 @@ fn check_undefined_in_body(
     if node.kind() == "identifier"
         && let Ok(name) = node.utf8_text(source.as_bytes())
         && !known.contains(name)
-        && !is_identifier_context_ok(node, name, source, symbols, project)
+        && !is_identifier_context_ok(node, name, source, file, project)
     {
         errors.push(StructuralError {
             line: node.start_position().row as u32 + 1,
@@ -266,7 +265,7 @@ fn check_undefined_in_body(
     let mut cursor = node.walk();
     if cursor.goto_first_child() {
         loop {
-            check_undefined_in_body(&cursor.node(), source, symbols, project, known, errors);
+            check_undefined_in_body(&cursor.node(), source, file, project, known, errors);
             if !cursor.goto_next_sibling() {
                 break;
             }
@@ -337,7 +336,7 @@ fn is_identifier_context_ok(
     node: &Node,
     name: &str,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile,
     project: &ProjectIndex,
 ) -> bool {
     // Skip builtins and well-known names
@@ -360,7 +359,7 @@ fn is_identifier_context_ok(
     }
 
     // Known type names (reuses existing comprehensive check)
-    if is_known_type(name, symbols, project) {
+    if is_known_type(name, file, project) {
         return true;
     }
 
@@ -385,7 +384,7 @@ fn is_identifier_context_ok(
     }
 
     // Cross-file: methods/properties from project-defined base classes
-    if let Some(ext) = &symbols.extends
+    if let Some(ext) = file.extends_class()
         && (project.method_exists(ext, name) || project.variable_type(ext, name).is_some())
     {
         return true;
@@ -394,7 +393,7 @@ fn is_identifier_context_ok(
     // ClassDB: extends chain for properties, methods, and constants/enums.
     // Resolve through project extends chain to find the ClassDB ancestor —
     // handles both direct ClassDB types and path-based extends.
-    if let Some(ext) = &symbols.extends {
+    if let Some(ext) = file.extends_class() {
         let classdb_ext = resolve_to_classdb_type(ext, project);
         if crate::class_db::property_exists(&classdb_ext, name)
             || crate::class_db::method_exists(&classdb_ext, name)
@@ -467,17 +466,17 @@ pub(super) fn resolve_to_classdb_type<'a>(ext: &'a str, project: &'a ProjectInde
 pub(super) fn check_super_method_not_found(
     root: &Node,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile,
     project: &ProjectIndex,
     errors: &mut Vec<StructuralError>,
 ) {
-    check_super_method_in_node(root, source, symbols, project, errors);
+    check_super_method_in_node(root, source, file, project, errors);
 }
 
 fn check_super_method_in_node(
     node: &Node,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile,
     project: &ProjectIndex,
     errors: &mut Vec<StructuralError>,
 ) {
@@ -488,17 +487,16 @@ fn check_super_method_in_node(
         && let Ok(recv_name) = receiver.utf8_text(source.as_bytes())
         && recv_name == "super"
     {
+        let extends = file.extends_class();
         let mut cursor2 = node.walk();
         for child in node.children(&mut cursor2) {
             if child.kind() == "attribute_call"
                 && let Some(method_node) = child.named_child(0)
                 && let Ok(method_name) = method_node.utf8_text(source.as_bytes())
             {
-                let mut found = symbols
-                    .extends
-                    .as_ref()
+                let mut found = extends
                     .is_some_and(|ext| project.method_exists(ext, method_name));
-                if !found && let Some(ext) = &symbols.extends {
+                if !found && let Some(ext) = extends {
                     let classdb_ext = resolve_to_classdb_type(ext, project);
                     found = crate::class_db::method_exists(&classdb_ext, method_name);
                 }
@@ -508,7 +506,7 @@ fn check_super_method_in_node(
                         column: method_node.start_position().column as u32 + 1,
                         message: format!(
                             "function \"{method_name}()\" not found in base {}",
-                            symbols.extends.as_deref().unwrap_or("Node"),
+                            file.extends_class().unwrap_or("Node"),
                         ),
                     });
                 }
@@ -519,7 +517,7 @@ fn check_super_method_in_node(
     let mut cursor = node.walk();
     if cursor.goto_first_child() {
         loop {
-            check_super_method_in_node(&cursor.node(), source, symbols, project, errors);
+            check_super_method_in_node(&cursor.node(), source, file, project, errors);
             if !cursor.goto_next_sibling() {
                 break;
             }

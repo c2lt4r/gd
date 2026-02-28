@@ -2,7 +2,6 @@ use crate::core::gd_ast::{self, GdExpr, GdFile};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
-use crate::core::symbol_table::SymbolTable;
 
 pub struct UnusedPrivateClassVariable;
 
@@ -28,7 +27,6 @@ impl LintRule for UnusedPrivateClassVariable {
         file: &GdFile<'_>,
         _source: &str,
         _config: &LintConfig,
-        symbols: &SymbolTable,
     ) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
 
@@ -40,11 +38,11 @@ impl LintRule for UnusedPrivateClassVariable {
             }
         });
 
-        for var in &symbols.variables {
-            if !var.name.starts_with('_') || var.is_constant {
+        for var in file.vars() {
+            if !var.name.starts_with('_') || var.is_const {
                 continue;
             }
-            if !referenced.contains(var.name.as_str()) {
+            if !referenced.contains(var.name) {
                 diags.push(LintDiagnostic {
                     rule: "unused-private-class-variable",
                     message: format!(
@@ -52,7 +50,7 @@ impl LintRule for UnusedPrivateClassVariable {
                         var.name
                     ),
                     severity: Severity::Warning,
-                    line: var.line,
+                    line: var.node.start_position().row,
                     column: 0,
                     end_column: None,
                     fix: None,
@@ -70,14 +68,12 @@ mod tests {
     use super::*;
     use crate::core::parser;
     use crate::core::gd_ast;
-    use crate::core::symbol_table;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();
         let file = gd_ast::convert(&tree, source);
-        let symbols = symbol_table::build(&tree, source);
         let config = LintConfig::default();
-        UnusedPrivateClassVariable.check_with_symbols(&file, source, &config, &symbols)
+        UnusedPrivateClassVariable.check_with_symbols(&file, source, &config)
     }
 
     #[test]

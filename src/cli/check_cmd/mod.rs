@@ -18,11 +18,11 @@ use miette::Result;
 use owo_colors::OwoColorize;
 use serde::Serialize;
 
-use crate::core::symbol_table::SymbolTable;
+use crate::core::gd_ast::{self, GdFile};
 use crate::core::workspace_index::ProjectIndex;
 use crate::core::{
     config::Config, config::find_project_root, fs::collect_gdscript_files,
-    fs::collect_resource_files, parser, resource_parser, scene, symbol_table,
+    fs::collect_resource_files, parser, resource_parser, scene,
 };
 use crate::lint::matches_ignore_pattern;
 use crate::lint::rules::LintRule;
@@ -115,14 +115,14 @@ pub fn exec(args: &CheckArgs) -> Result<()> {
                 Ok((source, tree)) => {
                     let root_node = tree.root_node();
                     let has_parse_errors = root_node.has_error();
-                    let symbols = symbol_table::build(&tree, &source);
+                    let gd_file = gd_ast::convert(&tree, &source);
                     let structural =
-                        validate_structure(&root_node, &source, &symbols, Some(&root_project));
+                        validate_structure(&root_node, &source, &gd_file, Some(&root_project));
                     let classdb =
-                        check_classdb_errors(&root_node, &source, &symbols, &project_index);
+                        check_classdb_errors(&gd_file, &source, &project_index);
                     let duplicates = check_duplicates(&tree, &source);
-                    let promoted = check_promoted_rules(&tree, &source, &symbols);
-                    let overrides = check_overrides(&tree, &source, &symbols, &project_index);
+                    let promoted = check_promoted_rules(&tree, &source, &gd_file);
+                    let overrides = check_overrides(&tree, &source, &gd_file, &project_index);
 
                     let has_errors = has_parse_errors
                         || !structural.is_empty()
@@ -340,14 +340,13 @@ fn check_duplicates(
 // ---------------------------------------------------------------------------
 
 fn check_overrides(
-    tree: &tree_sitter::Tree,
+    _tree: &tree_sitter::Tree,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile,
     project: &ProjectIndex,
 ) -> Vec<crate::lint::rules::LintDiagnostic> {
-    let file = crate::core::gd_ast::convert(tree, source);
     let lint_config = crate::core::config::LintConfig::default();
-    OverrideSignatureMismatch.check_with_project(&file, source, &lint_config, symbols, project)
+    OverrideSignatureMismatch.check_with_project(file, source, &lint_config, project)
 }
 
 // ---------------------------------------------------------------------------
@@ -355,30 +354,28 @@ fn check_overrides(
 // ---------------------------------------------------------------------------
 
 fn check_promoted_rules(
-    tree: &tree_sitter::Tree,
+    _tree: &tree_sitter::Tree,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile,
 ) -> Vec<crate::lint::rules::LintDiagnostic> {
-    let file = crate::core::gd_ast::convert(tree, source);
     let lint_config = crate::core::config::LintConfig::default();
     let mut diags = Vec::new();
 
     // duplicate-key: duplicate dictionary keys are a compile error
-    diags.extend(DuplicateKey.check(&file, source, &lint_config));
+    diags.extend(DuplicateKey.check(file, source, &lint_config));
 
     // onready-with-export: @onready + @export is a compile error
-    diags.extend(OnreadyWithExport.check_with_symbols(&file, source, &lint_config, symbols));
+    diags.extend(OnreadyWithExport.check_with_symbols(file, source, &lint_config));
 
     // get-node-default-without-onready: $Path default without @onready is a compile error
     diags.extend(GetNodeDefaultWithoutOnready.check_with_symbols(
-        &file,
+        file,
         source,
         &lint_config,
-        symbols,
     ));
 
     // native-method-override: overriding a native non-virtual method is a compile error
-    diags.extend(NativeMethodOverride.check_with_symbols(&file, source, &lint_config, symbols));
+    diags.extend(NativeMethodOverride.check_with_symbols(file, source, &lint_config));
 
     diags
 }

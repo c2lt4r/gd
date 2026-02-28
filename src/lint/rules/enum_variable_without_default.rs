@@ -1,8 +1,7 @@
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{GdDecl, GdFile};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
-use crate::core::symbol_table::SymbolTable;
 
 pub struct EnumVariableWithoutDefault;
 
@@ -25,30 +24,33 @@ impl LintRule for EnumVariableWithoutDefault {
 
     fn check_with_symbols(
         &self,
-        _file: &GdFile<'_>,
+        file: &GdFile<'_>,
         _source: &str,
         _config: &LintConfig,
-        symbols: &SymbolTable,
     ) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        check_table(symbols, &mut diags);
-        for (_, inner) in &symbols.inner_classes {
-            check_table(inner, &mut diags);
+        check_decls(&file.declarations, &mut diags);
+        for inner in file.inner_classes() {
+            check_decls(&inner.declarations, &mut diags);
         }
         diags
     }
 }
 
-fn check_table(symbols: &SymbolTable, diags: &mut Vec<LintDiagnostic>) {
-    let enum_names: Vec<&str> = symbols.enums.iter().map(|e| e.name.as_str()).collect();
+fn check_decls(decls: &[GdDecl], diags: &mut Vec<LintDiagnostic>) {
+    let enum_names: Vec<&str> = decls
+        .iter()
+        .filter_map(GdDecl::as_enum)
+        .map(|e| e.name)
+        .collect();
 
-    for var in &symbols.variables {
-        if var.has_default || var.is_constant {
+    for var in decls.iter().filter_map(GdDecl::as_var) {
+        if var.value.is_some() || var.is_const {
             continue;
         }
         if let Some(ref ann) = var.type_ann
             && !ann.is_inferred
-            && enum_names.contains(&ann.name.as_str())
+            && enum_names.contains(&ann.name)
         {
             diags.push(LintDiagnostic {
                 rule: "enum-variable-without-default",
@@ -57,7 +59,7 @@ fn check_table(symbols: &SymbolTable, diags: &mut Vec<LintDiagnostic>) {
                     var.name, ann.name
                 ),
                 severity: Severity::Warning,
-                line: var.line,
+                line: var.node.start_position().row,
                 column: 0,
                 end_column: None,
                 fix: None,
@@ -72,14 +74,12 @@ mod tests {
     use super::*;
     use crate::core::parser;
     use crate::core::gd_ast;
-    use crate::core::symbol_table;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();
         let file = gd_ast::convert(&tree, source);
-        let symbols = symbol_table::build(&tree, source);
         let config = LintConfig::default();
-        EnumVariableWithoutDefault.check_with_symbols(&file, source, &config, &symbols)
+        EnumVariableWithoutDefault.check_with_symbols(&file, source, &config)
     }
 
     #[test]

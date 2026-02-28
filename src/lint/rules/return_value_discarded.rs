@@ -2,7 +2,6 @@ use crate::core::gd_ast::{self, GdExpr, GdFile, GdStmt};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
-use crate::core::symbol_table::SymbolTable;
 use crate::core::type_inference::{
     InferredType, infer_expression_type, infer_expression_type_with_project,
 };
@@ -32,10 +31,9 @@ impl LintRule for ReturnValueDiscarded {
         file: &GdFile<'_>,
         source: &str,
         _config: &LintConfig,
-        symbols: &SymbolTable,
     ) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        check_stmts(file, source, symbols, None, &mut diags);
+        check_stmts(file, source, None, &mut diags);
         diags
     }
 
@@ -44,11 +42,10 @@ impl LintRule for ReturnValueDiscarded {
         file: &GdFile<'_>,
         source: &str,
         _config: &LintConfig,
-        symbols: &SymbolTable,
         project: &ProjectIndex,
     ) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        check_stmts(file, source, symbols, Some(project), &mut diags);
+        check_stmts(file, source, Some(project), &mut diags);
         diags
     }
 }
@@ -56,7 +53,6 @@ impl LintRule for ReturnValueDiscarded {
 fn check_stmts(
     file: &GdFile,
     source: &str,
-    symbols: &SymbolTable,
     project: Option<&ProjectIndex>,
     diags: &mut Vec<LintDiagnostic>,
 ) {
@@ -67,9 +63,9 @@ fn check_stmts(
         {
             let expr_node = expr.node();
             let inferred = if let Some(proj) = project {
-                infer_expression_type_with_project(&expr_node, source, symbols, proj)
+                infer_expression_type_with_project(&expr_node, source, file, proj)
             } else {
-                infer_expression_type(&expr_node, source, symbols)
+                infer_expression_type(&expr_node, source, file)
             };
 
             if matches!(inferred, Some(InferredType::Void) | None) {
@@ -104,14 +100,13 @@ fn is_call_expr(expr: &GdExpr) -> bool {
 mod tests {
     use super::*;
     use crate::core::gd_ast;
-    use crate::core::{parser, symbol_table};
+    use crate::core::parser;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();
         let file = gd_ast::convert(&tree, source);
-        let symbols = symbol_table::build(&tree, source);
         let config = LintConfig::default();
-        ReturnValueDiscarded.check_with_symbols(&file, source, &config, &symbols)
+        ReturnValueDiscarded.check_with_symbols(&file, source, &config)
     }
 
     #[test]

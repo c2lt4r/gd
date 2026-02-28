@@ -20,6 +20,7 @@ pub struct GdFile<'a> {
     pub extends: Option<GdExtends<'a>>,
     pub extends_node: Option<Node<'a>>,
     pub is_tool: bool,
+    pub has_static_unload: bool,
     pub declarations: Vec<GdDecl<'a>>,
 }
 
@@ -56,6 +57,8 @@ pub struct GdFunc<'a> {
     pub is_static: bool,
     pub is_constructor: bool,
     pub annotations: Vec<GdAnnotation<'a>>,
+    /// `##` doc comment text, if any.
+    pub doc: Option<&'a str>,
 }
 
 /// A function parameter.
@@ -81,6 +84,8 @@ pub struct GdVar<'a> {
     pub annotations: Vec<GdAnnotation<'a>>,
     pub setter: Option<&'a str>,
     pub getter: Option<&'a str>,
+    /// `##` doc comment text, if any.
+    pub doc: Option<&'a str>,
 }
 
 /// A type reference (annotation or return type).
@@ -106,6 +111,8 @@ pub struct GdSignal<'a> {
     pub name: &'a str,
     pub name_node: Option<Node<'a>>,
     pub params: Vec<GdParam<'a>>,
+    /// `##` doc comment text, if any.
+    pub doc: Option<&'a str>,
 }
 
 /// An `enum` declaration.
@@ -115,6 +122,8 @@ pub struct GdEnum<'a> {
     pub name: &'a str,
     pub name_node: Option<Node<'a>>,
     pub members: Vec<GdEnumMember<'a>>,
+    /// `##` doc comment text, if any.
+    pub doc: Option<&'a str>,
 }
 
 /// A single enum member (name + optional value).
@@ -134,6 +143,8 @@ pub struct GdClass<'a> {
     pub name_node: Option<Node<'a>>,
     pub extends: Option<GdExtends<'a>>,
     pub declarations: Vec<GdDecl<'a>>,
+    /// `##` doc comment text, if any.
+    pub doc: Option<&'a str>,
 }
 
 /// An `if` statement with optional `elif`/`else` chains.
@@ -384,9 +395,73 @@ impl<'a> GdDecl<'a> {
     pub fn is_declaration(&self) -> bool {
         !matches!(self, GdDecl::Stmt(_))
     }
+
+    /// Returns `Some(&GdFunc)` if this is a `Func` variant.
+    #[must_use]
+    pub fn as_func(&self) -> Option<&GdFunc<'a>> {
+        if let GdDecl::Func(f) = self { Some(f) } else { None }
+    }
+
+    /// Returns `Some(&GdVar)` if this is a `Var` variant.
+    #[must_use]
+    pub fn as_var(&self) -> Option<&GdVar<'a>> {
+        if let GdDecl::Var(v) = self { Some(v) } else { None }
+    }
+
+    /// Returns `Some(&GdSignal)` if this is a `Signal` variant.
+    #[must_use]
+    pub fn as_signal(&self) -> Option<&GdSignal<'a>> {
+        if let GdDecl::Signal(s) = self { Some(s) } else { None }
+    }
+
+    /// Returns `Some(&GdEnum)` if this is an `Enum` variant.
+    #[must_use]
+    pub fn as_enum(&self) -> Option<&GdEnum<'a>> {
+        if let GdDecl::Enum(e) = self { Some(e) } else { None }
+    }
+
+    /// Returns `Some(&GdClass)` if this is a `Class` variant.
+    #[must_use]
+    pub fn as_class(&self) -> Option<&GdClass<'a>> {
+        if let GdDecl::Class(c) = self { Some(c) } else { None }
+    }
 }
 
 impl<'a> GdFile<'a> {
+    /// Iterate over all top-level function declarations.
+    pub fn funcs(&self) -> impl Iterator<Item = &GdFunc<'a>> {
+        self.declarations.iter().filter_map(GdDecl::as_func)
+    }
+
+    /// Iterate over all top-level variable/constant declarations.
+    pub fn vars(&self) -> impl Iterator<Item = &GdVar<'a>> {
+        self.declarations.iter().filter_map(GdDecl::as_var)
+    }
+
+    /// Iterate over all top-level signal declarations.
+    pub fn signals(&self) -> impl Iterator<Item = &GdSignal<'a>> {
+        self.declarations.iter().filter_map(GdDecl::as_signal)
+    }
+
+    /// Iterate over all top-level enum declarations.
+    pub fn enums(&self) -> impl Iterator<Item = &GdEnum<'a>> {
+        self.declarations.iter().filter_map(GdDecl::as_enum)
+    }
+
+    /// Iterate over all inner class declarations.
+    pub fn inner_classes(&self) -> impl Iterator<Item = &GdClass<'a>> {
+        self.declarations.iter().filter_map(GdDecl::as_class)
+    }
+
+    /// Returns the extends class name (only for `GdExtends::Class`).
+    #[must_use]
+    pub fn extends_class(&self) -> Option<&str> {
+        match self.extends {
+            Some(GdExtends::Class(c)) => Some(c),
+            _ => None,
+        }
+    }
+
     /// Find a top-level declaration by name.
     #[must_use]
     pub fn find_decl_by_name(&self, name: &str) -> Option<&GdDecl<'a>> {
@@ -755,6 +830,7 @@ pub fn convert<'a>(tree: &'a Tree, source: &'a str) -> GdFile<'a> {
         extends: None,
         extends_node: None,
         is_tool: false,
+        has_static_unload: false,
         declarations: Vec::new(),
     };
 
@@ -763,6 +839,8 @@ pub fn convert<'a>(tree: &'a Tree, source: &'a str) -> GdFile<'a> {
 
     // Pending annotations accumulate before the next declaration.
     let mut pending_annotations: Vec<GdAnnotation<'a>> = Vec::new();
+    // Pending `##` doc comment lines accumulate before the next declaration.
+    let mut pending_doc: Option<&'a str> = None;
 
     for child in &children {
         if child.is_error() || child.is_missing() {
@@ -773,18 +851,40 @@ pub fn convert<'a>(tree: &'a Tree, source: &'a str) -> GdFile<'a> {
                 let name_node = child.child_by_field_name("name");
                 file.class_name = name_node.and_then(|n| n.utf8_text(bytes).ok());
                 file.class_name_node = name_node;
+                pending_doc = None;
             }
             "extends_statement" => {
                 file.extends = convert_extends(child, source);
                 file.extends_node = Some(*child);
+                pending_doc = None;
+            }
+            "comment" => {
+                if let Ok(text) = child.utf8_text(bytes) {
+                    if text.starts_with("##") {
+                        // Accumulate doc comments — use the whole comment block's
+                        // byte range. On the first `##` line, start the span. On
+                        // subsequent contiguous `##` lines, extend it. A non-`##`
+                        // node resets.
+                        let start = pending_doc
+                            .map_or(child.start_byte(), |d| d.as_ptr() as usize - source.as_ptr() as usize);
+                        let end = child.end_byte();
+                        pending_doc = source.get(start..end);
+                    } else {
+                        // Regular `#` comment breaks the doc chain.
+                        pending_doc = None;
+                    }
+                }
             }
             "annotation" => {
                 let ann = convert_annotation(*child, source);
                 if ann.name == "tool" {
                     file.is_tool = true;
+                } else if ann.name == "static_unload" {
+                    file.has_static_unload = true;
                 } else {
                     pending_annotations.push(ann);
                 }
+                // Annotations don't break the doc comment chain.
             }
             "annotations" => {
                 let mut ac = child.walk();
@@ -793,6 +893,8 @@ pub fn convert<'a>(tree: &'a Tree, source: &'a str) -> GdFile<'a> {
                         let ann = convert_annotation(a, source);
                         if ann.name == "tool" {
                             file.is_tool = true;
+                        } else if ann.name == "static_unload" {
+                            file.has_static_unload = true;
                         } else {
                             pending_annotations.push(ann);
                         }
@@ -800,11 +902,13 @@ pub fn convert<'a>(tree: &'a Tree, source: &'a str) -> GdFile<'a> {
                 }
             }
             _ => {
-                if let Some(decl) = convert_decl(*child, source, &mut pending_annotations) {
+                if let Some(mut decl) = convert_decl(*child, source, &mut pending_annotations) {
+                    set_decl_doc(&mut decl, pending_doc.take());
                     file.declarations.push(decl);
                 } else if is_stmt_node(child) {
                     file.declarations.push(GdDecl::Stmt(convert_stmt(*child, source)));
                 }
+                pending_doc = None;
                 // If convert_decl returned None, any accumulated annotations
                 // are stale — clear them to avoid leaking onto the next decl.
                 if !pending_annotations.is_empty() {
@@ -815,6 +919,18 @@ pub fn convert<'a>(tree: &'a Tree, source: &'a str) -> GdFile<'a> {
     }
 
     file
+}
+
+/// Attach a doc comment to a declaration.
+fn set_decl_doc<'a>(decl: &mut GdDecl<'a>, doc: Option<&'a str>) {
+    match decl {
+        GdDecl::Func(f) => f.doc = doc,
+        GdDecl::Var(v) => v.doc = doc,
+        GdDecl::Signal(s) => s.doc = doc,
+        GdDecl::Enum(e) => e.doc = doc,
+        GdDecl::Class(c) => c.doc = doc,
+        GdDecl::Stmt(_) => {}
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -924,6 +1040,7 @@ fn convert_func<'a>(node: Node<'a>, source: &'a str, is_constructor: bool) -> Gd
         is_static,
         is_constructor,
         annotations,
+        doc: None,
     }
 }
 
@@ -1024,6 +1141,7 @@ fn convert_var<'a>(node: Node<'a>, source: &'a str, is_const: bool) -> GdVar<'a>
         annotations,
         setter,
         getter,
+        doc: None,
     }
 }
 
@@ -1041,7 +1159,7 @@ fn convert_signal<'a>(node: Node<'a>, source: &'a str) -> GdSignal<'a> {
         .child_by_field_name("parameters")
         .map(|p| convert_params(p, source))
         .unwrap_or_default();
-    GdSignal { node, name, name_node, params }
+    GdSignal { node, name, name_node, params, doc: None }
 }
 
 fn convert_enum<'a>(node: Node<'a>, source: &'a str) -> GdEnum<'a> {
@@ -1066,7 +1184,7 @@ fn convert_enum<'a>(node: Node<'a>, source: &'a str) -> GdEnum<'a> {
             }
         }
     }
-    GdEnum { node, name, name_node, members }
+    GdEnum { node, name, name_node, members, doc: None }
 }
 
 fn convert_class<'a>(node: Node<'a>, source: &'a str) -> GdClass<'a> {
@@ -1107,7 +1225,7 @@ fn convert_class<'a>(node: Node<'a>, source: &'a str) -> GdClass<'a> {
         }
     }
 
-    GdClass { node, name, name_node, extends, declarations }
+    GdClass { node, name, name_node, extends, declarations, doc: None }
 }
 
 // ═══════════════════════════════════════════════════════════════════════

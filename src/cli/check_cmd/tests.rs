@@ -1,13 +1,12 @@
-use crate::core::parser;
-use crate::core::symbol_table;
+use crate::core::{gd_ast, parser};
 use crate::core::workspace_index::ProjectIndex;
 
 use super::*;
 
 fn structural_errors(source: &str) -> Vec<StructuralError> {
     let tree = parser::parse(source).unwrap();
-    let symbols = symbol_table::build(&tree, source);
-    validate_structure(&tree.root_node(), source, &symbols, None)
+    let file = gd_ast::convert(&tree, source);
+    validate_structure(&tree.root_node(), source, &file, None)
 }
 
 // -- Top-level statement checks --
@@ -891,9 +890,9 @@ fn range_three_args_ok() {
 
 fn classdb_errors(source: &str) -> Vec<StructuralError> {
     let tree = parser::parse(source).unwrap();
-    let symbols = symbol_table::build(&tree, source);
+    let file = gd_ast::convert(&tree, source);
     let project = ProjectIndex::build(std::path::Path::new("/nonexistent"));
-    check_classdb_errors(&tree.root_node(), source, &symbols, &project)
+    check_classdb_errors(&file, source, &project)
 }
 
 // -- H5: class_name shadows native class --

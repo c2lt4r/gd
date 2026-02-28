@@ -5,7 +5,6 @@ use miette::Result;
 use serde::Serialize;
 use tree_sitter::Node;
 
-use crate::core::symbol_table;
 use crate::core::type_inference::{InferredType, infer_expression_type};
 
 // ── introduce-parameter ────────────────────────────────────────────────────
@@ -86,11 +85,11 @@ pub fn introduce_parameter(
     };
 
     // Resolve the effective type: explicit --type flag wins, otherwise infer from AST.
+    let gd_file = crate::core::gd_ast::convert(&tree, &source);
     let effective_type: Option<String> = if let Some(t) = type_hint {
         Some(t.to_string())
     } else {
-        let symbols = symbol_table::build(&tree, &source);
-        infer_expression_type(&expr, &source, &symbols).and_then(|ty| match ty {
+        infer_expression_type(&expr, &source, &gd_file).and_then(|ty| match ty {
             InferredType::Void | InferredType::Variant => None,
             _ => Some(ty.display_name()),
         })

@@ -2,7 +2,6 @@ use crate::core::gd_ast::{self, GdExpr, GdFile};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
-use crate::core::symbol_table::SymbolTable;
 use crate::core::workspace_index::ProjectIndex;
 
 pub struct StaticCalledOnInstance;
@@ -25,10 +24,9 @@ impl LintRule for StaticCalledOnInstance {
         file: &GdFile<'_>,
         _source: &str,
         _config: &LintConfig,
-        symbols: &SymbolTable,
     ) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        check_calls(file, symbols, None, &mut diags);
+        check_calls(file, None, &mut diags);
         diags
     }
 
@@ -37,18 +35,16 @@ impl LintRule for StaticCalledOnInstance {
         file: &GdFile<'_>,
         _source: &str,
         _config: &LintConfig,
-        symbols: &SymbolTable,
         project: &ProjectIndex,
     ) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        check_calls(file, symbols, Some(project), &mut diags);
+        check_calls(file, Some(project), &mut diags);
         diags
     }
 }
 
 fn check_calls(
     file: &GdFile,
-    symbols: &SymbolTable,
     project: Option<&ProjectIndex>,
     diags: &mut Vec<LintDiagnostic>,
 ) {
@@ -61,15 +57,14 @@ fn check_calls(
 
             // Check `self.static_method()` — same-file static
             if receiver_name == "self" {
-                if symbols
-                    .functions
-                    .iter()
+                if file
+                    .funcs()
                     .any(|f| f.name == *method && f.is_static)
                 {
                     emit_diagnostic(method, receiver_name, diags, expr);
                 }
             } else if let Some(proj) = project
-                && let Some(class) = resolve_receiver_class(receiver_name, symbols)
+                && let Some(class) = resolve_receiver_class(receiver_name, file)
                 && proj.method_is_static(&class, method) == Some(true)
             {
                 emit_diagnostic(method, receiver_name, diags, expr);
@@ -78,15 +73,15 @@ fn check_calls(
     });
 }
 
-/// Try to resolve the class name of a receiver identifier from the symbol table.
-fn resolve_receiver_class(receiver: &str, symbols: &SymbolTable) -> Option<String> {
-    for var in &symbols.variables {
+/// Try to resolve the class name of a receiver identifier from the typed AST.
+fn resolve_receiver_class(receiver: &str, file: &GdFile) -> Option<String> {
+    for var in file.vars() {
         if var.name == receiver {
             if let Some(ref type_ann) = var.type_ann
                 && !type_ann.is_inferred
                 && !type_ann.name.is_empty()
             {
-                return Some(type_ann.name.clone());
+                return Some(type_ann.name.to_string());
             }
             return None;
         }
@@ -114,15 +109,14 @@ mod tests {
     use super::*;
     use crate::core::workspace_index;
     use crate::core::gd_ast;
-    use crate::core::{parser, symbol_table};
+    use crate::core::parser;
     use std::path::PathBuf;
 
     fn check_same_file(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();
         let file = gd_ast::convert(&tree, source);
-        let symbols = symbol_table::build(&tree, source);
         let config = LintConfig::default();
-        StaticCalledOnInstance.check_with_symbols(&file, source, &config, &symbols)
+        StaticCalledOnInstance.check_with_symbols(&file, source, &config)
     }
 
     fn check_with_project(source: &str, project_files: &[(&str, &str)]) -> Vec<LintDiagnostic> {
@@ -135,9 +129,8 @@ mod tests {
 
         let tree = parser::parse(source).unwrap();
         let file = gd_ast::convert(&tree, source);
-        let symbols = symbol_table::build(&tree, source);
         let config = LintConfig::default();
-        StaticCalledOnInstance.check_with_project(&file, source, &config, &symbols, &project)
+        StaticCalledOnInstance.check_with_project(&file, source, &config, &project)
     }
 
     #[test]

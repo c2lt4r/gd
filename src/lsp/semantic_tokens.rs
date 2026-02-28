@@ -74,14 +74,14 @@ pub fn provide_semantic_tokens(
     workspace: Option<&WorkspaceIndex>,
 ) -> Option<SemanticTokensResult> {
     let tree = crate::core::parser::parse(source).ok()?;
-    let symbols = crate::core::symbol_table::build(&tree, source);
+    let file = crate::core::gd_ast::convert(&tree, source);
     let bytes = source.as_bytes();
 
     let mut raw_tokens = Vec::new();
     walk_node(
         tree.root_node(),
         bytes,
-        &symbols,
+        &file,
         workspace,
         &mut raw_tokens,
     );
@@ -121,18 +121,18 @@ pub fn provide_semantic_tokens(
 fn walk_node(
     node: tree_sitter::Node,
     source: &[u8],
-    symbols: &crate::core::symbol_table::SymbolTable,
+    file: &crate::core::gd_ast::GdFile,
     workspace: Option<&WorkspaceIndex>,
     tokens: &mut Vec<RawToken>,
 ) {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         if (child.kind() == "identifier" || child.kind() == "name")
-            && let Some(tok) = classify_identifier(child, source, symbols, workspace)
+            && let Some(tok) = classify_identifier(child, source, file, workspace)
         {
             tokens.push(tok);
         }
-        walk_node(child, source, symbols, workspace, tokens);
+        walk_node(child, source, file, workspace, tokens);
     }
 }
 
@@ -140,7 +140,7 @@ fn walk_node(
 fn classify_identifier(
     node: tree_sitter::Node,
     source: &[u8],
-    symbols: &crate::core::symbol_table::SymbolTable,
+    file: &crate::core::gd_ast::GdFile,
     workspace: Option<&WorkspaceIndex>,
 ) -> Option<RawToken> {
     let parent = node.parent()?;
@@ -167,7 +167,7 @@ fn classify_identifier(
     }
 
     // Check by name (workspace symbols, engine classes, enum members).
-    classify_by_name(text, symbols, workspace).map(|(tt, m)| make(tt, m))
+    classify_by_name(text, file, workspace).map(|(tt, m)| make(tt, m))
 }
 
 /// Classify an identifier based on its parent node context (declarations, calls, types).
@@ -249,7 +249,7 @@ fn classify_type_parent(type_node: &tree_sitter::Node) -> Option<(u32, u32)> {
 /// Classify an identifier by its text — workspace symbols, engine classes, enum members.
 fn classify_by_name(
     text: &str,
-    symbols: &crate::core::symbol_table::SymbolTable,
+    file: &crate::core::gd_ast::GdFile,
     workspace: Option<&WorkspaceIndex>,
 ) -> Option<(u32, u32)> {
     // Workspace autoload references
@@ -268,8 +268,8 @@ fn classify_by_name(
     }
 
     // Enum member references
-    for e in &symbols.enums {
-        if e.members.contains(&text.to_string()) {
+    for e in file.enums() {
+        if e.members.iter().any(|m| m.name == text) {
             return Some((TYPE_PROPERTY, MOD_READONLY));
         }
     }

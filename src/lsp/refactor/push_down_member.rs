@@ -206,7 +206,7 @@ fn discover_child_files(
     project_root: &Path,
 ) -> Result<Vec<std::path::PathBuf>> {
     let parent_tree = crate::core::parser::parse(parent_source)?;
-    let parent_table = crate::core::symbol_table::build(&parent_tree, parent_source);
+    let parent_gd = gd_ast::convert(&parent_tree, parent_source);
 
     let index = ProjectIndex::build(project_root);
     let parent_relative = crate::core::fs::relative_slash(parent_file, project_root);
@@ -221,9 +221,8 @@ fn discover_child_files(
 
         let is_child = if let Some(ref extends) = fs.extends {
             // Match by class_name
-            let by_name = parent_table
+            let by_name = parent_gd
                 .class_name
-                .as_ref()
                 .is_some_and(|cn| extends == cn);
             // Also match by res:// path in extends (e.g., extends "res://base.gd")
             by_name || extends == &parent_res || extends == &parent_relative

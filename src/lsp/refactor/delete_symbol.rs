@@ -83,16 +83,15 @@ pub fn delete_symbol(
     // in files that reference that class (avoids false positives from same-name methods
     // on unrelated classes).
     let workspace = crate::lsp::workspace::WorkspaceIndex::new(project_root.to_path_buf());
-    let symbols = crate::core::symbol_table::build(&tree, &source);
     let all_refs = crate::lsp::references::find_references_by_name(
         &symbol_name,
         &workspace,
-        if symbols.class_name.is_none() {
+        if gd_file.class_name.is_none() {
             Some(file)
         } else {
             None
         },
-        symbols.class_name.as_deref(),
+        gd_file.class_name,
     );
 
     // Filter out references within the declaration's own range
@@ -250,16 +249,15 @@ fn delete_enum_member(
 
     // Check references — scope to this class if class_name is declared
     let workspace = crate::lsp::workspace::WorkspaceIndex::new(project_root.to_path_buf());
-    let symbols = crate::core::symbol_table::build(&tree, &source);
     let all_refs = crate::lsp::references::find_references_by_name(
         member_name,
         &workspace,
-        if symbols.class_name.is_none() {
+        if gd_file.class_name.is_none() {
             Some(file)
         } else {
             None
         },
-        symbols.class_name.as_deref(),
+        gd_file.class_name,
     );
 
     let file_uri = tower_lsp::lsp_types::Url::from_file_path(file).ok();

@@ -2,7 +2,6 @@ use crate::core::gd_ast::{self, GdDecl, GdExpr, GdFile, GdFunc, GdStmt};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
-use crate::core::symbol_table::SymbolTable;
 use crate::core::type_inference::{InferredType, infer_expression_type_with_project};
 use crate::core::workspace_index::ProjectIndex;
 
@@ -26,13 +25,12 @@ impl LintRule for UntypedArrayArgument {
         file: &GdFile<'_>,
         source: &str,
         _config: &LintConfig,
-        symbols: &SymbolTable,
         project: &ProjectIndex,
     ) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
         gd_ast::visit_decls(file, &mut |decl| {
             if let GdDecl::Func(func) = decl {
-                check_stmts(&func.body, func, source, symbols, project, &mut diags);
+                check_stmts(&func.body, func, source, file, project, &mut diags);
             }
         });
         diags
@@ -44,49 +42,49 @@ fn check_stmts(
     stmts: &[GdStmt],
     func: &GdFunc,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile,
     project: &ProjectIndex,
     diags: &mut Vec<LintDiagnostic>,
 ) {
     for stmt in stmts {
         match stmt {
             GdStmt::Expr { expr, .. } => {
-                check_call_expr(expr, func, source, symbols, project, diags);
+                check_call_expr(expr, func, source, file, project, diags);
             }
             GdStmt::Var(var) => {
                 if let Some(value) = &var.value {
-                    check_call_expr(value, func, source, symbols, project, diags);
+                    check_call_expr(value, func, source, file, project, diags);
                 }
             }
             GdStmt::Assign { value, .. } | GdStmt::AugAssign { value, .. } => {
-                check_call_expr(value, func, source, symbols, project, diags);
+                check_call_expr(value, func, source, file, project, diags);
             }
             GdStmt::Return { value: Some(v), .. } => {
-                check_call_expr(v, func, source, symbols, project, diags);
+                check_call_expr(v, func, source, file, project, diags);
             }
             GdStmt::If(if_stmt) => {
-                check_call_expr(&if_stmt.condition, func, source, symbols, project, diags);
-                check_stmts(&if_stmt.body, func, source, symbols, project, diags);
+                check_call_expr(&if_stmt.condition, func, source, file, project, diags);
+                check_stmts(&if_stmt.body, func, source, file, project, diags);
                 for (cond, branch) in &if_stmt.elif_branches {
-                    check_call_expr(cond, func, source, symbols, project, diags);
-                    check_stmts(branch, func, source, symbols, project, diags);
+                    check_call_expr(cond, func, source, file, project, diags);
+                    check_stmts(branch, func, source, file, project, diags);
                 }
                 if let Some(else_body) = &if_stmt.else_body {
-                    check_stmts(else_body, func, source, symbols, project, diags);
+                    check_stmts(else_body, func, source, file, project, diags);
                 }
             }
             GdStmt::For { iter, body, .. } => {
-                check_call_expr(iter, func, source, symbols, project, diags);
-                check_stmts(body, func, source, symbols, project, diags);
+                check_call_expr(iter, func, source, file, project, diags);
+                check_stmts(body, func, source, file, project, diags);
             }
             GdStmt::While { condition, body, .. } => {
-                check_call_expr(condition, func, source, symbols, project, diags);
-                check_stmts(body, func, source, symbols, project, diags);
+                check_call_expr(condition, func, source, file, project, diags);
+                check_stmts(body, func, source, file, project, diags);
             }
             GdStmt::Match { value, arms, .. } => {
-                check_call_expr(value, func, source, symbols, project, diags);
+                check_call_expr(value, func, source, file, project, diags);
                 for arm in arms {
-                    check_stmts(&arm.body, func, source, symbols, project, diags);
+                    check_stmts(&arm.body, func, source, file, project, diags);
                 }
             }
             _ => {}
@@ -99,7 +97,7 @@ fn check_call_expr(
     expr: &GdExpr,
     func: &GdFunc,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile,
     project: &ProjectIndex,
     diags: &mut Vec<LintDiagnostic>,
 ) {
@@ -107,51 +105,51 @@ fn check_call_expr(
     if let GdExpr::Call { callee, args, .. } = expr
         && let GdExpr::Ident { name: func_name, .. } = callee.as_ref()
     {
-        check_call_args(func_name, args, func, source, symbols, project, diags);
+        check_call_args(func_name, args, func, source, file, project, diags);
     }
 
     // Recurse into sub-expressions
     match expr {
         GdExpr::Call { callee, args, .. } => {
-            check_call_expr(callee, func, source, symbols, project, diags);
+            check_call_expr(callee, func, source, file, project, diags);
             for a in args {
-                check_call_expr(a, func, source, symbols, project, diags);
+                check_call_expr(a, func, source, file, project, diags);
             }
         }
         GdExpr::MethodCall { receiver, args, .. } => {
-            check_call_expr(receiver, func, source, symbols, project, diags);
+            check_call_expr(receiver, func, source, file, project, diags);
             for a in args {
-                check_call_expr(a, func, source, symbols, project, diags);
+                check_call_expr(a, func, source, file, project, diags);
             }
         }
         GdExpr::BinOp { left, right, .. } => {
-            check_call_expr(left, func, source, symbols, project, diags);
-            check_call_expr(right, func, source, symbols, project, diags);
+            check_call_expr(left, func, source, file, project, diags);
+            check_call_expr(right, func, source, file, project, diags);
         }
         GdExpr::UnaryOp { operand, .. } => {
-            check_call_expr(operand, func, source, symbols, project, diags);
+            check_call_expr(operand, func, source, file, project, diags);
         }
         GdExpr::Ternary { condition, true_val, false_val, .. } => {
-            check_call_expr(condition, func, source, symbols, project, diags);
-            check_call_expr(true_val, func, source, symbols, project, diags);
-            check_call_expr(false_val, func, source, symbols, project, diags);
+            check_call_expr(condition, func, source, file, project, diags);
+            check_call_expr(true_val, func, source, file, project, diags);
+            check_call_expr(false_val, func, source, file, project, diags);
         }
         GdExpr::Array { elements, .. } => {
             for e in elements {
-                check_call_expr(e, func, source, symbols, project, diags);
+                check_call_expr(e, func, source, file, project, diags);
             }
         }
         GdExpr::Subscript { receiver, index, .. } => {
-            check_call_expr(receiver, func, source, symbols, project, diags);
-            check_call_expr(index, func, source, symbols, project, diags);
+            check_call_expr(receiver, func, source, file, project, diags);
+            check_call_expr(index, func, source, file, project, diags);
         }
         GdExpr::PropertyAccess { receiver, .. } => {
-            check_call_expr(receiver, func, source, symbols, project, diags);
+            check_call_expr(receiver, func, source, file, project, diags);
         }
         GdExpr::Cast { expr: inner, .. }
         | GdExpr::Is { expr: inner, .. }
         | GdExpr::Await { expr: inner, .. } => {
-            check_call_expr(inner, func, source, symbols, project, diags);
+            check_call_expr(inner, func, source, file, project, diags);
         }
         _ => {}
     }
@@ -163,11 +161,11 @@ fn check_call_args(
     args: &[GdExpr],
     func: &GdFunc,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile,
     project: &ProjectIndex,
     diags: &mut Vec<LintDiagnostic>,
 ) {
-    let param_types = resolve_param_types(func_name, symbols, project);
+    let param_types = resolve_param_types(func_name, file, project);
     if param_types.is_empty() {
         return;
     }
@@ -188,7 +186,7 @@ fn check_call_args(
         // Infer argument type — use raw node escape hatch for type inference API,
         // then fall back to local variable lookup via typed AST
         let arg_node = arg.node();
-        let arg_type = infer_expression_type_with_project(&arg_node, source, symbols, project)
+        let arg_type = infer_expression_type_with_project(&arg_node, source, file, project)
             .or_else(|| resolve_local_type(arg, &func.body));
 
         let Some(arg_type) = arg_type else {
@@ -278,11 +276,11 @@ fn classify_array_type(type_name: &str) -> InferredType {
 /// Returns Vec of `Option<String>` where `None` means untyped parameter.
 fn resolve_param_types(
     func_name: &str,
-    symbols: &SymbolTable,
+    file: &GdFile,
     project: &ProjectIndex,
 ) -> Vec<Option<String>> {
     // Same-file functions first
-    for func in &symbols.functions {
+    for func in file.funcs() {
         if func.name == func_name {
             return func
                 .params
@@ -291,7 +289,7 @@ fn resolve_param_types(
                     p.type_ann
                         .as_ref()
                         .filter(|t| !t.is_inferred && !t.name.is_empty())
-                        .map(|t| t.name.clone())
+                        .map(|t| t.name.to_string())
                 })
                 .collect();
         }
@@ -325,7 +323,7 @@ mod tests {
     use super::*;
     use crate::core::workspace_index;
     use crate::core::gd_ast;
-    use crate::core::{parser, symbol_table};
+    use crate::core::parser;
     use std::path::PathBuf;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
@@ -342,9 +340,8 @@ mod tests {
 
         let tree = parser::parse(source).unwrap();
         let file = gd_ast::convert(&tree, source);
-        let symbols = symbol_table::build(&tree, source);
         let config = LintConfig::default();
-        UntypedArrayArgument.check_with_project(&file, source, &config, &symbols, &project)
+        UntypedArrayArgument.check_with_project(&file, source, &config, &project)
     }
 
     #[test]

@@ -2,7 +2,7 @@ use std::path::Path;
 
 use tree_sitter::Node;
 
-use crate::core::symbol_table::SymbolTable;
+use crate::core::gd_ast::{GdClass, GdFile};
 use crate::core::type_inference;
 
 use super::StructuralError;
@@ -11,7 +11,7 @@ use super::StructuralError;
 pub(super) fn validate_structure(
     root: &Node,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile<'_>,
     project_root: Option<&Path>,
 ) -> Vec<StructuralError> {
     let mut errors = Vec::new();
@@ -19,10 +19,10 @@ pub(super) fn validate_structure(
     check_indentation_consistency(root, &mut errors);
     check_class_constants(root, source, &mut errors);
     check_variant_inference(root, source, &mut errors);
-    check_declaration_constraints(root, source, symbols, &mut errors);
-    check_semantic_errors(root, source, symbols, &mut errors);
+    check_declaration_constraints(root, source, file, &mut errors);
+    check_semantic_errors(root, source, file, &mut errors);
     check_preload_and_misc(root, source, project_root, &mut errors);
-    check_advanced_semantic(root, source, symbols, &mut errors);
+    check_advanced_semantic(root, source, file, &mut errors);
     errors
 }
 
@@ -570,45 +570,60 @@ fn is_in_operator(node: &Node, source: &str) -> bool {
 fn check_declaration_constraints(
     root: &Node,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile<'_>,
     errors: &mut Vec<StructuralError>,
 ) {
-    check_init_return_type(symbols, errors);
-    check_mandatory_after_optional(symbols, errors);
+    check_init_return_type(file, errors);
+    check_mandatory_after_optional(file, errors);
     check_signal_default_values(root, source, errors);
     check_duplicate_class_name_extends(root, source, errors);
-    check_duplicate_param_names(symbols, errors);
+    check_duplicate_param_names(file, errors);
     check_yield_keyword(root, source, errors);
-    check_static_init_params(symbols, errors);
+    check_static_init_params(file, errors);
     check_duplicate_tool(root, source, errors);
 }
 
 /// G4: Constructor `_init` cannot have a return type.
-fn check_init_return_type(symbols: &SymbolTable, errors: &mut Vec<StructuralError>) {
-    for func in &symbols.functions {
+fn check_init_return_type(file: &GdFile<'_>, errors: &mut Vec<StructuralError>) {
+    for func in file.funcs() {
         if func.name == "_init" && func.return_type.is_some() {
             errors.push(StructuralError {
-                line: func.line as u32 + 1,
+                line: func.node.start_position().row as u32 + 1,
                 column: 1,
                 message: "constructor `_init()` cannot have a return type".to_string(),
             });
         }
     }
-    for (_, inner) in &symbols.inner_classes {
-        check_init_return_type(inner, errors);
+    for inner in file.inner_classes() {
+        check_init_return_type_inner(inner, errors);
+    }
+}
+
+fn check_init_return_type_inner(class: &GdClass<'_>, errors: &mut Vec<StructuralError>) {
+    for func in class.declarations.iter().filter_map(|d| d.as_func()) {
+        if func.name == "_init" && func.return_type.is_some() {
+            errors.push(StructuralError {
+                line: func.node.start_position().row as u32 + 1,
+                column: 1,
+                message: "constructor `_init()` cannot have a return type".to_string(),
+            });
+        }
+    }
+    for inner in class.declarations.iter().filter_map(|d| d.as_class()) {
+        check_init_return_type_inner(inner, errors);
     }
 }
 
 /// G3: Mandatory parameter after optional parameter.
-fn check_mandatory_after_optional(symbols: &SymbolTable, errors: &mut Vec<StructuralError>) {
-    for func in &symbols.functions {
+fn check_mandatory_after_optional(file: &GdFile<'_>, errors: &mut Vec<StructuralError>) {
+    for func in file.funcs() {
         let mut seen_optional = false;
         for param in &func.params {
-            if param.has_default {
+            if param.default.is_some() {
                 seen_optional = true;
             } else if seen_optional {
                 errors.push(StructuralError {
-                    line: func.line as u32 + 1,
+                    line: func.node.start_position().row as u32 + 1,
                     column: 1,
                     message: format!(
                         "required parameter `{}` follows optional parameter in `{}()`",
@@ -619,8 +634,32 @@ fn check_mandatory_after_optional(symbols: &SymbolTable, errors: &mut Vec<Struct
             }
         }
     }
-    for (_, inner) in &symbols.inner_classes {
-        check_mandatory_after_optional(inner, errors);
+    for inner in file.inner_classes() {
+        check_mandatory_after_optional_inner(inner, errors);
+    }
+}
+
+fn check_mandatory_after_optional_inner(class: &GdClass<'_>, errors: &mut Vec<StructuralError>) {
+    for func in class.declarations.iter().filter_map(|d| d.as_func()) {
+        let mut seen_optional = false;
+        for param in &func.params {
+            if param.default.is_some() {
+                seen_optional = true;
+            } else if seen_optional {
+                errors.push(StructuralError {
+                    line: func.node.start_position().row as u32 + 1,
+                    column: 1,
+                    message: format!(
+                        "required parameter `{}` follows optional parameter in `{}()`",
+                        param.name, func.name,
+                    ),
+                });
+                break;
+            }
+        }
+    }
+    for inner in class.declarations.iter().filter_map(|d| d.as_class()) {
+        check_mandatory_after_optional_inner(inner, errors);
     }
 }
 
@@ -702,13 +741,13 @@ fn check_duplicate_class_name_extends(
 }
 
 /// G7: Duplicate parameter names in the same function.
-fn check_duplicate_param_names(symbols: &SymbolTable, errors: &mut Vec<StructuralError>) {
-    for func in &symbols.functions {
+fn check_duplicate_param_names(file: &GdFile<'_>, errors: &mut Vec<StructuralError>) {
+    for func in file.funcs() {
         let mut seen = std::collections::HashSet::new();
         for param in &func.params {
-            if !seen.insert(&param.name) {
+            if !seen.insert(param.name) {
                 errors.push(StructuralError {
-                    line: func.line as u32 + 1,
+                    line: func.node.start_position().row as u32 + 1,
                     column: 1,
                     message: format!(
                         "duplicate parameter name `{}` in `{}()`",
@@ -718,8 +757,29 @@ fn check_duplicate_param_names(symbols: &SymbolTable, errors: &mut Vec<Structura
             }
         }
     }
-    for (_, inner) in &symbols.inner_classes {
-        check_duplicate_param_names(inner, errors);
+    for inner in file.inner_classes() {
+        check_duplicate_param_names_inner(inner, errors);
+    }
+}
+
+fn check_duplicate_param_names_inner(class: &GdClass<'_>, errors: &mut Vec<StructuralError>) {
+    for func in class.declarations.iter().filter_map(|d| d.as_func()) {
+        let mut seen = std::collections::HashSet::new();
+        for param in &func.params {
+            if !seen.insert(param.name) {
+                errors.push(StructuralError {
+                    line: func.node.start_position().row as u32 + 1,
+                    column: 1,
+                    message: format!(
+                        "duplicate parameter name `{}` in `{}()`",
+                        param.name, func.name,
+                    ),
+                });
+            }
+        }
+    }
+    for inner in class.declarations.iter().filter_map(|d| d.as_class()) {
+        check_duplicate_param_names_inner(inner, errors);
     }
 }
 
@@ -756,18 +816,33 @@ fn check_yield_in_node(node: Node, source: &str, errors: &mut Vec<StructuralErro
 }
 
 /// H7: `_static_init` cannot have parameters.
-fn check_static_init_params(symbols: &SymbolTable, errors: &mut Vec<StructuralError>) {
-    for func in &symbols.functions {
+fn check_static_init_params(file: &GdFile<'_>, errors: &mut Vec<StructuralError>) {
+    for func in file.funcs() {
         if func.name == "_static_init" && !func.params.is_empty() {
             errors.push(StructuralError {
-                line: func.line as u32 + 1,
+                line: func.node.start_position().row as u32 + 1,
                 column: 1,
                 message: "`_static_init()` cannot have parameters".to_string(),
             });
         }
     }
-    for (_, inner) in &symbols.inner_classes {
-        check_static_init_params(inner, errors);
+    for inner in file.inner_classes() {
+        check_static_init_params_inner(inner, errors);
+    }
+}
+
+fn check_static_init_params_inner(class: &GdClass<'_>, errors: &mut Vec<StructuralError>) {
+    for func in class.declarations.iter().filter_map(|d| d.as_func()) {
+        if func.name == "_static_init" && !func.params.is_empty() {
+            errors.push(StructuralError {
+                line: func.node.start_position().row as u32 + 1,
+                column: 1,
+                message: "`_static_init()` cannot have parameters".to_string(),
+            });
+        }
+    }
+    for inner in class.declarations.iter().filter_map(|d| d.as_class()) {
+        check_static_init_params_inner(inner, errors);
     }
 }
 
@@ -812,14 +887,14 @@ pub(super) fn find_annotation_name<'a>(node: &Node, source: &'a str) -> Option<&
 fn check_semantic_errors(
     root: &Node,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile<'_>,
     errors: &mut Vec<StructuralError>,
 ) {
-    check_static_context_violations(root, source, symbols, errors);
-    check_assign_to_constant(root, source, symbols, errors);
-    check_void_return_value(root, source, symbols, errors);
+    check_static_context_violations(root, source, file, errors);
+    check_assign_to_constant(root, source, file, errors);
+    check_void_return_value(root, source, file, errors);
     check_get_node_in_static(root, source, errors);
-    check_export_constraints(symbols, errors);
+    check_export_constraints(file, errors);
     check_object_constructor(root, source, errors);
 }
 
@@ -828,22 +903,20 @@ fn check_semantic_errors(
 fn check_static_context_violations(
     root: &Node,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile<'_>,
     errors: &mut Vec<StructuralError>,
 ) {
     let bytes = source.as_bytes();
     // Collect instance (non-static) member names for reference
-    let instance_vars: std::collections::HashSet<&str> = symbols
-        .variables
-        .iter()
-        .filter(|v| !v.is_static && !v.is_constant)
-        .map(|v| v.name.as_str())
+    let instance_vars: std::collections::HashSet<&str> = file
+        .vars()
+        .filter(|v| !v.is_static && !v.is_const)
+        .map(|v| v.name)
         .collect();
-    let instance_funcs: std::collections::HashSet<&str> = symbols
-        .functions
-        .iter()
+    let instance_funcs: std::collections::HashSet<&str> = file
+        .funcs()
         .filter(|f| !f.is_static)
-        .map(|f| f.name.as_str())
+        .map(|f| f.name)
         .collect();
 
     // Walk functions that are static
@@ -870,12 +943,12 @@ fn check_static_context_violations(
         };
 
         // Check if this function is static
-        let is_static = symbols.functions.iter().any(|f| {
+        let is_static = file.funcs().any(|f| {
             f.is_static
                 && func_node
                     .child_by_field_name("name")
                     .and_then(|n| n.utf8_text(bytes).ok())
-                    == Some(&f.name)
+                    == Some(f.name)
         });
         if !is_static {
             continue;
@@ -979,20 +1052,18 @@ fn check_static_body(
 fn check_assign_to_constant(
     root: &Node,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile<'_>,
     errors: &mut Vec<StructuralError>,
 ) {
     let bytes = source.as_bytes();
-    let constants: std::collections::HashSet<&str> = symbols
-        .variables
-        .iter()
-        .filter(|v| v.is_constant)
-        .map(|v| v.name.as_str())
+    let constants: std::collections::HashSet<&str> = file
+        .vars()
+        .filter(|v| v.is_const)
+        .map(|v| v.name)
         .collect();
-    let enum_members: std::collections::HashSet<&str> = symbols
-        .enums
-        .iter()
-        .flat_map(|e| e.members.iter().map(String::as_str))
+    let enum_members: std::collections::HashSet<&str> = file
+        .enums()
+        .flat_map(|e| e.members.iter().map(|m| m.name))
         .collect();
 
     check_assign_to_const_in_node(*root, bytes, &constants, &enum_members, errors);
@@ -1072,20 +1143,39 @@ fn check_assign_to_const_in_node(
 fn check_void_return_value(
     root: &Node,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile<'_>,
     errors: &mut Vec<StructuralError>,
 ) {
     let bytes = source.as_bytes();
-    for func in &symbols.functions {
+    for func in file.funcs() {
         if let Some(ref ret) = func.return_type
             && ret.name == "void"
         {
             // Find the AST node for this function and check for `return <value>`
-            check_void_func_returns(*root, bytes, &func.name, errors);
+            check_void_func_returns(*root, bytes, func.name, errors);
         }
     }
-    for (_, inner) in &symbols.inner_classes {
-        check_void_return_value(root, source, inner, errors);
+    for inner in file.inner_classes() {
+        check_void_return_value_inner(root, source, inner, errors);
+    }
+}
+
+fn check_void_return_value_inner(
+    root: &Node,
+    source: &str,
+    class: &GdClass<'_>,
+    errors: &mut Vec<StructuralError>,
+) {
+    let bytes = source.as_bytes();
+    for func in class.declarations.iter().filter_map(|d| d.as_func()) {
+        if let Some(ref ret) = func.return_type
+            && ret.name == "void"
+        {
+            check_void_func_returns(*root, bytes, func.name, errors);
+        }
+    }
+    for inner in class.declarations.iter().filter_map(|d| d.as_class()) {
+        check_void_return_value_inner(root, source, inner, errors);
     }
 }
 
@@ -1248,12 +1338,12 @@ fn check_get_node_in_body(node: &Node, func_name: &str, errors: &mut Vec<Structu
 /// E1: `@export` without type or initializer.
 /// E3: `@export` on a static variable.
 /// E4: Duplicate `@export` annotation on same variable.
-fn check_export_constraints(symbols: &SymbolTable, errors: &mut Vec<StructuralError>) {
-    for var in &symbols.variables {
+fn check_export_constraints(file: &GdFile<'_>, errors: &mut Vec<StructuralError>) {
+    for var in file.vars() {
         let export_count = var
             .annotations
             .iter()
-            .filter(|a| a.as_str() == "export")
+            .filter(|a| a.name == "export")
             .count();
         let has_export = export_count > 0;
 
@@ -1261,7 +1351,7 @@ fn check_export_constraints(symbols: &SymbolTable, errors: &mut Vec<StructuralEr
             // E4: Duplicate @export
             if export_count > 1 {
                 errors.push(StructuralError {
-                    line: var.line as u32 + 1,
+                    line: var.node.start_position().row as u32 + 1,
                     column: 1,
                     message: format!("duplicate `@export` annotation on `{}`", var.name,),
                 });
@@ -1270,7 +1360,7 @@ fn check_export_constraints(symbols: &SymbolTable, errors: &mut Vec<StructuralEr
             // E3: @export on static
             if var.is_static {
                 errors.push(StructuralError {
-                    line: var.line as u32 + 1,
+                    line: var.node.start_position().row as u32 + 1,
                     column: 1,
                     message: format!("`@export` cannot be used on static variable `{}`", var.name,),
                 });
@@ -1279,9 +1369,9 @@ fn check_export_constraints(symbols: &SymbolTable, errors: &mut Vec<StructuralEr
             // E1: @export without type or initializer
             // Only check plain @export, not @export_* variants
             let has_type = var.type_ann.as_ref().is_some_and(|t| !t.name.is_empty());
-            if !has_type && !var.has_default {
+            if !has_type && var.value.is_none() {
                 errors.push(StructuralError {
-                    line: var.line as u32 + 1,
+                    line: var.node.start_position().row as u32 + 1,
                     column: 1,
                     message: format!(
                         "`@export` variable `{}` has no type annotation or initializer",
@@ -1291,8 +1381,50 @@ fn check_export_constraints(symbols: &SymbolTable, errors: &mut Vec<StructuralEr
             }
         }
     }
-    for (_, inner) in &symbols.inner_classes {
-        check_export_constraints(inner, errors);
+    for inner in file.inner_classes() {
+        check_export_constraints_inner(inner, errors);
+    }
+}
+
+fn check_export_constraints_inner(class: &GdClass<'_>, errors: &mut Vec<StructuralError>) {
+    for var in class.declarations.iter().filter_map(|d| d.as_var()) {
+        let export_count = var
+            .annotations
+            .iter()
+            .filter(|a| a.name == "export")
+            .count();
+        let has_export = export_count > 0;
+
+        if has_export {
+            if export_count > 1 {
+                errors.push(StructuralError {
+                    line: var.node.start_position().row as u32 + 1,
+                    column: 1,
+                    message: format!("duplicate `@export` annotation on `{}`", var.name,),
+                });
+            }
+            if var.is_static {
+                errors.push(StructuralError {
+                    line: var.node.start_position().row as u32 + 1,
+                    column: 1,
+                    message: format!("`@export` cannot be used on static variable `{}`", var.name,),
+                });
+            }
+            let has_type = var.type_ann.as_ref().is_some_and(|t| !t.name.is_empty());
+            if !has_type && var.value.is_none() {
+                errors.push(StructuralError {
+                    line: var.node.start_position().row as u32 + 1,
+                    column: 1,
+                    message: format!(
+                        "`@export` variable `{}` has no type annotation or initializer",
+                        var.name,
+                    ),
+                });
+            }
+        }
+    }
+    for inner in class.declarations.iter().filter_map(|d| d.as_class()) {
+        check_export_constraints_inner(inner, errors);
     }
 }
 
@@ -1497,12 +1629,12 @@ fn check_assert_in_node(node: Node, source: &str, errors: &mut Vec<StructuralErr
 fn check_advanced_semantic(
     root: &Node,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile<'_>,
     errors: &mut Vec<StructuralError>,
 ) {
-    check_missing_return(root, source, symbols, errors);
+    check_missing_return(root, source, file, errors);
     check_const_expression_required(root, source, errors);
-    check_getter_setter_signature(root, source, symbols, errors);
+    check_getter_setter_signature(root, source, file, errors);
 }
 
 /// C4: Not all code paths return a value.
@@ -1510,11 +1642,11 @@ fn check_advanced_semantic(
 fn check_missing_return(
     root: &Node,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile<'_>,
     errors: &mut Vec<StructuralError>,
 ) {
     let bytes = source.as_bytes();
-    for func in &symbols.functions {
+    for func in file.funcs() {
         // Only check functions with explicit non-void return type
         let Some(ref ret) = func.return_type else {
             continue;
@@ -1554,7 +1686,7 @@ fn check_missing_return(
                 && !body_always_returns(&body, bytes)
             {
                 errors.push(StructuralError {
-                    line: func.line as u32 + 1,
+                    line: func.node.start_position().row as u32 + 1,
                     column: 1,
                     message: format!(
                         "not all code paths return a value in `{name}()` (declared -> {})",
@@ -1564,8 +1696,68 @@ fn check_missing_return(
             }
         }
     }
-    for (_, inner) in &symbols.inner_classes {
-        check_missing_return(root, source, inner, errors);
+    for inner in file.inner_classes() {
+        check_missing_return_inner(root, source, inner, errors);
+    }
+}
+
+fn check_missing_return_inner(
+    root: &Node,
+    source: &str,
+    class: &GdClass<'_>,
+    errors: &mut Vec<StructuralError>,
+) {
+    let bytes = source.as_bytes();
+    for func in class.declarations.iter().filter_map(|d| d.as_func()) {
+        let Some(ref ret) = func.return_type else {
+            continue;
+        };
+        if ret.name == "void" || ret.name.is_empty() || ret.is_inferred {
+            continue;
+        }
+
+        let mut cursor = root.walk();
+        for child in root.children(&mut cursor) {
+            let func_node = match child.kind() {
+                "function_definition" => child,
+                "decorated_definition" => {
+                    let mut inner_cursor = child.walk();
+                    let mut found = None;
+                    for inner in child.children(&mut inner_cursor) {
+                        if inner.kind() == "function_definition" {
+                            found = Some(inner);
+                            break;
+                        }
+                    }
+                    if let Some(f) = found { f } else { continue }
+                }
+                _ => continue,
+            };
+
+            let name = func_node
+                .child_by_field_name("name")
+                .and_then(|n| n.utf8_text(bytes).ok())
+                .unwrap_or("");
+            if name != func.name {
+                continue;
+            }
+
+            if let Some(body) = func_node.child_by_field_name("body")
+                && !body_always_returns(&body, bytes)
+            {
+                errors.push(StructuralError {
+                    line: func.node.start_position().row as u32 + 1,
+                    column: 1,
+                    message: format!(
+                        "not all code paths return a value in `{name}()` (declared -> {})",
+                        ret.name,
+                    ),
+                });
+            }
+        }
+    }
+    for inner in class.declarations.iter().filter_map(|d| d.as_class()) {
+        check_missing_return_inner(root, source, inner, errors);
     }
 }
 
@@ -1805,16 +1997,16 @@ fn is_const_expression(node: &Node, source: &[u8]) -> bool {
 fn check_getter_setter_signature(
     root: &Node,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile<'_>,
     errors: &mut Vec<StructuralError>,
 ) {
-    check_getset_in_node(*root, source.as_bytes(), symbols, errors);
+    check_getset_in_node(*root, source.as_bytes(), file, errors);
 }
 
 fn check_getset_in_node(
     node: Node,
     source: &[u8],
-    symbols: &SymbolTable,
+    file: &GdFile<'_>,
     errors: &mut Vec<StructuralError>,
 ) {
     // Handle inline getter/setter nodes (direct set(v):/get(): syntax)
@@ -1854,7 +2046,7 @@ fn check_getset_in_node(
             if child.kind() == "getter"
                 && let Ok(func_name) = child.utf8_text(source)
                 && !func_name.is_empty()
-                && let Some(func) = symbols.functions.iter().find(|f| f.name == func_name)
+                && let Some(func) = file.funcs().find(|f| f.name == func_name)
                 && !func.params.is_empty()
             {
                 let pos = child.start_position();
@@ -1870,7 +2062,7 @@ fn check_getset_in_node(
             if child.kind() == "setter"
                 && let Ok(func_name) = child.utf8_text(source)
                 && !func_name.is_empty()
-                && let Some(func) = symbols.functions.iter().find(|f| f.name == func_name)
+                && let Some(func) = file.funcs().find(|f| f.name == func_name)
                 && func.params.len() != 1
             {
                 let pos = child.start_position();
@@ -1888,7 +2080,7 @@ fn check_getset_in_node(
     let mut cursor = node.walk();
     if cursor.goto_first_child() {
         loop {
-            check_getset_in_node(cursor.node(), source, symbols, errors);
+            check_getset_in_node(cursor.node(), source, file, errors);
             if !cursor.goto_next_sibling() {
                 break;
             }

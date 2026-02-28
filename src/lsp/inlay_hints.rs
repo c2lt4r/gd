@@ -15,11 +15,11 @@ pub fn provide_inlay_hints(
         return Vec::new();
     };
 
-    let symbols = crate::core::symbol_table::build(&tree, source);
+    let file = crate::core::gd_ast::convert(&tree, source);
     let root = tree.root_node();
     let mut hints = Vec::new();
 
-    collect_variable_type_hints(&root, source, &symbols, &range, &mut hints);
+    collect_variable_type_hints(&root, source, &file, &range, &mut hints);
 
     hints
 }
@@ -28,7 +28,7 @@ pub fn provide_inlay_hints(
 fn collect_variable_type_hints(
     node: &tree_sitter::Node,
     source: &str,
-    symbols: &crate::core::symbol_table::SymbolTable,
+    file: &crate::core::gd_ast::GdFile,
     range: &Range,
     hints: &mut Vec<InlayHint>,
 ) {
@@ -43,13 +43,13 @@ fn collect_variable_type_hints(
         }
 
         if child.kind() == "variable_statement"
-            && let Some(hint) = variable_type_hint(&child, source, symbols)
+            && let Some(hint) = variable_type_hint(&child, source, file)
         {
             hints.push(hint);
         }
 
         // Recurse into children (function bodies, class bodies, etc.).
-        collect_variable_type_hints(&child, source, symbols, range, hints);
+        collect_variable_type_hints(&child, source, file, range, hints);
     }
 }
 
@@ -60,7 +60,7 @@ fn collect_variable_type_hints(
 fn variable_type_hint(
     node: &tree_sitter::Node,
     source: &str,
-    symbols: &crate::core::symbol_table::SymbolTable,
+    file: &crate::core::gd_ast::GdFile,
 ) -> Option<InlayHint> {
     let bytes = source.as_bytes();
 
@@ -73,7 +73,7 @@ fn variable_type_hint(
     let name_node = node.child_by_field_name("name")?;
     let value_node = node.child_by_field_name("value")?;
 
-    let type_name = infer_value_type(&value_node, bytes, symbols)?;
+    let type_name = infer_value_type(&value_node, bytes, file)?;
 
     // Place the hint right after the variable name.
     let name_end = name_node.end_position();
@@ -95,7 +95,7 @@ fn variable_type_hint(
 fn infer_value_type(
     value: &tree_sitter::Node,
     source: &[u8],
-    symbols: &crate::core::symbol_table::SymbolTable,
+    file: &crate::core::gd_ast::GdFile,
 ) -> Option<String> {
     match value.kind() {
         // Literals
@@ -116,7 +116,7 @@ fn infer_value_type(
         _ => {
             let source_str = std::str::from_utf8(source).ok()?;
             let inferred =
-                crate::core::type_inference::infer_expression_type(value, source_str, symbols)?;
+                crate::core::type_inference::infer_expression_type(value, source_str, file)?;
             let name = inferred.display_name();
             // Don't show hints for Variant or void — they aren't useful.
             if name == "Variant" || name == "void" {

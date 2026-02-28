@@ -2,7 +2,6 @@ use crate::core::gd_ast::GdFile;
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
-use crate::core::symbol_table::SymbolTable;
 
 pub struct RedundantStaticUnload;
 
@@ -25,16 +24,15 @@ impl LintRule for RedundantStaticUnload {
 
     fn check_with_symbols(
         &self,
-        _file: &GdFile<'_>,
+        file: &GdFile<'_>,
         _source: &str,
         _config: &LintConfig,
-        symbols: &SymbolTable,
     ) -> Vec<LintDiagnostic> {
-        if !symbols.has_static_unload {
+        if !file.has_static_unload {
             return Vec::new();
         }
 
-        let has_static_var = symbols.variables.iter().any(|v| v.is_static);
+        let has_static_var = file.vars().any(|v| v.is_static);
         if has_static_var {
             return Vec::new();
         }
@@ -58,14 +56,12 @@ mod tests {
     use super::*;
     use crate::core::parser;
     use crate::core::gd_ast;
-    use crate::core::symbol_table;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();
         let file = gd_ast::convert(&tree, source);
-        let symbols = symbol_table::build(&tree, source);
         let config = LintConfig::default();
-        RedundantStaticUnload.check_with_symbols(&file, source, &config, &symbols)
+        RedundantStaticUnload.check_with_symbols(&file, source, &config)
     }
 
     #[test]

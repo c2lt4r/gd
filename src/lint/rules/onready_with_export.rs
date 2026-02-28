@@ -1,8 +1,7 @@
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{GdClass, GdFile, GdVar};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
-use crate::core::symbol_table::SymbolTable;
 
 pub struct OnreadyWithExport;
 
@@ -25,38 +24,49 @@ impl LintRule for OnreadyWithExport {
 
     fn check_with_symbols(
         &self,
-        _file: &GdFile<'_>,
+        file: &GdFile<'_>,
         _source: &str,
         _config: &LintConfig,
-        symbols: &SymbolTable,
     ) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        check_table(symbols, &mut diags);
-        for (_, inner) in &symbols.inner_classes {
-            check_table(inner, &mut diags);
+        check_vars(file.vars(), &mut diags);
+        for inner in file.inner_classes() {
+            check_inner_class(inner, &mut diags);
         }
         diags
     }
 }
 
-fn check_table(symbols: &SymbolTable, diags: &mut Vec<LintDiagnostic>) {
-    for var in &symbols.variables {
-        let has_onready = var.annotations.iter().any(|a| a == "onready");
-        let has_export = var.annotations.iter().any(|a| a == "export");
-        if has_onready && has_export {
-            diags.push(LintDiagnostic {
-                rule: "onready-with-export",
-                message: format!(
-                    "`{}` has both `@onready` and `@export` — `@onready` sets the value after `@export`, making the export useless",
-                    var.name
-                ),
-                severity: Severity::Error,
-                line: var.line,
-                column: 0,
-                end_column: None,
-                fix: None,
-                context_lines: None,
-            });
+fn check_var(var: &GdVar, diags: &mut Vec<LintDiagnostic>) {
+    let has_onready = var.annotations.iter().any(|a| a.name == "onready");
+    let has_export = var.annotations.iter().any(|a| a.name == "export");
+    if has_onready && has_export {
+        diags.push(LintDiagnostic {
+            rule: "onready-with-export",
+            message: format!(
+                "`{}` has both `@onready` and `@export` — `@onready` sets the value after `@export`, making the export useless",
+                var.name
+            ),
+            severity: Severity::Error,
+            line: var.node.start_position().row,
+            column: 0,
+            end_column: None,
+            fix: None,
+            context_lines: None,
+        });
+    }
+}
+
+fn check_vars<'a>(vars: impl Iterator<Item = &'a GdVar<'a>>, diags: &mut Vec<LintDiagnostic>) {
+    for var in vars {
+        check_var(var, diags);
+    }
+}
+
+fn check_inner_class(class: &GdClass, diags: &mut Vec<LintDiagnostic>) {
+    for decl in &class.declarations {
+        if let crate::core::gd_ast::GdDecl::Var(var) = decl {
+            check_var(var, diags);
         }
     }
 }
@@ -66,14 +76,12 @@ mod tests {
     use super::*;
     use crate::core::parser;
     use crate::core::gd_ast;
-    use crate::core::symbol_table;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();
         let file = gd_ast::convert(&tree, source);
-        let symbols = symbol_table::build(&tree, source);
         let config = LintConfig::default();
-        OnreadyWithExport.check_with_symbols(&file, source, &config, &symbols)
+        OnreadyWithExport.check_with_symbols(&file, source, &config)
     }
 
     #[test]

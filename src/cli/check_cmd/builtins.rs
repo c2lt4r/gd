@@ -1,6 +1,6 @@
 use tree_sitter::Node;
 
-use crate::core::symbol_table::SymbolTable;
+use crate::core::gd_ast::GdFile;
 use crate::core::type_inference;
 
 use super::StructuralError;
@@ -20,16 +20,16 @@ fn resolve_builtin_type_name(ty: &type_inference::InferredType) -> Option<&str> 
 pub(super) fn check_builtin_method_not_found(
     root: &Node,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile<'_>,
     errors: &mut Vec<StructuralError>,
 ) {
-    check_builtin_method_in_node(root, source, symbols, errors);
+    check_builtin_method_in_node(root, source, file, errors);
 }
 
 fn check_builtin_method_in_node(
     node: &Node,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile<'_>,
     errors: &mut Vec<StructuralError>,
 ) {
     // Pattern: attribute { identifier(receiver), attribute_call { identifier(method), arguments } }
@@ -43,8 +43,8 @@ fn check_builtin_method_in_node(
         && method_ident.kind() == "identifier"
         && let Ok(method_name) = method_ident.utf8_text(source.as_bytes())
     {
-        let ty = type_inference::infer_expression_type(&receiver, source, symbols)
-            .or_else(|| infer_local_var_type(&receiver, source, symbols));
+        let ty = type_inference::infer_expression_type(&receiver, source, file)
+            .or_else(|| infer_local_var_type(&receiver, source, file));
         if let Some(ref ty) = ty
             && let Some(type_name) = resolve_builtin_type_name(ty)
             && type_inference::is_builtin_type(type_name)
@@ -68,7 +68,7 @@ fn check_builtin_method_in_node(
     let mut cursor = node.walk();
     if cursor.goto_first_child() {
         loop {
-            check_builtin_method_in_node(&cursor.node(), source, symbols, errors);
+            check_builtin_method_in_node(&cursor.node(), source, file, errors);
             if !cursor.goto_next_sibling() {
                 break;
             }
@@ -80,16 +80,16 @@ fn check_builtin_method_in_node(
 pub(super) fn check_builtin_property_not_found(
     root: &Node,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile<'_>,
     errors: &mut Vec<StructuralError>,
 ) {
-    check_builtin_property_in_node(root, source, symbols, errors);
+    check_builtin_property_in_node(root, source, file, errors);
 }
 
 fn check_builtin_property_in_node(
     node: &Node,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile<'_>,
     errors: &mut Vec<StructuralError>,
 ) {
     // Pattern: attribute { identifier(receiver), identifier(member) } — no attribute_call
@@ -103,8 +103,8 @@ fn check_builtin_property_in_node(
             .any(|c| c.kind() == "attribute_call")
         && let Ok(member_name) = member.utf8_text(source.as_bytes())
     {
-        let ty = type_inference::infer_expression_type(&receiver, source, symbols)
-            .or_else(|| infer_local_var_type(&receiver, source, symbols));
+        let ty = type_inference::infer_expression_type(&receiver, source, file)
+            .or_else(|| infer_local_var_type(&receiver, source, file));
         if let Some(ref ty) = ty
             && let Some(type_name) = resolve_builtin_type_name(ty)
             && type_inference::is_builtin_type(type_name)
@@ -126,7 +126,7 @@ fn check_builtin_property_in_node(
     let mut cursor = node.walk();
     if cursor.goto_first_child() {
         loop {
-            check_builtin_property_in_node(&cursor.node(), source, symbols, errors);
+            check_builtin_property_in_node(&cursor.node(), source, file, errors);
             if !cursor.goto_next_sibling() {
                 break;
             }

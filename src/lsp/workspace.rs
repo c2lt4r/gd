@@ -5,8 +5,116 @@ use dashmap::DashMap;
 use serde::Serialize;
 use tower_lsp::lsp_types::InitializeParams;
 
+use crate::core::gd_ast;
 use crate::core::scene::SceneData;
-use crate::core::symbol_table::{self, SymbolTable};
+
+/// Owned per-file symbol cache (extracted from `GdFile` for long-term storage).
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct CachedSymbols {
+    pub class_name: Option<String>,
+    pub extends: Option<String>,
+    pub has_tool: bool,
+    pub functions: Vec<CachedFunc>,
+    pub variables: Vec<CachedVar>,
+    pub signals: Vec<CachedSignal>,
+    pub enums: Vec<CachedEnum>,
+    pub inner_classes: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct CachedFunc {
+    pub name: String,
+    pub line: usize,
+    pub is_static: bool,
+    pub params: Vec<CachedParam>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CachedParam {
+    pub name: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct CachedVar {
+    pub name: String,
+    pub line: usize,
+    pub is_constant: bool,
+    pub annotations: Vec<String>,
+    pub type_ann: Option<CachedTypeAnn>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CachedTypeAnn {
+    pub name: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct CachedSignal {
+    pub name: String,
+    pub line: usize,
+}
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct CachedEnum {
+    pub name: String,
+    pub line: usize,
+    pub members: Vec<String>,
+}
+
+/// Build a `CachedSymbols` from a `GdFile`.
+fn cache_from_gd_file(file: &gd_ast::GdFile) -> CachedSymbols {
+    CachedSymbols {
+        class_name: file.class_name.map(String::from),
+        extends: file.extends_class().map(String::from),
+        has_tool: file.is_tool,
+        functions: file
+            .funcs()
+            .map(|f| CachedFunc {
+                name: f.name.to_string(),
+                line: f.node.start_position().row,
+                is_static: f.is_static,
+                params: f
+                    .params
+                    .iter()
+                    .map(|p| CachedParam {
+                        name: p.name.to_string(),
+                    })
+                    .collect(),
+            })
+            .collect(),
+        variables: file
+            .vars()
+            .map(|v| CachedVar {
+                name: v.name.to_string(),
+                line: v.node.start_position().row,
+                is_constant: v.is_const,
+                annotations: v.annotations.iter().map(|a| a.name.to_string()).collect(),
+                type_ann: v.type_ann.as_ref().map(|t| CachedTypeAnn {
+                    name: t.name.to_string(),
+                }),
+            })
+            .collect(),
+        signals: file
+            .signals()
+            .map(|s| CachedSignal {
+                name: s.name.to_string(),
+                line: s.node.start_position().row,
+            })
+            .collect(),
+        enums: file
+            .enums()
+            .map(|e| CachedEnum {
+                name: e.name.to_string(),
+                line: e.node.start_position().row,
+                members: e.members.iter().map(|m| m.name.to_string()).collect(),
+            })
+            .collect(),
+        inner_classes: file.inner_classes().map(|c| c.name.to_string()).collect(),
+    }
+}
 
 /// Autoload singleton metadata resolved during workspace scan.
 pub struct AutoloadInfo {
@@ -55,8 +163,8 @@ pub struct WorkspaceIndex {
     class_names: DashMap<String, PathBuf>,
     /// Autoload name → resolved metadata.
     autoloads: DashMap<String, AutoloadInfo>,
-    /// Per-file cached `SymbolTable`.
-    symbols: DashMap<PathBuf, SymbolTable>,
+    /// Per-file cached symbols (extracted from `GdFile`).
+    symbols: DashMap<PathBuf, CachedSymbols>,
     /// Symbol name → files that declare it.
     declarations: DashMap<String, Vec<PathBuf>>,
     /// File → extends class name.
@@ -97,11 +205,12 @@ impl WorkspaceIndex {
                         if let Some(cn) = extract_class_name(tree.root_node(), &content) {
                             self.class_names.insert(cn, path.clone());
                         }
-                        // Build and cache SymbolTable
-                        let table = symbol_table::build(&tree, &content);
-                        self.extends_map.insert(path.clone(), table.extends.clone());
-                        self.insert_declarations_from_table(&path, &table);
-                        self.symbols.insert(path.clone(), table);
+                        // Build and cache symbols
+                        let file = gd_ast::convert(&tree, &content);
+                        let cached = cache_from_gd_file(&file);
+                        self.extends_map.insert(path.clone(), cached.extends.clone());
+                        self.insert_declarations_from_cached(&path, &cached);
+                        self.symbols.insert(path.clone(), cached);
                     }
                     self.files.insert(path, Arc::new(content));
                 }
@@ -138,34 +247,34 @@ impl WorkspaceIndex {
         }
     }
 
-    /// Insert declaration index entries from a `SymbolTable`.
-    fn insert_declarations_from_table(&self, path: &Path, table: &SymbolTable) {
+    /// Insert declaration index entries from a `CachedSymbols`.
+    fn insert_declarations_from_cached(&self, path: &Path, cached: &CachedSymbols) {
         let pb = path.to_path_buf();
-        for f in &table.functions {
+        for f in &cached.functions {
             self.declarations
                 .entry(f.name.clone())
                 .or_default()
                 .push(pb.clone());
         }
-        for v in &table.variables {
+        for v in &cached.variables {
             self.declarations
                 .entry(v.name.clone())
                 .or_default()
                 .push(pb.clone());
         }
-        for s in &table.signals {
+        for s in &cached.signals {
             self.declarations
                 .entry(s.name.clone())
                 .or_default()
                 .push(pb.clone());
         }
-        for e in &table.enums {
+        for e in &cached.enums {
             self.declarations
                 .entry(e.name.clone())
                 .or_default()
                 .push(pb.clone());
         }
-        if let Some(cn) = &table.class_name {
+        if let Some(cn) = &cached.class_name {
             self.declarations.entry(cn.clone()).or_default().push(pb);
         }
     }
@@ -182,8 +291,8 @@ impl WorkspaceIndex {
     /// Rebuild declarations for a single file.
     fn rebuild_declarations_for_file(&self, path: &Path) {
         self.remove_declarations_for_file(path);
-        if let Some(table) = self.symbols.get(path) {
-            self.insert_declarations_from_table(path, &table);
+        if let Some(cached) = self.symbols.get(path) {
+            self.insert_declarations_from_cached(path, &cached);
         }
     }
 
@@ -212,11 +321,11 @@ impl WorkspaceIndex {
         self.files.get(path).map(|r| Arc::clone(r.value()))
     }
 
-    /// Get a cached `SymbolTable` for a file.
+    /// Get cached symbols for a file.
     pub fn get_symbols(
         &self,
         path: &Path,
-    ) -> Option<dashmap::mapref::one::Ref<'_, PathBuf, SymbolTable>> {
+    ) -> Option<dashmap::mapref::one::Ref<'_, PathBuf, CachedSymbols>> {
         self.symbols.get(path)
     }
 
@@ -239,11 +348,12 @@ impl WorkspaceIndex {
             if let Some(cn) = extract_class_name(tree.root_node(), content) {
                 self.class_names.insert(cn, path.to_path_buf());
             }
-            // Rebuild SymbolTable
-            let table = symbol_table::build(&tree, content);
+            // Build cached symbols from typed AST
+            let file = gd_ast::convert(&tree, content);
+            let cached = cache_from_gd_file(&file);
             self.extends_map
-                .insert(path.to_path_buf(), table.extends.clone());
-            self.symbols.insert(path.to_path_buf(), table);
+                .insert(path.to_path_buf(), cached.extends.clone());
+            self.symbols.insert(path.to_path_buf(), cached);
             self.rebuild_declarations_for_file(path);
         }
         self.files

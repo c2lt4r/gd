@@ -2,7 +2,6 @@ use crate::core::gd_ast::GdFile;
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
-use crate::core::symbol_table::SymbolTable;
 use crate::core::workspace_index::ProjectIndex;
 
 pub struct OverrideSignatureMismatch;
@@ -22,25 +21,24 @@ impl LintRule for OverrideSignatureMismatch {
 
     fn check_with_project(
         &self,
-        _file: &GdFile<'_>,
+        file: &GdFile<'_>,
         _source: &str,
         _config: &LintConfig,
-        symbols: &SymbolTable,
         project: &ProjectIndex,
     ) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
 
-        let Some(ref extends) = symbols.extends else {
+        let Some(extends) = file.extends_class() else {
             return diags;
         };
 
         // Walk the full ancestor chain: [extends, extends-of-extends, ...]
         // extends_chain starts from a class name, so we need to include the
         // immediate parent plus its ancestors.
-        let mut ancestors = vec![extends.as_str()];
+        let mut ancestors = vec![extends];
         ancestors.extend(project.extends_chain(extends));
 
-        for func in &symbols.functions {
+        for func in file.funcs() {
             // Check each ancestor for a method with the same name
             for &ancestor in &ancestors {
                 let Some(ancestor_symbols) = project.lookup_class(ancestor) else {
@@ -67,7 +65,7 @@ impl LintRule for OverrideSignatureMismatch {
                             if parent_count == 1 { "" } else { "s" },
                         ),
                         severity: Severity::Error,
-                        line: func.line,
+                        line: func.node.start_position().row,
                         column: 0,
                         end_column: None,
                         fix: None,
@@ -89,7 +87,7 @@ mod tests {
     use super::*;
     use crate::core::workspace_index;
     use crate::core::gd_ast;
-    use crate::core::{parser, symbol_table};
+    use crate::core::parser;
     use std::path::PathBuf;
 
     fn check_with_project(source: &str, project_files: &[(&str, &str)]) -> Vec<LintDiagnostic> {
@@ -102,9 +100,8 @@ mod tests {
 
         let tree = parser::parse(source).unwrap();
         let file = gd_ast::convert(&tree, source);
-        let symbols = symbol_table::build(&tree, source);
         let config = LintConfig::default();
-        OverrideSignatureMismatch.check_with_project(&file, source, &config, &symbols, &project)
+        OverrideSignatureMismatch.check_with_project(&file, source, &config, &project)
     }
 
     #[test]

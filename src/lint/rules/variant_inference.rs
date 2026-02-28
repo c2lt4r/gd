@@ -2,7 +2,6 @@ use crate::core::gd_ast::{self, GdDecl, GdExpr, GdFile, GdStmt, GdVar};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
-use crate::core::symbol_table::SymbolTable;
 use crate::core::type_inference::{InferredType, infer_expression_type_with_project};
 use crate::core::workspace_index::ProjectIndex;
 
@@ -30,20 +29,19 @@ impl LintRule for VariantInference {
         file: &GdFile<'_>,
         source: &str,
         _config: &LintConfig,
-        symbols: &SymbolTable,
         project: &ProjectIndex,
     ) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
         // Check class-level var declarations
         gd_ast::visit_decls(file, &mut |decl| {
             if let GdDecl::Var(var) = decl {
-                check_var(var, source, symbols, project, &mut diags);
+                check_var(var, source, file, project, &mut diags);
             }
         });
         // Check function-local var declarations
         gd_ast::visit_stmts(file, &mut |stmt| {
             if let GdStmt::Var(var) = stmt {
-                check_var(var, source, symbols, project, &mut diags);
+                check_var(var, source, file, project, &mut diags);
             }
         });
         diags
@@ -53,7 +51,7 @@ impl LintRule for VariantInference {
 fn check_var(
     var: &GdVar,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile,
     project: &ProjectIndex,
     diags: &mut Vec<LintDiagnostic>,
 ) {
@@ -86,7 +84,7 @@ fn check_var(
 
     // Use the project-aware inference engine for cross-file resolution.
     let value_node = value.node();
-    let inferred = infer_expression_type_with_project(&value_node, source, symbols, project);
+    let inferred = infer_expression_type_with_project(&value_node, source, file, project);
     let is_variant = matches!(inferred, Some(InferredType::Variant) | None);
     if !is_variant {
         return;
@@ -120,17 +118,16 @@ fn is_in_operator(expr: &GdExpr) -> bool {
 mod tests {
     use super::*;
     use crate::core::gd_ast;
-    use crate::core::{parser, symbol_table, workspace_index};
+    use crate::core::{parser, workspace_index};
     use std::path::PathBuf;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();
         let file = gd_ast::convert(&tree, source);
-        let symbols = symbol_table::build(&tree, source);
         let config = LintConfig::default();
         let root = PathBuf::from("/test_project");
         let project = workspace_index::build_from_sources(&root, &[], &[]);
-        VariantInference.check_with_project(&file, source, &config, &symbols, &project)
+        VariantInference.check_with_project(&file, source, &config, &project)
     }
 
     fn check_with_files(source: &str, project_files: &[(&str, &str)]) -> Vec<LintDiagnostic> {
@@ -143,9 +140,8 @@ mod tests {
 
         let tree = parser::parse(source).unwrap();
         let file = gd_ast::convert(&tree, source);
-        let symbols = symbol_table::build(&tree, source);
         let config = LintConfig::default();
-        VariantInference.check_with_project(&file, source, &config, &symbols, &project)
+        VariantInference.check_with_project(&file, source, &config, &project)
     }
 
     #[test]

@@ -1,11 +1,11 @@
 //! Expression-level type inference for GDScript AST nodes.
 //!
 //! Layer 2: given any expression node, determine its inferred type.
-//! Builds on the per-file symbol table (Layer 1) and the engine ClassDB.
+//! Builds on the typed AST (`GdFile`) and the engine ClassDB.
 
 use tree_sitter::Node;
 
-use super::symbol_table::SymbolTable;
+use super::gd_ast::GdFile;
 use super::workspace_index::ProjectIndex;
 use crate::class_db;
 
@@ -51,7 +51,7 @@ impl InferredType {
 pub fn infer_expression_type(
     node: &Node,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile,
 ) -> Option<InferredType> {
     match node.kind() {
         // ── Literals ────────────────────────────────────────────────
@@ -64,38 +64,38 @@ pub fn infer_expression_type(
         "dictionary" => Some(InferredType::Builtin("Dictionary")),
 
         // ── Unary operators ─────────────────────────────────────────
-        "unary_operator" => infer_unary(node, source, symbols),
+        "unary_operator" => infer_unary(node, source, file),
 
         // ── Binary operators ────────────────────────────────────────
-        "binary_operator" => infer_binary(node, source, symbols),
+        "binary_operator" => infer_binary(node, source, file),
 
         // ── Cast: `x as Node` ───────────────────────────────────────
         "as_pattern" | "cast" => infer_cast(node, source),
 
         // ── Ternary: `a if cond else b` ─────────────────────────────
-        "conditional_expression" | "ternary_expression" => infer_ternary(node, source, symbols),
+        "conditional_expression" | "ternary_expression" => infer_ternary(node, source, file),
 
         // ── Parenthesized: `(expr)` → recurse ──────────────────────
         "parenthesized_expression" => node
             .named_child(0)
-            .and_then(|inner| infer_expression_type(&inner, source, symbols)),
+            .and_then(|inner| infer_expression_type(&inner, source, file)),
 
         // ── $Node / get_node ────────────────────────────────────────
         "get_node" => Some(InferredType::Class("Node".to_string())),
 
-        // ── Identifiers → symbol table lookup ───────────────────────
-        "identifier" => infer_identifier(node, source, symbols),
+        // ── Identifiers → typed AST lookup ──────────────────────────
+        "identifier" => infer_identifier(node, source, file),
 
         // ── Function/constructor calls ──────────────────────────────
-        "call" => infer_call(node, source, symbols),
+        "call" => infer_call(node, source, file),
 
         // ── Method calls: `obj.method()` ────────────────────────────
-        "attribute" => infer_attribute(node, source, symbols),
+        "attribute" => infer_attribute(node, source, file),
 
         // ── Await: result type of the awaited expression ────────────
         "await_expression" => node
             .named_child(0)
-            .and_then(|inner| infer_expression_type(&inner, source, symbols)),
+            .and_then(|inner| infer_expression_type(&inner, source, file)),
 
         _ => None,
     }
@@ -108,14 +108,14 @@ pub fn infer_expression_type(
 pub fn infer_expression_type_with_project(
     node: &Node,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile,
     project: &ProjectIndex,
 ) -> Option<InferredType> {
     match node.kind() {
-        "call" => infer_call_with_project(node, source, symbols, project),
-        "attribute" => infer_attribute_with_project(node, source, symbols, project),
+        "call" => infer_call_with_project(node, source, file, project),
+        "attribute" => infer_attribute_with_project(node, source, file, project),
         // For all other node kinds, delegate to the per-file inference
-        _ => infer_expression_type(node, source, symbols),
+        _ => infer_expression_type(node, source, file),
     }
 }
 
@@ -123,7 +123,7 @@ pub fn infer_expression_type_with_project(
 fn infer_call_with_project(
     node: &Node,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile,
     project: &ProjectIndex,
 ) -> Option<InferredType> {
     let func_node = node
@@ -149,8 +149,8 @@ fn infer_call_with_project(
         return Some(typ);
     }
 
-    // 4. Self method calls — symbol table first
-    for func in &symbols.functions {
+    // 4. Self method calls — typed AST first
+    for func in file.funcs() {
         if func.name == func_name {
             return func.return_type.as_ref().map_or_else(
                 || Some(InferredType::Variant),
@@ -158,7 +158,7 @@ fn infer_call_with_project(
                     if ret.name == "void" {
                         Some(InferredType::Void)
                     } else {
-                        Some(classify_type_name(&ret.name))
+                        Some(classify_type_name(ret.name))
                     }
                 },
             );
@@ -166,14 +166,14 @@ fn infer_call_with_project(
     }
 
     // 5. Project index: check user-defined base classes via extends chain
-    if let Some(extends) = &symbols.extends
+    if let Some(extends) = file.extends_class()
         && let Some(ret) = project.method_return_type(extends, func_name)
     {
         return Some(classify_type_str(&ret));
     }
 
     // 6. ClassDB lookup via extends chain
-    if let Some(extends) = &symbols.extends
+    if let Some(extends) = file.extends_class()
         && let Some(ret_type) = class_db::method_return_type(extends, func_name)
     {
         return Some(parse_class_db_type(ret_type));
@@ -186,7 +186,7 @@ fn infer_call_with_project(
 fn infer_attribute_with_project(
     node: &Node,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile,
     project: &ProjectIndex,
 ) -> Option<InferredType> {
     let mut has_call = false;
@@ -202,7 +202,7 @@ fn infer_attribute_with_project(
     }
 
     let receiver = node.named_child(0)?;
-    let receiver_type = infer_expression_type_with_project(&receiver, source, symbols, project)?;
+    let receiver_type = infer_expression_type_with_project(&receiver, source, file, project)?;
 
     let class_name = match &receiver_type {
         InferredType::Builtin(b) => *b,
@@ -254,7 +254,7 @@ fn classify_type_str(name: &str) -> InferredType {
 }
 
 /// Infer type of a unary operator expression.
-fn infer_unary(node: &Node, source: &str, symbols: &SymbolTable) -> Option<InferredType> {
+fn infer_unary(node: &Node, source: &str, file: &GdFile) -> Option<InferredType> {
     // Check if it's a boolean negation
     let mut cursor = node.walk();
     let children: Vec<Node> = node.children(&mut cursor).collect();
@@ -266,11 +266,11 @@ fn infer_unary(node: &Node, source: &str, symbols: &SymbolTable) -> Option<Infer
     }
     // `-x`, `+x`, `~x` → propagate operand type (first named child is the operand)
     node.named_child(0)
-        .and_then(|operand| infer_expression_type(&operand, source, symbols))
+        .and_then(|operand| infer_expression_type(&operand, source, file))
 }
 
 /// Infer type of a binary operator expression.
-fn infer_binary(node: &Node, source: &str, symbols: &SymbolTable) -> Option<InferredType> {
+fn infer_binary(node: &Node, source: &str, file: &GdFile) -> Option<InferredType> {
     let op = node.child_by_field_name("op").or_else(|| {
         // Some tree-sitter versions use positional children for the operator
         let mut cursor = node.walk();
@@ -324,8 +324,8 @@ fn infer_binary(node: &Node, source: &str, symbols: &SymbolTable) -> Option<Infe
             .or_else(|| node.named_child(1));
 
         if let (Some(l), Some(r)) = (left, right) {
-            let lt = infer_expression_type(&l, source, symbols);
-            let rt = infer_expression_type(&r, source, symbols);
+            let lt = infer_expression_type(&l, source, file);
+            let rt = infer_expression_type(&r, source, file);
 
             match (&lt, &rt) {
                 (Some(InferredType::Builtin("String")), Some(InferredType::Builtin("String"))) => {
@@ -368,8 +368,8 @@ fn infer_binary(node: &Node, source: &str, symbols: &SymbolTable) -> Option<Infe
             .or_else(|| node.named_child(1));
 
         if let (Some(l), Some(r)) = (left, right) {
-            let lt = infer_expression_type(&l, source, symbols);
-            let rt = infer_expression_type(&r, source, symbols);
+            let lt = infer_expression_type(&l, source, file);
+            let rt = infer_expression_type(&r, source, file);
 
             match (&lt, &rt) {
                 (Some(InferredType::Builtin("float")), _)
@@ -403,14 +403,14 @@ fn infer_cast(node: &Node, source: &str) -> Option<InferredType> {
 }
 
 /// Infer type of a ternary expression — common type of both branches.
-fn infer_ternary(node: &Node, source: &str, symbols: &SymbolTable) -> Option<InferredType> {
+fn infer_ternary(node: &Node, source: &str, file: &GdFile) -> Option<InferredType> {
     // tree-sitter-gdscript: conditional_expression has 3 named children:
     // [0] = true branch, [1] = condition, [2] = false branch
     let true_branch = node.named_child(0)?;
     let false_branch = node.named_child(2).or_else(|| node.named_child(1))?;
 
-    let true_type = infer_expression_type(&true_branch, source, symbols);
-    let false_type = infer_expression_type(&false_branch, source, symbols);
+    let true_type = infer_expression_type(&true_branch, source, file);
+    let false_type = infer_expression_type(&false_branch, source, file);
 
     match (&true_type, &false_type) {
         (Some(a), Some(b)) if a == b => true_type,
@@ -420,12 +420,12 @@ fn infer_ternary(node: &Node, source: &str, symbols: &SymbolTable) -> Option<Inf
     }
 }
 
-/// Infer type from an identifier by looking it up in the symbol table.
-fn infer_identifier(node: &Node, source: &str, symbols: &SymbolTable) -> Option<InferredType> {
+/// Infer type from an identifier by looking it up in the typed AST.
+fn infer_identifier(node: &Node, source: &str, file: &GdFile) -> Option<InferredType> {
     let name = node.utf8_text(source.as_bytes()).ok()?;
 
     // Check class-level variables
-    for var in &symbols.variables {
+    for var in file.vars() {
         if var.name == name {
             if let Some(ref type_ann) = var.type_ann
                 && !type_ann.is_inferred
@@ -435,14 +435,14 @@ fn infer_identifier(node: &Node, source: &str, symbols: &SymbolTable) -> Option<
                 if let Some(narrowed) = find_narrowed_type(node, name, source) {
                     return Some(classify_type_name(&narrowed));
                 }
-                return Some(classify_type_name(&type_ann.name));
+                return Some(classify_type_name(type_ann.name));
             }
             return None;
         }
     }
 
     // Check enum names (the enum itself is a type)
-    for e in &symbols.enums {
+    for e in file.enums() {
         if e.name == name {
             return Some(InferredType::Enum(name.to_string()));
         }
@@ -457,7 +457,7 @@ fn infer_identifier(node: &Node, source: &str, symbols: &SymbolTable) -> Option<
 }
 
 /// Infer type from a function/constructor call.
-fn infer_call(node: &Node, source: &str, symbols: &SymbolTable) -> Option<InferredType> {
+fn infer_call(node: &Node, source: &str, file: &GdFile) -> Option<InferredType> {
     // tree-sitter-gdscript: call has `function` field, or first named child is identifier
     let func_node = node
         .child_by_field_name("function")
@@ -482,8 +482,8 @@ fn infer_call(node: &Node, source: &str, symbols: &SymbolTable) -> Option<Inferr
         return Some(typ);
     }
 
-    // 4. Self method calls — look up in symbol table, then ClassDB via extends chain
-    for func in &symbols.functions {
+    // 4. Self method calls — look up in file, then ClassDB via extends chain
+    for func in file.funcs() {
         if func.name == func_name {
             return func.return_type.as_ref().map_or_else(
                 || Some(InferredType::Variant),
@@ -491,7 +491,7 @@ fn infer_call(node: &Node, source: &str, symbols: &SymbolTable) -> Option<Inferr
                     if ret.name == "void" {
                         Some(InferredType::Void)
                     } else {
-                        Some(classify_type_name(&ret.name))
+                        Some(classify_type_name(ret.name))
                     }
                 },
             );
@@ -499,7 +499,7 @@ fn infer_call(node: &Node, source: &str, symbols: &SymbolTable) -> Option<Inferr
     }
 
     // 5. ClassDB lookup via extends chain
-    if let Some(extends) = &symbols.extends
+    if let Some(extends) = file.extends_class()
         && let Some(ret_type) = class_db::method_return_type(extends, func_name)
     {
         return Some(parse_class_db_type(ret_type));
@@ -511,7 +511,7 @@ fn infer_call(node: &Node, source: &str, symbols: &SymbolTable) -> Option<Inferr
 /// Infer type from an attribute expression (property access or method call).
 ///
 /// tree-sitter pattern: `obj.method()` → `attribute` > [`identifier`, `attribute_call`]
-fn infer_attribute(node: &Node, source: &str, symbols: &SymbolTable) -> Option<InferredType> {
+fn infer_attribute(node: &Node, source: &str, file: &GdFile) -> Option<InferredType> {
     // Check if this is a method call (has attribute_call child)
     let mut has_call = false;
     let mut method_name = None;
@@ -527,7 +527,7 @@ fn infer_attribute(node: &Node, source: &str, symbols: &SymbolTable) -> Option<I
 
     // Infer the receiver type
     let receiver = node.named_child(0)?;
-    let receiver_type = infer_expression_type(&receiver, source, symbols);
+    let receiver_type = infer_expression_type(&receiver, source, file);
 
     // If receiver doesn't resolve, check if it's a class name (e.g., Node.new())
     let receiver_class_name: Option<String>;
@@ -1028,31 +1028,31 @@ fn leak_str(s: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::gd_ast;
     use crate::core::parser;
-    use crate::core::symbol_table;
 
-    /// Parse source, build symbol table, find the value node of the first variable
+    /// Parse source, build typed AST, find the value node of the first variable
     /// statement, and infer its type.
     fn infer_var_value(source: &str) -> Option<InferredType> {
         let tree = parser::parse(source).unwrap();
-        let symbols = symbol_table::build(&tree, source);
+        let file = gd_ast::convert(&tree, source);
         let root = tree.root_node();
-        find_first_var_value(&root, source, &symbols)
+        find_first_var_value(&root, source, &file)
     }
 
     fn find_first_var_value(
         node: &Node,
         source: &str,
-        symbols: &SymbolTable,
+        file: &GdFile,
     ) -> Option<InferredType> {
         if node.kind() == "variable_statement"
             && let Some(value) = node.child_by_field_name("value")
         {
-            return infer_expression_type(&value, source, symbols);
+            return infer_expression_type(&value, source, file);
         }
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
-            if let Some(result) = find_first_var_value(&child, source, symbols) {
+            if let Some(result) = find_first_var_value(&child, source, file) {
                 return Some(result);
             }
         }
@@ -1680,6 +1680,7 @@ func f():
 
     mod project_tests {
         use super::*;
+        use crate::core::gd_ast;
         use crate::core::workspace_index;
         use std::path::PathBuf;
 
@@ -1695,25 +1696,25 @@ func f():
             let project = workspace_index::build_from_sources(&root, &file_entries, &[]);
 
             let tree = parser::parse(source).unwrap();
-            let symbols = symbol_table::build(&tree, source);
+            let file = gd_ast::convert(&tree, source);
             let root_node = tree.root_node();
-            find_first_var_value_project(&root_node, source, &symbols, &project)
+            find_first_var_value_project(&root_node, source, &file, &project)
         }
 
         fn find_first_var_value_project(
             node: &tree_sitter::Node,
             source: &str,
-            symbols: &SymbolTable,
+            file: &GdFile,
             project: &workspace_index::ProjectIndex,
         ) -> Option<InferredType> {
             if node.kind() == "variable_statement"
                 && let Some(value) = node.child_by_field_name("value")
             {
-                return infer_expression_type_with_project(&value, source, symbols, project);
+                return infer_expression_type_with_project(&value, source, file, project);
             }
             let mut cursor = node.walk();
             for child in node.children(&mut cursor) {
-                if let Some(result) = find_first_var_value_project(&child, source, symbols, project)
+                if let Some(result) = find_first_var_value_project(&child, source, file, project)
                 {
                     return Some(result);
                 }

@@ -1,6 +1,6 @@
 use tree_sitter::Node;
 
-use crate::core::symbol_table::SymbolTable;
+use crate::core::gd_ast::{GdClass, GdDecl, GdFile};
 use crate::core::type_inference;
 use crate::core::workspace_index::ProjectIndex;
 
@@ -9,30 +9,29 @@ use super::identifiers::resolve_to_classdb_type;
 use super::structural::find_annotation_name;
 
 fn check_onready_non_node(
-    symbols: &SymbolTable,
+    file: &GdFile,
     project: &ProjectIndex,
     errors: &mut Vec<StructuralError>,
 ) {
-    let has_onready = symbols
-        .variables
-        .iter()
-        .any(|v| v.annotations.iter().any(|a| a == "onready"));
+    let has_onready = file
+        .vars()
+        .any(|v| v.annotations.iter().any(|a| a.name == "onready"));
     if !has_onready {
         return;
     }
 
     // Check if extends chain reaches Node — resolve through project types
-    let extends = symbols.extends.as_deref().unwrap_or("RefCounted");
+    let extends = file.extends_class().unwrap_or("RefCounted");
     let classdb_type = resolve_to_classdb_type(extends, project);
     if classdb_type == "Node" || crate::class_db::inherits(&classdb_type, "Node") {
         return;
     }
 
     // @onready is used but class doesn't extend Node
-    for var in &symbols.variables {
-        if var.annotations.iter().any(|a| a == "onready") {
+    for var in file.vars() {
+        if var.annotations.iter().any(|a| a.name == "onready") {
             errors.push(StructuralError {
-                line: var.line as u32 + 1,
+                line: var.node.start_position().row as u32 + 1,
                 column: 1,
                 message: format!(
                     "`@onready` can only be used in classes that extend `Node` (class extends `{extends}`)",
@@ -48,45 +47,45 @@ fn check_onready_non_node(
 
 /// Batch 5: Check type annotations, class_name shadowing, enum shadowing.
 pub fn check_classdb_errors(
-    root: &Node,
+    file: &GdFile,
     source: &str,
-    symbols: &SymbolTable,
     project: &ProjectIndex,
 ) -> Vec<StructuralError> {
+    let root = &file.node;
     let mut errors = Vec::new();
-    check_class_name_shadows_native(symbols, &mut errors);
-    check_enum_shadows_builtin(symbols, &mut errors);
-    check_type_annotations_resolve(root, source, symbols, project, &mut errors);
-    check_use_void_return(root, source, symbols, &mut errors);
+    check_class_name_shadows_native(file, &mut errors);
+    check_enum_shadows_builtin(file, &mut errors);
+    check_type_annotations_resolve(root, source, file, project, &mut errors);
+    check_use_void_return(root, source, file, &mut errors);
     check_instance_method_on_class(root, source, &mut errors);
-    check_virtual_override_signature(symbols, &mut errors);
-    check_cyclic_inner_class(symbols, &mut errors);
-    check_export_invalid_type(symbols, &mut errors);
+    check_virtual_override_signature(file, &mut errors);
+    check_cyclic_inner_class(file, &mut errors);
+    check_export_invalid_type(file, &mut errors);
     check_rpc_args(root, source, &mut errors);
     check_export_node_path_type(root, source, &mut errors);
     check_lambda_super(root, source, &mut errors);
-    check_typed_array_wrong_element(root, source, symbols, &mut errors);
-    check_callable_direct_call(root, source, symbols, &mut errors);
-    check_for_on_non_iterable(root, source, symbols, &mut errors);
-    super::args::check_arg_count(root, source, symbols, &mut errors);
-    super::args::check_arg_type_mismatch(root, source, symbols, &mut errors);
-    super::types::check_assign_type_mismatch(root, source, symbols, &mut errors);
-    super::types::check_return_type_mismatch(root, source, symbols, &mut errors);
-    super::types::check_invalid_operators(root, source, symbols, &mut errors);
-    super::types::check_invalid_cast(root, source, symbols, &mut errors);
-    super::identifiers::check_type_not_found(root, source, symbols, project, &mut errors);
-    super::identifiers::check_method_not_found(root, source, symbols, project, &mut errors);
-    super::identifiers::check_super_method_not_found(root, source, symbols, project, &mut errors);
-    super::identifiers::check_undefined_identifiers(root, source, symbols, project, &mut errors);
-    super::builtins::check_builtin_method_not_found(root, source, symbols, &mut errors);
-    super::builtins::check_builtin_property_not_found(root, source, symbols, &mut errors);
-    check_onready_non_node(symbols, project, &mut errors);
+    check_typed_array_wrong_element(root, source, file, &mut errors);
+    check_callable_direct_call(root, source, file, &mut errors);
+    check_for_on_non_iterable(root, source, file, &mut errors);
+    super::args::check_arg_count(root, source, file, &mut errors);
+    super::args::check_arg_type_mismatch(root, source, file, &mut errors);
+    super::types::check_assign_type_mismatch(root, source, file, &mut errors);
+    super::types::check_return_type_mismatch(root, source, file, &mut errors);
+    super::types::check_invalid_operators(root, source, file, &mut errors);
+    super::types::check_invalid_cast(root, source, file, &mut errors);
+    super::identifiers::check_type_not_found(root, source, file, project, &mut errors);
+    super::identifiers::check_method_not_found(root, source, file, project, &mut errors);
+    super::identifiers::check_super_method_not_found(root, source, file, project, &mut errors);
+    super::identifiers::check_undefined_identifiers(root, source, file, project, &mut errors);
+    super::builtins::check_builtin_method_not_found(root, source, file, &mut errors);
+    super::builtins::check_builtin_property_not_found(root, source, file, &mut errors);
+    check_onready_non_node(file, project, &mut errors);
     errors
 }
 
 /// H5: `class_name` shadows a native Godot class.
-fn check_class_name_shadows_native(symbols: &SymbolTable, errors: &mut Vec<StructuralError>) {
-    if let Some(ref name) = symbols.class_name
+fn check_class_name_shadows_native(file: &GdFile, errors: &mut Vec<StructuralError>) {
+    if let Some(name) = file.class_name
         && crate::class_db::class_exists(name)
     {
         errors.push(StructuralError {
@@ -95,22 +94,39 @@ fn check_class_name_shadows_native(symbols: &SymbolTable, errors: &mut Vec<Struc
             message: format!("`class_name {name}` shadows the native Godot class `{name}`",),
         });
     }
-    for (inner_name, inner) in &symbols.inner_classes {
-        if crate::class_db::class_exists(inner_name) {
+    for inner in file.inner_classes() {
+        if crate::class_db::class_exists(inner.name) {
             errors.push(StructuralError {
                 line: 1,
                 column: 1,
                 message: format!(
-                    "inner class `{inner_name}` shadows the native Godot class `{inner_name}`",
+                    "inner class `{}` shadows the native Godot class `{}`",
+                    inner.name, inner.name,
                 ),
             });
         }
-        check_class_name_shadows_native(inner, errors);
+        check_class_name_shadows_native_inner(inner, errors);
+    }
+}
+
+fn check_class_name_shadows_native_inner(class: &GdClass, errors: &mut Vec<StructuralError>) {
+    for inner in class.declarations.iter().filter_map(GdDecl::as_class) {
+        if crate::class_db::class_exists(inner.name) {
+            errors.push(StructuralError {
+                line: 1,
+                column: 1,
+                message: format!(
+                    "inner class `{}` shadows the native Godot class `{}`",
+                    inner.name, inner.name,
+                ),
+            });
+        }
+        check_class_name_shadows_native_inner(inner, errors);
     }
 }
 
 /// G5: Enum name or member name shadows a builtin type.
-fn check_enum_shadows_builtin(symbols: &SymbolTable, errors: &mut Vec<StructuralError>) {
+fn check_enum_shadows_builtin(file: &GdFile, errors: &mut Vec<StructuralError>) {
     let builtin_types = [
         "bool",
         "int",
@@ -152,10 +168,10 @@ fn check_enum_shadows_builtin(symbols: &SymbolTable, errors: &mut Vec<Structural
         "Nil",
         "Object",
     ];
-    for e in &symbols.enums {
-        if !e.name.is_empty() && builtin_types.contains(&e.name.as_str()) {
+    for e in file.enums() {
+        if !e.name.is_empty() && builtin_types.contains(&e.name) {
             errors.push(StructuralError {
-                line: e.line as u32 + 1,
+                line: e.node.start_position().row as u32 + 1,
                 column: 1,
                 message: format!(
                     "enum `{name}` shadows the built-in type `{name}`",
@@ -164,8 +180,30 @@ fn check_enum_shadows_builtin(symbols: &SymbolTable, errors: &mut Vec<Structural
             });
         }
     }
-    for (_, inner) in &symbols.inner_classes {
-        check_enum_shadows_builtin(inner, errors);
+    for inner in file.inner_classes() {
+        check_enum_shadows_builtin_inner(inner, &builtin_types, errors);
+    }
+}
+
+fn check_enum_shadows_builtin_inner(
+    class: &GdClass,
+    builtin_types: &[&str],
+    errors: &mut Vec<StructuralError>,
+) {
+    for e in class.declarations.iter().filter_map(GdDecl::as_enum) {
+        if !e.name.is_empty() && builtin_types.contains(&e.name) {
+            errors.push(StructuralError {
+                line: e.node.start_position().row as u32 + 1,
+                column: 1,
+                message: format!(
+                    "enum `{name}` shadows the built-in type `{name}`",
+                    name = e.name,
+                ),
+            });
+        }
+    }
+    for inner in class.declarations.iter().filter_map(GdDecl::as_class) {
+        check_enum_shadows_builtin_inner(inner, builtin_types, errors);
     }
 }
 
@@ -173,17 +211,17 @@ fn check_enum_shadows_builtin(symbols: &SymbolTable, errors: &mut Vec<Structural
 fn check_type_annotations_resolve(
     root: &Node,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile,
     project: &ProjectIndex,
     errors: &mut Vec<StructuralError>,
 ) {
-    check_type_annotations_in_node(*root, source, symbols, project, errors);
+    check_type_annotations_in_node(*root, source, file, project, errors);
 }
 
 fn check_type_annotations_in_node(
     node: Node,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile,
     project: &ProjectIndex,
     errors: &mut Vec<StructuralError>,
 ) {
@@ -208,7 +246,7 @@ fn check_type_annotations_in_node(
             .strip_prefix("Array[")
             .and_then(|s| s.strip_suffix(']'))
         {
-            if !inner.is_empty() && !is_known_type(inner, symbols, project) {
+            if !inner.is_empty() && !is_known_type(inner, file, project) {
                 let pos = type_node.start_position();
                 errors.push(StructuralError {
                     line: pos.row as u32 + 1,
@@ -220,7 +258,7 @@ fn check_type_annotations_in_node(
             let mut cursor = node.walk();
             if cursor.goto_first_child() {
                 loop {
-                    check_type_annotations_in_node(cursor.node(), source, symbols, project, errors);
+                    check_type_annotations_in_node(cursor.node(), source, file, project, errors);
                     if !cursor.goto_next_sibling() {
                         break;
                     }
@@ -235,7 +273,7 @@ fn check_type_annotations_in_node(
             // Check each type in "K, V"
             for part in inner.split(',') {
                 let part = part.trim();
-                if !part.is_empty() && !is_known_type(part, symbols, project) {
+                if !part.is_empty() && !is_known_type(part, file, project) {
                     let pos = type_node.start_position();
                     errors.push(StructuralError {
                         line: pos.row as u32 + 1,
@@ -247,7 +285,7 @@ fn check_type_annotations_in_node(
             let mut cursor = node.walk();
             if cursor.goto_first_child() {
                 loop {
-                    check_type_annotations_in_node(cursor.node(), source, symbols, project, errors);
+                    check_type_annotations_in_node(cursor.node(), source, file, project, errors);
                     if !cursor.goto_next_sibling() {
                         break;
                     }
@@ -257,7 +295,7 @@ fn check_type_annotations_in_node(
         }
         let base_type = type_name;
 
-        if !base_type.is_empty() && !is_known_type(base_type, symbols, project) {
+        if !base_type.is_empty() && !is_known_type(base_type, file, project) {
             let pos = type_node.start_position();
             errors.push(StructuralError {
                 line: pos.row as u32 + 1,
@@ -270,7 +308,7 @@ fn check_type_annotations_in_node(
     let mut cursor = node.walk();
     if cursor.goto_first_child() {
         loop {
-            check_type_annotations_in_node(cursor.node(), source, symbols, project, errors);
+            check_type_annotations_in_node(cursor.node(), source, file, project, errors);
             if !cursor.goto_next_sibling() {
                 break;
             }
@@ -279,7 +317,7 @@ fn check_type_annotations_in_node(
 }
 
 /// Check if a type name is known (builtin, ClassDB, user class, enum, or inner class).
-pub(super) fn is_known_type(name: &str, symbols: &SymbolTable, project: &ProjectIndex) -> bool {
+pub(super) fn is_known_type(name: &str, file: &GdFile, project: &ProjectIndex) -> bool {
     // GDScript built-in types
     let builtins = [
         "void",
@@ -343,12 +381,12 @@ pub(super) fn is_known_type(name: &str, symbols: &SymbolTable, project: &Project
     }
 
     // Same-file enums
-    if symbols.enums.iter().any(|e| e.name == name) {
+    if file.enums().any(|e| e.name == name) {
         return true;
     }
 
     // Inner classes
-    if symbols.inner_classes.iter().any(|(n, _)| n == name) {
+    if file.inner_classes().any(|c| c.name == name) {
         return true;
     }
 
@@ -383,16 +421,16 @@ pub(super) fn is_known_type(name: &str, symbols: &SymbolTable, project: &Project
 fn check_use_void_return(
     root: &Node,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile,
     errors: &mut Vec<StructuralError>,
 ) {
-    check_use_void_in_node(*root, source, symbols, errors);
+    check_use_void_in_node(*root, source, file, errors);
 }
 
 fn check_use_void_in_node(
     node: Node,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile,
     errors: &mut Vec<StructuralError>,
 ) {
     let bytes = source.as_bytes();
@@ -408,11 +446,11 @@ fn check_use_void_in_node(
         && let Ok(func_name) = func.utf8_text(bytes)
     {
         // Check user-defined functions
-        let is_void = symbols.functions.iter().any(|f| {
+        let is_void = file.funcs().any(|f| {
             f.name == func_name && f.return_type.as_ref().is_some_and(|r| r.name == "void")
         });
         // Check ClassDB methods (bare call = self method)
-        let extends = symbols.extends.as_deref().unwrap_or("RefCounted");
+        let extends = file.extends_class().unwrap_or("RefCounted");
         let is_classdb_void =
             !is_void && crate::class_db::method_return_type(extends, func_name) == Some("void");
 
@@ -438,7 +476,7 @@ fn check_use_void_in_node(
             let mut cursor = body.walk();
             if cursor.goto_first_child() {
                 loop {
-                    check_use_void_in_node(cursor.node(), source, symbols, errors);
+                    check_use_void_in_node(cursor.node(), source, file, errors);
                     if !cursor.goto_next_sibling() {
                         break;
                     }
@@ -451,7 +489,7 @@ fn check_use_void_in_node(
     let mut cursor = node.walk();
     if cursor.goto_first_child() {
         loop {
-            check_use_void_in_node(cursor.node(), source, symbols, errors);
+            check_use_void_in_node(cursor.node(), source, file, errors);
             if !cursor.goto_next_sibling() {
                 break;
             }
@@ -524,9 +562,9 @@ fn known_virtual_signature(name: &str) -> Option<(&'static str, u8)> {
 }
 
 /// D1/D2: Virtual override signature checks — wrong return type or wrong param count.
-fn check_virtual_override_signature(symbols: &SymbolTable, errors: &mut Vec<StructuralError>) {
-    let extends = symbols.extends.as_deref().unwrap_or("RefCounted");
-    for func in &symbols.functions {
+fn check_virtual_override_signature(file: &GdFile, errors: &mut Vec<StructuralError>) {
+    let extends = file.extends_class().unwrap_or("RefCounted");
+    for func in file.funcs() {
         // Only check virtual overrides (functions starting with _)
         if !func.name.starts_with('_') {
             continue;
@@ -534,9 +572,9 @@ fn check_virtual_override_signature(symbols: &SymbolTable, errors: &mut Vec<Stru
 
         // Try ClassDB first, fall back to well-known virtuals
         let (ret_type, total) =
-            if let Some(sig) = crate::class_db::method_signature(extends, &func.name) {
+            if let Some(sig) = crate::class_db::method_signature(extends, func.name) {
                 (sig.return_type, sig.total_params as usize)
-            } else if let Some((ret, params)) = known_virtual_signature(&func.name) {
+            } else if let Some((ret, params)) = known_virtual_signature(func.name) {
                 (ret, params as usize)
             } else {
                 continue;
@@ -550,7 +588,7 @@ fn check_virtual_override_signature(symbols: &SymbolTable, errors: &mut Vec<Stru
             && ret.name != ret_type
         {
             errors.push(StructuralError {
-                line: func.line as u32 + 1,
+                line: func.node.start_position().row as u32 + 1,
                 column: 1,
                 message: format!(
                     "override `{}()` has return type `{}` but parent expects `{}`",
@@ -563,7 +601,7 @@ fn check_virtual_override_signature(symbols: &SymbolTable, errors: &mut Vec<Stru
         let user_count = func.params.len();
         if func.name != "_init" && user_count != total {
             errors.push(StructuralError {
-                line: func.line as u32 + 1,
+                line: func.node.start_position().row as u32 + 1,
                 column: 1,
                 message: format!(
                     "override `{}()` has {} parameter(s) but parent expects {}",
@@ -572,29 +610,87 @@ fn check_virtual_override_signature(symbols: &SymbolTable, errors: &mut Vec<Stru
             });
         }
     }
-    for (_, inner) in &symbols.inner_classes {
-        check_virtual_override_signature(inner, errors);
+    for inner in file.inner_classes() {
+        check_virtual_override_signature_inner(inner, errors);
+    }
+}
+
+fn check_virtual_override_signature_inner(class: &GdClass, errors: &mut Vec<StructuralError>) {
+    let extends = class
+        .extends
+        .as_ref()
+        .and_then(|e| match e {
+            crate::core::gd_ast::GdExtends::Class(c) => Some(*c),
+            crate::core::gd_ast::GdExtends::Path(_) => None,
+        })
+        .unwrap_or("RefCounted");
+    for func in class.declarations.iter().filter_map(GdDecl::as_func) {
+        if !func.name.starts_with('_') {
+            continue;
+        }
+        let (ret_type, total) =
+            if let Some(sig) = crate::class_db::method_signature(extends, func.name) {
+                (sig.return_type, sig.total_params as usize)
+            } else if let Some((ret, params)) = known_virtual_signature(func.name) {
+                (ret, params as usize)
+            } else {
+                continue;
+            };
+        if let Some(ref ret) = func.return_type
+            && !ret.name.is_empty()
+            && ret.name != "void"
+            && ret_type != "Variant"
+            && ret.name != ret_type
+        {
+            errors.push(StructuralError {
+                line: func.node.start_position().row as u32 + 1,
+                column: 1,
+                message: format!(
+                    "override `{}()` has return type `{}` but parent expects `{}`",
+                    func.name, ret.name, ret_type,
+                ),
+            });
+        }
+        let user_count = func.params.len();
+        if func.name != "_init" && user_count != total {
+            errors.push(StructuralError {
+                line: func.node.start_position().row as u32 + 1,
+                column: 1,
+                message: format!(
+                    "override `{}()` has {} parameter(s) but parent expects {}",
+                    func.name, user_count, total,
+                ),
+            });
+        }
+    }
+    for inner in class.declarations.iter().filter_map(GdDecl::as_class) {
+        check_virtual_override_signature_inner(inner, errors);
     }
 }
 
 /// D3: Cyclic inner class inheritance.
-fn check_cyclic_inner_class(symbols: &SymbolTable, errors: &mut Vec<StructuralError>) {
+fn check_cyclic_inner_class(file: &GdFile, errors: &mut Vec<StructuralError>) {
     // Build a map of inner class name -> extends
-    let extends_map: std::collections::HashMap<&str, &str> = symbols
-        .inner_classes
-        .iter()
-        .filter_map(|(n, s)| s.extends.as_deref().map(|e| (n.as_str(), e)))
+    let extends_map: std::collections::HashMap<&str, &str> = file
+        .inner_classes()
+        .filter_map(|c| {
+            c.extends.as_ref().and_then(|e| match e {
+                crate::core::gd_ast::GdExtends::Class(ext) => Some((c.name, *ext)),
+                crate::core::gd_ast::GdExtends::Path(_) => None,
+            })
+        })
         .collect();
 
     // Check for cycles: walk the extends chain, detect if we revisit a class
     let mut reported = std::collections::HashSet::new();
-    for (name, _) in &symbols.inner_classes {
+    for inner in file.inner_classes() {
+        let name = inner.name;
         let mut visited = std::collections::HashSet::new();
-        let mut current = name.as_str();
+        let mut current = name;
         while let Some(&parent) = extends_map.get(current) {
             if !visited.insert(parent) || parent == name {
                 // Cycle detected — report only once
-                if reported.insert(name.as_str()) {
+                if reported.insert(name) {
                     errors.push(StructuralError {
                         line: 1,
                         column: 1,
@@ -611,9 +707,9 @@ fn check_cyclic_inner_class(symbols: &SymbolTable, errors: &mut Vec<StructuralEr
 }
 
 /// E2: `@export` with an invalid type (Object is not exportable).
-fn check_export_invalid_type(symbols: &SymbolTable, errors: &mut Vec<StructuralError>) {
-    for var in &symbols.variables {
-        let has_export = var.annotations.iter().any(|a| a == "export");
+fn check_export_invalid_type(file: &GdFile, errors: &mut Vec<StructuralError>) {
+    for var in file.vars() {
+        let has_export = var.annotations.iter().any(|a| a.name == "export");
         if !has_export {
             continue;
         }
@@ -621,7 +717,7 @@ fn check_export_invalid_type(symbols: &SymbolTable, errors: &mut Vec<StructuralE
             && type_ann.name == "Object"
         {
             errors.push(StructuralError {
-                line: var.line as u32 + 1,
+                line: var.node.start_position().row as u32 + 1,
                 column: 1,
                 message: format!(
                     "`@export` type `Object` is not a valid export type for variable `{}`",
@@ -630,8 +726,32 @@ fn check_export_invalid_type(symbols: &SymbolTable, errors: &mut Vec<StructuralE
             });
         }
     }
-    for (_, inner) in &symbols.inner_classes {
-        check_export_invalid_type(inner, errors);
+    for inner in file.inner_classes() {
+        check_export_invalid_type_inner(inner, errors);
+    }
+}
+
+fn check_export_invalid_type_inner(class: &GdClass, errors: &mut Vec<StructuralError>) {
+    for var in class.declarations.iter().filter_map(GdDecl::as_var) {
+        let has_export = var.annotations.iter().any(|a| a.name == "export");
+        if !has_export {
+            continue;
+        }
+        if let Some(ref type_ann) = var.type_ann
+            && type_ann.name == "Object"
+        {
+            errors.push(StructuralError {
+                line: var.node.start_position().row as u32 + 1,
+                column: 1,
+                message: format!(
+                    "`@export` type `Object` is not a valid export type for variable `{}`",
+                    var.name,
+                ),
+            });
+        }
+    }
+    for inner in class.declarations.iter().filter_map(GdDecl::as_class) {
+        check_export_invalid_type_inner(inner, errors);
     }
 }
 
@@ -802,16 +922,16 @@ fn check_lambda_super_in_node(
 fn check_typed_array_wrong_element(
     root: &Node,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile,
     errors: &mut Vec<StructuralError>,
 ) {
-    check_typed_array_in_node(root, source, symbols, errors);
+    check_typed_array_in_node(root, source, file, errors);
 }
 
 fn check_typed_array_in_node(
     node: &Node,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile,
     errors: &mut Vec<StructuralError>,
 ) {
     // Look for variable declarations with typed array annotation and array literal initializer
@@ -824,13 +944,13 @@ fn check_typed_array_in_node(
         && let Some(value_node) = node.child_by_field_name("value")
         && value_node.kind() == "array"
     {
-        check_array_elements(&value_node, source, symbols, element_type, errors);
+        check_array_elements(&value_node, source, file, element_type, errors);
     }
 
     let mut cursor = node.walk();
     if cursor.goto_first_child() {
         loop {
-            check_typed_array_in_node(&cursor.node(), source, symbols, errors);
+            check_typed_array_in_node(&cursor.node(), source, file, errors);
             if !cursor.goto_next_sibling() {
                 break;
             }
@@ -841,7 +961,7 @@ fn check_typed_array_in_node(
 fn check_array_elements(
     array_node: &Node,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile,
     expected_type: &str,
     errors: &mut Vec<StructuralError>,
 ) {
@@ -850,7 +970,7 @@ fn check_array_elements(
         if !child.is_named() {
             continue;
         }
-        let Some(actual) = type_inference::infer_expression_type(&child, source, symbols) else {
+        let Some(actual) = type_inference::infer_expression_type(&child, source, file) else {
             continue;
         };
         let actual_name = match &actual {
@@ -896,23 +1016,22 @@ pub(super) fn types_assignable(declared: &str, actual: &str) -> bool {
 fn check_callable_direct_call(
     root: &Node,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile,
     errors: &mut Vec<StructuralError>,
 ) {
     // Collect class-level Callable variables
-    let mut callable_names: Vec<String> = symbols
-        .variables
-        .iter()
+    let mut callable_names: Vec<String> = file
+        .vars()
         .filter(|v| v.type_ann.as_ref().is_some_and(|t| t.name == "Callable"))
-        .map(|v| v.name.clone())
+        .map(|v| v.name.to_string())
         .collect();
-    check_callable_in_node(root, source, symbols, &mut callable_names, errors);
+    check_callable_in_node(root, source, file, &mut callable_names, errors);
 }
 
 fn check_callable_in_node(
     node: &Node,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile,
     callable_names: &mut Vec<String>,
     errors: &mut Vec<StructuralError>,
 ) {
@@ -932,7 +1051,7 @@ fn check_callable_in_node(
         && let Some(func_node) = node.named_child(0)
         && func_node.kind() == "identifier"
         && let Ok(name) = func_node.utf8_text(source.as_bytes())
-        && !symbols.functions.iter().any(|f| f.name == name)
+        && !file.funcs().any(|f| f.name == name)
         && callable_names.iter().any(|cn| cn == name)
     {
         errors.push(StructuralError {
@@ -947,7 +1066,7 @@ fn check_callable_in_node(
     let mut cursor = node.walk();
     if cursor.goto_first_child() {
         loop {
-            check_callable_in_node(&cursor.node(), source, symbols, callable_names, errors);
+            check_callable_in_node(&cursor.node(), source, file, callable_names, errors);
             if !cursor.goto_next_sibling() {
                 break;
             }
@@ -959,21 +1078,21 @@ fn check_callable_in_node(
 fn check_for_on_non_iterable(
     root: &Node,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile,
     errors: &mut Vec<StructuralError>,
 ) {
-    check_for_iterable_in_node(root, source, symbols, errors);
+    check_for_iterable_in_node(root, source, file, errors);
 }
 
 fn check_for_iterable_in_node(
     node: &Node,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile,
     errors: &mut Vec<StructuralError>,
 ) {
     if node.kind() == "for_statement"
         && let Some(iter_node) = node.child_by_field_name("right")
-        && let Some(ty) = type_inference::infer_expression_type(&iter_node, source, symbols)
+        && let Some(ty) = type_inference::infer_expression_type(&iter_node, source, file)
         && !is_iterable_type(&ty)
     {
         let ty_name = match &ty {
@@ -994,7 +1113,7 @@ fn check_for_iterable_in_node(
     let mut cursor = node.walk();
     if cursor.goto_first_child() {
         loop {
-            check_for_iterable_in_node(&cursor.node(), source, symbols, errors);
+            check_for_iterable_in_node(&cursor.node(), source, file, errors);
             if !cursor.goto_next_sibling() {
                 break;
             }

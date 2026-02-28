@@ -106,7 +106,6 @@ use std::str::FromStr;
 
 use crate::core::config::{LintConfig, RuleConfig};
 use crate::core::gd_ast::GdFile;
-use crate::core::symbol_table::SymbolTable;
 use crate::core::workspace_index::ProjectIndex;
 
 /// Clippy-style category for organizing lint rules.
@@ -247,15 +246,14 @@ pub trait LintRule: Send + Sync {
     /// Run the rule against a parsed file and return diagnostics.
     fn check(&self, file: &GdFile<'_>, source: &str, config: &LintConfig) -> Vec<LintDiagnostic>;
 
-    /// Run the rule with access to the per-file symbol table.
-    /// Default delegates to `check()`, ignoring the symbol table.
+    /// Run the rule with access to the per-file typed AST.
+    /// Default delegates to `check()`.
     /// Override this in rules that need declaration-level type information.
     fn check_with_symbols(
         &self,
         file: &GdFile<'_>,
         source: &str,
         config: &LintConfig,
-        _symbols: &SymbolTable,
     ) -> Vec<LintDiagnostic> {
         self.check(file, source, config)
     }
@@ -268,10 +266,9 @@ pub trait LintRule: Send + Sync {
         file: &GdFile<'_>,
         source: &str,
         config: &LintConfig,
-        symbols: &SymbolTable,
         _project: &ProjectIndex,
     ) -> Vec<LintDiagnostic> {
-        self.check_with_symbols(file, source, config, symbols)
+        self.check_with_symbols(file, source, config)
     }
 }
 

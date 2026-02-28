@@ -6,7 +6,7 @@ use miette::Result;
 use tree_sitter::Node;
 
 use super::{ExtractMethodOutput, ParameterOutput, line_starts, normalize_blank_lines};
-use crate::core::symbol_table::SymbolTable;
+use crate::core::gd_ast::GdFile;
 use crate::core::type_inference::{InferredType, infer_expression_type};
 
 // ── extract-method ──────────────────────────────────────────────────────────
@@ -34,7 +34,6 @@ pub fn extract_method(
     let tree = crate::core::parser::parse(&source)?;
     let root = tree.root_node();
     let gd_file = crate::core::gd_ast::convert(&tree, &source);
-    let symbols = crate::core::symbol_table::build(&tree, &source);
 
     let start_line_0 = start_line - 1;
     let end_line_0 = end_line - 1;
@@ -139,7 +138,7 @@ pub fn extract_method(
         &local_decls,
         &statements,
         extracted_range,
-        &symbols,
+        &gd_file,
     );
 
     // Separate params and return vars
@@ -157,7 +156,7 @@ pub fn extract_method(
         body,
         &source,
         extracted_range.1,
-        &symbols,
+        &gd_file,
     );
     return_vars.extend(local_returns);
 
@@ -435,7 +434,7 @@ fn inferred_type_to_hint(ty: &InferredType) -> Option<String> {
 /// Try to infer a type for a local `variable_statement` node by checking its
 /// explicit type annotation first, then falling back to expression inference on
 /// its initialiser.
-fn infer_var_type(node: Node, source: &str, symbols: &SymbolTable) -> Option<String> {
+fn infer_var_type(node: Node, source: &str, file: &GdFile) -> Option<String> {
     // 1. Explicit annotation (`: int`, `: Vector2`, etc.)
     if let Some(type_node) = node.child_by_field_name("type")
         && type_node.kind() != "inferred_type"
@@ -447,7 +446,7 @@ fn infer_var_type(node: Node, source: &str, symbols: &SymbolTable) -> Option<Str
 
     // 2. Infer from initialiser
     if let Some(value) = node.child_by_field_name("value")
-        && let Some(ty) = infer_expression_type(&value, source, symbols)
+        && let Some(ty) = infer_expression_type(&value, source, file)
     {
         return inferred_type_to_hint(&ty);
     }
@@ -466,17 +465,17 @@ fn find_captured_variables(
     local_decls: &HashSet<String>,
     statements: &[Node],
     extracted_range: (usize, usize),
-    symbols: &SymbolTable,
+    file: &GdFile,
 ) -> Vec<CapturedVar> {
     // Collect function parameters with optional type hints
     let mut pre_decls: HashMap<String, Option<String>> = HashMap::new();
 
-    // Look up the enclosing function in the symbol table for parameter types
+    // Look up the enclosing function in the typed AST for parameter types
     let func_name = func
         .child_by_field_name("name")
         .and_then(|n| n.utf8_text(source.as_bytes()).ok())
         .unwrap_or("");
-    let func_decl = symbols.functions.iter().find(|f| f.name == func_name);
+    let func_decl = file.find_func(func_name);
 
     if let Some(params) = func.child_by_field_name("parameters") {
         let mut cursor = params.walk();
@@ -486,12 +485,12 @@ fn find_captured_variables(
                 match child.kind() {
                     "identifier" => {
                         let name = source[child.byte_range()].to_string();
-                        // Try to get the type from the symbol table's FuncDecl
+                        // Try to get the type from the typed AST's GdFunc
                         let type_hint = func_decl
                             .and_then(|fd| fd.params.iter().find(|p| p.name == name))
                             .and_then(|p| p.type_ann.as_ref())
                             .filter(|ann| !ann.is_inferred && !ann.name.is_empty())
-                            .map(|ann| ann.name.clone());
+                            .map(|ann| ann.name.to_string());
                         pre_decls.insert(name, type_hint);
                     }
                     "typed_parameter" | "typed_default_parameter" => {
@@ -514,7 +513,7 @@ fn find_captured_variables(
                             // No explicit type, but try inference from default value
                             let type_hint = child
                                 .child_by_field_name("value")
-                                .and_then(|v| infer_expression_type(&v, source, symbols))
+                                .and_then(|v| infer_expression_type(&v, source, file))
                                 .and_then(|ty| inferred_type_to_hint(&ty));
                             pre_decls.insert(name, type_hint);
                         }
@@ -538,7 +537,7 @@ fn find_captured_variables(
             && let Some(name_node) = child.child_by_field_name("name")
             && let Ok(var_name) = name_node.utf8_text(source.as_bytes())
         {
-            let type_hint = infer_var_type(child, source, symbols);
+            let type_hint = infer_var_type(child, source, file);
             pre_decls.insert(var_name.to_string(), type_hint);
         }
     }
@@ -610,7 +609,7 @@ fn find_local_return_vars(
     body: Node,
     source: &str,
     range_end: usize,
-    symbols: &SymbolTable,
+    file: &GdFile,
 ) -> Vec<CapturedVar> {
     let mut result = Vec::new();
     for var_name in local_decls {
@@ -619,7 +618,7 @@ fn find_local_return_vars(
         }
         // Extract type hint from the variable_statement node in the extracted range,
         // falling back to type inference on the initialiser
-        let type_hint = find_var_type_hint_inferred(var_name, statements, source, symbols);
+        let type_hint = find_var_type_hint_inferred(var_name, statements, source, file);
         result.push(CapturedVar {
             name: var_name.clone(),
             type_hint,
@@ -638,10 +637,10 @@ fn find_var_type_hint_inferred(
     name: &str,
     statements: &[Node],
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile,
 ) -> Option<String> {
     for stmt in statements {
-        if let Some(hint) = find_var_type_hint_inferred_recursive(*stmt, name, source, symbols) {
+        if let Some(hint) = find_var_type_hint_inferred_recursive(*stmt, name, source, file) {
             return Some(hint);
         }
     }
@@ -652,17 +651,17 @@ fn find_var_type_hint_inferred_recursive(
     node: Node,
     name: &str,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile,
 ) -> Option<String> {
     if node.kind() == "variable_statement"
         && let Some(name_node) = node.child_by_field_name("name")
         && name_node.utf8_text(source.as_bytes()).ok() == Some(name)
     {
-        return infer_var_type(node, source, symbols);
+        return infer_var_type(node, source, file);
     }
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        if let Some(hint) = find_var_type_hint_inferred_recursive(child, name, source, symbols) {
+        if let Some(hint) = find_var_type_hint_inferred_recursive(child, name, source, file) {
             return Some(hint);
         }
     }

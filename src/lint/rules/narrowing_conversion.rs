@@ -2,7 +2,6 @@ use crate::core::gd_ast::{self, GdDecl, GdExpr, GdFile, GdStmt, GdVar};
 
 use super::{Fix, LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
-use crate::core::symbol_table::SymbolTable;
 use crate::core::type_inference::{InferredType, infer_expression_type};
 
 pub struct NarrowingConversion;
@@ -29,18 +28,17 @@ impl LintRule for NarrowingConversion {
         file: &GdFile<'_>,
         source: &str,
         _config: &LintConfig,
-        symbols: &SymbolTable,
     ) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
         // Check top-level variable declarations (GdDecl::Var)
         gd_ast::visit_decls(file, &mut |decl| {
             if let GdDecl::Var(var) = decl {
-                check_var_decl(var, source, symbols, &mut diags);
+                check_var_decl(var, source, file, &mut diags);
             }
         });
         // Check in-function variable declarations and assignments (GdStmt)
         gd_ast::visit_stmts(file, &mut |stmt| {
-            check_stmt(stmt, source, symbols, &mut diags);
+            check_stmt(stmt, source, file, &mut diags);
         });
         diags
     }
@@ -49,14 +47,14 @@ impl LintRule for NarrowingConversion {
 fn check_var_decl(
     var: &GdVar<'_>,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile,
     diags: &mut Vec<LintDiagnostic>,
 ) {
     if let Some(type_ann) = &var.type_ann
         && type_ann.name == "int"
         && let Some(value) = &var.value
         && matches!(
-            infer_expression_type(&value.node(), source, symbols),
+            infer_expression_type(&value.node(), source, file),
             Some(InferredType::Builtin("float"))
         )
     {
@@ -81,25 +79,24 @@ fn check_var_decl(
 fn check_stmt(
     stmt: &GdStmt<'_>,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile,
     diags: &mut Vec<LintDiagnostic>,
 ) {
     // Variable declarations inside functions
     if let GdStmt::Var(var) = stmt {
-        check_var_decl(var, source, symbols, diags);
+        check_var_decl(var, source, file, diags);
     }
 
     // Assignments to int-typed variables
     if let GdStmt::Assign { node, target, value, .. } = stmt
         && let GdExpr::Ident { name: var_name, .. } = target
     {
-        let is_int_var = symbols
-            .variables
-            .iter()
+        let is_int_var = file
+            .vars()
             .any(|v| v.name == *var_name && v.type_ann.as_ref().is_some_and(|t| t.name == "int"));
         if is_int_var
             && matches!(
-                infer_expression_type(&value.node(), source, symbols),
+                infer_expression_type(&value.node(), source, file),
                 Some(InferredType::Builtin("float"))
             )
         {
@@ -126,14 +123,13 @@ fn check_stmt(
 mod tests {
     use super::*;
     use crate::core::gd_ast;
-    use crate::core::{parser, symbol_table};
+    use crate::core::parser;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();
         let file = gd_ast::convert(&tree, source);
-        let symbols = symbol_table::build(&tree, source);
         let config = LintConfig::default();
-        NarrowingConversion.check_with_symbols(&file, source, &config, &symbols)
+        NarrowingConversion.check_with_symbols(&file, source, &config)
     }
 
     #[test]

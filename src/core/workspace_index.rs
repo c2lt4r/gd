@@ -8,9 +8,9 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::core::fs::collect_gdscript_files;
+use crate::core::gd_ast::{self, GdExtends, GdFunc, GdVar};
 use crate::core::parser;
 use crate::core::project::parse_autoloads;
-use crate::core::symbol_table::{self, FuncDecl, SymbolTable, VarDecl};
 
 /// Summary of a function parameter (no AST references).
 #[derive(Debug, Clone)]
@@ -354,56 +354,60 @@ impl ProjectIndex {
 /// Parse a single `.gd` file into `FileSymbols`.
 fn parse_file_symbols(path: &Path) -> Option<FileSymbols> {
     let (source, tree) = parser::parse_file(path).ok()?;
-    let table = symbol_table::build(&tree, &source);
-    Some(symbols_from_table(path.to_path_buf(), &table))
+    let file = gd_ast::convert(&tree, &source);
+    Some(symbols_from_gd_file(path.to_path_buf(), &file))
 }
 
-/// Convert a `SymbolTable` into the lighter `FileSymbols`.
-fn symbols_from_table(path: PathBuf, table: &SymbolTable) -> FileSymbols {
+/// Convert a `GdFile` into the lighter `FileSymbols`.
+fn symbols_from_gd_file(path: PathBuf, file: &gd_ast::GdFile) -> FileSymbols {
     FileSymbols {
         path,
-        class_name: table.class_name.clone(),
-        extends: table.extends.clone(),
-        has_tool: table.has_tool,
-        functions: table.functions.iter().map(func_summary).collect(),
-        variables: table.variables.iter().map(var_summary).collect(),
-        signals: table.signals.iter().map(|s| s.name.clone()).collect(),
-        enums: table.enums.iter().map(|e| e.name.clone()).collect(),
+        class_name: file.class_name.map(String::from),
+        extends: match file.extends {
+            Some(GdExtends::Class(c)) => Some(c.to_string()),
+            Some(GdExtends::Path(p)) => Some(p.to_string()),
+            None => None,
+        },
+        has_tool: file.is_tool,
+        functions: file.funcs().map(func_summary).collect(),
+        variables: file.vars().map(var_summary).collect(),
+        signals: file.signals().map(|s| s.name.to_string()).collect(),
+        enums: file.enums().map(|e| e.name.to_string()).collect(),
     }
 }
 
-fn func_summary(f: &FuncDecl) -> FuncSummary {
+fn func_summary(f: &GdFunc) -> FuncSummary {
     FuncSummary {
-        name: f.name.clone(),
+        name: f.name.to_string(),
         params: f
             .params
             .iter()
             .map(|p| ParamSummary {
-                name: p.name.clone(),
+                name: p.name.to_string(),
                 type_name: p
                     .type_ann
                     .as_ref()
                     .filter(|t| !t.is_inferred && !t.name.is_empty())
-                    .map(|t| t.name.clone()),
+                    .map(|t| t.name.to_string()),
             })
             .collect(),
-        return_type: f.return_type.as_ref().map(|t| t.name.clone()),
+        return_type: f.return_type.as_ref().map(|t| t.name.to_string()),
         is_static: f.is_static,
-        doc: f.doc.clone(),
+        doc: f.doc.map(String::from),
     }
 }
 
-fn var_summary(v: &VarDecl) -> VarSummary {
+fn var_summary(v: &GdVar) -> VarSummary {
     VarSummary {
-        name: v.name.clone(),
+        name: v.name.to_string(),
         type_name: v
             .type_ann
             .as_ref()
             .filter(|t| !t.is_inferred && !t.name.is_empty())
-            .map(|t| t.name.clone()),
+            .map(|t| t.name.to_string()),
         is_static: v.is_static,
-        is_constant: v.is_constant,
-        doc: v.doc.clone(),
+        is_constant: v.is_const,
+        doc: v.doc.map(String::from),
     }
 }
 
@@ -426,8 +430,8 @@ pub fn build_from_sources(
 
     for (path, source) in files {
         if let Ok(tree) = parser::parse(source) {
-            let table = symbol_table::build(&tree, source);
-            let fs = symbols_from_table(path.clone(), &table);
+            let file = gd_ast::convert(&tree, source);
+            let fs = symbols_from_gd_file(path.clone(), &file);
             if let Some(ref cn) = fs.class_name {
                 classes.insert(cn.clone(), fs.clone());
             }

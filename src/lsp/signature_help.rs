@@ -245,14 +245,14 @@ fn resolve_method_signature(
     None
 }
 
-/// Resolve a function signature from the same file's symbol table.
+/// Resolve a function signature from the same file's typed AST.
 fn resolve_same_file_signature(
     func_name: &str,
     source: &str,
     tree: &tree_sitter::Tree,
 ) -> Option<SignatureInformation> {
-    let symbols = crate::core::symbol_table::build(tree, source);
-    let func = symbols.functions.iter().find(|f| f.name == func_name)?;
+    let file = crate::core::gd_ast::convert(tree, source);
+    let func = file.funcs().find(|f| f.name == func_name)?;
 
     let params: Vec<ParameterInformation> = func
         .params
@@ -273,10 +273,10 @@ fn resolve_same_file_signature(
         let _ = write!(label, " -> {}", ret.name);
     }
 
-    let documentation = func.doc.as_ref().map(|d| {
+    let documentation = func.doc.map(|d| {
         Documentation::MarkupContent(MarkupContent {
             kind: MarkupKind::Markdown,
-            value: d.clone(),
+            value: d.to_string(),
         })
     });
 
@@ -293,10 +293,10 @@ fn resolve_same_file_signature(
 }
 
 /// Format a parameter declaration as a label string.
-fn format_param(p: &crate::core::symbol_table::ParamDecl) -> String {
+fn format_param(p: &crate::core::gd_ast::GdParam) -> String {
     match &p.type_ann {
         Some(ann) => format!("{}: {}", p.name, ann.name),
-        None => p.name.clone(),
+        None => p.name.to_string(),
     }
 }
 

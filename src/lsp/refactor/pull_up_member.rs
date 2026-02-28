@@ -44,20 +44,19 @@ pub fn pull_up_member(
     let kind = declaration_kind_str(decl.kind()).to_string();
 
     // Read extends from child file
-    let child_symbols = crate::core::symbol_table::build(&child_tree, &child_source);
-    let extends = child_symbols
+    let child_extends = child_gd_file
         .extends
-        .as_deref()
         .ok_or_else(|| miette::miette!("child file has no 'extends' declaration"))?;
 
     // Resolve parent class via workspace index
     let index = crate::core::workspace_index::ProjectIndex::build(project_root);
-    let parent_fs = if extends.starts_with('"') {
-        // Path-based extends: `extends "res://path/to/file.gd"`
-        let path = extends.trim_matches('"');
-        index.resolve_preload(path)
-    } else {
-        index.lookup_class(extends)
+    let extends = match child_extends {
+        gd_ast::GdExtends::Class(c) => c,
+        gd_ast::GdExtends::Path(p) => p,
+    };
+    let parent_fs = match child_extends {
+        gd_ast::GdExtends::Path(p) => index.resolve_preload(p),
+        gd_ast::GdExtends::Class(c) => index.lookup_class(c),
     }
     .ok_or_else(|| miette::miette!("parent class '{extends}' not found in project"))?;
 

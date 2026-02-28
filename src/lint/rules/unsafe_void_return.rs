@@ -2,7 +2,6 @@ use crate::core::gd_ast::{self, GdExpr, GdFile, GdStmt, GdVar};
 
 use super::{Fix, LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
-use crate::core::symbol_table::SymbolTable;
 use crate::core::type_inference::{
     InferredType, infer_expression_type, infer_expression_type_with_project,
 };
@@ -32,10 +31,9 @@ impl LintRule for UnsafeVoidReturn {
         file: &GdFile<'_>,
         source: &str,
         _config: &LintConfig,
-        symbols: &SymbolTable,
     ) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        check_stmts(file, source, symbols, None, &mut diags);
+        check_stmts(file, source, None, &mut diags);
         diags
     }
 
@@ -44,11 +42,10 @@ impl LintRule for UnsafeVoidReturn {
         file: &GdFile<'_>,
         source: &str,
         _config: &LintConfig,
-        symbols: &SymbolTable,
         project: &ProjectIndex,
     ) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        check_stmts(file, source, symbols, Some(project), &mut diags);
+        check_stmts(file, source, Some(project), &mut diags);
         diags
     }
 }
@@ -56,17 +53,16 @@ impl LintRule for UnsafeVoidReturn {
 fn check_stmts(
     file: &GdFile,
     source: &str,
-    symbols: &SymbolTable,
     project: Option<&ProjectIndex>,
     diags: &mut Vec<LintDiagnostic>,
 ) {
     gd_ast::visit_stmts(file, &mut |stmt| {
         match stmt {
             GdStmt::Return { value: Some(expr), .. } => {
-                check_return_void(stmt, expr, source, symbols, project, diags);
+                check_return_void(stmt, expr, source, file, project, diags);
             }
             GdStmt::Var(var) => {
-                check_assign_void(var, source, symbols, project, diags);
+                check_assign_void(var, source, file, project, diags);
             }
             _ => {}
         }
@@ -77,7 +73,7 @@ fn check_return_void(
     stmt: &GdStmt,
     expr: &GdExpr,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile,
     project: Option<&ProjectIndex>,
     diags: &mut Vec<LintDiagnostic>,
 ) {
@@ -85,7 +81,7 @@ fn check_return_void(
         return;
     }
     let expr_node = expr.node();
-    if !is_void_call(&expr_node, source, symbols, project) {
+    if !is_void_call(&expr_node, source, file, project) {
         return;
     }
 
@@ -124,7 +120,7 @@ fn check_return_void(
 fn check_assign_void(
     var: &GdVar,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile,
     project: Option<&ProjectIndex>,
     diags: &mut Vec<LintDiagnostic>,
 ) {
@@ -133,7 +129,7 @@ fn check_assign_void(
         return;
     }
     let value_node = value.node();
-    if !is_void_call(&value_node, source, symbols, project) {
+    if !is_void_call(&value_node, source, file, project) {
         return;
     }
 
@@ -168,13 +164,13 @@ fn is_call_expr(expr: &GdExpr) -> bool {
 fn is_void_call(
     node: &tree_sitter::Node,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile,
     project: Option<&ProjectIndex>,
 ) -> bool {
     let inferred = if let Some(proj) = project {
-        infer_expression_type_with_project(node, source, symbols, proj)
+        infer_expression_type_with_project(node, source, file, proj)
     } else {
-        infer_expression_type(node, source, symbols)
+        infer_expression_type(node, source, file)
     };
     matches!(inferred, Some(InferredType::Void))
 }
@@ -183,14 +179,13 @@ fn is_void_call(
 mod tests {
     use super::*;
     use crate::core::gd_ast;
-    use crate::core::{parser, symbol_table};
+    use crate::core::parser;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();
         let file = gd_ast::convert(&tree, source);
-        let symbols = symbol_table::build(&tree, source);
         let config = LintConfig::default();
-        UnsafeVoidReturn.check_with_symbols(&file, source, &config, &symbols)
+        UnsafeVoidReturn.check_with_symbols(&file, source, &config)
     }
 
     #[test]

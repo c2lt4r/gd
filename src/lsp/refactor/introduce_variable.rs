@@ -92,9 +92,8 @@ pub fn introduce_variable(
     let expr_kind = expr.kind().to_string();
 
     // ── Type inference ──────────────────────────────────────────────────
-    let symbols = crate::core::symbol_table::build(&tree, &source);
     let inferred_type =
-        crate::core::type_inference::infer_expression_type(&expr, &source, &symbols)
+        crate::core::type_inference::infer_expression_type(&expr, &source, &gd_file)
             .filter(|t| {
                 !matches!(
                     t,

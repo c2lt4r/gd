@@ -15,8 +15,8 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use crate::core::config::Config;
+use crate::core::gd_ast;
 use crate::core::project::GodotProject;
-use crate::core::symbol_table;
 use crate::{ceprintln, cprintln};
 
 // Re-export run_with_timeout for use by gut.rs and gdunit.rs
@@ -411,29 +411,31 @@ pub fn filter_files_by_tests(
         let Some(tree) = parser.parse(&source, None) else {
             continue;
         };
-        let symbols = symbol_table::build(&tree, &source);
+        let gd_file = gd_ast::convert(&tree, &source);
 
         // Collect matching top-level test functions
-        let matching_tests: Vec<String> = symbols
-            .functions
-            .iter()
+        let matching_tests: Vec<String> = gd_file
+            .funcs()
             .filter(|f| f.name.starts_with("test_"))
             .filter(|f| name.is_none_or(|n| f.name.contains(n)))
-            .map(|f| f.name.clone())
+            .map(|f| f.name.to_string())
             .collect();
 
         // Collect matching inner classes
-        let matching_classes: Vec<String> = symbols
-            .inner_classes
-            .iter()
-            .filter(|(cls_name, syms)| {
-                let class_matches = class.is_none_or(|c| cls_name.contains(c));
-                let has_tests = syms.functions.iter().any(|f| {
-                    f.name.starts_with("test_") && name.is_none_or(|n| f.name.contains(n))
+        let matching_classes: Vec<String> = gd_file
+            .inner_classes()
+            .filter(|cls| {
+                let class_matches = class.is_none_or(|c| cls.name.contains(c));
+                let has_tests = cls.declarations.iter().any(|d| {
+                    if let gd_ast::GdDecl::Func(f) = d {
+                        f.name.starts_with("test_") && name.is_none_or(|n| f.name.contains(n))
+                    } else {
+                        false
+                    }
                 });
                 class_matches && has_tests
             })
-            .map(|(cls_name, _)| cls_name.clone())
+            .map(|cls| cls.name.to_string())
             .collect();
 
         // Include file if it has any matching tests or classes
@@ -446,11 +448,10 @@ pub fn filter_files_by_tests(
 
         if has_match {
             // Collect ALL test names in the file (for runners that need exclusion lists)
-            let all_tests: Vec<String> = symbols
-                .functions
-                .iter()
+            let all_tests: Vec<String> = gd_file
+                .funcs()
                 .filter(|f| f.name.starts_with("test_"))
-                .map(|f| f.name.clone())
+                .map(|f| f.name.to_string())
                 .collect();
 
             result.push(FileTestInfo {
@@ -753,33 +754,33 @@ fn list_tests(
         let Some(tree) = parser.parse(&source, None) else {
             continue;
         };
-        let symbols = symbol_table::build(&tree, &source);
+        let gd_file = gd_ast::convert(&tree, &source);
 
         // Collect top-level test functions
-        let mut tests: Vec<String> = symbols
-            .functions
-            .iter()
+        let mut tests: Vec<String> = gd_file
+            .funcs()
             .filter(|f| f.name.starts_with("test_"))
-            .map(|f| f.name.clone())
+            .map(|f| f.name.to_string())
             .collect();
 
         // Collect inner class test functions
         let mut classes: Vec<TestListClass> = Vec::new();
-        for (class_name, class_symbols) in &symbols.inner_classes {
+        for cls in gd_file.inner_classes() {
             if let Some(ref cls_filter) = args.class
-                && !class_name.contains(cls_filter.as_str())
+                && !cls.name.contains(cls_filter.as_str())
             {
                 continue;
             }
-            let class_tests: Vec<String> = class_symbols
-                .functions
+            let class_tests: Vec<String> = cls
+                .declarations
                 .iter()
+                .filter_map(|d| if let gd_ast::GdDecl::Func(f) = d { Some(f) } else { None })
                 .filter(|f| f.name.starts_with("test_"))
-                .map(|f| f.name.clone())
+                .map(|f| f.name.to_string())
                 .collect();
             if !class_tests.is_empty() {
                 classes.push(TestListClass {
-                    name: class_name.clone(),
+                    name: cls.name.to_string(),
                     tests: class_tests,
                 });
             }

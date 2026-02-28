@@ -10,7 +10,7 @@ use crate::cli::test_cmd::{
     extract_errors, filter_files_by_tests, filter_noise, group_results_by_file, is_engine_noise,
     is_test_file, parse_res_location, strip_res_prefix,
 };
-use crate::core::symbol_table;
+use crate::core::gd_ast;
 
 #[test]
 fn test_is_test_file() {
@@ -422,30 +422,29 @@ fn collect_tests_from_source(source: &str) -> (Vec<String>, Vec<TestListClass>) 
         .set_language(&tree_sitter_gdscript::LANGUAGE.into())
         .unwrap();
     let tree = parser.parse(source, None).unwrap();
-    let symbols = symbol_table::build(&tree, source);
+    let gd_file = gd_ast::convert(&tree, source);
 
-    let tests: Vec<String> = symbols
-        .functions
-        .iter()
+    let tests: Vec<String> = gd_file
+        .funcs()
         .filter(|f| f.name.starts_with("test_"))
-        .map(|f| f.name.clone())
+        .map(|f| f.name.to_string())
         .collect();
 
-    let classes: Vec<TestListClass> = symbols
-        .inner_classes
-        .iter()
-        .filter_map(|(name, syms)| {
-            let class_tests: Vec<String> = syms
-                .functions
+    let classes: Vec<TestListClass> = gd_file
+        .inner_classes()
+        .filter_map(|cls| {
+            let class_tests: Vec<String> = cls
+                .declarations
                 .iter()
+                .filter_map(|d| if let gd_ast::GdDecl::Func(f) = d { Some(f) } else { None })
                 .filter(|f| f.name.starts_with("test_"))
-                .map(|f| f.name.clone())
+                .map(|f| f.name.to_string())
                 .collect();
             if class_tests.is_empty() {
                 None
             } else {
                 Some(TestListClass {
-                    name: name.clone(),
+                    name: cls.name.to_string(),
                     tests: class_tests,
                 })
             }

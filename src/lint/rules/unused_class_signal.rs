@@ -2,7 +2,6 @@ use crate::core::gd_ast::GdFile;
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
-use crate::core::symbol_table::SymbolTable;
 use crate::core::workspace_index::ProjectIndex;
 
 pub struct UnusedClassSignal;
@@ -26,22 +25,21 @@ impl LintRule for UnusedClassSignal {
 
     fn check_with_project(
         &self,
-        _file: &GdFile<'_>,
+        file: &GdFile<'_>,
         source: &str,
         _config: &LintConfig,
-        symbols: &SymbolTable,
         project: &ProjectIndex,
     ) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
 
-        for signal in &symbols.signals {
+        for signal in file.signals() {
             // Skip private signal convention (starting with _)
             if signal.name.starts_with('_') {
                 continue;
             }
 
             // Check if the signal is connected/emitted in any other project file
-            if is_signal_referenced(&signal.name, source, project) {
+            if is_signal_referenced(signal.name, source, project) {
                 continue;
             }
 
@@ -52,7 +50,7 @@ impl LintRule for UnusedClassSignal {
                     signal.name
                 ),
                 severity: Severity::Warning,
-                line: signal.line,
+                line: signal.node.start_position().row,
                 column: 0,
                 end_column: None,
                 fix: None,
@@ -170,7 +168,7 @@ mod tests {
     use super::*;
     use crate::core::workspace_index;
     use crate::core::gd_ast;
-    use crate::core::{parser, symbol_table};
+    use crate::core::parser;
     use std::path::PathBuf;
 
     fn check_with_project(source: &str, project_files: &[(&str, &str)]) -> Vec<LintDiagnostic> {
@@ -183,9 +181,8 @@ mod tests {
 
         let tree = parser::parse(source).unwrap();
         let file = gd_ast::convert(&tree, source);
-        let symbols = symbol_table::build(&tree, source);
         let config = LintConfig::default();
-        UnusedClassSignal.check_with_project(&file, source, &config, &symbols, &project)
+        UnusedClassSignal.check_with_project(&file, source, &config, &project)
     }
 
     #[test]
@@ -215,10 +212,9 @@ signal health_changed(value: int)
         let project = crate::core::workspace_index::ProjectIndex::build(dir.path());
         let tree = parser::parse(emitter).unwrap();
         let file = gd_ast::convert(&tree, emitter);
-        let symbols = symbol_table::build(&tree, emitter);
         let config = LintConfig::default();
         let diags =
-            UnusedClassSignal.check_with_project(&file, emitter, &config, &symbols, &project);
+            UnusedClassSignal.check_with_project(&file, emitter, &config, &project);
         assert!(diags.is_empty(), "signal connected from listener.gd");
     }
 
@@ -260,10 +256,9 @@ signal _private_signal
         let project = crate::core::workspace_index::ProjectIndex::build(dir.path());
         let tree = parser::parse(source).unwrap();
         let file = gd_ast::convert(&tree, source);
-        let symbols = symbol_table::build(&tree, source);
         let config = LintConfig::default();
         let diags =
-            UnusedClassSignal.check_with_project(&file, source, &config, &symbols, &project);
+            UnusedClassSignal.check_with_project(&file, source, &config, &project);
         assert!(diags.is_empty(), "signal connected in .tscn");
     }
 

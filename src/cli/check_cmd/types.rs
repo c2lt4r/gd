@@ -1,7 +1,7 @@
 use tree_sitter::Node;
 
-use crate::core::symbol_table::SymbolTable;
-use crate::core::{symbol_table, type_inference};
+use crate::core::gd_ast::GdFile;
+use crate::core::type_inference;
 
 use super::StructuralError;
 use super::classdb::types_assignable;
@@ -15,7 +15,7 @@ use super::classdb::types_assignable;
 pub(super) fn infer_local_var_type(
     ident_node: &Node,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile<'_>,
 ) -> Option<type_inference::InferredType> {
     if ident_node.kind() != "identifier" {
         return None;
@@ -48,7 +48,7 @@ pub(super) fn infer_local_var_type(
             }
             // Then infer from the initializer value
             if let Some(value) = child.child_by_field_name("value") {
-                return type_inference::infer_expression_type(&value, source, symbols);
+                return type_inference::infer_expression_type(&value, source, file);
             }
         }
     }
@@ -63,16 +63,16 @@ pub(super) fn infer_local_var_type(
 pub(super) fn check_assign_type_mismatch(
     root: &Node,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile<'_>,
     errors: &mut Vec<StructuralError>,
 ) {
-    check_assign_type_in_node(root, source, symbols, errors);
+    check_assign_type_in_node(root, source, file, errors);
 }
 
 fn check_assign_type_in_node(
     node: &Node,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile<'_>,
     errors: &mut Vec<StructuralError>,
 ) {
     // Check variable declarations with explicit type and initializer
@@ -82,7 +82,7 @@ fn check_assign_type_in_node(
         && let Ok(declared_type) = type_node.utf8_text(source.as_bytes())
         && !declared_type.starts_with("Array[") // typed arrays handled separately
         && let Some(value) = node.child_by_field_name("value")
-        && let Some(actual) = type_inference::infer_expression_type(&value, source, symbols)
+        && let Some(actual) = type_inference::infer_expression_type(&value, source, file)
         && let Some(actual_name) = inferred_type_name(&actual)
         && !types_assignable(declared_type, actual_name)
     {
@@ -103,22 +103,21 @@ fn check_assign_type_in_node(
         && let Some(rhs) = node.child_by_field_name("right")
     {
         // Check class-level variables first, then local variables
-        let class_var_type = symbols
-            .variables
-            .iter()
+        let class_var_type = file
+            .vars()
             .find(|v| v.name == var_name)
             .and_then(|v| v.type_ann.as_ref())
             .filter(|t| !t.is_inferred && !t.name.is_empty())
-            .map(|t| t.name.clone());
+            .map(|t| t.name.to_string());
         let local_var_type = if class_var_type.is_none() {
-            infer_local_var_type(&lhs, source, symbols)
+            infer_local_var_type(&lhs, source, file)
                 .and_then(|ty| inferred_type_name(&ty).map(String::from))
         } else {
             None
         };
         let declared_type = class_var_type.as_deref().or(local_var_type.as_deref());
         if let Some(declared_type) = declared_type
-            && let Some(actual) = type_inference::infer_expression_type(&rhs, source, symbols)
+            && let Some(actual) = type_inference::infer_expression_type(&rhs, source, file)
             && let Some(actual_name) = inferred_type_name(&actual)
             && !types_assignable(declared_type, actual_name)
         {
@@ -135,7 +134,7 @@ fn check_assign_type_in_node(
     let mut cursor = node.walk();
     if cursor.goto_first_child() {
         loop {
-            check_assign_type_in_node(&cursor.node(), source, symbols, errors);
+            check_assign_type_in_node(&cursor.node(), source, file, errors);
             if !cursor.goto_next_sibling() {
                 break;
             }
@@ -147,10 +146,10 @@ fn check_assign_type_in_node(
 pub(super) fn check_return_type_mismatch(
     root: &Node,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile<'_>,
     errors: &mut Vec<StructuralError>,
 ) {
-    for func in &symbols.functions {
+    for func in file.funcs() {
         let Some(ref ret_ann) = func.return_type else {
             continue;
         };
@@ -162,15 +161,15 @@ pub(super) fn check_return_type_mismatch(
             continue;
         }
         // Find the function definition node and check return statements
-        check_return_in_func(root, source, symbols, func, &ret_ann.name, errors);
+        check_return_in_func(root, source, file, func, ret_ann.name, errors);
     }
 }
 
 fn check_return_in_func(
     root: &Node,
     source: &str,
-    symbols: &SymbolTable,
-    func: &symbol_table::FuncDecl,
+    file: &GdFile<'_>,
+    func: &crate::core::gd_ast::GdFunc<'_>,
     ret_type: &str,
     errors: &mut Vec<StructuralError>,
 ) {
@@ -182,7 +181,7 @@ fn check_return_in_func(
             && let Ok(name) = name_node.utf8_text(source.as_bytes())
             && name == func.name
         {
-            check_return_type_in_body(&child, source, symbols, ret_type, errors);
+            check_return_type_in_body(&child, source, file, ret_type, errors);
         }
     }
 }
@@ -190,13 +189,13 @@ fn check_return_in_func(
 fn check_return_type_in_body(
     node: &Node,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile<'_>,
     ret_type: &str,
     errors: &mut Vec<StructuralError>,
 ) {
     if node.kind() == "return_statement"
         && let Some(expr) = node.named_child(0)
-        && let Some(actual) = type_inference::infer_expression_type(&expr, source, symbols)
+        && let Some(actual) = type_inference::infer_expression_type(&expr, source, file)
         && let Some(actual_name) = inferred_type_name(&actual)
         && !types_assignable(ret_type, actual_name)
     {
@@ -219,7 +218,7 @@ fn check_return_type_in_body(
     let mut cursor = node.walk();
     if cursor.goto_first_child() {
         loop {
-            check_return_type_in_body(&cursor.node(), source, symbols, ret_type, errors);
+            check_return_type_in_body(&cursor.node(), source, file, ret_type, errors);
             if !cursor.goto_next_sibling() {
                 break;
             }
@@ -231,16 +230,16 @@ fn check_return_type_in_body(
 pub(super) fn check_invalid_operators(
     root: &Node,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile<'_>,
     errors: &mut Vec<StructuralError>,
 ) {
-    check_operators_in_node(root, source, symbols, errors);
+    check_operators_in_node(root, source, file, errors);
 }
 
 fn check_operators_in_node(
     node: &Node,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile<'_>,
     errors: &mut Vec<StructuralError>,
 ) {
     if node.kind() == "binary_operator"
@@ -248,8 +247,8 @@ fn check_operators_in_node(
         && let Some(right) = node.child_by_field_name("right")
         && let Some(op_node) = node.child_by_field_name("op")
         && let Ok(op) = op_node.utf8_text(source.as_bytes())
-        && let Some(left_ty) = type_inference::infer_expression_type(&left, source, symbols)
-        && let Some(right_ty) = type_inference::infer_expression_type(&right, source, symbols)
+        && let Some(left_ty) = type_inference::infer_expression_type(&left, source, file)
+        && let Some(right_ty) = type_inference::infer_expression_type(&right, source, file)
         && let Some(lt) = inferred_type_name(&left_ty)
         && let Some(rt) = inferred_type_name(&right_ty)
         && !operator_valid(op, lt, rt)
@@ -264,7 +263,7 @@ fn check_operators_in_node(
     let mut cursor = node.walk();
     if cursor.goto_first_child() {
         loop {
-            check_operators_in_node(&cursor.node(), source, symbols, errors);
+            check_operators_in_node(&cursor.node(), source, file, errors);
             if !cursor.goto_next_sibling() {
                 break;
             }
@@ -383,16 +382,16 @@ fn is_transform_type(ty: &str) -> bool {
 pub(super) fn check_invalid_cast(
     root: &Node,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile<'_>,
     errors: &mut Vec<StructuralError>,
 ) {
-    check_cast_in_node(root, source, symbols, errors);
+    check_cast_in_node(root, source, file, errors);
 }
 
 fn check_cast_in_node(
     node: &Node,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile<'_>,
     errors: &mut Vec<StructuralError>,
 ) {
     // `as` cast: can appear as `as_pattern`, `cast`, or `binary_operator` with op "as"
@@ -414,8 +413,8 @@ fn check_cast_in_node(
 
     if let Some((expr, type_node)) = cast_parts
         && let Ok(target_type) = type_node.utf8_text(source.as_bytes())
-        && let Some(expr_ty) = type_inference::infer_expression_type(&expr, source, symbols)
-            .or_else(|| infer_local_var_type(&expr, source, symbols))
+        && let Some(expr_ty) = type_inference::infer_expression_type(&expr, source, file)
+            .or_else(|| infer_local_var_type(&expr, source, file))
         && let Some(actual_name) = inferred_type_name(&expr_ty)
         && is_primitive_type(actual_name)
         && crate::class_db::class_exists(target_type)
@@ -431,7 +430,7 @@ fn check_cast_in_node(
     let mut cursor = node.walk();
     if cursor.goto_first_child() {
         loop {
-            check_cast_in_node(&cursor.node(), source, symbols, errors);
+            check_cast_in_node(&cursor.node(), source, file, errors);
             if !cursor.goto_next_sibling() {
                 break;
             }

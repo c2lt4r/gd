@@ -2,7 +2,6 @@ use crate::core::gd_ast::{self, GdDecl, GdExpr, GdFile, GdStmt, GdVar};
 
 use super::{Fix, LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
-use crate::core::symbol_table::SymbolTable;
 use crate::core::type_inference::{InferredType, infer_expression_type};
 
 pub struct UntypedArrayLiteral;
@@ -25,19 +24,18 @@ impl LintRule for UntypedArrayLiteral {
         file: &GdFile<'_>,
         source: &str,
         _config: &LintConfig,
-        symbols: &SymbolTable,
     ) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
         // Check class-level var declarations
         gd_ast::visit_decls(file, &mut |decl| {
             if let GdDecl::Var(var) = decl {
-                check_var(var, source, symbols, &mut diags);
+                check_var(var, source, file, &mut diags);
             }
         });
         // Check function-local var declarations
         gd_ast::visit_stmts(file, &mut |stmt| {
             if let GdStmt::Var(var) = stmt {
-                check_var(var, source, symbols, &mut diags);
+                check_var(var, source, file, &mut diags);
             }
         });
         diags
@@ -47,7 +45,7 @@ impl LintRule for UntypedArrayLiteral {
 fn check_var(
     var: &GdVar,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile,
     diags: &mut Vec<LintDiagnostic>,
 ) {
     // Only check := (inferred type)
@@ -68,7 +66,7 @@ fn check_var(
     }
 
     // Try to infer element type using the centralized engine
-    let suggested_type = infer_array_element_type(elements, source, symbols);
+    let suggested_type = infer_array_element_type(elements, source, file);
 
     // Build auto-fix when type is inferable: replace `:=` region with `: Array[T] =`
     let fix = suggested_type.as_ref().map(|elem_type| {
@@ -111,14 +109,14 @@ fn check_var(
 fn infer_array_element_type(
     elements: &[GdExpr],
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile,
 ) -> Option<InferredType> {
     if elements.is_empty() {
         return None;
     }
 
     let first_node = elements[0].node();
-    let first_type = infer_expression_type(&first_node, source, symbols)?;
+    let first_type = infer_expression_type(&first_node, source, file)?;
 
     // Skip Variant — can't determine a concrete element type
     if matches!(first_type, InferredType::Variant | InferredType::Void) {
@@ -128,7 +126,7 @@ fn infer_array_element_type(
     // Check that all elements have the same type
     for elem in &elements[1..] {
         let elem_node = elem.node();
-        let elem_type = infer_expression_type(&elem_node, source, symbols)?;
+        let elem_type = infer_expression_type(&elem_node, source, file)?;
         if elem_type != first_type {
             return None;
         }
@@ -141,14 +139,13 @@ fn infer_array_element_type(
 mod tests {
     use super::*;
     use crate::core::gd_ast;
-    use crate::core::{parser, symbol_table};
+    use crate::core::parser;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();
         let file = gd_ast::convert(&tree, source);
-        let symbols = symbol_table::build(&tree, source);
         let config = LintConfig::default();
-        UntypedArrayLiteral.check_with_symbols(&file, source, &config, &symbols)
+        UntypedArrayLiteral.check_with_symbols(&file, source, &config)
     }
 
     #[test]

@@ -2,7 +2,6 @@ use crate::core::gd_ast::GdFile;
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
-use crate::core::symbol_table::SymbolTable;
 use crate::core::workspace_index::ProjectIndex;
 
 pub struct UnusedClassVariable;
@@ -26,38 +25,37 @@ impl LintRule for UnusedClassVariable {
 
     fn check_with_project(
         &self,
-        _file: &GdFile<'_>,
+        file: &GdFile<'_>,
         source: &str,
         _config: &LintConfig,
-        symbols: &SymbolTable,
         project: &ProjectIndex,
     ) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
 
         // Check if this class is an autoload (all members globally accessible)
-        if let Some(ref cn) = symbols.class_name
+        if let Some(cn) = file.class_name
             && project.is_autoload(cn)
         {
             return diags;
         }
 
-        for var in &symbols.variables {
+        for var in file.vars() {
             // Skip @export / @onready variables — editor/scene-referenced
             if var
                 .annotations
                 .iter()
-                .any(|a| a == "export" || a == "onready")
+                .any(|a| a.name == "export" || a.name == "onready")
             {
                 continue;
             }
 
             // Skip constants — they're often used as class-level configuration
-            if var.is_constant {
+            if var.is_const {
                 continue;
             }
 
             // Check if any other file references this variable name
-            if is_referenced_in_project(&var.name, source, project) {
+            if is_referenced_in_project(var.name, source, project) {
                 continue;
             }
 
@@ -65,7 +63,7 @@ impl LintRule for UnusedClassVariable {
                 rule: "unused-class-variable",
                 message: format!("class variable `{}` has no cross-file references", var.name),
                 severity: Severity::Warning,
-                line: var.line,
+                line: var.node.start_position().row,
                 column: 0,
                 end_column: None,
                 fix: None,
@@ -129,7 +127,7 @@ mod tests {
     use super::*;
     use crate::core::workspace_index;
     use crate::core::gd_ast;
-    use crate::core::{parser, symbol_table};
+    use crate::core::parser;
     use std::path::PathBuf;
 
     fn check_with_project(source: &str, project_files: &[(&str, &str)]) -> Vec<LintDiagnostic> {
@@ -142,9 +140,8 @@ mod tests {
 
         let tree = parser::parse(source).unwrap();
         let file = gd_ast::convert(&tree, source);
-        let symbols = symbol_table::build(&tree, source);
         let config = LintConfig::default();
-        UnusedClassVariable.check_with_project(&file, source, &config, &symbols, &project)
+        UnusedClassVariable.check_with_project(&file, source, &config, &project)
     }
 
     #[test]
@@ -172,13 +169,11 @@ var health: int = 100
         let project = crate::core::workspace_index::ProjectIndex::build(dir.path());
         let tree = parser::parse(player_source).unwrap();
         let file = gd_ast::convert(&tree, player_source);
-        let symbols = symbol_table::build(&tree, player_source);
         let config = LintConfig::default();
         let diags = UnusedClassVariable.check_with_project(
             &file,
             player_source,
             &config,
-            &symbols,
             &project,
         );
         assert!(diags.is_empty(), "health is referenced from hud.gd");
@@ -228,13 +223,11 @@ const MAX_SPEED: float = 300.0
         let project = crate::core::workspace_index::ProjectIndex::build(dir.path());
         let tree = parser::parse(global_source).unwrap();
         let file = gd_ast::convert(&tree, global_source);
-        let symbols = symbol_table::build(&tree, global_source);
         let config = LintConfig::default();
         let diags = UnusedClassVariable.check_with_project(
             &file,
             global_source,
             &config,
-            &symbols,
             &project,
         );
         assert!(diags.is_empty(), "autoload members are globally accessible");

@@ -3,7 +3,6 @@ use crate::core::gd_ast::{self, GdDecl, GdExpr, GdFile, GdFunc, GdStmt, GdVar};
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::class_db;
 use crate::core::config::LintConfig;
-use crate::core::symbol_table::SymbolTable;
 
 pub struct InferUnknownMember;
 
@@ -29,16 +28,15 @@ impl LintRule for InferUnknownMember {
         file: &GdFile<'_>,
         source: &str,
         _config: &LintConfig,
-        symbols: &SymbolTable,
     ) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
         gd_ast::visit_decls(file, &mut |decl| {
             match decl {
                 GdDecl::Func(func) => {
-                    check_stmts_for_inferred(&func.body, Some(func), source, symbols, &mut diags);
+                    check_stmts_for_inferred(&func.body, Some(func), source, file, &mut diags);
                 }
                 GdDecl::Var(var) => {
-                    check_inferred_var(var, None, &[], source, symbols, &mut diags);
+                    check_inferred_var(var, None, &[], source, file, &mut diags);
                 }
                 _ => {}
             }
@@ -48,35 +46,35 @@ impl LintRule for InferUnknownMember {
 }
 
 /// Recursively search statements for `:=` variable declarations with member access.
-fn check_stmts_for_inferred(
-    stmts: &[GdStmt],
-    func: Option<&GdFunc>,
+fn check_stmts_for_inferred<'a>(
+    stmts: &[GdStmt<'a>],
+    func: Option<&GdFunc<'a>>,
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile<'a>,
     diags: &mut Vec<LintDiagnostic>,
 ) {
     for stmt in stmts {
         if let GdStmt::Var(var) = stmt {
             let func_body = func.map_or(&[] as &[GdStmt], |f| f.body.as_slice());
-            check_inferred_var(var, func, func_body, source, symbols, diags);
+            check_inferred_var(var, func, func_body, source, file, diags);
         }
         // Recurse into control flow
         match stmt {
             GdStmt::If(if_stmt) => {
-                check_stmts_for_inferred(&if_stmt.body, func, source, symbols, diags);
+                check_stmts_for_inferred(&if_stmt.body, func, source, file, diags);
                 for (_, branch) in &if_stmt.elif_branches {
-                    check_stmts_for_inferred(branch, func, source, symbols, diags);
+                    check_stmts_for_inferred(branch, func, source, file, diags);
                 }
                 if let Some(else_body) = &if_stmt.else_body {
-                    check_stmts_for_inferred(else_body, func, source, symbols, diags);
+                    check_stmts_for_inferred(else_body, func, source, file, diags);
                 }
             }
             GdStmt::For { body, .. } | GdStmt::While { body, .. } => {
-                check_stmts_for_inferred(body, func, source, symbols, diags);
+                check_stmts_for_inferred(body, func, source, file, diags);
             }
             GdStmt::Match { arms, .. } => {
                 for arm in arms {
-                    check_stmts_for_inferred(&arm.body, func, source, symbols, diags);
+                    check_stmts_for_inferred(&arm.body, func, source, file, diags);
                 }
             }
             _ => {}
@@ -85,12 +83,12 @@ fn check_stmts_for_inferred(
 }
 
 /// Check a single variable declaration for the `:= obj.unknown_member` pattern.
-fn check_inferred_var(
-    var: &GdVar,
-    func: Option<&GdFunc>,
-    func_body: &[GdStmt],
+fn check_inferred_var<'a>(
+    var: &GdVar<'a>,
+    func: Option<&GdFunc<'a>>,
+    func_body: &[GdStmt<'a>],
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile<'a>,
     diags: &mut Vec<LintDiagnostic>,
 ) {
     // Only check := (inferred type)
@@ -107,7 +105,7 @@ fn check_inferred_var(
     };
 
     // Resolve the type of the receiver object
-    let Some(obj_type) = resolve_object_type(receiver, func, func_body, source, symbols) else {
+    let Some(obj_type) = resolve_object_type(receiver, func, func_body, source, file) else {
         return;
     };
 
@@ -140,27 +138,27 @@ fn check_inferred_var(
     });
 }
 
-/// Resolve the type of a receiver expression from the symbol table.
+/// Resolve the type of a receiver expression from the typed AST.
 /// Handles identifiers by checking class-level vars, function params, and local vars.
-fn resolve_object_type(
-    receiver: &GdExpr,
-    func: Option<&GdFunc>,
-    func_body: &[GdStmt],
+fn resolve_object_type<'a>(
+    receiver: &GdExpr<'a>,
+    func: Option<&GdFunc<'a>>,
+    func_body: &[GdStmt<'a>],
     source: &str,
-    symbols: &SymbolTable,
+    file: &GdFile<'a>,
 ) -> Option<String> {
     let GdExpr::Ident { name, node, .. } = receiver else {
         return None;
     };
 
     // Check class-level variable declarations
-    for var in &symbols.variables {
+    for var in file.vars() {
         if var.name == *name {
             return var
                 .type_ann
                 .as_ref()
                 .filter(|t| !t.is_inferred)
-                .map(|t| t.name.clone());
+                .map(|t| t.name.to_string());
         }
     }
 
@@ -200,14 +198,13 @@ fn resolve_object_type(
 mod tests {
     use super::*;
     use crate::core::gd_ast;
-    use crate::core::{parser, symbol_table};
+    use crate::core::parser;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();
         let file = gd_ast::convert(&tree, source);
-        let symbols = symbol_table::build(&tree, source);
         let config = LintConfig::default();
-        InferUnknownMember.check_with_symbols(&file, source, &config, &symbols)
+        InferUnknownMember.check_with_symbols(&file, source, &config)
     }
 
     #[test]
