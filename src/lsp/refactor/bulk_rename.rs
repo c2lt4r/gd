@@ -6,6 +6,7 @@ use serde::Serialize;
 use tower_lsp::lsp_types::Position;
 
 use super::find_declaration_by_name;
+use crate::core::gd_ast;
 
 #[derive(Serialize, Debug)]
 pub struct BulkRenameOutput {
@@ -53,9 +54,10 @@ pub fn bulk_rename(
         let source =
             std::fs::read_to_string(file).map_err(|e| miette::miette!("cannot read file: {e}"))?;
         let tree = crate::core::parser::parse(&source)?;
-        let root = tree.root_node();
+        let _root = tree.root_node();
+        let gd_file = gd_ast::convert(&tree, &source);
 
-        let Some(decl) = find_declaration_by_name(root, &source, old_name) else {
+        let Some(decl) = find_declaration_by_name(&gd_file, old_name) else {
             skipped.push(BulkRenameSkipped {
                 old_name: old_name.clone(),
                 new_name: new_name.clone(),

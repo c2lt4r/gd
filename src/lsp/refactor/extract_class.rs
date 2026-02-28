@@ -7,6 +7,7 @@ use super::{
     declaration_full_range, declaration_kind_str, find_declaration_by_name, get_declaration_name,
     normalize_blank_lines,
 };
+use crate::core::gd_ast;
 
 #[derive(Serialize, Debug)]
 pub struct ExtractClassOutput {
@@ -38,6 +39,7 @@ pub fn extract_class(
         std::fs::read_to_string(file).map_err(|e| miette::miette!("cannot read file: {e}"))?;
     let tree = crate::core::parser::parse(&source)?;
     let root = tree.root_node();
+    let gd_file = gd_ast::convert(&tree, &source);
 
     let from_relative = crate::core::fs::relative_slash(file, project_root);
     let to_relative = crate::core::fs::relative_slash(to_file, project_root);
@@ -47,7 +49,7 @@ pub fn extract_class(
     let mut not_found = Vec::new();
 
     for name in names {
-        let Some(decl) = find_declaration_by_name(root, &source, name) else {
+        let Some(decl) = find_declaration_by_name(&gd_file, name) else {
             not_found.push(name.clone());
             continue;
         };
@@ -73,9 +75,9 @@ pub fn extract_class(
         let target_source = std::fs::read_to_string(to_file)
             .map_err(|e| miette::miette!("cannot read target file: {e}"))?;
         let target_tree = crate::core::parser::parse(&target_source)?;
-        let target_root = target_tree.root_node();
+        let target_file = gd_ast::convert(&target_tree, &target_source);
         for (name, _, _, _, _) in &extractions {
-            if find_declaration_by_name(target_root, &target_source, name).is_some() {
+            if find_declaration_by_name(&target_file, name).is_some() {
                 return Err(miette::miette!(
                     "target already contains a declaration named '{name}'"
                 ));

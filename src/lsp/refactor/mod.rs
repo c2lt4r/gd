@@ -55,6 +55,8 @@ pub use undo::*;
 use serde::Serialize;
 use tree_sitter::Node;
 
+use crate::core::gd_ast::{self, GdClass, GdFile};
+
 // ── Output structs ──────────────────────────────────────────────────────────
 
 #[derive(Serialize, Debug)]
@@ -192,21 +194,14 @@ pub(super) fn get_declaration_name(node: Node, source: &str) -> Option<String> {
 }
 
 /// Find a top-level declaration by name.
-pub(super) fn find_declaration_by_name<'a>(
-    root: Node<'a>,
-    source: &str,
-    name: &str,
-) -> Option<Node<'a>> {
-    let mut cursor = root.walk();
-    for child in root.children(&mut cursor) {
-        if !DECLARATION_KINDS.contains(&child.kind()) {
-            continue;
-        }
-        if let Some(decl_name) = get_declaration_name(child, source)
-            && decl_name == name
-        {
-            return Some(child);
-        }
+pub(super) fn find_declaration_by_name<'a>(file: &GdFile<'a>, name: &str) -> Option<Node<'a>> {
+    if let Some(node) = file.find_decl_by_name(name).map(gd_ast::GdDecl::node) {
+        return Some(node);
+    }
+    // class_name is stored separately in GdFile, not as a GdDecl.
+    // Return the class_name_statement node (parent of the name identifier).
+    if file.class_name.is_some_and(|cn| cn == name) {
+        return file.class_name_node.and_then(|n| n.parent());
     }
     None
 }
@@ -214,17 +209,8 @@ pub(super) fn find_declaration_by_name<'a>(
 /// Find a top-level declaration at the given line (0-based).
 /// Only matches the declaration's start line — pointing to a line inside
 /// a function body does NOT match the enclosing function.
-pub(super) fn find_declaration_by_line(root: Node, line: usize) -> Option<Node> {
-    let mut cursor = root.walk();
-    for child in root.children(&mut cursor) {
-        if !DECLARATION_KINDS.contains(&child.kind()) {
-            continue;
-        }
-        if child.start_position().row == line {
-            return Some(child);
-        }
-    }
-    None
+pub(super) fn find_declaration_by_line<'a>(file: &GdFile<'a>, line: usize) -> Option<Node<'a>> {
+    file.find_decl_by_line(line).map(gd_ast::GdDecl::node)
 }
 
 /// Byte offsets of the start of each line in `source`.
@@ -324,24 +310,18 @@ pub fn resolve_name_to_position(
     class: Option<&str>,
 ) -> miette::Result<(usize, usize)> {
     let tree = crate::core::parser::parse(source)?;
-    let root = tree.root_node();
+    let file = gd_ast::convert(&tree, source);
     let decl = if let Some(cls) = class {
-        let class_node = find_class_definition(root, source, cls)
+        let inner = file
+            .find_class(cls)
             .ok_or_else(|| miette::miette!("inner class '{cls}' not found"))?;
-        find_declaration_in_class(class_node, source, name)
+        inner.find_decl_by_name(name)
     } else {
-        find_declaration_by_name(root, source, name)
+        file.find_decl_by_name(name)
     }
     .ok_or_else(|| miette::miette!("declaration '{name}' not found"))?;
-    let name_node = if decl.kind() == "constructor_definition" {
-        // _init has no "name" field — use the node start
-        decl
-    } else if decl.kind() == "class_name_statement" {
-        decl.child(1).unwrap_or(decl)
-    } else {
-        decl.child_by_field_name("name").unwrap_or(decl)
-    };
-    let pos = name_node.start_position();
+    let pos_node = decl.name_node().unwrap_or_else(|| decl.node());
+    let pos = pos_node.start_position();
     Ok((pos.row + 1, pos.column + 1))
 }
 
@@ -352,18 +332,24 @@ pub fn resolve_line_to_name(
     class: Option<&str>,
 ) -> miette::Result<String> {
     let tree = crate::core::parser::parse(source)?;
-    let root = tree.root_node();
+    let file = gd_ast::convert(&tree, source);
     let zero_line = line.saturating_sub(1);
     let decl = if let Some(cls) = class {
-        let class_node = find_class_definition(root, source, cls)
+        let inner = file
+            .find_class(cls)
             .ok_or_else(|| miette::miette!("inner class '{cls}' not found"))?;
-        find_declaration_in_class_by_line(class_node, zero_line)
+        inner.find_decl_by_line(zero_line)
     } else {
-        find_declaration_by_line(root, zero_line)
+        file.find_decl_by_line(zero_line)
     }
     .ok_or_else(|| miette::miette!("no declaration found at line {line}"))?;
-    get_declaration_name(decl, source)
-        .ok_or_else(|| miette::miette!("could not determine name of declaration at line {line}"))
+    let name = decl.name();
+    if name.is_empty() {
+        return Err(miette::miette!(
+            "could not determine name of declaration at line {line}"
+        ));
+    }
+    Ok(name.to_string())
 }
 
 // ── Post-refactoring validation ─────────────────────────────────────────────
@@ -414,63 +400,28 @@ pub(super) fn normalize_blank_lines(source: &mut String) {
 
 // ── Inner class helpers ─────────────────────────────────────────────────────
 
-/// Find a class_definition by name among direct children of `parent`.
+/// Find a class_definition by name.
 pub(super) fn find_class_definition<'a>(
-    parent: Node<'a>,
-    source: &str,
+    file: &GdFile<'a>,
     class_name: &str,
 ) -> Option<Node<'a>> {
-    let mut cursor = parent.walk();
-    for child in parent.children(&mut cursor) {
-        if child.kind() == "class_definition"
-            && let Some(name_node) = child.child_by_field_name("name")
-            && name_node.utf8_text(source.as_bytes()).ok() == Some(class_name)
-        {
-            return Some(child);
-        }
-    }
-    None
+    file.find_class(class_name).map(|c| c.node)
 }
 
-/// Find the body node of a class_definition.
-pub(super) fn class_body(class_node: Node) -> Option<Node> {
-    class_node.child_by_field_name("body")
-}
-
-/// Find a declaration by name within a class's body.
+/// Find a declaration by name within an inner class.
 pub(super) fn find_declaration_in_class<'a>(
-    class_node: Node<'a>,
-    source: &str,
+    class: &GdClass<'a>,
     name: &str,
 ) -> Option<Node<'a>> {
-    let body = class_body(class_node)?;
-    let mut cursor = body.walk();
-    for child in body.children(&mut cursor) {
-        if !DECLARATION_KINDS.contains(&child.kind()) {
-            continue;
-        }
-        if let Some(decl_name) = get_declaration_name(child, source)
-            && decl_name == name
-        {
-            return Some(child);
-        }
-    }
-    None
+    class.find_decl_by_name(name).map(gd_ast::GdDecl::node)
 }
 
-/// Find a declaration by line within a class's body.
-pub(super) fn find_declaration_in_class_by_line(class_node: Node, line: usize) -> Option<Node> {
-    let body = class_body(class_node)?;
-    let mut cursor = body.walk();
-    for child in body.children(&mut cursor) {
-        if !DECLARATION_KINDS.contains(&child.kind()) {
-            continue;
-        }
-        if child.start_position().row == line {
-            return Some(child);
-        }
-    }
-    None
+/// Find a declaration by line within an inner class.
+pub(super) fn find_declaration_in_class_by_line<'a>(
+    class: &GdClass<'a>,
+    line: usize,
+) -> Option<Node<'a>> {
+    class.find_decl_by_line(line).map(gd_ast::GdDecl::node)
 }
 
 /// Re-indent text to a target depth (measured in tabs).
@@ -510,13 +461,18 @@ pub(super) fn re_indent_to_depth(text: &str, target_tabs: usize) -> String {
 mod tests {
     use super::*;
 
+    fn parse_file<'a>(src: &'a str, tree: &'a tree_sitter::Tree) -> GdFile<'a> {
+        gd_ast::convert(tree, src)
+    }
+
     // ── find_declaration_by_name ──────────────────────────────────────────
 
     #[test]
     fn find_function_by_name() {
         let src = "func foo():\n\tpass\n";
         let tree = crate::core::parser::parse(src).unwrap();
-        let node = find_declaration_by_name(tree.root_node(), src, "foo");
+        let file = parse_file(src, &tree);
+        let node = find_declaration_by_name(&file, "foo");
         assert!(node.is_some());
         assert_eq!(node.unwrap().kind(), "function_definition");
     }
@@ -525,7 +481,8 @@ mod tests {
     fn find_variable_by_name() {
         let src = "var speed = 10\n";
         let tree = crate::core::parser::parse(src).unwrap();
-        let node = find_declaration_by_name(tree.root_node(), src, "speed");
+        let file = parse_file(src, &tree);
+        let node = find_declaration_by_name(&file, "speed");
         assert!(node.is_some());
         assert_eq!(node.unwrap().kind(), "variable_statement");
     }
@@ -534,7 +491,8 @@ mod tests {
     fn find_const_by_name() {
         let src = "const MAX_HP = 200\n";
         let tree = crate::core::parser::parse(src).unwrap();
-        let node = find_declaration_by_name(tree.root_node(), src, "MAX_HP");
+        let file = parse_file(src, &tree);
+        let node = find_declaration_by_name(&file, "MAX_HP");
         assert!(node.is_some());
         assert_eq!(node.unwrap().kind(), "const_statement");
     }
@@ -543,7 +501,8 @@ mod tests {
     fn find_signal_by_name() {
         let src = "signal died\n";
         let tree = crate::core::parser::parse(src).unwrap();
-        let node = find_declaration_by_name(tree.root_node(), src, "died");
+        let file = parse_file(src, &tree);
+        let node = find_declaration_by_name(&file, "died");
         assert!(node.is_some());
         assert_eq!(node.unwrap().kind(), "signal_statement");
     }
@@ -552,7 +511,8 @@ mod tests {
     fn find_enum_by_name() {
         let src = "enum State { IDLE, RUN }\n";
         let tree = crate::core::parser::parse(src).unwrap();
-        let node = find_declaration_by_name(tree.root_node(), src, "State");
+        let file = parse_file(src, &tree);
+        let node = find_declaration_by_name(&file, "State");
         assert!(node.is_some());
         assert_eq!(node.unwrap().kind(), "enum_definition");
     }
@@ -561,7 +521,8 @@ mod tests {
     fn find_class_by_name() {
         let src = "class Inner:\n\tvar x = 1\n";
         let tree = crate::core::parser::parse(src).unwrap();
-        let node = find_declaration_by_name(tree.root_node(), src, "Inner");
+        let file = parse_file(src, &tree);
+        let node = find_declaration_by_name(&file, "Inner");
         assert!(node.is_some());
         assert_eq!(node.unwrap().kind(), "class_definition");
     }
@@ -570,7 +531,8 @@ mod tests {
     fn find_constructor() {
         let src = "func _init():\n\tpass\n";
         let tree = crate::core::parser::parse(src).unwrap();
-        let node = find_declaration_by_name(tree.root_node(), src, "_init");
+        let file = parse_file(src, &tree);
+        let node = find_declaration_by_name(&file, "_init");
         assert!(node.is_some());
     }
 
@@ -578,7 +540,8 @@ mod tests {
     fn find_not_found() {
         let src = "var speed = 10\n";
         let tree = crate::core::parser::parse(src).unwrap();
-        let node = find_declaration_by_name(tree.root_node(), src, "nonexistent");
+        let file = parse_file(src, &tree);
+        let node = find_declaration_by_name(&file, "nonexistent");
         assert!(node.is_none());
     }
 
@@ -588,8 +551,9 @@ mod tests {
     fn find_decl_by_line() {
         let src = "var a = 1\nvar b = 2\n\n\nfunc foo():\n\tpass\n";
         let tree = crate::core::parser::parse(src).unwrap();
+        let file = parse_file(src, &tree);
         // Line 4 (0-based) is "func foo():"
-        let node = find_declaration_by_line(tree.root_node(), 4);
+        let node = find_declaration_by_line(&file, 4);
         assert!(node.is_some());
         assert_eq!(
             get_declaration_name(node.unwrap(), src),
@@ -601,10 +565,11 @@ mod tests {
     fn find_decl_by_line_body_does_not_match() {
         let src = "func foo():\n\tvar x = 1\n\treturn x\n";
         let tree = crate::core::parser::parse(src).unwrap();
+        let file = parse_file(src, &tree);
         // Line 0 is "func foo():" — should match
-        assert!(find_declaration_by_line(tree.root_node(), 0).is_some());
+        assert!(find_declaration_by_line(&file, 0).is_some());
         // Line 2 (0-based) is "return x" inside the body — should NOT match
-        assert!(find_declaration_by_line(tree.root_node(), 2).is_none());
+        assert!(find_declaration_by_line(&file, 2).is_none());
     }
 
     // ── declaration_full_range ────────────────────────────────────────────
@@ -613,7 +578,8 @@ mod tests {
     fn full_range_without_comments() {
         let src = "var a = 1\n\nfunc foo():\n\tpass\n";
         let tree = crate::core::parser::parse(src).unwrap();
-        let node = find_declaration_by_name(tree.root_node(), src, "foo").unwrap();
+        let file = parse_file(src, &tree);
+        let node = find_declaration_by_name(&file,"foo").unwrap();
         let (start, end) = declaration_full_range(node, src);
         assert_eq!(&src[start..end], "func foo():\n\tpass\n");
     }
@@ -622,7 +588,8 @@ mod tests {
     fn full_range_with_comments() {
         let src = "var a = 1\n\n## Documentation\n# More docs\nfunc foo():\n\tpass\n";
         let tree = crate::core::parser::parse(src).unwrap();
-        let node = find_declaration_by_name(tree.root_node(), src, "foo").unwrap();
+        let file = parse_file(src, &tree);
+        let node = find_declaration_by_name(&file,"foo").unwrap();
         let (start, end) = declaration_full_range(node, src);
         assert_eq!(
             &src[start..end],
@@ -634,7 +601,8 @@ mod tests {
     fn full_range_comment_stops_at_blank_line() {
         let src = "# Unrelated comment\n\n# Doc comment\nfunc foo():\n\tpass\n";
         let tree = crate::core::parser::parse(src).unwrap();
-        let node = find_declaration_by_name(tree.root_node(), src, "foo").unwrap();
+        let file = parse_file(src, &tree);
+        let node = find_declaration_by_name(&file,"foo").unwrap();
         let (start, end) = declaration_full_range(node, src);
         assert_eq!(&src[start..end], "# Doc comment\nfunc foo():\n\tpass\n");
     }
@@ -643,7 +611,8 @@ mod tests {
     fn full_range_annotation_inline() {
         let src = "@export var speed = 10\n";
         let tree = crate::core::parser::parse(src).unwrap();
-        let node = find_declaration_by_name(tree.root_node(), src, "speed").unwrap();
+        let file = parse_file(src, &tree);
+        let node = find_declaration_by_name(&file,"speed").unwrap();
         let (start, end) = declaration_full_range(node, src);
         // Annotation is part of the node, so the range covers it
         assert_eq!(&src[start..end], "@export var speed = 10\n");
@@ -653,7 +622,8 @@ mod tests {
     fn full_range_annotation_separate_line() {
         let src = "@rpc(\"any_peer\")\nfunc sync_pos(pos):\n\tpass\n";
         let tree = crate::core::parser::parse(src).unwrap();
-        let node = find_declaration_by_name(tree.root_node(), src, "sync_pos").unwrap();
+        let file = parse_file(src, &tree);
+        let node = find_declaration_by_name(&file,"sync_pos").unwrap();
         let (start, end) = declaration_full_range(node, src);
         assert_eq!(
             &src[start..end],
@@ -665,7 +635,8 @@ mod tests {
     fn full_range_doc_comment_then_annotation() {
         let src = "## Speed property\n@export\nvar speed = 10\n";
         let tree = crate::core::parser::parse(src).unwrap();
-        let node = find_declaration_by_name(tree.root_node(), src, "speed").unwrap();
+        let file = parse_file(src, &tree);
+        let node = find_declaration_by_name(&file,"speed").unwrap();
         let (start, end) = declaration_full_range(node, src);
         assert_eq!(
             &src[start..end],
@@ -677,7 +648,8 @@ mod tests {
     fn full_range_multiple_annotations() {
         let src = "@export\n@onready\nvar timer = null\n";
         let tree = crate::core::parser::parse(src).unwrap();
-        let node = find_declaration_by_name(tree.root_node(), src, "timer").unwrap();
+        let file = parse_file(src, &tree);
+        let node = find_declaration_by_name(&file,"timer").unwrap();
         let (start, end) = declaration_full_range(node, src);
         assert_eq!(&src[start..end], "@export\n@onready\nvar timer = null\n");
     }
@@ -686,7 +658,8 @@ mod tests {
     fn full_range_bridges_blank_for_doc_comment() {
         let src = "## Doc line\n\nfunc foo():\n\tpass\n";
         let tree = crate::core::parser::parse(src).unwrap();
-        let node = find_declaration_by_name(tree.root_node(), src, "foo").unwrap();
+        let file = parse_file(src, &tree);
+        let node = find_declaration_by_name(&file,"foo").unwrap();
         let (start, end) = declaration_full_range(node, src);
         assert_eq!(&src[start..end], "## Doc line\n\nfunc foo():\n\tpass\n");
     }
@@ -695,7 +668,8 @@ mod tests {
     fn full_range_bridges_two_blanks_for_doc_comment() {
         let src = "## Doc line\n\n\nfunc foo():\n\tpass\n";
         let tree = crate::core::parser::parse(src).unwrap();
-        let node = find_declaration_by_name(tree.root_node(), src, "foo").unwrap();
+        let file = parse_file(src, &tree);
+        let node = find_declaration_by_name(&file,"foo").unwrap();
         let (start, end) = declaration_full_range(node, src);
         assert_eq!(&src[start..end], "## Doc line\n\n\nfunc foo():\n\tpass\n");
     }
@@ -704,7 +678,8 @@ mod tests {
     fn full_range_no_bridge_three_blanks() {
         let src = "## Doc line\n\n\n\nfunc foo():\n\tpass\n";
         let tree = crate::core::parser::parse(src).unwrap();
-        let node = find_declaration_by_name(tree.root_node(), src, "foo").unwrap();
+        let file = parse_file(src, &tree);
+        let node = find_declaration_by_name(&file,"foo").unwrap();
         let (start, end) = declaration_full_range(node, src);
         assert_eq!(&src[start..end], "func foo():\n\tpass\n");
     }
@@ -713,7 +688,8 @@ mod tests {
     fn full_range_bridges_multiline_doc_over_blank() {
         let src = "## First paragraph\n## more\n\n## Second paragraph\nfunc foo():\n\tpass\n";
         let tree = crate::core::parser::parse(src).unwrap();
-        let node = find_declaration_by_name(tree.root_node(), src, "foo").unwrap();
+        let file = parse_file(src, &tree);
+        let node = find_declaration_by_name(&file,"foo").unwrap();
         let (start, end) = declaration_full_range(node, src);
         assert_eq!(
             &src[start..end],
@@ -725,7 +701,8 @@ mod tests {
     fn full_range_stops_at_section_divider() {
         let src = "# ===\n# SECTION\n# ===\n## Doc\n\nfunc foo():\n\tpass\n";
         let tree = crate::core::parser::parse(src).unwrap();
-        let node = find_declaration_by_name(tree.root_node(), src, "foo").unwrap();
+        let file = parse_file(src, &tree);
+        let node = find_declaration_by_name(&file,"foo").unwrap();
         let (start, end) = declaration_full_range(node, src);
         assert_eq!(&src[start..end], "## Doc\n\nfunc foo():\n\tpass\n");
     }
@@ -734,7 +711,8 @@ mod tests {
     fn full_range_bridges_doc_but_stops_at_divider() {
         let src = "# ===\n# SECTION\n# ===\n## Doc\n\nvar x = 1\n";
         let tree = crate::core::parser::parse(src).unwrap();
-        let node = find_declaration_by_name(tree.root_node(), src, "x").unwrap();
+        let file = parse_file(src, &tree);
+        let node = find_declaration_by_name(&file,"x").unwrap();
         let (start, end) = declaration_full_range(node, src);
         assert_eq!(&src[start..end], "## Doc\n\nvar x = 1\n");
     }
@@ -743,7 +721,8 @@ mod tests {
     fn full_range_no_bridge_regular_comment_over_blank() {
         let src = "# Regular comment\n\nfunc foo():\n\tpass\n";
         let tree = crate::core::parser::parse(src).unwrap();
-        let node = find_declaration_by_name(tree.root_node(), src, "foo").unwrap();
+        let file = parse_file(src, &tree);
+        let node = find_declaration_by_name(&file,"foo").unwrap();
         let (start, end) = declaration_full_range(node, src);
         assert_eq!(&src[start..end], "func foo():\n\tpass\n");
     }
@@ -752,7 +731,8 @@ mod tests {
     fn full_range_doc_comment_one_blank_before_var() {
         let src = "## Doc.\n\nvar x = 1\n";
         let tree = crate::core::parser::parse(src).unwrap();
-        let node = find_declaration_by_name(tree.root_node(), src, "x").unwrap();
+        let file = parse_file(src, &tree);
+        let node = find_declaration_by_name(&file,"x").unwrap();
         let (start, end) = declaration_full_range(node, src);
         assert_eq!(&src[start..end], "## Doc.\n\nvar x = 1\n");
     }

@@ -7,6 +7,7 @@ use super::{
     DECLARATION_KINDS, declaration_full_range, declaration_kind_str, find_declaration_by_name,
     get_declaration_name, normalize_blank_lines,
 };
+use crate::core::gd_ast;
 
 // ── Output ──────────────────────────────────────────────────────────────────
 
@@ -34,10 +35,10 @@ pub fn pull_up_member(
     let child_source = std::fs::read_to_string(child_file)
         .map_err(|e| miette::miette!("cannot read child file: {e}"))?;
     let child_tree = crate::core::parser::parse(&child_source)?;
-    let child_root = child_tree.root_node();
+    let child_gd_file = gd_ast::convert(&child_tree, &child_source);
 
     // Find the declaration in the child file
-    let decl = find_declaration_by_name(child_root, &child_source, name)
+    let decl = find_declaration_by_name(&child_gd_file, name)
         .ok_or_else(|| miette::miette!("no declaration named '{name}' found in child file"))?;
 
     let kind = declaration_kind_str(decl.kind()).to_string();
@@ -73,8 +74,9 @@ pub fn pull_up_member(
         .map_err(|e| miette::miette!("cannot read parent file: {e}"))?;
     let parent_tree = crate::core::parser::parse(&parent_source)?;
     let parent_root = parent_tree.root_node();
+    let parent_gd_file = gd_ast::convert(&parent_tree, &parent_source);
 
-    if find_declaration_by_name(parent_root, &parent_source, name).is_some() {
+    if find_declaration_by_name(&parent_gd_file, name).is_some() {
         return Err(miette::miette!(
             "parent class '{extends}' already contains a declaration named '{name}'"
         ));

@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 use miette::Result;
 use serde::Serialize;
 
+use crate::core::gd_ast;
+
 use super::{
     declaration_full_range, declaration_kind_str, find_declaration_by_name, normalize_blank_lines,
 };
@@ -38,7 +40,7 @@ pub fn bulk_delete_symbol(
     let source =
         std::fs::read_to_string(file).map_err(|e| miette::miette!("cannot read file: {e}"))?;
     let tree = crate::core::parser::parse(&source)?;
-    let root = tree.root_node();
+    let gd_file = gd_ast::convert(&tree, &source);
 
     let workspace = crate::lsp::workspace::WorkspaceIndex::new(project_root.to_path_buf());
     let file_uri = tower_lsp::lsp_types::Url::from_file_path(file).ok();
@@ -59,7 +61,7 @@ pub fn bulk_delete_symbol(
             continue;
         }
 
-        let Some(decl) = find_declaration_by_name(root, &source, name) else {
+        let Some(decl) = find_declaration_by_name(&gd_file, name) else {
             skipped.push(BulkSkippedEntry {
                 name: name.clone(),
                 reason: "declaration not found".to_string(),

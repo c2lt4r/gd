@@ -7,6 +7,7 @@ use super::{
     DECLARATION_KINDS, declaration_full_range, declaration_kind_str, find_declaration_by_name,
     normalize_blank_lines,
 };
+use crate::core::gd_ast;
 use crate::core::workspace_index::ProjectIndex;
 
 // ── Output structs ──────────────────────────────────────────────────────────
@@ -44,9 +45,10 @@ pub fn push_down_member(
         std::fs::read_to_string(file).map_err(|e| miette::miette!("cannot read file: {e}"))?;
     let tree = crate::core::parser::parse(&source)?;
     let root = tree.root_node();
+    let gd_file = gd_ast::convert(&tree, &source);
 
     // Find the declaration
-    let decl = find_declaration_by_name(root, &source, name)
+    let decl = find_declaration_by_name(&gd_file, name)
         .ok_or_else(|| miette::miette!("no declaration named '{name}' found"))?;
 
     let kind = declaration_kind_str(decl.kind()).to_string();
@@ -100,9 +102,9 @@ pub fn push_down_member(
         let target_source = std::fs::read_to_string(target_path)
             .map_err(|e| miette::miette!("cannot read {target_relative}: {e}"))?;
         let target_tree = crate::core::parser::parse(&target_source)?;
-        let target_root = target_tree.root_node();
+        let target_file = gd_ast::convert(&target_tree, &target_source);
 
-        if let Some(existing) = find_declaration_by_name(target_root, &target_source, name) {
+        if let Some(existing) = find_declaration_by_name(&target_file, name) {
             if force {
                 targets.push(PushDownTarget {
                     file: target_relative,

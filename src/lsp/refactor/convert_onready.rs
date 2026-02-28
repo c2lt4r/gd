@@ -7,6 +7,7 @@ use serde::Serialize;
 use tree_sitter::Node;
 
 use super::invert_if::node_text;
+use crate::core::gd_ast;
 
 // ── Output ──────────────────────────────────────────────────────────────────
 
@@ -31,7 +32,7 @@ pub fn convert_onready(
     let source =
         std::fs::read_to_string(file).map_err(|e| miette::miette!("cannot read file: {e}"))?;
     let tree = crate::core::parser::parse(&source)?;
-    let root = tree.root_node();
+    let gd_file = gd_ast::convert(&tree, &source);
     let relative_file = crate::core::fs::relative_slash(file, project_root);
 
     if to_ready {
@@ -39,7 +40,7 @@ pub fn convert_onready(
             file,
             name,
             &source,
-            root,
+            &gd_file,
             dry_run,
             &relative_file,
             project_root,
@@ -49,7 +50,7 @@ pub fn convert_onready(
             file,
             name,
             &source,
-            root,
+            &gd_file,
             dry_run,
             &relative_file,
             project_root,
@@ -63,13 +64,13 @@ fn convert_to_ready(
     file: &Path,
     name: &str,
     source: &str,
-    root: Node,
+    gd_file: &gd_ast::GdFile,
     dry_run: bool,
     relative_file: &str,
     project_root: &Path,
 ) -> Result<ConvertOnreadyOutput> {
     // Find the variable declaration
-    let var_node = super::find_declaration_by_name(root, source, name)
+    let var_node = super::find_declaration_by_name(gd_file, name)
         .ok_or_else(|| miette::miette!("variable '{name}' not found"))?;
 
     if var_node.kind() != "variable_statement" {
@@ -149,13 +150,13 @@ fn convert_to_onready(
     file: &Path,
     name: &str,
     source: &str,
-    root: Node,
+    gd_file: &gd_ast::GdFile,
     dry_run: bool,
     relative_file: &str,
     project_root: &Path,
 ) -> Result<ConvertOnreadyOutput> {
     // Find the variable declaration (must exist as bare `var name`)
-    let var_node = super::find_declaration_by_name(root, source, name)
+    let var_node = super::find_declaration_by_name(gd_file, name)
         .ok_or_else(|| miette::miette!("variable '{name}' not found"))?;
 
     if var_node.kind() != "variable_statement" {
@@ -167,7 +168,7 @@ fn convert_to_onready(
     }
 
     // Find _ready() and the assignment for this variable
-    let ready_func = super::find_declaration_by_name(root, source, "_ready")
+    let ready_func = super::find_declaration_by_name(gd_file, "_ready")
         .ok_or_else(|| miette::miette!("no _ready() function found"))?;
 
     let (assignment_value, assignment_stmt) = find_assignment_in_func(&ready_func, source, name)?;
@@ -212,8 +213,8 @@ fn convert_to_onready(
 
     // Now replace the var declaration (use updated source offsets)
     let updated_tree = crate::core::parser::parse(&new_source)?;
-    let updated_root = updated_tree.root_node();
-    let updated_var = super::find_declaration_by_name(updated_root, &new_source, name)
+    let updated_file = gd_ast::convert(&updated_tree, &new_source);
+    let updated_var = super::find_declaration_by_name(&updated_file, name)
         .ok_or_else(|| miette::miette!("lost variable '{name}' during transform"))?;
 
     let var_line_start = line_byte_offset(&new_source, updated_var.start_position().row);
@@ -375,9 +376,9 @@ fn find_assignment_in_func<'a>(
 /// Add an assignment line to _ready(), creating the function if it doesn't exist.
 fn add_to_ready(source: &str, assignment: &str) -> Result<String> {
     let tree = crate::core::parser::parse(source)?;
-    let root = tree.root_node();
+    let file = gd_ast::convert(&tree, source);
 
-    if let Some(ready_func) = super::find_declaration_by_name(root, source, "_ready") {
+    if let Some(ready_func) = super::find_declaration_by_name(&file, "_ready") {
         // _ready() exists — append to its body
         let body = ready_func
             .child_by_field_name("body")
@@ -416,9 +417,9 @@ fn add_to_ready(source: &str, assignment: &str) -> Result<String> {
 /// If _ready() exists and its body is empty or only whitespace, insert `pass`.
 fn ensure_ready_not_empty(source: &str) -> Result<String> {
     let tree = crate::core::parser::parse(source)?;
-    let root = tree.root_node();
+    let file = gd_ast::convert(&tree, source);
 
-    let Some(ready_func) = super::find_declaration_by_name(root, source, "_ready") else {
+    let Some(ready_func) = super::find_declaration_by_name(&file, "_ready") else {
         return Ok(source.to_string());
     };
 

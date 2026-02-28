@@ -7,6 +7,7 @@ use serde::Serialize;
 use tree_sitter::Node;
 
 use super::{declaration_full_range, find_declaration_by_name, line_starts, normalize_blank_lines};
+use crate::core::gd_ast;
 use crate::core::workspace_index::ProjectIndex;
 
 // ── inline-method ───────────────────────────────────────────────────────────
@@ -37,6 +38,7 @@ pub fn inline_method(
         std::fs::read_to_string(file).map_err(|e| miette::miette!("cannot read file: {e}"))?;
     let tree = crate::core::parser::parse(&source)?;
     let root = tree.root_node();
+    let file_ast = gd_ast::convert(&tree, &source);
 
     let point = tree_sitter::Point::new(line - 1, column - 1);
 
@@ -50,7 +52,6 @@ pub fn inline_method(
 
     let def_source;
     let def_tree;
-    let def_root;
     let func_def;
 
     // Track cross-file source info for the output
@@ -62,8 +63,8 @@ pub fn inline_method(
         def_source = std::fs::read_to_string(target_file)
             .map_err(|e| miette::miette!("cannot read target file: {e}"))?;
         def_tree = crate::core::parser::parse(&def_source)?;
-        def_root = def_tree.root_node();
-        func_def = find_declaration_by_name(def_root, &def_source, &call_info.method_name)
+        let def_file = gd_ast::convert(&def_tree, &def_source);
+        func_def = find_declaration_by_name(&def_file, &call_info.method_name)
             .ok_or_else(|| {
                 miette::miette!(
                     "cannot find definition of '{}' in {}",
@@ -74,12 +75,12 @@ pub fn inline_method(
         cross_file_relative = Some(crate::core::fs::relative_slash(target_file, project_root));
     } else {
         // Same-file: check if the definition actually exists here
-        let same_file_def = find_declaration_by_name(root, &source, &call_info.method_name);
+        let same_file_def = find_declaration_by_name(&file_ast, &call_info.method_name);
         if let Some(local_def) = same_file_def {
             def_source = source.clone();
             def_tree = crate::core::parser::parse(&def_source)?;
-            def_root = def_tree.root_node();
-            func_def = find_declaration_by_name(def_root, &def_source, &call_info.method_name)
+            let def_file = gd_ast::convert(&def_tree, &def_source);
+            func_def = find_declaration_by_name(&def_file, &call_info.method_name)
                 .unwrap_or(local_def);
         } else {
             // Bare call not found in same file — try cross-file resolution
@@ -87,8 +88,8 @@ pub fn inline_method(
             cross_file_relative = Some(crate::core::fs::relative_slash(&cross.path, project_root));
             def_source = cross.source;
             def_tree = crate::core::parser::parse(&def_source)?;
-            def_root = def_tree.root_node();
-            func_def = find_declaration_by_name(def_root, &def_source, &call_info.method_name)
+            let def_file = gd_ast::convert(&def_tree, &def_source);
+            func_def = find_declaration_by_name(&def_file, &call_info.method_name)
                 .ok_or_else(|| {
                     miette::miette!(
                         "cannot find definition of '{}' in resolved file",
@@ -373,8 +374,8 @@ pub fn inline_method(
         // 2. Delete function definition if single callsite (same-file only)
         if can_delete {
             let new_tree = crate::core::parser::parse(&new_source)?;
-            let new_root = new_tree.root_node();
-            if let Some(def) = find_declaration_by_name(new_root, &new_source, func_name) {
+            let new_file = gd_ast::convert(&new_tree, &new_source);
+            if let Some(def) = find_declaration_by_name(&new_file, func_name) {
                 let (def_start, def_end) = declaration_full_range(def, &new_source);
                 let mut final_source = String::with_capacity(new_source.len());
                 final_source.push_str(&new_source[..def_start]);
@@ -440,9 +441,10 @@ pub fn inline_method_by_name(
         std::fs::read_to_string(file).map_err(|e| miette::miette!("cannot read file: {e}"))?;
     let tree = crate::core::parser::parse(&source)?;
     let root = tree.root_node();
+    let file_ast = gd_ast::convert(&tree, &source);
 
     // Try same-file definition first
-    let same_file_def = find_declaration_by_name(root, &source, name);
+    let same_file_def = find_declaration_by_name(&file_ast, name);
 
     if let Some(func_def) = same_file_def {
         inline_by_name_same_file(
@@ -537,8 +539,8 @@ fn inline_by_name_same_file(
             let current_source = std::fs::read_to_string(file)
                 .map_err(|e| miette::miette!("cannot read file: {e}"))?;
             let current_tree = crate::core::parser::parse(&current_source)?;
-            let current_root = current_tree.root_node();
-            if let Some(def) = find_declaration_by_name(current_root, &current_source, name) {
+            let current_file = gd_ast::convert(&current_tree, &current_source);
+            if let Some(def) = find_declaration_by_name(&current_file, name) {
                 let (def_start, def_end) = declaration_full_range(def, &current_source);
                 let mut final_source = String::with_capacity(current_source.len());
                 final_source.push_str(&current_source[..def_start]);
@@ -566,8 +568,8 @@ fn inline_by_name_same_file(
         let current_source =
             std::fs::read_to_string(file).map_err(|e| miette::miette!("cannot read file: {e}"))?;
         let current_tree = crate::core::parser::parse(&current_source)?;
-        let current_root = current_tree.root_node();
-        find_declaration_by_name(current_root, &current_source, name).is_none()
+        let current_file = gd_ast::convert(&current_tree, &current_source);
+        find_declaration_by_name(&current_file, name).is_none()
     } else {
         false
     };

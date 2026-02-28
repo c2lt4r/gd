@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 
 use miette::Result;
 
+use crate::core::gd_ast;
+
 use super::{
     DeleteSymbolOutput, LineRange, RefLocation, declaration_full_range, declaration_kind_str,
     find_class_definition, find_declaration_by_line, find_declaration_by_name,
@@ -30,28 +32,29 @@ pub fn delete_symbol(
     let source =
         std::fs::read_to_string(file).map_err(|e| miette::miette!("cannot read file: {e}"))?;
     let tree = crate::core::parser::parse(&source)?;
-    let root = tree.root_node();
+    let gd_file = gd_ast::convert(&tree, &source);
 
     let decl = if let Some(class_name) = class {
         // Look inside an inner class
-        let class_node = find_class_definition(root, &source, class_name)
+        let _class_node = find_class_definition(&gd_file, class_name)
             .ok_or_else(|| miette::miette!("no inner class named '{class_name}' found"))?;
+        let gd_class = gd_file.find_class(class_name).unwrap();
         if let Some(name) = name {
-            find_declaration_in_class(class_node, &source, name).ok_or_else(|| {
+            find_declaration_in_class(gd_class, name).ok_or_else(|| {
                 miette::miette!("no declaration named '{name}' found in class '{class_name}'")
             })?
         } else if let Some(line) = line {
-            find_declaration_in_class_by_line(class_node, line - 1).ok_or_else(|| {
+            find_declaration_in_class_by_line(gd_class, line - 1).ok_or_else(|| {
                 miette::miette!("no declaration found at line {line} in class '{class_name}'")
             })?
         } else {
             return Err(miette::miette!("either --name or --line is required"));
         }
     } else if let Some(name) = name {
-        find_declaration_by_name(root, &source, name)
+        find_declaration_by_name(&gd_file, name)
             .ok_or_else(|| miette::miette!("no declaration named '{name}' found at top level"))?
     } else if let Some(line) = line {
-        find_declaration_by_line(root, line - 1)
+        find_declaration_by_line(&gd_file, line - 1)
             .ok_or_else(|| miette::miette!("no declaration found at line {line}"))?
     } else {
         return Err(miette::miette!("either --name or --line is required"));
@@ -186,9 +189,9 @@ fn delete_enum_member(
     let source =
         std::fs::read_to_string(file).map_err(|e| miette::miette!("cannot read file: {e}"))?;
     let tree = crate::core::parser::parse(&source)?;
-    let root = tree.root_node();
+    let gd_file = gd_ast::convert(&tree, &source);
 
-    let enum_node = find_declaration_by_name(root, &source, enum_name)
+    let enum_node = find_declaration_by_name(&gd_file, enum_name)
         .ok_or_else(|| miette::miette!("no enum named '{enum_name}' found"))?;
     if enum_node.kind() != "enum_definition" {
         return Err(miette::miette!("'{enum_name}' is not an enum"));

@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 use miette::Result;
 use serde::Serialize;
 
+use crate::core::gd_ast;
+
 // ── Output ──────────────────────────────────────────────────────────────────
 
 #[derive(Serialize, Debug)]
@@ -444,9 +446,9 @@ fn remove_connect_call(source: &str, from: &str, signal: &str, method: &str) -> 
 /// If _ready() body is empty after removing a statement, insert `pass`.
 fn ensure_ready_has_body(source: &str) -> Result<String> {
     let tree = crate::core::parser::parse(source)?;
-    let root = tree.root_node();
+    let file = gd_ast::convert(&tree, source);
 
-    let Some(ready_func) = super::find_declaration_by_name(root, source, "_ready") else {
+    let Some(ready_func) = super::find_declaration_by_name(&file, "_ready") else {
         return Ok(source.to_string());
     };
     let Some(body) = ready_func.child_by_field_name("body") else {
@@ -476,9 +478,9 @@ fn ensure_ready_has_body(source: &str) -> Result<String> {
 /// Add a line to _ready(), creating it if necessary.
 fn add_to_ready(source: &str, line: &str) -> Result<String> {
     let tree = crate::core::parser::parse(source)?;
-    let root = tree.root_node();
+    let file = gd_ast::convert(&tree, source);
 
-    if let Some(ready_func) = super::find_declaration_by_name(root, source, "_ready") {
+    if let Some(ready_func) = super::find_declaration_by_name(&file, "_ready") {
         let body = ready_func
             .child_by_field_name("body")
             .ok_or_else(|| miette::miette!("_ready() has no body"))?;

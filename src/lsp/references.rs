@@ -4,6 +4,7 @@ use std::path::Path;
 use tower_lsp::lsp_types::{Location, Position, Range, Url};
 
 use super::util::{FUNCTION_KINDS, node_range};
+use crate::core::gd_ast::{self, GdDecl, GdFile};
 
 // ── Static/instance disambiguation ──────────────────────────────────────
 
@@ -21,20 +22,16 @@ enum MethodKind {
 /// staticness) in the same file, return the `MethodKind` of the targeted
 /// declaration and the 0-based line of the *other* declaration.
 fn detect_ambiguous_overload(
-    root: tree_sitter::Node,
-    source: &str,
+    file: &GdFile,
     target_name: &str,
     cursor_line: usize,
 ) -> Option<MethodKind> {
     let mut decls: Vec<(usize, bool)> = Vec::new(); // (line, is_static)
-    let mut cur = root.walk();
-    for child in root.children(&mut cur) {
-        if child.kind() == "function_definition"
-            && let Some(name_node) = child.child_by_field_name("name")
-            && name_node.utf8_text(source.as_bytes()).unwrap_or("") == target_name
+    for d in &file.declarations {
+        if let GdDecl::Func(f) = d
+            && f.name == target_name
         {
-            let is_static = has_static_keyword(&child);
-            decls.push((child.start_position().row, is_static));
+            decls.push((f.node.start_position().row, f.is_static));
         }
     }
     if decls.len() < 2 {
@@ -164,21 +161,9 @@ fn reference_matches_kind(
     kind == MethodKind::Instance
 }
 
-/// Extract the `class_name` from a file's root node (if declared).
-fn extract_class_name(root: tree_sitter::Node, source: &str) -> Option<String> {
-    let mut cursor = root.walk();
-    for child in root.children(&mut cursor) {
-        if child.kind() == "class_name_statement" {
-            let name_node = child.child_by_field_name("name").or_else(|| child.child(1));
-            if let Some(n) = name_node
-                && let Ok(text) = n.utf8_text(source.as_bytes())
-                && !text.is_empty()
-            {
-                return Some(text.to_string());
-            }
-        }
-    }
-    None
+/// Extract the `class_name` from a typed file (if declared).
+fn extract_class_name(file: &GdFile) -> Option<String> {
+    file.class_name.map(String::from)
 }
 
 /// Find all references to the symbol at the given position within the same file.
@@ -223,9 +208,10 @@ pub fn find_references(
     }
 
     // Check for ambiguous same-name function declarations (static vs instance)
+    let file = gd_ast::convert(&tree, source);
     let overload_kind =
-        detect_ambiguous_overload(root, source, target_name, position.line as usize);
-    let class_name = overload_kind.and_then(|_| extract_class_name(root, source));
+        detect_ambiguous_overload(&file, target_name, position.line as usize);
+    let class_name = overload_kind.and_then(|_| extract_class_name(&file));
     let filter = overload_kind.map(|kind| OverloadFilter {
         kind,
         target_decl_line: position.line as usize,
@@ -459,9 +445,10 @@ pub fn find_references_cross_file(
     }
 
     // Check for ambiguous same-name function declarations (static vs instance)
+    let file = gd_ast::convert(&tree, source);
     let overload_kind =
-        detect_ambiguous_overload(root, source, target_name, position.line as usize);
-    let origin_class_name = extract_class_name(root, source);
+        detect_ambiguous_overload(&file, target_name, position.line as usize);
+    let origin_class_name = extract_class_name(&file);
 
     // Build overload filter if disambiguation is needed
     let origin_filter = overload_kind.map(|kind| OverloadFilter {
@@ -947,13 +934,14 @@ pub fn find_references_by_name(
             };
 
             if let Some(class_name) = class_filter {
-                if has_class_name_statement(root, &content, class_name) {
+                let gd_file = gd_ast::convert(&tree, &content);
+                if gd_file.class_name == Some(class_name) {
                     // Whole file is this class — search everything
                     collect_references(root, &content, name, &uri, true, &mut locations);
-                } else if let Some(class_node) = find_inner_class(root, &content, class_name) {
+                } else if let Some(cls) = gd_file.find_class(class_name) {
                     // Inner class — only search inside it
-                    collect_references(class_node, &content, name, &uri, true, &mut locations);
-                } else if let Some(enum_node) = find_enum_definition(root, &content, class_name) {
+                    collect_references(cls.node, &content, name, &uri, true, &mut locations);
+                } else if let Some(enum_node) = find_enum_definition(&gd_file, class_name) {
                     // Enum definition — search members inside it and also
                     // qualified references (EnumName.MEMBER) throughout the file
                     collect_references(enum_node, &content, name, &uri, true, &mut locations);
@@ -1082,56 +1070,17 @@ fn collect_qualified_references(
     }
 }
 
-/// Check if a file has a top-level `class_name` statement matching `target`.
-fn has_class_name_statement(root: tree_sitter::Node, source: &str, target: &str) -> bool {
-    let mut cursor = root.walk();
-    for child in root.children(&mut cursor) {
-        if child.kind() == "class_name_statement" {
-            let name = child.child_by_field_name("name").or_else(|| child.child(1));
-            if let Some(n) = name
-                && n.utf8_text(source.as_bytes()).unwrap_or("") == target
-            {
-                return true;
-            }
-        }
-    }
-    false
-}
-
-/// Find a top-level inner `class_definition` matching `target`.
-fn find_inner_class<'a>(
-    root: tree_sitter::Node<'a>,
-    source: &str,
-    target: &str,
-) -> Option<tree_sitter::Node<'a>> {
-    let mut cursor = root.walk();
-    for child in root.children(&mut cursor) {
-        if child.kind() == "class_definition"
-            && let Some(name_node) = child.child_by_field_name("name")
-            && name_node.utf8_text(source.as_bytes()).unwrap_or("") == target
-        {
-            return Some(child);
-        }
-    }
-    None
-}
-
 /// Find a top-level `enum_definition` matching `target`.
-fn find_enum_definition<'a>(
-    root: tree_sitter::Node<'a>,
-    source: &str,
-    target: &str,
-) -> Option<tree_sitter::Node<'a>> {
-    let mut cursor = root.walk();
-    for child in root.children(&mut cursor) {
-        if child.kind() == "enum_definition"
-            && let Some(name_node) = child.child_by_field_name("name")
-            && name_node.utf8_text(source.as_bytes()).unwrap_or("") == target
+fn find_enum_definition<'a>(file: &GdFile<'a>, target: &str) -> Option<tree_sitter::Node<'a>> {
+    file.declarations.iter().find_map(|d| {
+        if let GdDecl::Enum(e) = d
+            && e.name == target
         {
-            return Some(child);
+            Some(e.node)
+        } else {
+            None
         }
-    }
-    None
+    })
 }
 
 fn is_scope_node(kind: &str) -> bool {

@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use miette::Result;
 use serde::Serialize;
 
+use crate::core::gd_ast;
 use super::invert_if::{get_line_indent, node_text};
 
 // ── Output structs ──────────────────────────────────────────────────────────
@@ -35,11 +36,11 @@ pub fn split_declaration(
     let source =
         std::fs::read_to_string(file).map_err(|e| miette::miette!("cannot read file: {e}"))?;
     let tree = crate::core::parser::parse(&source)?;
-    let root = tree.root_node();
+    let file_ast = gd_ast::convert(&tree, &source);
 
     let line_0 = line - 1;
 
-    let node = super::find_declaration_by_line(root, line_0)
+    let node = super::find_declaration_by_line(&file_ast, line_0)
         .ok_or_else(|| miette::miette!("no declaration found at line {line}"))?;
 
     if node.kind() == "const_statement" {
@@ -141,10 +142,11 @@ pub fn join_declaration(
         std::fs::read_to_string(file).map_err(|e| miette::miette!("cannot read file: {e}"))?;
     let tree = crate::core::parser::parse(&source)?;
     let root = tree.root_node();
+    let file_ast = gd_ast::convert(&tree, &source);
 
     let line_0 = line - 1;
 
-    let node = super::find_declaration_by_line(root, line_0)
+    let node = super::find_declaration_by_line(&file_ast, line_0)
         .ok_or_else(|| miette::miette!("no declaration found at line {line}"))?;
 
     if node.kind() == "const_statement" {

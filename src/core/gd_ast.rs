@@ -319,6 +319,122 @@ impl<'a> GdStmt<'a> {
     }
 }
 
+impl<'a> GdDecl<'a> {
+    /// The declaration's name (`""` for bare statements).
+    #[must_use]
+    pub fn name(&self) -> &'a str {
+        match self {
+            GdDecl::Func(f) => f.name,
+            GdDecl::Var(v) => v.name,
+            GdDecl::Signal(s) => s.name,
+            GdDecl::Enum(e) => e.name,
+            GdDecl::Class(c) => c.name,
+            GdDecl::Stmt(_) => "",
+        }
+    }
+
+    /// The backing tree-sitter node.
+    #[must_use]
+    pub fn node(&self) -> Node<'a> {
+        match self {
+            GdDecl::Func(f) => f.node,
+            GdDecl::Var(v) => v.node,
+            GdDecl::Signal(s) => s.node,
+            GdDecl::Enum(e) => e.node,
+            GdDecl::Class(c) => c.node,
+            GdDecl::Stmt(s) => s.node(),
+        }
+    }
+
+    /// The name identifier node (for position lookups). `Stmt` returns `None`.
+    #[must_use]
+    pub fn name_node(&self) -> Option<Node<'a>> {
+        match self {
+            GdDecl::Func(f) => f.name_node,
+            GdDecl::Var(v) => v.name_node,
+            GdDecl::Signal(s) => s.name_node,
+            GdDecl::Enum(e) => e.name_node,
+            GdDecl::Class(c) => c.name_node,
+            GdDecl::Stmt(_) => None,
+        }
+    }
+
+    /// Human-readable kind label.
+    #[must_use]
+    pub fn kind_str(&self) -> &'static str {
+        match self {
+            GdDecl::Func(_) => "function",
+            GdDecl::Var(v) => {
+                if v.is_const {
+                    "constant"
+                } else {
+                    "variable"
+                }
+            }
+            GdDecl::Signal(_) => "signal",
+            GdDecl::Enum(_) => "enum",
+            GdDecl::Class(_) => "class",
+            GdDecl::Stmt(_) => "statement",
+        }
+    }
+
+    /// `true` for all variants except `Stmt`.
+    #[must_use]
+    pub fn is_declaration(&self) -> bool {
+        !matches!(self, GdDecl::Stmt(_))
+    }
+}
+
+impl<'a> GdFile<'a> {
+    /// Find a top-level declaration by name.
+    #[must_use]
+    pub fn find_decl_by_name(&self, name: &str) -> Option<&GdDecl<'a>> {
+        self.declarations
+            .iter()
+            .find(|d| d.is_declaration() && d.name() == name)
+    }
+
+    /// Find a top-level declaration whose CST node starts at `line` (0-based).
+    #[must_use]
+    pub fn find_decl_by_line(&self, line: usize) -> Option<&GdDecl<'a>> {
+        self.declarations
+            .iter()
+            .find(|d| d.is_declaration() && d.node().start_position().row == line)
+    }
+
+    /// Find an inner class by name.
+    #[must_use]
+    pub fn find_class(&self, name: &str) -> Option<&GdClass<'a>> {
+        self.declarations.iter().find_map(|d| {
+            if let GdDecl::Class(c) = d
+                && c.name == name
+            {
+                Some(c)
+            } else {
+                None
+            }
+        })
+    }
+}
+
+impl<'a> GdClass<'a> {
+    /// Find a declaration by name within this inner class.
+    #[must_use]
+    pub fn find_decl_by_name(&self, name: &str) -> Option<&GdDecl<'a>> {
+        self.declarations
+            .iter()
+            .find(|d| d.is_declaration() && d.name() == name)
+    }
+
+    /// Find a declaration whose CST node starts at `line` (0-based).
+    #[must_use]
+    pub fn find_decl_by_line(&self, line: usize) -> Option<&GdDecl<'a>> {
+        self.declarations
+            .iter()
+            .find(|d| d.is_declaration() && d.node().start_position().row == line)
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 //  Visitors — pre-order traversal helpers
 // ═══════════════════════════════════════════════════════════════════════

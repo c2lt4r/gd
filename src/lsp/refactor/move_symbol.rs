@@ -3,6 +3,8 @@ use std::path::Path;
 use miette::Result;
 use tree_sitter::Node;
 
+use crate::core::gd_ast;
+
 use super::{
     CallerUpdateInfo, DECLARATION_KINDS, MoveSymbolOutput, PreloadRef, declaration_full_range,
     declaration_kind_str, find_class_definition, find_declaration_by_name,
@@ -24,16 +26,18 @@ pub fn move_symbol(
         .map_err(|e| miette::miette!("cannot read source file: {e}"))?;
     let tree = crate::core::parser::parse(&source)?;
     let root = tree.root_node();
+    let file = gd_ast::convert(&tree, &source);
 
     // Find the declaration (possibly within a class)
     let decl = if let Some(class_name) = class {
-        let class_node = find_class_definition(root, &source, class_name)
+        let inner = file
+            .find_class(class_name)
             .ok_or_else(|| miette::miette!("no inner class named '{class_name}' found"))?;
-        find_declaration_in_class(class_node, &source, name).ok_or_else(|| {
+        find_declaration_in_class(inner, name).ok_or_else(|| {
             miette::miette!("no declaration named '{name}' found in class '{class_name}'")
         })?
     } else {
-        find_declaration_by_name(root, &source, name)
+        find_declaration_by_name(&file, name)
             .ok_or_else(|| miette::miette!("no declaration named '{name}' found at top level"))?
     };
 
@@ -73,13 +77,14 @@ pub fn move_symbol(
         let target_source = std::fs::read_to_string(to_file)
             .map_err(|e| miette::miette!("cannot read target file: {e}"))?;
         let target_tree = crate::core::parser::parse(&target_source)?;
-        let target_root = target_tree.root_node();
+        let target_file = gd_ast::convert(&target_tree, &target_source);
 
         let dup = if let Some(tc) = target_class {
-            find_class_definition(target_root, &target_source, tc)
-                .and_then(|c| find_declaration_in_class(c, &target_source, name))
+            target_file
+                .find_class(tc)
+                .and_then(|c| find_declaration_in_class(c, name))
         } else {
-            find_declaration_by_name(target_root, &target_source, name)
+            find_declaration_by_name(&target_file, name)
         };
         if dup.is_some() {
             return Err(miette::miette!(
@@ -128,12 +133,12 @@ pub fn move_symbol(
             let target_source = std::fs::read_to_string(to_file)
                 .map_err(|e| miette::miette!("cannot read target file: {e}"))?;
             let target_tree = crate::core::parser::parse(&target_source)?;
-            let target_root = target_tree.root_node();
+            let target_file = gd_ast::convert(&target_tree, &target_source);
 
             let target_scope = if let Some(tc) = target_class {
-                find_class_definition(target_root, &target_source, tc)
+                find_class_definition(&target_file, tc)
             } else {
-                Some(target_root)
+                Some(target_tree.root_node())
             };
 
             if let Some(scope) = target_scope {
@@ -172,9 +177,9 @@ pub fn move_symbol(
             if let Some(tc) = target_class {
                 // Insert into target class body
                 let target_tree = crate::core::parser::parse(&target_source)?;
-                let target_root = target_tree.root_node();
+                let target_file = gd_ast::convert(&target_tree, &target_source);
                 let tc_node =
-                    find_class_definition(target_root, &target_source, tc).ok_or_else(|| {
+                    find_class_definition(&target_file, tc).ok_or_else(|| {
                         miette::miette!("target class '{tc}' not found in target file")
                     })?;
                 let insert_byte = tc_node.end_byte();

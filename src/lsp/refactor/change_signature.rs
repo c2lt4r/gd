@@ -10,6 +10,7 @@ use super::inline_method::{
     ParamInfo, extract_call_arguments, extract_function_params, find_call_at,
 };
 use super::{find_class_definition, find_declaration_by_name, find_declaration_in_class};
+use crate::core::gd_ast;
 
 // ── change-signature ────────────────────────────────────────────────────────
 
@@ -41,16 +42,17 @@ pub fn change_signature(
     let source =
         std::fs::read_to_string(file).map_err(|e| miette::miette!("cannot read file: {e}"))?;
     let tree = crate::core::parser::parse(&source)?;
-    let root = tree.root_node();
+    let file_ast = gd_ast::convert(&tree, &source);
 
     // Find function definition
     let func_def = if let Some(class_name) = class {
-        let class_node = find_class_definition(root, &source, class_name)
+        let _class_node = find_class_definition(&file_ast, class_name)
             .ok_or_else(|| miette::miette!("no inner class named '{class_name}' found"))?;
-        find_declaration_in_class(class_node, &source, name)
+        let inner = file_ast.find_class(class_name).unwrap(); // safe: find_class_definition succeeded
+        find_declaration_in_class(inner, name)
             .ok_or_else(|| miette::miette!("no function '{name}' in class '{class_name}'"))?
     } else {
-        find_declaration_by_name(root, &source, name)
+        find_declaration_by_name(&file_ast, name)
             .ok_or_else(|| miette::miette!("no declaration named '{name}' found"))?
     };
 
@@ -244,8 +246,8 @@ pub fn change_signature(
         if !rename_map.is_empty() {
             // Re-parse after signature change to get correct byte offsets
             let new_tree = crate::core::parser::parse(&new_source)?;
-            let new_root = new_tree.root_node();
-            if let Some(new_func) = find_declaration_by_name(new_root, &new_source, name)
+            let new_file = gd_ast::convert(&new_tree, &new_source);
+            if let Some(new_func) = find_declaration_by_name(&new_file, name)
                 && let Some(body) = new_func.child_by_field_name("body")
             {
                 let body_start = body.start_byte();
@@ -503,9 +505,9 @@ fn apply_signature_to_override(
     let source =
         std::fs::read_to_string(file).map_err(|e| miette::miette!("cannot read file: {e}"))?;
     let tree = crate::core::parser::parse(&source)?;
-    let root = tree.root_node();
+    let file_ast = gd_ast::convert(&tree, &source);
 
-    let func_def = find_declaration_by_name(root, &source, func_name)
+    let func_def = find_declaration_by_name(&file_ast, func_name)
         .ok_or_else(|| miette::miette!("override '{func_name}' not found"))?;
 
     if !matches!(
@@ -526,8 +528,8 @@ fn apply_signature_to_override(
     // Rename param usages in body (AST-aware)
     if !rename_map.is_empty() {
         let new_tree = crate::core::parser::parse(&new_source)?;
-        let new_root = new_tree.root_node();
-        if let Some(new_func) = find_declaration_by_name(new_root, &new_source, func_name)
+        let new_file = gd_ast::convert(&new_tree, &new_source);
+        if let Some(new_func) = find_declaration_by_name(&new_file, func_name)
             && let Some(body) = new_func.child_by_field_name("body")
         {
             let body_start = body.start_byte();

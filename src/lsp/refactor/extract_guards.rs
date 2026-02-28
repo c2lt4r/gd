@@ -5,6 +5,8 @@ use miette::Result;
 use serde::Serialize;
 use tree_sitter::Node;
 
+use crate::core::gd_ast;
+
 use super::invert_if::{get_line_indent, negate_condition, node_text};
 
 // ── Output structs ──────────────────────────────────────────────────────────
@@ -154,9 +156,9 @@ pub fn extract_guards(
     let source =
         std::fs::read_to_string(file).map_err(|e| miette::miette!("cannot read file: {e}"))?;
     let tree = crate::core::parser::parse(&source)?;
-    let root = tree.root_node();
+    let gd_file = gd_ast::convert(&tree, &source);
 
-    let func_node = super::find_declaration_by_name(root, &source, function_name)
+    let func_node = super::find_declaration_by_name(&gd_file, function_name)
         .ok_or_else(|| miette::miette!("function '{function_name}' not found"))?;
 
     if !matches!(

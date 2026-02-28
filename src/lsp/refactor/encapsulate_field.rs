@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 use miette::Result;
 use serde::Serialize;
 
+use crate::core::gd_ast;
+
 use super::invert_if::node_text;
 
 // ── Output ──────────────────────────────────────────────────────────────────
@@ -31,10 +33,10 @@ pub fn encapsulate_field(
     let source =
         std::fs::read_to_string(file).map_err(|e| miette::miette!("cannot read file: {e}"))?;
     let tree = crate::core::parser::parse(&source)?;
-    let root = tree.root_node();
+    let gd_file = gd_ast::convert(&tree, &source);
     let relative_file = crate::core::fs::relative_slash(file, project_root);
 
-    let var_node = super::find_declaration_by_name(root, &source, name)
+    let var_node = super::find_declaration_by_name(&gd_file, name)
         .ok_or_else(|| miette::miette!("variable '{name}' not found"))?;
 
     if var_node.kind() != "variable_statement" {
@@ -77,17 +79,17 @@ pub fn encapsulate_field(
         let setter = format!("_set_{name}");
         let backing = format!("_{name}");
 
-        if super::find_declaration_by_name(root, &source, &getter).is_some() {
+        if super::find_declaration_by_name(&gd_file, &getter).is_some() {
             warnings.push(format!(
                 "function '{getter}' already exists — will be overwritten"
             ));
         }
-        if super::find_declaration_by_name(root, &source, &setter).is_some() {
+        if super::find_declaration_by_name(&gd_file, &setter).is_some() {
             warnings.push(format!(
                 "function '{setter}' already exists — will be overwritten"
             ));
         }
-        if super::find_declaration_by_name(root, &source, &backing).is_some() {
+        if super::find_declaration_by_name(&gd_file, &backing).is_some() {
             return Err(miette::miette!(
                 "variable '{backing}' already exists — cannot create backing field"
             ));

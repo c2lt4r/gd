@@ -4,6 +4,8 @@ use std::path::Path;
 use miette::Result;
 use serde::Serialize;
 
+use crate::core::gd_ast;
+
 use super::{
     declaration_full_range, declaration_kind_str, find_declaration_by_name, get_declaration_name,
     normalize_blank_lines,
@@ -46,6 +48,7 @@ pub fn extract_superclass(
         std::fs::read_to_string(file).map_err(|e| miette::miette!("cannot read file: {e}"))?;
     let tree = crate::core::parser::parse(&source)?;
     let root = tree.root_node();
+    let gd_file = gd_ast::convert(&tree, &source);
 
     let from_relative = crate::core::fs::relative_slash(file, project_root);
     let to_relative = crate::core::fs::relative_slash(to_file, project_root);
@@ -58,7 +61,7 @@ pub fn extract_superclass(
     let mut not_found = Vec::new();
 
     for name in names {
-        let Some(decl) = find_declaration_by_name(root, &source, name) else {
+        let Some(decl) = find_declaration_by_name(&gd_file, name) else {
             not_found.push(name.clone());
             continue;
         };

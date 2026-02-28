@@ -7,6 +7,7 @@ use tree_sitter::Node;
 
 use super::inline_method::{extract_call_arguments, extract_function_params};
 use super::{declaration_full_range, find_declaration_by_name, normalize_blank_lines};
+use crate::core::gd_ast;
 
 #[derive(Serialize, Debug)]
 pub struct InlineDelegateOutput {
@@ -34,10 +35,11 @@ pub fn inline_delegate(
         std::fs::read_to_string(file).map_err(|e| miette::miette!("cannot read file: {e}"))?;
     let tree = crate::core::parser::parse(&source)?;
     let root = tree.root_node();
+    let gd_file = gd_ast::convert(&tree, &source);
     let relative_file = crate::core::fs::relative_slash(file, project_root);
 
     // Find function definition
-    let func_def = find_declaration_by_name(root, &source, name)
+    let func_def = find_declaration_by_name(&gd_file, name)
         .ok_or_else(|| miette::miette!("no function named '{name}' found"))?;
     if !matches!(
         func_def.kind(),
@@ -158,8 +160,8 @@ pub fn inline_delegate(
         // by replacements that come AFTER it (higher byte offsets).
         // Reparse to be safe.
         let new_tree = crate::core::parser::parse(&new_source)?;
-        let new_root = new_tree.root_node();
-        if let Some(def) = find_declaration_by_name(new_root, &new_source, name) {
+        let new_file = gd_ast::convert(&new_tree, &new_source);
+        if let Some(def) = find_declaration_by_name(&new_file, name) {
             let (ds, de) = declaration_full_range(def, &new_source);
             let mut final_source = String::with_capacity(new_source.len());
             final_source.push_str(&new_source[..ds]);

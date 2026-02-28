@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 use miette::Result;
 use serde::Serialize;
 
+use crate::core::gd_ast;
+
 use super::{
     declaration_full_range, find_class_definition, find_declaration_by_name,
     find_declaration_in_class, line_starts, re_indent_to_depth,
@@ -57,17 +59,19 @@ pub fn replace_body(
     let source =
         std::fs::read_to_string(file).map_err(|e| miette::miette!("cannot read file: {e}"))?;
     let tree = crate::core::parser::parse(&source)?;
-    let root = tree.root_node();
+    let _root = tree.root_node();
+    let file_ast = gd_ast::convert(&tree, &source);
     let rel = crate::core::fs::relative_slash(file, project_root);
 
     // Find the target function/constructor
     let decl = if let Some(cls) = class {
-        let class_node = find_class_definition(root, &source, cls)
+        let _class_node = find_class_definition(&file_ast, cls)
             .ok_or_else(|| miette::miette!("class '{cls}' not found in {rel}"))?;
-        find_declaration_in_class(class_node, &source, name)
+        let inner = file_ast.find_class(cls).unwrap();
+        find_declaration_in_class(inner, name)
             .ok_or_else(|| miette::miette!("symbol '{name}' not found in class '{cls}'"))?
     } else {
-        find_declaration_by_name(root, &source, name)
+        find_declaration_by_name(&file_ast, name)
             .ok_or_else(|| miette::miette!("symbol '{name}' not found in {rel}"))?
     };
 
@@ -190,16 +194,18 @@ pub fn insert(
     let source =
         std::fs::read_to_string(file).map_err(|e| miette::miette!("cannot read file: {e}"))?;
     let tree = crate::core::parser::parse(&source)?;
-    let root = tree.root_node();
+    let _root = tree.root_node();
+    let file_ast = gd_ast::convert(&tree, &source);
     let rel = crate::core::fs::relative_slash(file, project_root);
 
     let decl = if let Some(cls) = class {
-        let class_node = find_class_definition(root, &source, cls)
+        let _class_node = find_class_definition(&file_ast, cls)
             .ok_or_else(|| miette::miette!("class '{cls}' not found in {rel}"))?;
-        find_declaration_in_class(class_node, &source, anchor_name)
+        let inner = file_ast.find_class(cls).unwrap();
+        find_declaration_in_class(inner, anchor_name)
             .ok_or_else(|| miette::miette!("symbol '{anchor_name}' not found in class '{cls}'"))?
     } else {
-        find_declaration_by_name(root, &source, anchor_name)
+        find_declaration_by_name(&file_ast, anchor_name)
             .ok_or_else(|| miette::miette!("symbol '{anchor_name}' not found in {rel}"))?
     };
 
@@ -280,16 +286,18 @@ pub fn replace_symbol(
     let source =
         std::fs::read_to_string(file).map_err(|e| miette::miette!("cannot read file: {e}"))?;
     let tree = crate::core::parser::parse(&source)?;
-    let root = tree.root_node();
+    let _root = tree.root_node();
+    let file_ast = gd_ast::convert(&tree, &source);
     let rel = crate::core::fs::relative_slash(file, project_root);
 
     let decl = if let Some(cls) = class {
-        let class_node = find_class_definition(root, &source, cls)
+        let _class_node = find_class_definition(&file_ast, cls)
             .ok_or_else(|| miette::miette!("class '{cls}' not found in {rel}"))?;
-        find_declaration_in_class(class_node, &source, name)
+        let inner = file_ast.find_class(cls).unwrap();
+        find_declaration_in_class(inner, name)
             .ok_or_else(|| miette::miette!("symbol '{name}' not found in class '{cls}'"))?
     } else {
-        find_declaration_by_name(root, &source, name)
+        find_declaration_by_name(&file_ast, name)
             .ok_or_else(|| miette::miette!("symbol '{name}' not found in {rel}"))?
     };
 

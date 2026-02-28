@@ -5,6 +5,8 @@ use miette::Result;
 use serde::Serialize;
 use tree_sitter::Node;
 
+use crate::core::gd_ast;
+
 use super::{
     collision::collect_scope_names, find_declaration_by_name, line_starts, normalize_blank_lines,
 };
@@ -35,6 +37,7 @@ pub fn inline_variable(
         std::fs::read_to_string(file).map_err(|e| miette::miette!("cannot read file: {e}"))?;
     let tree = crate::core::parser::parse(&source)?;
     let root = tree.root_node();
+    let gd_file = gd_ast::convert(&tree, &source);
 
     let point = tree_sitter::Point::new(line - 1, column - 1);
 
@@ -53,7 +56,7 @@ pub fn inline_variable(
     }
 
     // Find the variable declaration
-    let (decl, is_local) = find_var_declaration(root, &source, var_name, point)?;
+    let (decl, is_local) = find_var_declaration(root, &gd_file, &source, var_name, point)?;
 
     // Validate: must be var, not const
     if decl.kind() == "const_statement" {
@@ -147,13 +150,14 @@ pub fn inline_variable(
         let starts = line_starts(&new_source);
         let tree2 = crate::core::parser::parse(&new_source)?;
         let root2 = tree2.root_node();
+        let gd_file2 = gd_ast::convert(&tree2, &new_source);
 
         // Find declaration in modified source by name
         let decl2 = if is_local {
             crate::lsp::references::enclosing_function(root2, point)
                 .and_then(|f| find_local_var_decl(f, &new_source, var_name))
         } else {
-            find_declaration_by_name(root2, &new_source, var_name)
+            find_declaration_by_name(&gd_file2, var_name)
         };
 
         if let Some(decl_node) = decl2 {
@@ -199,6 +203,7 @@ pub fn inline_variable(
 /// Returns (declaration_node, is_local).
 fn find_var_declaration<'a>(
     root: Node<'a>,
+    gd_file: &gd_ast::GdFile<'a>,
     source: &str,
     name: &str,
     position: tree_sitter::Point,
@@ -211,7 +216,7 @@ fn find_var_declaration<'a>(
     }
 
     // Check file-level
-    if let Some(decl) = find_declaration_by_name(root, source, name) {
+    if let Some(decl) = find_declaration_by_name(gd_file, name) {
         return Ok((decl, false));
     }
 
