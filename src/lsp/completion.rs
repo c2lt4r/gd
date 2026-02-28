@@ -337,19 +337,24 @@ fn resolve_chain(
         if let Some(content) = content
             && let Ok(tree) = crate::core::parser::parse(&content)
         {
+            let gd_file = crate::core::gd_ast::convert(&tree, &content);
             // Check if member is an enum in that file
-            if find_enum_in_source(tree.root_node(), &content, member) {
+            if gd_file.declarations.iter().any(|d| {
+                matches!(d, crate::core::gd_ast::GdDecl::Enum(e) if e.name == member)
+            }) {
                 return Some(ResolvedReceiver::WorkspaceEnum {
                     file_content: content,
                     enum_name: member.to_string(),
                 });
             }
             // Check if member is an inner class — return it as a class name
-            if find_inner_class(tree.root_node(), &content, member) {
+            if gd_file.find_class(member).is_some() {
                 return Some(ResolvedReceiver::ClassName(member.to_string()));
             }
             // Check if member is a signal — signals have type "Signal"
-            if find_signal_in_source(tree.root_node(), &content, member) {
+            if gd_file.declarations.iter().any(|d| {
+                matches!(d, crate::core::gd_ast::GdDecl::Signal(s) if s.name == member)
+            }) {
                 let signal_type = "Signal".to_string();
                 if parts.len() > 1 {
                     let remaining = parts[1..].join(".");
@@ -363,7 +368,12 @@ fn resolve_chain(
     // 1b. For self/super, check current file's signals
     if (head == "self" || head == "super")
         && let Ok(tree) = crate::core::parser::parse(source)
-        && find_signal_in_source(tree.root_node(), source, member)
+        && {
+            let gd_file = crate::core::gd_ast::convert(&tree, source);
+            gd_file.declarations.iter().any(|d| {
+                matches!(d, crate::core::gd_ast::GdDecl::Signal(s) if s.name == member)
+            })
+        }
     {
         let signal_type = "Signal".to_string();
         if parts.len() > 1 {
@@ -443,45 +453,6 @@ fn normalize_type(raw: &str) -> String {
     } else {
         raw.to_string()
     }
-}
-
-/// Check if an enum with the given name exists at the top level of a source file.
-fn find_enum_in_source(root: tree_sitter::Node, source: &str, enum_name: &str) -> bool {
-    let bytes = source.as_bytes();
-    let mut cursor = root.walk();
-    root.children(&mut cursor).any(|child| {
-        child.kind() == "enum_definition"
-            && child
-                .child_by_field_name("name")
-                .and_then(|n| n.utf8_text(bytes).ok())
-                == Some(enum_name)
-    })
-}
-
-/// Check if a signal with the given name exists at the top level of a source file.
-fn find_signal_in_source(root: tree_sitter::Node, source: &str, signal_name: &str) -> bool {
-    let bytes = source.as_bytes();
-    let mut cursor = root.walk();
-    root.children(&mut cursor).any(|child| {
-        child.kind() == "signal_statement"
-            && child
-                .child_by_field_name("name")
-                .and_then(|n| n.utf8_text(bytes).ok())
-                == Some(signal_name)
-    })
-}
-
-/// Check if an inner class with the given name exists at the top level of a source file.
-fn find_inner_class(root: tree_sitter::Node, source: &str, class_name: &str) -> bool {
-    let bytes = source.as_bytes();
-    let mut cursor = root.walk();
-    root.children(&mut cursor).any(|child| {
-        child.kind() == "class_definition"
-            && child
-                .child_by_field_name("name")
-                .and_then(|n| n.utf8_text(bytes).ok())
-                == Some(class_name)
-    })
 }
 
 /// Find the type annotation of a top-level variable by name.
