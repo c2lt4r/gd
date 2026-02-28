@@ -246,7 +246,15 @@ pub(super) fn resolve_simple_receiver(
     // 1. self / super → file's extends class
     if receiver == "self" || receiver == "super" {
         if let Ok(tree) = crate::core::parser::parse(source) {
-            return find_extends_class(tree.root_node(), source);
+            let file = crate::core::gd_ast::convert(&tree, source);
+            return match file.extends {
+                Some(crate::core::gd_ast::GdExtends::Class(name))
+                    if crate::class_db::class_exists(name) =>
+                {
+                    Some(name.to_string())
+                }
+                _ => None,
+            };
         }
         return None;
     }
@@ -291,8 +299,10 @@ pub(super) fn resolve_simple_receiver(
         }
 
         // 6. Inherited member from the file's extends class (e.g. position → Vector2)
-        if let Some(extends_class) = find_extends_class(tree.root_node(), source)
-            && let Some(ty) = resolve_member_type(&extends_class, receiver)
+        let file = crate::core::gd_ast::convert(&tree, source);
+        if let Some(crate::core::gd_ast::GdExtends::Class(extends_class)) = file.extends
+            && crate::class_db::class_exists(extends_class)
+            && let Some(ty) = resolve_member_type(extends_class, receiver)
         {
             return Some(ty);
         }
@@ -880,7 +890,15 @@ fn provide_class_dot_completions(
             .or_else(|| ws.autoload_content(class_name));
         content.and_then(|c| {
             let tree = crate::core::parser::parse(&c).ok()?;
-            find_extends_class(tree.root_node(), &c)
+            let file = crate::core::gd_ast::convert(&tree, &c);
+            match file.extends {
+                Some(crate::core::gd_ast::GdExtends::Class(name))
+                    if crate::class_db::class_exists(name) =>
+                {
+                    Some(name.to_string())
+                }
+                _ => None,
+            }
         })
     } else {
         None
@@ -1282,17 +1300,20 @@ pub fn provide_completions(
     }
 
     // Engine methods from class_db based on extends clause
-    if let Ok(tree) = crate::core::parser::parse(source)
-        && let Some(extends_class) = find_extends_class(tree.root_node(), source)
-    {
-        collect_class_db_methods(&extends_class, &mut items);
+    if let Ok(tree) = crate::core::parser::parse(source) {
+        let file = crate::core::gd_ast::convert(&tree, source);
+        if let Some(crate::core::gd_ast::GdExtends::Class(extends_class)) = file.extends
+            && crate::class_db::class_exists(extends_class)
+        {
+            collect_class_db_methods(extends_class, &mut items);
+        }
     }
 
     items
 }
 
 /// Find the class name from the `extends` statement at the top of the file.
-pub(super) fn find_extends_class(root: tree_sitter::Node, source: &str) -> Option<String> {
+fn find_extends_class(root: tree_sitter::Node, source: &str) -> Option<String> {
     let mut cursor = root.walk();
     for child in root.children(&mut cursor) {
         if child.kind() == "extends_statement" {
