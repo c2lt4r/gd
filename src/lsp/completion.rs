@@ -892,19 +892,14 @@ fn collect_enum_dot_completions(
     let Ok(tree) = crate::core::parser::parse(file_content) else {
         return Vec::new();
     };
-    let root = tree.root_node();
-    let bytes = file_content.as_bytes();
-    let mut cursor = root.walk();
+    let gd_file = crate::core::gd_ast::convert(&tree, file_content);
 
-    for child in root.children(&mut cursor) {
-        if child.kind() == "enum_definition"
-            && child
-                .child_by_field_name("name")
-                .and_then(|n| n.utf8_text(bytes).ok())
-                == Some(enum_name)
+    for decl in &gd_file.declarations {
+        if let crate::core::gd_ast::GdDecl::Enum(e) = decl
+            && e.name == enum_name
         {
             let mut items = Vec::new();
-            collect_enum_members(&child, file_content, &mut items);
+            collect_enum_members(&e.node, file_content, &mut items);
             if !prefix.is_empty() {
                 items.retain(|item| item.label.starts_with(prefix));
             }
