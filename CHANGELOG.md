@@ -1,10 +1,16 @@
 # Changelog
 
-## [0.3.14] - 2026-02-27
+## [0.3.14] - 2026-02-28
 
 ### Internal
-- **Typed AST migration for lint system — complete.** All 96 lint rules now accept `GdFile<'_>` instead of raw `tree_sitter::Tree`. Added visitor helpers (`visit_exprs`/`visit_stmts`/`visit_decls`) and `GdDecl::Stmt` for top-level statements. 57 rules fully rewritten to use typed AST pattern matching (expressions, statements, declarations). 14 hybrid rules use typed AST for declaration/function iteration with CST for body analysis. 14 remaining rules use `file.node` escape hatch for patterns that fundamentally require CST (attribute chains, parent-walking, flow analysis, comments). Net reduction: ~3,300 lines deleted from lint rules across 15 batches.
+- **Typed AST migration — complete across entire codebase.** All modules now use `GdFile<'_>` from the typed AST layer instead of raw tree-sitter CST for declaration-level work. This includes lint rules, `gd check`, type inference, workspace index, LSP features, and refactoring commands.
+- **Eliminated `symbol_table.rs`** (~1,000 lines deleted). The per-file `SymbolTable` abstraction was fully redundant with `GdFile` and has been removed. 49 files migrated: type inference, 22 lint rules, 7 check_cmd modules, 6 LSP refactor commands, test_cmd, workspace_index, and LSP features (inlay hints, semantic tokens, signature help). The `LintRule` trait no longer takes a `symbols` parameter.
+- **Typed AST enrichment** — added `name_node` fields to `GdFunc`, `GdVar`, `GdSignal`, `GdEnum`, `GdClass` for precise rename/reference locations; `else_node` to `GdIf`; `extends_node` and `class_name_node` to `GdFile`; `doc` comment fields to all declaration types; `has_static_unload` flag; `GdDecl` convenience methods (`as_func()`, `as_var()`, etc.) and `GdFile` iterator helpers (`funcs()`, `vars()`, `signals()`, `enums()`, `inner_classes()`, `extends_class()`).
+- **LSP modules converted to typed AST** — hover, definition, references, implementations, document symbols, call hierarchy, completion, signature help, semantic tokens, inlay hints, and query/analysis all use `GdFile` instead of raw CST helpers. Removed CST helper functions (`find_enum`, `find_signal`, `find_inner_class`, `find_extends_class`, `matches_name`) from completion.rs.
+- **Refactoring commands converted** — move_symbol, pull_up_member, push_down_member, extract_superclass, extract_class, bulk_rename, extract_method, introduce_parameter, introduce_variable, delete_symbol all use typed AST.
+- **Lint rule deep conversion continued** (batches 16–21) — converted remaining rules from CST traversal to typed AST, including `duplicate_code`, `magic_number`, `naming_convention`, `nullable_current_scene`, `unused_parameter`, `parameter_shadows_field`, and 15 others. Added `name_node` fields to eliminate `child_by_field_name` calls in 12 lint rules.
 - **Split `check_cmd.rs` into directory module** — the largest file in the project (6,152 lines) is now organized into 7 focused submodules (`structural`, `classdb`, `types`, `args`, `identifiers`, `builtins`, `tests`), following the established module split pattern used by `debug_cmd/`, `scene_cmd/`, and `test_cmd/`. Pure reorganization with no behavioral changes.
+- **Net reduction**: ~4,800 lines deleted across the full typed AST migration (3,300 from lint rules + 1,000 from SymbolTable + 500 from CST helper removal).
 
 ## [0.3.13] - 2026-02-27
 
