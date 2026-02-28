@@ -402,6 +402,20 @@ impl<'a> GdFile<'a> {
             .find(|d| d.is_declaration() && d.node().start_position().row == line)
     }
 
+    /// Find a top-level function by name.
+    #[must_use]
+    pub fn find_func(&self, name: &str) -> Option<&GdFunc<'a>> {
+        self.declarations.iter().find_map(|d| {
+            if let GdDecl::Func(f) = d
+                && f.name == name
+            {
+                Some(f)
+            } else {
+                None
+            }
+        })
+    }
+
     /// Find an inner class by name.
     #[must_use]
     pub fn find_class(&self, name: &str) -> Option<&GdClass<'a>> {

@@ -1,15 +1,34 @@
 use tower_lsp::lsp_types::{DocumentSymbol, DocumentSymbolResponse, SymbolKind};
 
+use crate::core::gd_ast::{self, GdClass, GdDecl};
+
 use super::util::{node_range, node_text};
 
 /// Extract document symbols (outline) from GDScript source.
 #[allow(deprecated)] // DocumentSymbol::deprecated field is deprecated in the lsp-types API
 pub fn document_symbols(source: &str) -> Option<DocumentSymbolResponse> {
     let tree = crate::core::parser::parse(source).ok()?;
-    let root = tree.root_node();
+    let file = gd_ast::convert(&tree, source);
     let mut symbols = Vec::new();
 
-    collect_symbols(root, source, &mut symbols);
+    // class_name statement (not a GdDecl, stored separately on GdFile)
+    if let Some(cn) = file.class_name
+        && let Some(cn_node) = file.class_name_node
+    {
+        let parent = cn_node.parent().unwrap_or(cn_node);
+        symbols.push(DocumentSymbol {
+            name: cn.to_string(),
+            detail: Some("class_name".to_string()),
+            kind: SymbolKind::CLASS,
+            tags: None,
+            deprecated: None,
+            range: node_range(&parent),
+            selection_range: node_range(&cn_node),
+            children: None,
+        });
+    }
+
+    collect_symbols(&file.declarations, source, &mut symbols);
 
     if symbols.is_empty() {
         return None;
@@ -18,40 +37,96 @@ pub fn document_symbols(source: &str) -> Option<DocumentSymbolResponse> {
     Some(DocumentSymbolResponse::Nested(symbols))
 }
 
-#[allow(deprecated, clippy::too_many_lines)]
-fn collect_symbols(node: tree_sitter::Node, source: &str, symbols: &mut Vec<DocumentSymbol>) {
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        match child.kind() {
-            "class_name_statement" => {
-                if let Some(name_node) = child.child_by_field_name("name") {
-                    let name = node_text(&name_node, source).to_string();
+#[allow(deprecated)]
+fn collect_symbols(decls: &[GdDecl], source: &str, symbols: &mut Vec<DocumentSymbol>) {
+    for decl in decls {
+        match decl {
+            GdDecl::Func(f) => {
+                let node = f.node;
+                let detail = build_function_detail(&node, source);
+                if let Some(name_node) = f.name_node {
                     symbols.push(DocumentSymbol {
-                        name,
-                        detail: Some("class_name".to_string()),
-                        kind: SymbolKind::CLASS,
+                        name: f.name.to_string(),
+                        detail: Some(detail),
+                        kind: SymbolKind::FUNCTION,
                         tags: None,
                         deprecated: None,
-                        range: node_range(&child),
+                        range: node_range(&node),
                         selection_range: node_range(&name_node),
                         children: None,
                     });
                 }
             }
-            "class_definition" => {
-                if let Some(name_node) = child.child_by_field_name("name") {
-                    let name = node_text(&name_node, source).to_string();
-                    let mut children = Vec::new();
-                    if let Some(body) = child.child_by_field_name("body") {
-                        collect_symbols(body, source, &mut children);
-                    }
+            GdDecl::Var(v) => {
+                let node = v.node;
+                if let Some(name_node) = v.name_node {
+                    let kind = if is_onready(&node, source) {
+                        if v.is_const {
+                            SymbolKind::CONSTANT
+                        } else {
+                            SymbolKind::FIELD
+                        }
+                    } else if v.is_const {
+                        SymbolKind::CONSTANT
+                    } else {
+                        SymbolKind::VARIABLE
+                    };
+                    let detail = build_declaration_detail(&node, source);
                     symbols.push(DocumentSymbol {
-                        name,
+                        name: v.name.to_string(),
+                        detail: Some(detail),
+                        kind,
+                        tags: None,
+                        deprecated: None,
+                        range: node_range(&node),
+                        selection_range: node_range(&name_node),
+                        children: None,
+                    });
+                }
+            }
+            GdDecl::Signal(s) => {
+                let node = s.node;
+                if let Some(name_node) = s.name_node {
+                    let detail = build_declaration_detail(&node, source);
+                    symbols.push(DocumentSymbol {
+                        name: s.name.to_string(),
+                        detail: Some(detail),
+                        kind: SymbolKind::EVENT,
+                        tags: None,
+                        deprecated: None,
+                        range: node_range(&node),
+                        selection_range: node_range(&name_node),
+                        children: None,
+                    });
+                }
+            }
+            GdDecl::Enum(e) => {
+                let node = e.node;
+                if let Some(name_node) = e.name_node {
+                    let detail = build_enum_detail(&node, source);
+                    symbols.push(DocumentSymbol {
+                        name: e.name.to_string(),
+                        detail: Some(detail),
+                        kind: SymbolKind::ENUM,
+                        tags: None,
+                        deprecated: None,
+                        range: node_range(&node),
+                        selection_range: node_range(&name_node),
+                        children: None,
+                    });
+                }
+            }
+            GdDecl::Class(c) => {
+                if let Some(name_node) = c.name_node {
+                    let mut children = Vec::new();
+                    collect_class_symbols(c, source, &mut children);
+                    symbols.push(DocumentSymbol {
+                        name: c.name.to_string(),
                         detail: Some("class".to_string()),
                         kind: SymbolKind::CLASS,
                         tags: None,
                         deprecated: None,
-                        range: node_range(&child),
+                        range: node_range(&c.node),
                         selection_range: node_range(&name_node),
                         children: if children.is_empty() {
                             None
@@ -61,94 +136,14 @@ fn collect_symbols(node: tree_sitter::Node, source: &str, symbols: &mut Vec<Docu
                     });
                 }
             }
-            "function_definition" => {
-                if let Some(name_node) = child.child_by_field_name("name") {
-                    let name = node_text(&name_node, source).to_string();
-                    let detail = build_function_detail(&child, source);
-                    symbols.push(DocumentSymbol {
-                        name,
-                        detail: Some(detail),
-                        kind: SymbolKind::FUNCTION,
-                        tags: None,
-                        deprecated: None,
-                        range: node_range(&child),
-                        selection_range: node_range(&name_node),
-                        children: None,
-                    });
-                }
-            }
-            "variable_statement" => {
-                if let Some(name_node) = child.child_by_field_name("name") {
-                    let name = node_text(&name_node, source).to_string();
-                    let kind = if is_onready(&child, source) {
-                        SymbolKind::FIELD
-                    } else {
-                        SymbolKind::VARIABLE
-                    };
-                    let detail = build_declaration_detail(&child, source);
-                    symbols.push(DocumentSymbol {
-                        name,
-                        detail: Some(detail),
-                        kind,
-                        tags: None,
-                        deprecated: None,
-                        range: node_range(&child),
-                        selection_range: node_range(&name_node),
-                        children: None,
-                    });
-                }
-            }
-            "const_statement" => {
-                if let Some(name_node) = child.child_by_field_name("name") {
-                    let name = node_text(&name_node, source).to_string();
-                    let detail = build_declaration_detail(&child, source);
-                    symbols.push(DocumentSymbol {
-                        name,
-                        detail: Some(detail),
-                        kind: SymbolKind::CONSTANT,
-                        tags: None,
-                        deprecated: None,
-                        range: node_range(&child),
-                        selection_range: node_range(&name_node),
-                        children: None,
-                    });
-                }
-            }
-            "signal_statement" => {
-                if let Some(name_node) = child.child_by_field_name("name") {
-                    let name = node_text(&name_node, source).to_string();
-                    let detail = build_declaration_detail(&child, source);
-                    symbols.push(DocumentSymbol {
-                        name,
-                        detail: Some(detail),
-                        kind: SymbolKind::EVENT,
-                        tags: None,
-                        deprecated: None,
-                        range: node_range(&child),
-                        selection_range: node_range(&name_node),
-                        children: None,
-                    });
-                }
-            }
-            "enum_definition" => {
-                if let Some(name_node) = child.child_by_field_name("name") {
-                    let name = node_text(&name_node, source).to_string();
-                    let detail = build_enum_detail(&child, source);
-                    symbols.push(DocumentSymbol {
-                        name,
-                        detail: Some(detail),
-                        kind: SymbolKind::ENUM,
-                        tags: None,
-                        deprecated: None,
-                        range: node_range(&child),
-                        selection_range: node_range(&name_node),
-                        children: None,
-                    });
-                }
-            }
-            _ => {}
+            GdDecl::Stmt(_) => {}
         }
     }
+}
+
+#[allow(deprecated)]
+fn collect_class_symbols(class: &GdClass, source: &str, symbols: &mut Vec<DocumentSymbol>) {
+    collect_symbols(&class.declarations, source, symbols);
 }
 
 fn build_function_detail(node: &tree_sitter::Node, source: &str) -> String {

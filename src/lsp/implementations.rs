@@ -2,6 +2,8 @@ use std::collections::HashSet;
 
 use tower_lsp::lsp_types::{GotoDefinitionResponse, Location, Position, Range, Url};
 
+use crate::core::gd_ast;
+
 use super::util::{FUNCTION_KINDS, node_range, node_text};
 use super::workspace::WorkspaceIndex;
 
@@ -176,34 +178,19 @@ fn find_file_class_name(source: &str, uri: &Url, workspace: &WorkspaceIndex) -> 
 
     // Parse source directly as fallback
     let tree = crate::core::parser::parse(source).ok()?;
-    let root = tree.root_node();
-    let mut cursor = root.walk();
-    for child in root.children(&mut cursor) {
-        if child.kind() == "class_name_statement" {
-            let name_node = child.child_by_field_name("name")?;
-            return name_node
-                .utf8_text(source.as_bytes())
-                .ok()
-                .map(std::string::ToString::to_string);
-        }
-    }
-    None
+    let file = gd_ast::convert(&tree, source);
+    file.class_name.map(String::from)
 }
 
 /// Parse a source to find the range of its `class_name` identifier.
 fn find_class_name_range(source: &str, name: &str) -> Option<Range> {
     let tree = crate::core::parser::parse(source).ok()?;
-    let root = tree.root_node();
-    let mut cursor = root.walk();
-    for child in root.children(&mut cursor) {
-        if child.kind() == "class_name_statement"
-            && let Some(name_node) = child.child_by_field_name("name")
-            && node_text(&name_node, source) == name
-        {
-            return Some(node_range(&name_node));
-        }
+    let file = gd_ast::convert(&tree, source);
+    if file.class_name == Some(name) {
+        file.class_name_node.map(|n| node_range(&n))
+    } else {
+        None
     }
-    None
 }
 
 /// Collect all transitive subtypes of a class via BFS.

@@ -5,6 +5,8 @@ use tower_lsp::lsp_types::{
     SymbolKind, Url,
 };
 
+use crate::core::gd_ast::{self, GdDecl};
+
 use super::util::{FUNCTION_KINDS, node_range, node_text};
 use super::workspace::WorkspaceIndex;
 
@@ -15,6 +17,7 @@ use super::workspace::WorkspaceIndex;
 pub fn prepare(source: &str, uri: &Url, position: Position) -> Option<Vec<CallHierarchyItem>> {
     let tree = crate::core::parser::parse(source).ok()?;
     let root = tree.root_node();
+    let file = gd_ast::convert(&tree, source);
 
     let point = tree_sitter::Point::new(position.line as usize, position.character as usize);
     let node = root.descendant_for_point_range(point, point)?;
@@ -25,9 +28,10 @@ pub fn prepare(source: &str, uri: &Url, position: Position) -> Option<Vec<CallHi
         && (parent.kind() == "call" || parent.kind() == "attribute_call")
     {
         let callee_name = node.utf8_text(source.as_bytes()).ok()?;
-        if let Some(func_node) = find_function_node(root, callee_name, source) {
-            let name_node = func_node.child_by_field_name("name")?;
-            return Some(vec![make_item(callee_name, &func_node, &name_node, uri)]);
+        if let Some(f) = file.find_func(callee_name)
+            && let Some(name_node) = f.name_node
+        {
+            return Some(vec![make_item(callee_name, &f.node, &name_node, uri)]);
         }
     }
 
@@ -55,21 +59,19 @@ pub fn incoming_calls(
             continue;
         };
 
-        let root = tree.root_node();
+        let file = gd_ast::convert(&tree, &content);
 
         // Walk all top-level function definitions in this file.
-        let mut cursor = root.walk();
-        for child in root.children(&mut cursor) {
-            if !FUNCTION_KINDS.contains(&child.kind()) {
-                continue;
-            }
-            let Some(name_node) = child.child_by_field_name("name") else {
+        for decl in &file.declarations {
+            let GdDecl::Func(f) = decl else {
                 continue;
             };
-            let caller_name = node_text(&name_node, &content);
+            let Some(name_node) = f.name_node else {
+                continue;
+            };
 
-            // Collect calls inside this function's body.
-            let Some(body) = child.child_by_field_name("body") else {
+            // Collect calls inside this function's body via CST.
+            let Some(body) = f.node.child_by_field_name("body") else {
                 continue;
             };
             let calls = collect_calls_in_node(body, &content);
@@ -85,7 +87,7 @@ pub fn incoming_calls(
                 continue;
             }
 
-            let from_item = make_item(caller_name, &child, &name_node, &file_uri);
+            let from_item = make_item(f.name, &f.node, &name_node, &file_uri);
             results.push(CallHierarchyIncomingCall {
                 from: from_item,
                 from_ranges: matching_ranges,
@@ -110,12 +112,12 @@ pub fn outgoing_calls(item: &CallHierarchyItem, source: &str) -> Vec<CallHierarc
     let Ok(tree) = crate::core::parser::parse(source) else {
         return Vec::new();
     };
-    let root = tree.root_node();
+    let file = gd_ast::convert(&tree, source);
 
-    let Some(func_node) = find_function_node(root, &item.name, source) else {
+    let Some(f) = file.find_func(&item.name) else {
         return Vec::new();
     };
-    let Some(body) = func_node.child_by_field_name("body") else {
+    let Some(body) = f.node.child_by_field_name("body") else {
         return Vec::new();
     };
 
@@ -131,10 +133,10 @@ pub fn outgoing_calls(item: &CallHierarchyItem, source: &str) -> Vec<CallHierarc
         .into_iter()
         .map(|(name, from_ranges)| {
             // Try to resolve the called function to a declaration in this file.
-            let to = if let Some(target_node) = find_function_node(root, &name, source)
-                && let Some(target_name_node) = target_node.child_by_field_name("name")
+            let to = if let Some(target) = file.find_func(&name)
+                && let Some(target_name_node) = target.name_node
             {
-                make_item(&name, &target_node, &target_name_node, &item.uri)
+                make_item(&name, &target.node, &target_name_node, &item.uri)
             } else {
                 // External or builtin — create a synthetic item using the first call range.
                 let call_range = from_ranges.first().copied().unwrap_or_default();
@@ -178,24 +180,6 @@ fn make_item(
         selection_range: node_range(name_node),
         data: None,
     }
-}
-
-/// Find a top-level `function_definition` or `constructor_definition` matching `name`.
-fn find_function_node<'a>(
-    root: tree_sitter::Node<'a>,
-    name: &str,
-    source: &str,
-) -> Option<tree_sitter::Node<'a>> {
-    let mut cursor = root.walk();
-    for child in root.children(&mut cursor) {
-        if FUNCTION_KINDS.contains(&child.kind())
-            && let Some(name_node) = child.child_by_field_name("name")
-            && node_text(&name_node, source) == name
-        {
-            return Some(child);
-        }
-    }
-    None
 }
 
 /// Find the enclosing function definition for a given source position.

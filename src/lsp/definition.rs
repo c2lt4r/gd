@@ -2,7 +2,9 @@ use std::path::PathBuf;
 
 use tower_lsp::lsp_types::{GotoDefinitionResponse, Location, Position, Range, Url};
 
-use super::util::{FUNCTION_KINDS, matches_name, node_range, node_text};
+use crate::core::gd_ast::{self, GdFile};
+
+use super::util::{FUNCTION_KINDS, node_range, node_text};
 
 /// Resolve go-to-definition at the given position within a single file.
 pub fn goto_definition(
@@ -12,6 +14,7 @@ pub fn goto_definition(
 ) -> Option<GotoDefinitionResponse> {
     let tree = crate::core::parser::parse(source).ok()?;
     let root = tree.root_node();
+    let file = gd_ast::convert(&tree, source);
 
     let point = tree_sitter::Point::new(position.line as usize, position.character as usize);
     let node = root.descendant_for_point_range(point, point)?;
@@ -31,43 +34,30 @@ pub fn goto_definition(
     }
 
     // Search top-level nodes for a matching definition
-    find_definition(&root, ident, source, uri)
+    find_definition(&file, ident, uri)
 }
 
 /// Find a top-level definition that matches the given name.
-fn find_definition(
-    root: &tree_sitter::Node,
-    name: &str,
-    source: &str,
-    uri: &Url,
-) -> Option<GotoDefinitionResponse> {
-    let mut cursor = root.walk();
-    for child in root.children(&mut cursor) {
-        let matched = match child.kind() {
-            "function_definition"
-            | "variable_statement"
-            | "const_statement"
-            | "signal_statement"
-            | "class_definition"
-            | "enum_definition" => matches_name(&child, name, source),
-            "class_name_statement" => {
-                // class_name MyClass  — the name is the second child
-                child
-                    .child_by_field_name("name")
-                    .or_else(|| child.child(1))
-                    .is_some_and(|n| node_text(&n, source) == name)
-            }
-            _ => false,
-        };
-
-        if matched {
-            let name_node = child.child_by_field_name("name").unwrap_or(child);
-            return Some(GotoDefinitionResponse::Scalar(Location {
-                uri: uri.clone(),
-                range: node_range(&name_node),
-            }));
-        }
+fn find_definition(file: &GdFile, name: &str, uri: &Url) -> Option<GotoDefinitionResponse> {
+    // Check declarations (func, var, const, signal, enum, class)
+    if let Some(decl) = file.find_decl_by_name(name) {
+        let target = decl.name_node().unwrap_or(decl.node());
+        return Some(GotoDefinitionResponse::Scalar(Location {
+            uri: uri.clone(),
+            range: node_range(&target),
+        }));
     }
+
+    // Check class_name statement
+    if file.class_name.is_some_and(|cn| cn == name)
+        && let Some(cn_node) = file.class_name_node
+    {
+        return Some(GotoDefinitionResponse::Scalar(Location {
+            uri: uri.clone(),
+            range: node_range(&cn_node),
+        }));
+    }
+
     None
 }
 
@@ -216,6 +206,7 @@ pub fn goto_definition_cross_file(
 ) -> Option<GotoDefinitionResponse> {
     let tree = crate::core::parser::parse(source).ok()?;
     let root = tree.root_node();
+    let file = gd_ast::convert(&tree, source);
 
     let point = tree_sitter::Point::new(position.line as usize, position.character as usize);
     let node = root.descendant_for_point_range(point, point)?;
@@ -244,7 +235,7 @@ pub fn goto_definition_cross_file(
     }
 
     // Try single-file definition first
-    if let Some(result) = find_definition(&root, ident, source, uri) {
+    if let Some(result) = find_definition(&file, ident, uri) {
         return Some(result);
     }
 
@@ -255,12 +246,13 @@ pub fn goto_definition_cross_file(
             continue;
         }
         if let Some(content) = workspace.get_content(&path)
-            && let Ok(tree) = crate::core::parser::parse(&content)
+            && let Ok(other_tree) = crate::core::parser::parse(&content)
         {
             let Ok(file_uri) = Url::from_file_path(&path) else {
                 continue;
             };
-            if let Some(result) = find_definition(&tree.root_node(), ident, &content, &file_uri) {
+            let other_file = gd_ast::convert(&other_tree, &content);
+            if let Some(result) = find_definition(&other_file, ident, &file_uri) {
                 return Some(result);
             }
         }
