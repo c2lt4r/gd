@@ -18,6 +18,7 @@ pub struct GdFile<'a> {
     pub class_name: Option<&'a str>,
     pub class_name_node: Option<Node<'a>>,
     pub extends: Option<GdExtends<'a>>,
+    pub extends_node: Option<Node<'a>>,
     pub is_tool: bool,
     pub declarations: Vec<GdDecl<'a>>,
 }
@@ -752,6 +753,7 @@ pub fn convert<'a>(tree: &'a Tree, source: &'a str) -> GdFile<'a> {
         class_name: None,
         class_name_node: None,
         extends: None,
+        extends_node: None,
         is_tool: false,
         declarations: Vec::new(),
     };
@@ -774,6 +776,7 @@ pub fn convert<'a>(tree: &'a Tree, source: &'a str) -> GdFile<'a> {
             }
             "extends_statement" => {
                 file.extends = convert_extends(child, source);
+                file.extends_node = Some(*child);
             }
             "annotation" => {
                 let ann = convert_annotation(*child, source);

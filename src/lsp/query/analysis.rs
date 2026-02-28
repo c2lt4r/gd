@@ -1,6 +1,8 @@
 use miette::Result;
 use tower_lsp::lsp_types::{CodeActionOrCommand, DocumentSymbolResponse, SymbolKind};
 
+use crate::core::gd_ast::{self, GdDecl, GdExtends};
+
 use super::{
     CodeActionOutput, FileEditEntry, FileReference, ImplementationEntry, ImplementationsOutput,
     SafeDeleteFileOutput, SymbolOutput, find_root, resolve_file, url_to_relative,
@@ -158,27 +160,19 @@ pub fn query_safe_delete_file(
             continue;
         }
         if let Ok(tree) = crate::core::parser::parse(&content) {
-            let root = tree.root_node();
-            let mut cursor = root.walk();
-            for child in root.children(&mut cursor) {
-                if child.kind() == "extends_statement" {
-                    for i in 0..child.named_child_count() {
-                        if let Some(str_node) = child.named_child(i)
-                            && str_node.kind() == "string"
-                            && let Ok(text) = str_node.utf8_text(content.as_bytes())
-                        {
-                            let unquoted = text.trim_matches('"').trim_matches('\'');
-                            if unquoted == res_path {
-                                references.push(FileReference {
-                                    file: crate::core::fs::relative_slash(&fpath, &project_root),
-                                    line: child.start_position().row as u32 + 1,
-                                    kind: "extends".to_string(),
-                                    text: unquoted.to_string(),
-                                });
-                            }
-                        }
-                    }
-                }
+            let file = gd_ast::convert(&tree, &content);
+            if let Some(GdExtends::Path(ext_path)) = file.extends
+                && ext_path == res_path
+            {
+                let ext_line = file
+                    .extends_node
+                    .map_or(0, |n| n.start_position().row as u32);
+                references.push(FileReference {
+                    file: crate::core::fs::relative_slash(&fpath, &project_root),
+                    line: ext_line + 1,
+                    kind: "extends".to_string(),
+                    text: ext_path.to_string(),
+                });
             }
         }
     }
@@ -210,35 +204,15 @@ pub fn query_find_implementations(name: &str, base: Option<&str>) -> Result<Impl
 
     for (fpath, content) in workspace.all_files() {
         if let Ok(tree) = crate::core::parser::parse(&content) {
-            let root = tree.root_node();
+            let file = gd_ast::convert(&tree, &content);
 
             // Extract extends info
-            let mut extends_value = None;
-            let mut class_name_value = None;
-            let mut cursor = root.walk();
-            for child in root.children(&mut cursor) {
-                match child.kind() {
-                    "extends_statement" => {
-                        for i in 0..child.named_child_count() {
-                            if let Some(c) = child.named_child(i)
-                                && let Ok(text) = c.utf8_text(content.as_bytes())
-                            {
-                                let val = text.trim_matches('"').trim_matches('\'');
-                                extends_value = Some(val.to_string());
-                                break;
-                            }
-                        }
-                    }
-                    "class_name_statement" => {
-                        if let Some(c) = child.child(1)
-                            && let Ok(text) = c.utf8_text(content.as_bytes())
-                        {
-                            class_name_value = Some(text.to_string());
-                        }
-                    }
-                    _ => {}
-                }
-            }
+            let extends_value = match file.extends {
+                Some(GdExtends::Class(cls)) => Some(cls.to_string()),
+                Some(GdExtends::Path(p)) => Some(p.to_string()),
+                None => None,
+            };
+            let class_name_value = file.class_name.map(String::from);
 
             // Filter by base if specified
             if let Some(base_filter) = base {
@@ -249,22 +223,14 @@ pub fn query_find_implementations(name: &str, base: Option<&str>) -> Result<Impl
             }
 
             // Search for matching function definitions
-            let mut cursor2 = root.walk();
-            for child in root.children(&mut cursor2) {
-                let is_match = match child.kind() {
-                    "function_definition" => child
-                        .child_by_field_name("name")
-                        .and_then(|n| n.utf8_text(content.as_bytes()).ok())
-                        .is_some_and(|n| n == name),
-                    "constructor_definition" => name == "_init",
-                    _ => false,
-                };
-
-                if is_match {
+            for decl in &file.declarations {
+                if let GdDecl::Func(f) = decl
+                    && f.name == name
+                {
                     implementations.push(ImplementationEntry {
                         file: crate::core::fs::relative_slash(&fpath, &project_root),
-                        line: child.start_position().row as u32 + 1,
-                        end_line: child.end_position().row as u32 + 1,
+                        line: f.node.start_position().row as u32 + 1,
+                        end_line: f.node.end_position().row as u32 + 1,
                         extends: extends_value.clone(),
                         class_name: class_name_value.clone(),
                     });
