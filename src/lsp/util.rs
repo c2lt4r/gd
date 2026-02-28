@@ -19,11 +19,5 @@ pub fn node_text<'a>(node: &tree_sitter::Node, source: &'a str) -> &'a str {
     node.utf8_text(source.as_bytes()).unwrap_or("unknown")
 }
 
-/// Check if a declaration node's `name` field matches the given name.
-pub fn matches_name(node: &tree_sitter::Node, name: &str, source: &str) -> bool {
-    node.child_by_field_name("name")
-        .is_some_and(|n| node_text(&n, source) == name)
-}
-
 /// Node kinds that represent function definitions (including constructors).
 pub const FUNCTION_KINDS: &[&str] = &["function_definition", "constructor_definition"];

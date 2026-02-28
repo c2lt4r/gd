@@ -2,8 +2,10 @@ use std::path::Path;
 
 use tower_lsp::lsp_types::{Hover, HoverContents, MarkupContent, MarkupKind, Position};
 
+use crate::core::gd_ast::{self, GdDecl, GdExtends, GdFile};
+
 use super::builtins::BuiltinMember;
-use super::util::{matches_name, node_range, node_text};
+use super::util::{node_range, node_text};
 use super::workspace::WorkspaceIndex;
 
 /// Provide hover information at the given position.
@@ -18,6 +20,7 @@ pub fn hover_at(
 ) -> Option<Hover> {
     let tree = crate::core::parser::parse(source).ok()?;
     let root = tree.root_node();
+    let file = gd_ast::convert(&tree, source);
 
     // Find the most specific node at the cursor position
     let point = tree_sitter::Point::new(position.line as usize, position.character as usize);
@@ -92,7 +95,7 @@ pub fn hover_at(
             }
             "identifier" | "name" => {
                 let mut hover =
-                    resolve_hover_for_identifier(&current, &root, source, position, workspace);
+                    resolve_hover_for_identifier(&current, &file, source, position, workspace);
                 // Enrich function hovers with signal connection info
                 if let Some(ref mut h) = hover {
                     let ident_name = node_text(&current, source);
@@ -128,9 +131,10 @@ fn is_on_declaration_keyword(decl_node: &tree_sitter::Node, point: tree_sitter::
 }
 
 /// Resolve hover for an identifier/name node: declarations, builtins, enum members.
+#[allow(clippy::too_many_lines)]
 fn resolve_hover_for_identifier(
     current: &tree_sitter::Node,
-    root: &tree_sitter::Node,
+    file: &GdFile,
     source: &str,
     position: Position,
     workspace: Option<&WorkspaceIndex>,
@@ -140,7 +144,7 @@ fn resolve_hover_for_identifier(
     // 1. FIRST: check if this is a member access (foo.bar) — must come before
     //    same-file declaration lookup to avoid name collisions (e.g. hovering on
     //    `_turn_manager.submit_action` should NOT resolve to the local submit_action).
-    if let Some(hover) = try_member_hover(current, root, source, position, workspace) {
+    if let Some(hover) = try_member_hover(current, file, source, position, workspace) {
         return Some(hover);
     }
     // 2. If we're the object side of a dot (EventBus in EventBus.foo), try workspace/autoload
@@ -148,7 +152,7 @@ fn resolve_hover_for_identifier(
         return Some(hover);
     }
     // 3. Try to resolve to a same-file declaration
-    if let Some(hover) = resolve_identifier(root, name, source) {
+    if let Some(hover) = resolve_identifier(file, name, source) {
         return Some(hover);
     }
     // 4. Try builtin type
@@ -178,7 +182,7 @@ fn resolve_hover_for_identifier(
     // 7. Try builtin/ClassDB member as standalone identifier (GDScript allows
     //    inherited members without self prefix: velocity, move_and_slide, etc.)
     //    Priority: class-specific builtin → ClassDB property/method → generic builtin.
-    if let Some(doc) = resolve_builtin_member_for_file(root, source, name) {
+    if let Some(doc) = resolve_builtin_member_for_file(file, name) {
         return Some(Hover {
             contents: HoverContents::Markup(MarkupContent {
                 kind: MarkupKind::Markdown,
@@ -187,7 +191,7 @@ fn resolve_hover_for_identifier(
             range: Some(node_range(current)),
         });
     }
-    if let Some(hover) = resolve_classdb_member_for_file(root, source, name, current) {
+    if let Some(hover) = resolve_classdb_member_for_file(file, name, current) {
         return Some(hover);
     }
     if let Some(doc) = super::builtins::lookup_member(name) {
@@ -206,7 +210,7 @@ fn resolve_hover_for_identifier(
         return hover_enum_member(&parent, source);
     }
     // 8. Check if this identifier refers to an enum member in the same file
-    if let Some(hover) = resolve_enum_member(root, name, source) {
+    if let Some(hover) = resolve_enum_member(file, name, source) {
         return Some(hover);
     }
     // 9. Global enum constant used as bare identifier (OK, KEY_ESCAPE, etc.)
@@ -234,8 +238,11 @@ fn resolve_hover_for_identifier(
         && let Some(content) = ws.get_content(&path)
         && let Ok(tree) = crate::core::parser::parse(&content)
     {
-        let extends =
-            super::completion::find_extends_class(tree.root_node(), &content).unwrap_or_default();
+        let other_file = gd_ast::convert(&tree, &content);
+        let extends = match other_file.extends {
+            Some(GdExtends::Class(cls)) => cls,
+            _ => "",
+        };
         let code = if extends.is_empty() {
             format!("class_name {name}")
         } else {
@@ -285,8 +292,11 @@ fn try_receiver_hover(
         && let Some(content) = ws.get_content(&path)
         && let Ok(tree) = crate::core::parser::parse(&content)
     {
-        let extends =
-            super::completion::find_extends_class(tree.root_node(), &content).unwrap_or_default();
+        let other_file = gd_ast::convert(&tree, &content);
+        let extends = match other_file.extends {
+            Some(GdExtends::Class(cls)) => cls,
+            _ => "",
+        };
         let code = if extends.is_empty() {
             format!("class_name {name}")
         } else {
@@ -489,7 +499,7 @@ fn format_signal_handler_info(name: &str, workspace: Option<&WorkspaceIndex>) ->
 /// - Method call: `attribute` > [`obj`, `attribute_call` > [`method`, `arguments`]]
 fn try_member_hover(
     ident_node: &tree_sitter::Node,
-    root: &tree_sitter::Node,
+    file: &GdFile,
     source: &str,
     position: Position,
     workspace: Option<&WorkspaceIndex>,
@@ -523,7 +533,7 @@ fn try_member_hover(
     // Handle self.member — resolve to same-file declarations first
     let object_text = node_text(&object_node, source);
     if object_text == "self"
-        && let Some(hover) = resolve_identifier(root, member_name, source)
+        && let Some(hover) = resolve_identifier(file, member_name, source)
     {
         return Some(hover);
     }
@@ -596,7 +606,7 @@ fn hover_member_on_type(
             .or_else(|| ws.autoload_content(class));
         if let Some(content) = content
             && let Ok(tree) = crate::core::parser::parse(&content)
-            && let Some(mut hover) = resolve_identifier(&tree.root_node(), member, &content)
+            && let Some(mut hover) = resolve_identifier(&gd_ast::convert(&tree, &content), member, &content)
         {
             // Annotate with origin class
             if let HoverContents::Markup(ref mut markup) = hover.contents {
@@ -617,7 +627,13 @@ fn hover_member_on_type(
             .or_else(|| ws.autoload_content(class));
         content.and_then(|c| {
             let tree = crate::core::parser::parse(&c).ok()?;
-            super::completion::find_extends_class(tree.root_node(), &c)
+            let f = gd_ast::convert(&tree, &c);
+            match f.extends {
+                Some(GdExtends::Class(name)) if crate::class_db::class_exists(name) => {
+                    Some(name.to_string())
+                }
+                _ => None,
+            }
         })
     } else {
         None
@@ -852,19 +868,13 @@ fn compute_enum_member_value(target: &tree_sitter::Node, source: &str) -> String
 }
 
 /// Search enum definitions for a member matching `name`.
-fn resolve_enum_member(root: &tree_sitter::Node, name: &str, source: &str) -> Option<Hover> {
-    let mut cursor = root.walk();
-    for child in root.children(&mut cursor) {
-        if child.kind() == "enum_definition"
-            && let Some(body) = child.child_by_field_name("body")
-        {
-            let mut body_cursor = body.walk();
-            for member in body.children(&mut body_cursor) {
-                if member.kind() == "enumerator"
-                    && let Some(left) = member.child_by_field_name("left")
-                    && node_text(&left, source) == name
-                {
-                    return hover_enum_member(&member, source);
+fn resolve_enum_member(file: &GdFile, name: &str, source: &str) -> Option<Hover> {
+    for decl in &file.declarations {
+        if let GdDecl::Enum(e) = decl {
+            for member in &e.members {
+                if member.name == name {
+                    // Use the CST node for hover formatting (needs sibling walk for value)
+                    return hover_enum_member(&member.node, source);
                 }
             }
         }
@@ -873,44 +883,18 @@ fn resolve_enum_member(root: &tree_sitter::Node, name: &str, source: &str) -> Op
 }
 
 /// Try to resolve an identifier to a top-level declaration in the file.
-fn resolve_identifier(root: &tree_sitter::Node, name: &str, source: &str) -> Option<Hover> {
-    let mut cursor = root.walk();
-    for child in root.children(&mut cursor) {
-        match child.kind() {
-            "function_definition" => {
-                if matches_name(&child, name, source) {
-                    return hover_function(&child, source);
-                }
-            }
-            "variable_statement" => {
-                if matches_name(&child, name, source) {
-                    return Some(hover_variable(&child, source));
-                }
-            }
-            "const_statement" => {
-                if matches_name(&child, name, source) {
-                    return Some(hover_const(&child, source));
-                }
-            }
-            "signal_statement" => {
-                if matches_name(&child, name, source) {
-                    return Some(hover_signal(&child, source));
-                }
-            }
-            "class_definition" => {
-                if matches_name(&child, name, source) {
-                    return hover_class(&child, source);
-                }
-            }
-            "enum_definition" => {
-                if matches_name(&child, name, source) {
-                    return hover_enum(&child, source);
-                }
-            }
-            _ => {}
-        }
+fn resolve_identifier(file: &GdFile, name: &str, source: &str) -> Option<Hover> {
+    let decl = file.find_decl_by_name(name)?;
+    let node = decl.node();
+    match decl {
+        GdDecl::Func(_) => hover_function(&node, source),
+        GdDecl::Var(v) if v.is_const => Some(hover_const(&node, source)),
+        GdDecl::Var(_) => Some(hover_variable(&node, source)),
+        GdDecl::Signal(_) => Some(hover_signal(&node, source)),
+        GdDecl::Class(_) => hover_class(&node, source),
+        GdDecl::Enum(_) => hover_enum(&node, source),
+        GdDecl::Stmt(_) => None,
     }
-    None
 }
 
 /// Extract the `##` doc comment at the top of a file (before class_name or first declaration).
@@ -958,25 +942,24 @@ fn hover_gdscript_keyword(name: &str, node: &tree_sitter::Node) -> Option<Hover>
 /// Try to resolve a bare identifier as a ClassDB property or method using the
 /// file's extends class. Covers engine properties like `rotation` on Node3D.
 fn resolve_classdb_member_for_file(
-    root: &tree_sitter::Node,
-    source: &str,
+    file: &GdFile,
     name: &str,
     ident_node: &tree_sitter::Node,
 ) -> Option<Hover> {
-    let extends = super::completion::find_extends_class(*root, source)?;
+    let extends = extends_classdb_class(file)?;
     // Try property
-    for (prop_name, prop_type, owner_class) in crate::class_db::class_properties(&extends) {
+    for (prop_name, prop_type, owner_class) in crate::class_db::class_properties(extends) {
         if prop_name == name {
             let code = format!("{prop_type} {owner_class}.{prop_name}");
-            let doc = crate::class_db::property_doc(&extends, prop_name);
+            let doc = crate::class_db::property_doc(extends, prop_name);
             return Some(make_hover(&code, ident_node, doc));
         }
     }
     // Try method
-    if let Some(ret) = crate::class_db::method_return_type(&extends, name) {
-        let owner = find_method_owner(&extends, name).unwrap_or(&extends);
+    if let Some(ret) = crate::class_db::method_return_type(extends, name) {
+        let owner = find_method_owner(extends, name).unwrap_or(extends);
         let code = format!("{owner}.{name}() -> {ret}");
-        let doc = crate::class_db::method_doc(&extends, name);
+        let doc = crate::class_db::method_doc(extends, name);
         return Some(make_hover(&code, ident_node, doc));
     }
     None
@@ -984,13 +967,9 @@ fn resolve_classdb_member_for_file(
 
 /// Try to resolve a builtin member using the file's extends class, walking the
 /// ClassDB inheritance chain. Returns the class-specific member doc if found.
-fn resolve_builtin_member_for_file<'a>(
-    root: &tree_sitter::Node,
-    source: &str,
-    name: &str,
-) -> Option<&'a BuiltinMember> {
-    let extends = super::completion::find_extends_class(*root, source)?;
-    let mut current: &str = &extends;
+fn resolve_builtin_member_for_file<'a>(file: &GdFile, name: &str) -> Option<&'a BuiltinMember> {
+    let extends = extends_classdb_class(file)?;
+    let mut current: &str = extends;
     loop {
         if let Some(doc) = super::builtins::lookup_member_for(current, name) {
             return Some(doc);
@@ -999,6 +978,14 @@ fn resolve_builtin_member_for_file<'a>(
             Some(parent) => current = parent,
             None => return None,
         }
+    }
+}
+
+/// Extract the ClassDB-known `extends` class from a typed file.
+fn extends_classdb_class<'a>(file: &GdFile<'a>) -> Option<&'a str> {
+    match file.extends {
+        Some(GdExtends::Class(name)) if crate::class_db::class_exists(name) => Some(name),
+        _ => None,
     }
 }
 
