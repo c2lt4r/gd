@@ -64,21 +64,21 @@ pub fn check_classdb_errors(
     check_rpc_args(root, source, &mut errors);
     check_export_node_path_type(root, source, &mut errors);
     check_lambda_super(root, source, &mut errors);
-    check_typed_array_wrong_element(root, source, file, &mut errors);
+    check_typed_array_wrong_element(root, source, file, project, &mut errors);
     check_callable_direct_call(root, source, file, &mut errors);
-    check_for_on_non_iterable(root, source, file, &mut errors);
-    super::args::check_arg_count(root, source, file, &mut errors);
-    super::args::check_arg_type_mismatch(root, source, file, &mut errors);
-    super::types::check_assign_type_mismatch(root, source, file, &mut errors);
-    super::types::check_return_type_mismatch(root, source, file, &mut errors);
-    super::types::check_invalid_operators(root, source, file, &mut errors);
-    super::types::check_invalid_cast(root, source, file, &mut errors);
+    check_for_on_non_iterable(root, source, file, project, &mut errors);
+    super::args::check_arg_count(root, source, file, project, &mut errors);
+    super::args::check_arg_type_mismatch(root, source, file, project, &mut errors);
+    super::types::check_assign_type_mismatch(root, source, file, project, &mut errors);
+    super::types::check_return_type_mismatch(root, source, file, project, &mut errors);
+    super::types::check_invalid_operators(root, source, file, project, &mut errors);
+    super::types::check_invalid_cast(root, source, file, project, &mut errors);
     super::identifiers::check_type_not_found(root, source, file, project, &mut errors);
     super::identifiers::check_method_not_found(root, source, file, project, &mut errors);
     super::identifiers::check_super_method_not_found(root, source, file, project, &mut errors);
     super::identifiers::check_undefined_identifiers(root, source, file, project, &mut errors);
-    super::builtins::check_builtin_method_not_found(root, source, file, &mut errors);
-    super::builtins::check_builtin_property_not_found(root, source, file, &mut errors);
+    super::builtins::check_builtin_method_not_found(root, source, file, project, &mut errors);
+    super::builtins::check_builtin_property_not_found(root, source, file, project, &mut errors);
     check_onready_non_node(file, project, &mut errors);
     errors
 }
@@ -942,15 +942,17 @@ fn check_typed_array_wrong_element(
     root: &Node,
     source: &str,
     file: &GdFile,
+    project: &ProjectIndex,
     errors: &mut Vec<StructuralError>,
 ) {
-    check_typed_array_in_node(root, source, file, errors);
+    check_typed_array_in_node(root, source, file, project, errors);
 }
 
 fn check_typed_array_in_node(
     node: &Node,
     source: &str,
     file: &GdFile,
+    project: &ProjectIndex,
     errors: &mut Vec<StructuralError>,
 ) {
     // Look for variable declarations with typed array annotation and array literal initializer
@@ -963,13 +965,13 @@ fn check_typed_array_in_node(
         && let Some(value_node) = node.child_by_field_name("value")
         && value_node.kind() == "array"
     {
-        check_array_elements(&value_node, source, file, element_type, errors);
+        check_array_elements(&value_node, source, file, project, element_type, errors);
     }
 
     let mut cursor = node.walk();
     if cursor.goto_first_child() {
         loop {
-            check_typed_array_in_node(&cursor.node(), source, file, errors);
+            check_typed_array_in_node(&cursor.node(), source, file, project, errors);
             if !cursor.goto_next_sibling() {
                 break;
             }
@@ -981,6 +983,7 @@ fn check_array_elements(
     array_node: &Node,
     source: &str,
     file: &GdFile,
+    project: &ProjectIndex,
     expected_type: &str,
     errors: &mut Vec<StructuralError>,
 ) {
@@ -989,7 +992,9 @@ fn check_array_elements(
         if !child.is_named() {
             continue;
         }
-        let Some(actual) = type_inference::infer_expression_type(&child, source, file) else {
+        let Some(actual) =
+            type_inference::infer_expression_type_with_project(&child, source, file, project)
+        else {
             continue;
         };
         let actual_name = match &actual {
@@ -1194,20 +1199,22 @@ fn check_for_on_non_iterable(
     root: &Node,
     source: &str,
     file: &GdFile,
+    project: &ProjectIndex,
     errors: &mut Vec<StructuralError>,
 ) {
-    check_for_iterable_in_node(root, source, file, errors);
+    check_for_iterable_in_node(root, source, file, project, errors);
 }
 
 fn check_for_iterable_in_node(
     node: &Node,
     source: &str,
     file: &GdFile,
+    project: &ProjectIndex,
     errors: &mut Vec<StructuralError>,
 ) {
     if node.kind() == "for_statement"
         && let Some(iter_node) = node.child_by_field_name("right")
-        && let Some(ty) = type_inference::infer_expression_type(&iter_node, source, file)
+        && let Some(ty) = type_inference::infer_expression_type_with_project(&iter_node, source, file, project)
         && !is_iterable_type(&ty)
     {
         let ty_name = match &ty {
@@ -1228,7 +1235,7 @@ fn check_for_iterable_in_node(
     let mut cursor = node.walk();
     if cursor.goto_first_child() {
         loop {
-            check_for_iterable_in_node(&cursor.node(), source, file, errors);
+            check_for_iterable_in_node(&cursor.node(), source, file, project, errors);
             if !cursor.goto_next_sibling() {
                 break;
             }

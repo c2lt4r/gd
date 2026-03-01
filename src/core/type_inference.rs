@@ -202,12 +202,26 @@ fn infer_attribute_with_project(
     }
 
     let receiver = node.named_child(0)?;
-    let receiver_type = infer_expression_type_with_project(&receiver, source, file, project)?;
+    let receiver_type = infer_expression_type_with_project(&receiver, source, file, project);
 
-    let class_name = match &receiver_type {
-        InferredType::Builtin(b) => *b,
-        InferredType::Class(c) => c.as_str(),
-        _ => return None,
+    // If receiver doesn't resolve, check if it's a class name (e.g., Node.new())
+    let receiver_class_name: Option<String>;
+    let class_name = if let Some(ref rt) = receiver_type {
+        match rt {
+            InferredType::Builtin(b) => *b,
+            InferredType::Class(c) => c.as_str(),
+            _ => return None,
+        }
+    } else {
+        let name = receiver.utf8_text(source.as_bytes()).ok()?;
+        if receiver.kind() == "identifier"
+            && (class_db::class_exists(name) || project.lookup_class(name).is_some())
+        {
+            receiver_class_name = Some(name.to_string());
+            receiver_class_name.as_deref()?
+        } else {
+            return None;
+        }
     };
 
     if !has_call {
@@ -228,6 +242,13 @@ fn infer_attribute_with_project(
     }
 
     let method = method_name?;
+
+    // ClassName.new() → returns ClassName
+    if method == "new"
+        && (class_db::class_exists(class_name) || project.lookup_class(class_name).is_some())
+    {
+        return Some(InferredType::Class(class_name.to_string()));
+    }
 
     // Try project index first (user-defined types)
     if let Some(ret) = project.method_return_type(class_name, method) {

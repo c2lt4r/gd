@@ -62,6 +62,10 @@ pub mod incompatible_ternary;
 pub mod infer_unknown_member;
 pub mod look_at_before_tree;
 pub mod loop_variable_name;
+pub mod manual_array_all;
+pub mod manual_array_any;
+pub mod manual_array_filter;
+pub mod manual_array_map;
 pub mod manual_range_contains;
 pub mod max_file_lines;
 pub mod max_line_length;
@@ -376,6 +380,10 @@ pub fn all_rules(
         Box::new(duplicate_code::DuplicateCode),
         Box::new(collapsible_if::CollapsibleIf),
         Box::new(enum_variant_names::EnumVariantNames),
+        Box::new(manual_array_any::ManualArrayAny),
+        Box::new(manual_array_all::ManualArrayAll),
+        Box::new(manual_array_filter::ManualArrayFilter),
+        Box::new(manual_array_map::ManualArrayMap),
         Box::new(manual_range_contains::ManualRangeContains),
         Box::new(needless_bool::NeedlessBool),
         Box::new(override_signature_mismatch::OverrideSignatureMismatch),

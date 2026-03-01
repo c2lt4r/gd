@@ -1,8 +1,9 @@
 # Changelog
 
-## [0.3.14] - 2026-02-28
+## [0.3.14] - 2026-03-01
 
 ### Improved
+- **`gd check` — project-aware type inference**: all type-checking functions (assignment mismatch, return type mismatch, invalid operators, invalid cast, argument type/count, builtin method/property resolution) now use cross-file type inference via `ProjectIndex`, resolving user-defined base class methods, autoload types, and preloaded script types. Previously only file-local inference was used, causing ~238 false positives on real projects.
 - **`gd check` — 67% FP reduction on real Godot 4 projects** (4,062 → 1,350 across 4 projects, 100% mutation parity maintained):
   - **Extends chain variable resolution**: base class variables with inferred types (`:=`) now found via new `variable_exists()` method — previously only explicit type annotations were checked
   - **Attribute subscript**: `obj.member[index]` no longer falsely flags `member` as undeclared — `attribute_subscript` tree-sitter node now recognized
@@ -15,6 +16,13 @@
   - **Inner class type annotations**: `ClassName.InnerClass` dot notation now allowed when the base class is known
   - **Typed Dictionary iteration**: `for key in typed_dict:` no longer flagged as non-iterable
   - **GDScript keywords in identifier check**: tree-sitter sometimes emits `identifier` nodes for keywords in match bodies — now skipped
+
+### Added
+- **4 new lint rules** — loop-to-functional style rules (all opt-in, Style category, with auto-fixes):
+  - `manual-array-any`: detects `for x in arr: if cond: return true` + `return false` → suggests `arr.any(func(x): return cond)`
+  - `manual-array-all`: detects `for x in arr: if cond: return false` + `return true` → suggests `arr.all(func(x): return not (cond))`
+  - `manual-array-filter`: detects `var result = []; for x in arr: if cond: result.append(x)` → suggests `arr.filter(func(x): return cond)`
+  - `manual-array-map`: detects `var result = []; for x in arr: result.append(transform(x))` → suggests `arr.map(func(x): return transform(x))`
 
 ### Internal
 - **Typed AST migration — complete across entire codebase.** All modules now use `GdFile<'_>` from the typed AST layer instead of raw tree-sitter CST for declaration-level work. This includes lint rules, `gd check`, type inference, workspace index, LSP features, and refactoring commands.
