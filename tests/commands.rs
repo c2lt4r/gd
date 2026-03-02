@@ -564,66 +564,7 @@ fn test_addons_install_locked_requires_lockfile() {
     );
 }
 
-// ── eval command ─────────────────────────────────────────────────────────────
-
-#[test]
-fn test_eval_check_valid_expression() {
-    let temp = setup_gd_project(&[]);
-
-    let output = gd_bin()
-        .args(["eval", "--check", "1 + 1"])
-        .current_dir(temp.path())
-        .output()
-        .expect("Failed to run gd eval --check");
-
-    // --check only validates the wrapper script parses; doesn't need Godot
-    // It will fail at the Godot execution step (no Godot in CI), but the
-    // pre-check itself should pass, so look for non-syntax errors
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        !stderr.contains("syntax error"),
-        "Valid expression should pass --check, stderr: {stderr}"
-    );
-}
-
-#[test]
-fn test_eval_file_rejects_non_scene_tree() {
-    let temp = setup_gd_project(&[("bad.gd", "extends Node\nfunc _ready():\n\tpass\n")]);
-
-    let output = gd_bin()
-        .args(["eval", "bad.gd"])
-        .current_dir(temp.path())
-        .output()
-        .expect("Failed to run gd eval");
-
-    assert!(
-        !output.status.success(),
-        "Should reject non-SceneTree script"
-    );
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("extends SceneTree") || stderr.contains("extends 'Node'"),
-        "Should explain the extends requirement, stderr: {stderr}"
-    );
-}
-
-#[test]
-fn test_eval_check_invalid_expression() {
-    let temp = setup_gd_project(&[]);
-
-    let output = gd_bin()
-        .args(["eval", "--check", "if if if"])
-        .current_dir(temp.path())
-        .output()
-        .expect("Failed to run gd eval --check");
-
-    assert!(
-        !output.status.success(),
-        "Invalid expression should fail --check"
-    );
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("syntax error"),
-        "Should report syntax errors, stderr: {stderr}"
-    );
-}
+// eval command: syntax validation and base-class checks are tested as unit
+// tests in src/cli/eval_cmd.rs (pre_check_valid, pre_check_invalid,
+// validate_base_class_rejects_node, etc.). Integration tests removed because
+// `gd eval` requires a Godot binary which isn't available in CI.
