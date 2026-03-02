@@ -401,18 +401,12 @@ pub(super) fn normalize_blank_lines(source: &mut String) {
 // ── Inner class helpers ─────────────────────────────────────────────────────
 
 /// Find a class_definition by name.
-pub(super) fn find_class_definition<'a>(
-    file: &GdFile<'a>,
-    class_name: &str,
-) -> Option<Node<'a>> {
+pub(super) fn find_class_definition<'a>(file: &GdFile<'a>, class_name: &str) -> Option<Node<'a>> {
     file.find_class(class_name).map(|c| c.node)
 }
 
 /// Find a declaration by name within an inner class.
-pub(super) fn find_declaration_in_class<'a>(
-    class: &GdClass<'a>,
-    name: &str,
-) -> Option<Node<'a>> {
+pub(super) fn find_declaration_in_class<'a>(class: &GdClass<'a>, name: &str) -> Option<Node<'a>> {
     class.find_decl_by_name(name).map(gd_ast::GdDecl::node)
 }
 
@@ -571,7 +565,7 @@ mod tests {
         let src = "var a = 1\n\nfunc foo():\n\tpass\n";
         let tree = crate::core::parser::parse(src).unwrap();
         let file = parse_file(src, &tree);
-        let node = find_declaration_by_name(&file,"foo").unwrap();
+        let node = find_declaration_by_name(&file, "foo").unwrap();
         let (start, end) = declaration_full_range(node, src);
         assert_eq!(&src[start..end], "func foo():\n\tpass\n");
     }
@@ -581,7 +575,7 @@ mod tests {
         let src = "var a = 1\n\n## Documentation\n# More docs\nfunc foo():\n\tpass\n";
         let tree = crate::core::parser::parse(src).unwrap();
         let file = parse_file(src, &tree);
-        let node = find_declaration_by_name(&file,"foo").unwrap();
+        let node = find_declaration_by_name(&file, "foo").unwrap();
         let (start, end) = declaration_full_range(node, src);
         assert_eq!(
             &src[start..end],
@@ -594,7 +588,7 @@ mod tests {
         let src = "# Unrelated comment\n\n# Doc comment\nfunc foo():\n\tpass\n";
         let tree = crate::core::parser::parse(src).unwrap();
         let file = parse_file(src, &tree);
-        let node = find_declaration_by_name(&file,"foo").unwrap();
+        let node = find_declaration_by_name(&file, "foo").unwrap();
         let (start, end) = declaration_full_range(node, src);
         assert_eq!(&src[start..end], "# Doc comment\nfunc foo():\n\tpass\n");
     }
@@ -604,7 +598,7 @@ mod tests {
         let src = "@export var speed = 10\n";
         let tree = crate::core::parser::parse(src).unwrap();
         let file = parse_file(src, &tree);
-        let node = find_declaration_by_name(&file,"speed").unwrap();
+        let node = find_declaration_by_name(&file, "speed").unwrap();
         let (start, end) = declaration_full_range(node, src);
         // Annotation is part of the node, so the range covers it
         assert_eq!(&src[start..end], "@export var speed = 10\n");
@@ -615,7 +609,7 @@ mod tests {
         let src = "@rpc(\"any_peer\")\nfunc sync_pos(pos):\n\tpass\n";
         let tree = crate::core::parser::parse(src).unwrap();
         let file = parse_file(src, &tree);
-        let node = find_declaration_by_name(&file,"sync_pos").unwrap();
+        let node = find_declaration_by_name(&file, "sync_pos").unwrap();
         let (start, end) = declaration_full_range(node, src);
         assert_eq!(
             &src[start..end],
@@ -628,7 +622,7 @@ mod tests {
         let src = "## Speed property\n@export\nvar speed = 10\n";
         let tree = crate::core::parser::parse(src).unwrap();
         let file = parse_file(src, &tree);
-        let node = find_declaration_by_name(&file,"speed").unwrap();
+        let node = find_declaration_by_name(&file, "speed").unwrap();
         let (start, end) = declaration_full_range(node, src);
         assert_eq!(
             &src[start..end],
@@ -641,7 +635,7 @@ mod tests {
         let src = "@export\n@onready\nvar timer = null\n";
         let tree = crate::core::parser::parse(src).unwrap();
         let file = parse_file(src, &tree);
-        let node = find_declaration_by_name(&file,"timer").unwrap();
+        let node = find_declaration_by_name(&file, "timer").unwrap();
         let (start, end) = declaration_full_range(node, src);
         assert_eq!(&src[start..end], "@export\n@onready\nvar timer = null\n");
     }
@@ -651,7 +645,7 @@ mod tests {
         let src = "## Doc line\n\nfunc foo():\n\tpass\n";
         let tree = crate::core::parser::parse(src).unwrap();
         let file = parse_file(src, &tree);
-        let node = find_declaration_by_name(&file,"foo").unwrap();
+        let node = find_declaration_by_name(&file, "foo").unwrap();
         let (start, end) = declaration_full_range(node, src);
         assert_eq!(&src[start..end], "## Doc line\n\nfunc foo():\n\tpass\n");
     }
@@ -661,7 +655,7 @@ mod tests {
         let src = "## Doc line\n\n\nfunc foo():\n\tpass\n";
         let tree = crate::core::parser::parse(src).unwrap();
         let file = parse_file(src, &tree);
-        let node = find_declaration_by_name(&file,"foo").unwrap();
+        let node = find_declaration_by_name(&file, "foo").unwrap();
         let (start, end) = declaration_full_range(node, src);
         assert_eq!(&src[start..end], "## Doc line\n\n\nfunc foo():\n\tpass\n");
     }
@@ -671,7 +665,7 @@ mod tests {
         let src = "## Doc line\n\n\n\nfunc foo():\n\tpass\n";
         let tree = crate::core::parser::parse(src).unwrap();
         let file = parse_file(src, &tree);
-        let node = find_declaration_by_name(&file,"foo").unwrap();
+        let node = find_declaration_by_name(&file, "foo").unwrap();
         let (start, end) = declaration_full_range(node, src);
         assert_eq!(&src[start..end], "func foo():\n\tpass\n");
     }
@@ -681,7 +675,7 @@ mod tests {
         let src = "## First paragraph\n## more\n\n## Second paragraph\nfunc foo():\n\tpass\n";
         let tree = crate::core::parser::parse(src).unwrap();
         let file = parse_file(src, &tree);
-        let node = find_declaration_by_name(&file,"foo").unwrap();
+        let node = find_declaration_by_name(&file, "foo").unwrap();
         let (start, end) = declaration_full_range(node, src);
         assert_eq!(
             &src[start..end],
@@ -694,7 +688,7 @@ mod tests {
         let src = "# ===\n# SECTION\n# ===\n## Doc\n\nfunc foo():\n\tpass\n";
         let tree = crate::core::parser::parse(src).unwrap();
         let file = parse_file(src, &tree);
-        let node = find_declaration_by_name(&file,"foo").unwrap();
+        let node = find_declaration_by_name(&file, "foo").unwrap();
         let (start, end) = declaration_full_range(node, src);
         assert_eq!(&src[start..end], "## Doc\n\nfunc foo():\n\tpass\n");
     }
@@ -704,7 +698,7 @@ mod tests {
         let src = "# ===\n# SECTION\n# ===\n## Doc\n\nvar x = 1\n";
         let tree = crate::core::parser::parse(src).unwrap();
         let file = parse_file(src, &tree);
-        let node = find_declaration_by_name(&file,"x").unwrap();
+        let node = find_declaration_by_name(&file, "x").unwrap();
         let (start, end) = declaration_full_range(node, src);
         assert_eq!(&src[start..end], "## Doc\n\nvar x = 1\n");
     }
@@ -714,7 +708,7 @@ mod tests {
         let src = "# Regular comment\n\nfunc foo():\n\tpass\n";
         let tree = crate::core::parser::parse(src).unwrap();
         let file = parse_file(src, &tree);
-        let node = find_declaration_by_name(&file,"foo").unwrap();
+        let node = find_declaration_by_name(&file, "foo").unwrap();
         let (start, end) = declaration_full_range(node, src);
         assert_eq!(&src[start..end], "func foo():\n\tpass\n");
     }
@@ -724,7 +718,7 @@ mod tests {
         let src = "## Doc.\n\nvar x = 1\n";
         let tree = crate::core::parser::parse(src).unwrap();
         let file = parse_file(src, &tree);
-        let node = find_declaration_by_name(&file,"x").unwrap();
+        let node = find_declaration_by_name(&file, "x").unwrap();
         let (start, end) = declaration_full_range(node, src);
         assert_eq!(&src[start..end], "## Doc.\n\nvar x = 1\n");
     }

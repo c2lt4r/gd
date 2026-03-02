@@ -17,7 +17,16 @@ impl LintRule for ComparisonWithBoolean {
     fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
         gd_ast::visit_exprs(file, &mut |expr| {
-            let GdExpr::BinOp { node, op, left, right, .. } = expr else { return };
+            let GdExpr::BinOp {
+                node,
+                op,
+                left,
+                right,
+                ..
+            } = expr
+            else {
+                return;
+            };
             if *op != "==" && *op != "!=" {
                 return;
             }

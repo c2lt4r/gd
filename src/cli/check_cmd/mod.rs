@@ -123,8 +123,7 @@ pub fn exec(args: &CheckArgs) -> Result<()> {
                         Some(&root_project),
                         &project_index,
                     );
-                    let classdb =
-                        check_classdb_errors(&gd_file, &source, &project_index);
+                    let classdb = check_classdb_errors(&gd_file, &source, &project_index);
                     let duplicates = check_duplicates(&tree, &source);
                     let promoted = check_promoted_rules(&tree, &source, &gd_file);
                     let overrides = check_overrides(&tree, &source, &gd_file, &project_index);
@@ -373,11 +372,7 @@ fn check_promoted_rules(
     diags.extend(OnreadyWithExport.check_with_symbols(file, source, &lint_config));
 
     // get-node-default-without-onready: $Path default without @onready is a compile error
-    diags.extend(GetNodeDefaultWithoutOnready.check_with_symbols(
-        file,
-        source,
-        &lint_config,
-    ));
+    diags.extend(GetNodeDefaultWithoutOnready.check_with_symbols(file, source, &lint_config));
 
     // native-method-override: overriding a native non-virtual method is a compile error
     diags.extend(NativeMethodOverride.check_with_symbols(file, source, &lint_config));

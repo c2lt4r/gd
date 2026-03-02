@@ -37,12 +37,15 @@ fn check_redundant_else(stmt: &GdStmt<'_>, source: &str, diags: &mut Vec<LintDia
     }
 
     // The else clause node is captured during typed AST conversion
-    let Some(else_node) = gif.else_node else { return };
+    let Some(else_node) = gif.else_node else {
+        return;
+    };
 
     diags.push(LintDiagnostic {
         rule: "redundant-else",
-        message: "unnecessary `else` after `return`/`break`/`continue`; remove the `else` and dedent"
-            .to_string(),
+        message:
+            "unnecessary `else` after `return`/`break`/`continue`; remove the `else` and dedent"
+                .to_string(),
         severity: Severity::Warning,
         line: else_node.start_position().row,
         column: else_node.start_position().column,
@@ -134,8 +137,8 @@ fn generate_else_fix(else_node: &tree_sitter::Node<'_>, source: &str) -> Option<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::parser;
     use crate::core::gd_ast;
+    use crate::core::parser;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();

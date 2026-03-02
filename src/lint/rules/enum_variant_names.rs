@@ -22,7 +22,11 @@ impl LintRule for EnumVariantNames {
         let mut diags = Vec::new();
         gd_ast::visit_decls(file, &mut |decl| {
             if let GdDecl::Enum(e) = decl {
-                let enum_name = if e.name.is_empty() { None } else { Some(e.name) };
+                let enum_name = if e.name.is_empty() {
+                    None
+                } else {
+                    Some(e.name)
+                };
                 let variant_names: Vec<&str> = e.members.iter().map(|m| m.name).collect();
                 if variant_names.len() < 2 {
                     return;
@@ -152,8 +156,8 @@ fn to_upper_no_sep(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::parser;
     use crate::core::gd_ast;
+    use crate::core::parser;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();

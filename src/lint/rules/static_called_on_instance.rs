@@ -15,7 +15,12 @@ impl LintRule for StaticCalledOnInstance {
         LintCategory::Suspicious
     }
 
-    fn check(&self, _file: &GdFile<'_>, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(
+        &self,
+        _file: &GdFile<'_>,
+        _source: &str,
+        _config: &LintConfig,
+    ) -> Vec<LintDiagnostic> {
         Vec::new()
     }
 
@@ -43,13 +48,12 @@ impl LintRule for StaticCalledOnInstance {
     }
 }
 
-fn check_calls(
-    file: &GdFile,
-    project: Option<&ProjectIndex>,
-    diags: &mut Vec<LintDiagnostic>,
-) {
+fn check_calls(file: &GdFile, project: Option<&ProjectIndex>, diags: &mut Vec<LintDiagnostic>) {
     gd_ast::visit_exprs(file, &mut |expr| {
-        if let GdExpr::MethodCall { receiver, method, .. } = expr {
+        if let GdExpr::MethodCall {
+            receiver, method, ..
+        } = expr
+        {
             let receiver_name = match receiver.as_ref() {
                 GdExpr::Ident { name, .. } => *name,
                 _ => return,
@@ -57,10 +61,7 @@ fn check_calls(
 
             // Check `self.static_method()` — same-file static
             if receiver_name == "self" {
-                if file
-                    .funcs()
-                    .any(|f| f.name == *method && f.is_static)
-                {
+                if file.funcs().any(|f| f.name == *method && f.is_static) {
                     emit_diagnostic(method, receiver_name, diags, expr);
                 }
             } else if let Some(proj) = project
@@ -107,9 +108,9 @@ fn emit_diagnostic(method: &str, receiver: &str, diags: &mut Vec<LintDiagnostic>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::workspace_index;
     use crate::core::gd_ast;
     use crate::core::parser;
+    use crate::core::workspace_index;
     use std::path::PathBuf;
 
     fn check_same_file(source: &str) -> Vec<LintDiagnostic> {

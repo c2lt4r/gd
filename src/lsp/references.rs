@@ -209,8 +209,7 @@ pub fn find_references(
 
     // Check for ambiguous same-name function declarations (static vs instance)
     let file = gd_ast::convert(&tree, source);
-    let overload_kind =
-        detect_ambiguous_overload(&file, target_name, position.line as usize);
+    let overload_kind = detect_ambiguous_overload(&file, target_name, position.line as usize);
     let class_name = overload_kind.and_then(|_| extract_class_name(&file));
     let filter = overload_kind.map(|kind| OverloadFilter {
         kind,
@@ -446,8 +445,7 @@ pub fn find_references_cross_file(
 
     // Check for ambiguous same-name function declarations (static vs instance)
     let file = gd_ast::convert(&tree, source);
-    let overload_kind =
-        detect_ambiguous_overload(&file, target_name, position.line as usize);
+    let overload_kind = detect_ambiguous_overload(&file, target_name, position.line as usize);
     let origin_class_name = extract_class_name(&file);
 
     // Build overload filter if disambiguation is needed

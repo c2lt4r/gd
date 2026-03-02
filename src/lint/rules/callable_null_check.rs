@@ -1,5 +1,5 @@
-use std::collections::HashSet;
 use crate::core::gd_ast::{self, GdDecl, GdExpr, GdFile, GdStmt};
+use std::collections::HashSet;
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -51,17 +51,17 @@ fn check_function_body(body: &[GdStmt], diags: &mut Vec<LintDiagnostic>) {
 fn collect_validated<'a>(expr: &GdExpr<'a>, validated: &mut HashSet<&'a str>) {
     match expr {
         // foo.is_valid() or foo.is_null()
-        GdExpr::MethodCall { receiver, method, .. }
-            if matches!(*method, "is_valid" | "is_null") =>
-        {
+        GdExpr::MethodCall {
+            receiver, method, ..
+        } if matches!(*method, "is_valid" | "is_null") => {
             if let Some(name) = terminal_name(receiver) {
                 validated.insert(name);
             }
         }
         // foo != null / foo == null / null != foo / null == foo
-        GdExpr::BinOp { left, op, right, .. }
-            if matches!(*op, "!=" | "==") =>
-        {
+        GdExpr::BinOp {
+            left, op, right, ..
+        } if matches!(*op, "!=" | "==") => {
             if matches!(right.as_ref(), GdExpr::Null { .. })
                 && let GdExpr::Ident { name, .. } = left.as_ref()
             {
@@ -77,33 +77,35 @@ fn collect_validated<'a>(expr: &GdExpr<'a>, validated: &mut HashSet<&'a str>) {
 }
 
 /// Check for .call()/.call_deferred()/.callv() on unvalidated callable identifiers.
-fn check_callable_call(
-    expr: &GdExpr,
-    validated: &HashSet<&str>,
-    diags: &mut Vec<LintDiagnostic>,
-) {
-    let GdExpr::MethodCall { receiver, method, args, .. } = expr else { return };
+fn check_callable_call(expr: &GdExpr, validated: &HashSet<&str>, diags: &mut Vec<LintDiagnostic>) {
+    let GdExpr::MethodCall {
+        receiver,
+        method,
+        args,
+        ..
+    } = expr
+    else {
+        return;
+    };
     if !matches!(*method, "call" | "call_deferred" | "callv") {
         return;
     }
 
     // `obj.call_deferred("method_name")` is Object.call_deferred, not Callable
-    if *method == "call_deferred"
-        && matches!(args.first(), Some(GdExpr::StringLiteral { .. }))
-    {
+    if *method == "call_deferred" && matches!(args.first(), Some(GdExpr::StringLiteral { .. })) {
         return;
     }
 
-    let Some(obj_name) = terminal_name(receiver) else { return };
+    let Some(obj_name) = terminal_name(receiver) else {
+        return;
+    };
     if obj_name == "self" || validated.contains(obj_name) {
         return;
     }
 
     diags.push(LintDiagnostic {
         rule: "callable-null-check",
-        message: format!(
-            "`{obj_name}.{method}()` called without `{obj_name}.is_valid()` check"
-        ),
+        message: format!("`{obj_name}.{method}()` called without `{obj_name}.is_valid()` check"),
         severity: Severity::Warning,
         line: expr.line(),
         column: expr.column(),
@@ -129,8 +131,8 @@ fn terminal_name<'a>(expr: &GdExpr<'a>) -> Option<&'a str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::parser;
     use crate::core::gd_ast;
+    use crate::core::parser;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();

@@ -147,7 +147,12 @@ impl std::hash::Hash for OrderedF64 {
 
 /// Walk function body statements checking for magic numbers.
 /// Variable/const definitions are skipped entirely (numbers in definitions are fine).
-fn check_stmts(stmts: &[GdStmt], source: &str, ctx: &CheckContext, diags: &mut Vec<LintDiagnostic>) {
+fn check_stmts(
+    stmts: &[GdStmt],
+    source: &str,
+    ctx: &CheckContext,
+    diags: &mut Vec<LintDiagnostic>,
+) {
     for stmt in stmts {
         match stmt {
             // Variable/const definitions — numbers are fine here.
@@ -159,7 +164,9 @@ fn check_stmts(stmts: &[GdStmt], source: &str, ctx: &CheckContext, diags: &mut V
             GdStmt::Assign { value, .. } | GdStmt::AugAssign { value, .. } => {
                 check_expr(value, source, ctx, false, false, diags);
             }
-            GdStmt::Return { value: Some(v), .. } => check_expr(v, source, ctx, false, false, diags),
+            GdStmt::Return { value: Some(v), .. } => {
+                check_expr(v, source, ctx, false, false, diags);
+            }
 
             GdStmt::If(if_stmt) => {
                 check_expr(&if_stmt.condition, source, ctx, false, false, diags);
@@ -176,7 +183,9 @@ fn check_stmts(stmts: &[GdStmt], source: &str, ctx: &CheckContext, diags: &mut V
                 check_expr(iter, source, ctx, false, false, diags);
                 check_stmts(body, source, ctx, diags);
             }
-            GdStmt::While { condition, body, .. } => {
+            GdStmt::While {
+                condition, body, ..
+            } => {
                 check_expr(condition, source, ctx, false, false, diags);
                 check_stmts(body, source, ctx, diags);
             }
@@ -242,7 +251,12 @@ fn check_expr(
                 check_expr(arg, source, ctx, args_allowed, false, diags);
             }
         }
-        GdExpr::MethodCall { receiver, method, args, .. } => {
+        GdExpr::MethodCall {
+            receiver,
+            method,
+            args,
+            ..
+        } => {
             let args_allowed = in_allowed_ctx || ctx.allowed_contexts.contains(method);
             check_expr(receiver, source, ctx, in_allowed_ctx, in_subscript, diags);
             for arg in args {
@@ -250,7 +264,9 @@ fn check_expr(
             }
         }
 
-        GdExpr::BinOp { op, left, right, .. } => {
+        GdExpr::BinOp {
+            op, left, right, ..
+        } => {
             if *op == "%" {
                 // Left side checked normally; right side of modulo is always allowed
                 check_expr(left, source, ctx, in_allowed_ctx, in_subscript, diags);
@@ -264,7 +280,9 @@ fn check_expr(
             }
         }
 
-        GdExpr::Subscript { receiver, index, .. } => {
+        GdExpr::Subscript {
+            receiver, index, ..
+        } => {
             check_expr(receiver, source, ctx, in_allowed_ctx, false, diags);
             check_expr(index, source, ctx, in_allowed_ctx, true, diags);
         }
@@ -275,7 +293,12 @@ fn check_expr(
         GdExpr::PropertyAccess { receiver, .. } => {
             check_expr(receiver, source, ctx, in_allowed_ctx, in_subscript, diags);
         }
-        GdExpr::Ternary { condition, true_val, false_val, .. } => {
+        GdExpr::Ternary {
+            condition,
+            true_val,
+            false_val,
+            ..
+        } => {
             check_expr(condition, source, ctx, in_allowed_ctx, in_subscript, diags);
             check_expr(true_val, source, ctx, in_allowed_ctx, in_subscript, diags);
             check_expr(false_val, source, ctx, in_allowed_ctx, in_subscript, diags);
@@ -354,8 +377,8 @@ fn parse_numeric(text: &str) -> Result<f64, ()> {
 mod tests {
     use super::*;
     use crate::core::config::{LintConfig, RuleConfig};
-    use crate::core::parser;
     use crate::core::gd_ast;
+    use crate::core::parser;
     use std::collections::HashMap;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {

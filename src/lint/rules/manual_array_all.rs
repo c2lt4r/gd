@@ -77,12 +77,23 @@ fn check_all_pattern(
     diags: &mut Vec<LintDiagnostic>,
 ) {
     // second must be `return true`
-    let GdStmt::Return { value: Some(GdExpr::Bool { value: true, .. }), .. } = second else {
+    let GdStmt::Return {
+        value: Some(GdExpr::Bool { value: true, .. }),
+        ..
+    } = second
+    else {
         return;
     };
 
     // first must be a for loop
-    let GdStmt::For { node: for_node, var, iter, body, .. } = first else {
+    let GdStmt::For {
+        node: for_node,
+        var,
+        iter,
+        body,
+        ..
+    } = first
+    else {
         return;
     };
 
@@ -101,15 +112,17 @@ fn check_all_pattern(
     if gif.body.len() != 1 {
         return;
     }
-    let GdStmt::Return { value: Some(GdExpr::Bool { value: false, .. }), .. } = &gif.body[0]
+    let GdStmt::Return {
+        value: Some(GdExpr::Bool { value: false, .. }),
+        ..
+    } = &gif.body[0]
     else {
         return;
     };
 
     let iter_text = &source[iter.node().byte_range()];
     let cond_text = &source[gif.condition.node().byte_range()];
-    let suggestion =
-        format!("return {iter_text}.all(func({var}): return not ({cond_text}))");
+    let suggestion = format!("return {iter_text}.all(func({var}): return not ({cond_text}))");
 
     let fix = generate_fix(for_node, &second.node(), &suggestion, source);
 
@@ -177,16 +190,22 @@ mod tests {
 
     #[test]
     fn detects_basic_all_pattern() {
-        let source = "func f(arr):\n\tfor x in arr:\n\t\tif x <= 0:\n\t\t\treturn false\n\treturn true\n";
+        let source =
+            "func f(arr):\n\tfor x in arr:\n\t\tif x <= 0:\n\t\t\treturn false\n\treturn true\n";
         let diags = check(source);
         assert_eq!(diags.len(), 1);
-        assert!(diags[0].message.contains("arr.all(func(x): return not (x <= 0))"));
+        assert!(
+            diags[0]
+                .message
+                .contains("arr.all(func(x): return not (x <= 0))")
+        );
     }
 
     #[test]
     fn no_warning_any_pattern() {
         // return true in if, return false after loop -- that's manual-array-any
-        let source = "func f(arr):\n\tfor x in arr:\n\t\tif x > 0:\n\t\t\treturn true\n\treturn false\n";
+        let source =
+            "func f(arr):\n\tfor x in arr:\n\t\tif x > 0:\n\t\t\treturn true\n\treturn false\n";
         assert!(check(source).is_empty());
     }
 
@@ -198,7 +217,8 @@ mod tests {
 
     #[test]
     fn fix_applies_correctly() {
-        let source = "func f(arr):\n\tfor x in arr:\n\t\tif x <= 0:\n\t\t\treturn false\n\treturn true\n";
+        let source =
+            "func f(arr):\n\tfor x in arr:\n\t\tif x <= 0:\n\t\t\treturn false\n\treturn true\n";
         let diags = check(source);
         assert_eq!(diags.len(), 1);
         let fix = diags[0].fix.as_ref().unwrap();

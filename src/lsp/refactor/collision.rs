@@ -33,12 +33,7 @@ impl std::fmt::Display for CollisionKind {
 }
 
 /// Collect all names visible at `position` in the file.
-pub fn collect_scope_names(
-    root: Node,
-    source: &str,
-    position: Point,
-    file: &GdFile,
-) -> ScopeNames {
+pub fn collect_scope_names(root: Node, source: &str, position: Point, file: &GdFile) -> ScopeNames {
     let locals = collect_locals(root, source, position);
     let file_level = collect_file_level(file);
     let builtins = gdscript_builtins().clone();

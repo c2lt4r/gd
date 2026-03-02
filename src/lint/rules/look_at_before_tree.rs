@@ -1,5 +1,5 @@
-use std::collections::{HashMap, HashSet};
 use crate::core::gd_ast::{self, GdDecl, GdExpr, GdFile, GdStmt};
+use std::collections::{HashMap, HashSet};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -56,7 +56,9 @@ fn scan_stmts<'a>(
             // x = SomeClass.new() or x.global_position = ...
             GdStmt::Assign { target, value, .. } | GdStmt::AugAssign { target, value, .. } => {
                 // Check for global property assignment on unattached
-                if let GdExpr::PropertyAccess { receiver, property, .. } = target
+                if let GdExpr::PropertyAccess {
+                    receiver, property, ..
+                } = target
                     && let GdExpr::Ident { name: obj, .. } = receiver.as_ref()
                     && is_global_property(property)
                     && unattached.contains_key(obj)
@@ -140,7 +142,12 @@ fn check_expr_for_tree_calls(
     attached: &HashSet<&str>,
     diags: &mut Vec<LintDiagnostic>,
 ) {
-    if let GdExpr::MethodCall { receiver, method, node, .. } = expr
+    if let GdExpr::MethodCall {
+        receiver,
+        method,
+        node,
+        ..
+    } = expr
         && let GdExpr::Ident { name, .. } = receiver.as_ref()
         && unattached.contains_key(name)
         && !attached.contains(name)
@@ -185,11 +192,18 @@ fn check_expr_for_tree_calls(
         GdExpr::PropertyAccess { receiver, .. } => {
             check_expr_for_tree_calls(receiver, unattached, attached, diags);
         }
-        GdExpr::Subscript { receiver, index, .. } => {
+        GdExpr::Subscript {
+            receiver, index, ..
+        } => {
             check_expr_for_tree_calls(receiver, unattached, attached, diags);
             check_expr_for_tree_calls(index, unattached, attached, diags);
         }
-        GdExpr::Ternary { condition, true_val, false_val, .. } => {
+        GdExpr::Ternary {
+            condition,
+            true_val,
+            false_val,
+            ..
+        } => {
             check_expr_for_tree_calls(condition, unattached, attached, diags);
             check_expr_for_tree_calls(true_val, unattached, attached, diags);
             check_expr_for_tree_calls(false_val, unattached, attached, diags);
@@ -256,8 +270,8 @@ fn is_global_property(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::parser;
     use crate::core::gd_ast;
+    use crate::core::parser;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();

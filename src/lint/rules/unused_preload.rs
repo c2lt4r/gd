@@ -1,5 +1,5 @@
-use std::collections::{HashMap, HashSet};
 use crate::core::gd_ast::{self, GdDecl, GdExpr, GdFile};
+use std::collections::{HashMap, HashSet};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -32,9 +32,9 @@ impl LintRule for UnusedPreload {
                     let col = var.name_node.map_or(var.node.start_position().column, |n| {
                         n.start_position().column
                     });
-                    let line = var.name_node.map_or(var.node.start_position().row, |n| {
-                        n.start_position().row
-                    });
+                    let line = var
+                        .name_node
+                        .map_or(var.node.start_position().row, |n| n.start_position().row);
                     preloads
                         .entry(var.name)
                         .or_insert((line, col, col + var.name.len()));

@@ -30,9 +30,13 @@ impl LintRule for PreferDollarSyntax {
 fn check_get_node_call(expr: &GdExpr<'_>, source: &str, diags: &mut Vec<LintDiagnostic>) {
     // Bare call: get_node("literal")
     if let GdExpr::Call { node, callee, args } = expr
-        && let GdExpr::Ident { name: "get_node", .. } = callee.as_ref()
+        && let GdExpr::Ident {
+            name: "get_node", ..
+        } = callee.as_ref()
         && args.len() == 1
-        && let GdExpr::StringLiteral { value: string_text, .. } = &args[0]
+        && let GdExpr::StringLiteral {
+            value: string_text, ..
+        } = &args[0]
         && let Some(diag) = make_dollar_diagnostic(node, string_text, source)
     {
         diags.push(diag);
@@ -40,10 +44,17 @@ fn check_get_node_call(expr: &GdExpr<'_>, source: &str, diags: &mut Vec<LintDiag
     }
 
     // Method call: self.get_node("literal")
-    if let GdExpr::MethodCall { node, receiver, method: "get_node", args } = expr
+    if let GdExpr::MethodCall {
+        node,
+        receiver,
+        method: "get_node",
+        args,
+    } = expr
         && let GdExpr::Ident { name: "self", .. } = receiver.as_ref()
         && args.len() == 1
-        && let GdExpr::StringLiteral { value: string_text, .. } = &args[0]
+        && let GdExpr::StringLiteral {
+            value: string_text, ..
+        } = &args[0]
         && let Some(diag) = make_dollar_diagnostic(node, string_text, source)
     {
         diags.push(diag);
@@ -107,8 +118,8 @@ fn dollar_syntax_for(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::parser;
     use crate::core::gd_ast;
+    use crate::core::parser;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();

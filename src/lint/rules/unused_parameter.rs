@@ -100,7 +100,9 @@ fn collect_refs_from_stmts<'a>(stmts: &[GdStmt<'a>], refs: &mut HashSet<&'a str>
                 collect_refs_from_expr(iter, refs);
                 collect_refs_from_stmts(body, refs);
             }
-            GdStmt::While { condition, body, .. } => {
+            GdStmt::While {
+                condition, body, ..
+            } => {
                 collect_refs_from_expr(condition, refs);
                 collect_refs_from_stmts(body, refs);
             }
@@ -128,38 +130,57 @@ fn collect_refs_from_expr<'a>(expr: &GdExpr<'a>, refs: &mut HashSet<&'a str>) {
         return;
     }
     match expr {
-        GdExpr::Ident { name, .. } => { refs.insert(name); }
+        GdExpr::Ident { name, .. } => {
+            refs.insert(name);
+        }
         GdExpr::BinOp { left, right, .. } => {
             collect_refs_from_expr(left, refs);
             collect_refs_from_expr(right, refs);
         }
-        GdExpr::UnaryOp { operand, .. } | GdExpr::Cast { expr: operand, .. }
-        | GdExpr::Is { expr: operand, .. } | GdExpr::Await { expr: operand, .. } => {
+        GdExpr::UnaryOp { operand, .. }
+        | GdExpr::Cast { expr: operand, .. }
+        | GdExpr::Is { expr: operand, .. }
+        | GdExpr::Await { expr: operand, .. } => {
             collect_refs_from_expr(operand, refs);
         }
         GdExpr::Call { callee, args, .. } => {
             collect_refs_from_expr(callee, refs);
-            for a in args { collect_refs_from_expr(a, refs); }
+            for a in args {
+                collect_refs_from_expr(a, refs);
+            }
         }
         GdExpr::MethodCall { receiver, args, .. } => {
             collect_refs_from_expr(receiver, refs);
-            for a in args { collect_refs_from_expr(a, refs); }
+            for a in args {
+                collect_refs_from_expr(a, refs);
+            }
         }
         GdExpr::SuperCall { args, .. } => {
-            for a in args { collect_refs_from_expr(a, refs); }
+            for a in args {
+                collect_refs_from_expr(a, refs);
+            }
         }
         GdExpr::PropertyAccess { receiver, .. } => collect_refs_from_expr(receiver, refs),
-        GdExpr::Subscript { receiver, index, .. } => {
+        GdExpr::Subscript {
+            receiver, index, ..
+        } => {
             collect_refs_from_expr(receiver, refs);
             collect_refs_from_expr(index, refs);
         }
-        GdExpr::Ternary { true_val, condition, false_val, .. } => {
+        GdExpr::Ternary {
+            true_val,
+            condition,
+            false_val,
+            ..
+        } => {
             collect_refs_from_expr(true_val, refs);
             collect_refs_from_expr(condition, refs);
             collect_refs_from_expr(false_val, refs);
         }
         GdExpr::Array { elements, .. } => {
-            for e in elements { collect_refs_from_expr(e, refs); }
+            for e in elements {
+                collect_refs_from_expr(e, refs);
+            }
         }
         GdExpr::Dict { pairs, .. } => {
             for (k, v) in pairs {
@@ -174,8 +195,8 @@ fn collect_refs_from_expr<'a>(expr: &GdExpr<'a>, refs: &mut HashSet<&'a str>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::parser;
     use crate::core::gd_ast;
+    use crate::core::parser;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();

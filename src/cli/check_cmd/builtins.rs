@@ -46,8 +46,9 @@ fn check_builtin_method_in_node(
         && method_ident.kind() == "identifier"
         && let Ok(method_name) = method_ident.utf8_text(source.as_bytes())
     {
-        let ty = type_inference::infer_expression_type_with_project(&receiver, source, file, project)
-            .or_else(|| infer_local_var_type(&receiver, source, file, project));
+        let ty =
+            type_inference::infer_expression_type_with_project(&receiver, source, file, project)
+                .or_else(|| infer_local_var_type(&receiver, source, file, project));
         if let Some(ref ty) = ty
             && let Some(type_name) = resolve_builtin_type_name(ty)
             && type_inference::is_builtin_type(type_name)
@@ -108,8 +109,9 @@ fn check_builtin_property_in_node(
             .any(|c| c.kind() == "attribute_call")
         && let Ok(member_name) = member.utf8_text(source.as_bytes())
     {
-        let ty = type_inference::infer_expression_type_with_project(&receiver, source, file, project)
-            .or_else(|| infer_local_var_type(&receiver, source, file, project));
+        let ty =
+            type_inference::infer_expression_type_with_project(&receiver, source, file, project)
+                .or_else(|| infer_local_var_type(&receiver, source, file, project));
         if let Some(ref ty) = ty
             && let Some(type_name) = resolve_builtin_type_name(ty)
             && type_inference::is_builtin_type(type_name)

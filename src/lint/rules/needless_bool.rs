@@ -44,11 +44,21 @@ fn check_if_statement(stmt: &GdStmt<'_>, source: &str, diags: &mut Vec<LintDiagn
 
     // Pattern 1: both return boolean literals
     if let (
-        GdStmt::Return { value: Some(if_expr), .. },
-        GdStmt::Return { value: Some(else_expr), .. },
+        GdStmt::Return {
+            value: Some(if_expr),
+            ..
+        },
+        GdStmt::Return {
+            value: Some(else_expr),
+            ..
+        },
     ) = (&gif.body[0], &else_body[0])
-        && let (GdExpr::Bool { value: if_bool, .. }, GdExpr::Bool { value: else_bool, .. }) =
-            (if_expr, else_expr)
+        && let (
+            GdExpr::Bool { value: if_bool, .. },
+            GdExpr::Bool {
+                value: else_bool, ..
+            },
+        ) = (if_expr, else_expr)
         && if_bool != else_bool
     {
         let suggestion = if *if_bool {
@@ -72,11 +82,21 @@ fn check_if_statement(stmt: &GdStmt<'_>, source: &str, diags: &mut Vec<LintDiagn
 
     // Pattern 2: both assign same variable to boolean literals
     if let (
-        GdStmt::Assign { target: if_target, value: if_val, .. },
-        GdStmt::Assign { target: else_target, value: else_val, .. },
+        GdStmt::Assign {
+            target: if_target,
+            value: if_val,
+            ..
+        },
+        GdStmt::Assign {
+            target: else_target,
+            value: else_val,
+            ..
+        },
     ) = (&gif.body[0], &else_body[0])
         && let GdExpr::Bool { value: if_bool, .. } = if_val
-        && let GdExpr::Bool { value: else_bool, .. } = else_val
+        && let GdExpr::Bool {
+            value: else_bool, ..
+        } = else_val
         && if_bool != else_bool
     {
         let if_var = &source[if_target.node().byte_range()];
@@ -106,12 +126,28 @@ fn check_if_statement(stmt: &GdStmt<'_>, source: &str, diags: &mut Vec<LintDiagn
 }
 
 fn check_ternary(expr: &GdExpr<'_>, source: &str, diags: &mut Vec<LintDiagnostic>) {
-    let GdExpr::Ternary { node, true_val, condition, false_val } = expr else {
+    let GdExpr::Ternary {
+        node,
+        true_val,
+        condition,
+        false_val,
+    } = expr
+    else {
         return;
     };
 
-    let GdExpr::Bool { value: true_bool, .. } = true_val.as_ref() else { return };
-    let GdExpr::Bool { value: false_bool, .. } = false_val.as_ref() else { return };
+    let GdExpr::Bool {
+        value: true_bool, ..
+    } = true_val.as_ref()
+    else {
+        return;
+    };
+    let GdExpr::Bool {
+        value: false_bool, ..
+    } = false_val.as_ref()
+    else {
+        return;
+    };
 
     if true_bool == false_bool {
         return;
@@ -172,8 +208,8 @@ fn generate_if_else_fix(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::parser;
     use crate::core::gd_ast;
+    use crate::core::parser;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();

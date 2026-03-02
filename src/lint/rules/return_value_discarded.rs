@@ -22,7 +22,12 @@ impl LintRule for ReturnValueDiscarded {
         false
     }
 
-    fn check(&self, _file: &GdFile<'_>, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(
+        &self,
+        _file: &GdFile<'_>,
+        _source: &str,
+        _config: &LintConfig,
+    ) -> Vec<LintDiagnostic> {
         Vec::new()
     }
 

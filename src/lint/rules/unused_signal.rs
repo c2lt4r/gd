@@ -1,5 +1,5 @@
-use std::collections::{HashMap, HashSet};
 use crate::core::gd_ast::{self, GdDecl, GdExpr, GdFile};
+use std::collections::{HashMap, HashSet};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -33,7 +33,11 @@ impl LintRule for UnusedSignal {
 
         // Event bus heuristic: if the file has no functions, it's likely an event
         // bus or signal-only file where signals are used from other files.
-        if !file.declarations.iter().any(|d| matches!(d, GdDecl::Func(_))) {
+        if !file
+            .declarations
+            .iter()
+            .any(|d| matches!(d, GdDecl::Func(_)))
+        {
             return diags;
         }
 
@@ -69,24 +73,30 @@ impl LintRule for UnusedSignal {
 fn collect_signal_ref<'a>(expr: &GdExpr<'a>, referenced: &mut HashSet<&'a str>) {
     match expr {
         // signal_name.emit() / .connect() / .disconnect()
-        GdExpr::MethodCall { receiver, method, .. }
-            if matches!(*method, "emit" | "connect" | "disconnect") =>
-        {
+        GdExpr::MethodCall {
+            receiver, method, ..
+        } if matches!(*method, "emit" | "connect" | "disconnect") => {
             if let Some(name) = signal_name_from_receiver(receiver) {
                 referenced.insert(name);
             }
         }
         // Bare callable reference: signal_name.emit (no parentheses)
-        GdExpr::PropertyAccess { receiver, property, .. }
-            if matches!(*property, "emit" | "connect" | "disconnect") =>
-        {
+        GdExpr::PropertyAccess {
+            receiver, property, ..
+        } if matches!(*property, "emit" | "connect" | "disconnect") => {
             if let Some(name) = signal_name_from_receiver(receiver) {
                 referenced.insert(name);
             }
         }
         // Legacy: emit_signal("signal_name")
         GdExpr::Call { callee, args, .. }
-            if matches!(callee.as_ref(), GdExpr::Ident { name: "emit_signal", .. }) =>
+            if matches!(
+                callee.as_ref(),
+                GdExpr::Ident {
+                    name: "emit_signal",
+                    ..
+                }
+            ) =>
         {
             if let Some(name) = extract_string_arg(args) {
                 referenced.insert(name);
@@ -101,11 +111,11 @@ fn signal_name_from_receiver<'a>(receiver: &GdExpr<'a>) -> Option<&'a str> {
     match receiver {
         GdExpr::Ident { name, .. } if *name != "self" => Some(name),
         // self.signal_name → property is the signal
-        GdExpr::PropertyAccess { receiver: inner, property, .. }
-            if matches!(inner.as_ref(), GdExpr::Ident { name: "self", .. }) =>
-        {
-            Some(property)
-        }
+        GdExpr::PropertyAccess {
+            receiver: inner,
+            property,
+            ..
+        } if matches!(inner.as_ref(), GdExpr::Ident { name: "self", .. }) => Some(property),
         _ => None,
     }
 }
@@ -124,8 +134,8 @@ fn extract_string_arg<'a>(args: &[GdExpr<'a>]) -> Option<&'a str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::parser;
     use crate::core::gd_ast;
+    use crate::core::parser;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();

@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use crate::core::gd_ast::{self, GdDecl, GdExpr, GdFile, GdStmt};
+use std::collections::HashMap;
 
 use super::{LintCategory, LintDiagnostic, LintRule};
 use crate::core::config::LintConfig;
@@ -67,7 +67,11 @@ fn walk_stmts<'a>(
                     );
                 }
                 // x.name = "..."
-                if let GdExpr::PropertyAccess { receiver, property: "name", .. } = target
+                if let GdExpr::PropertyAccess {
+                    receiver,
+                    property: "name",
+                    ..
+                } = target
                     && let GdExpr::Ident { name, .. } = receiver.as_ref()
                     && let Some(entry) = tracked.get_mut(name)
                 {
@@ -135,7 +139,11 @@ fn emit_unnamed_diag(
 
 /// Extract the class name from `SomeType.new()` — returns the identifier receiver of a "new" method call.
 fn extract_new_type<'a>(expr: &GdExpr<'a>) -> Option<&'a str> {
-    if let GdExpr::MethodCall { method: "new", receiver, .. } = expr
+    if let GdExpr::MethodCall {
+        method: "new",
+        receiver,
+        ..
+    } = expr
         && let GdExpr::Ident { name, .. } = receiver.as_ref()
     {
         return Some(name);
@@ -147,19 +155,34 @@ fn extract_new_type<'a>(expr: &GdExpr<'a>) -> Option<&'a str> {
 fn extract_add_child_arg<'a>(expr: &GdExpr<'a>) -> Option<(&'a str, usize, usize)> {
     match expr {
         // add_child(x) — direct call
-        GdExpr::Call { callee, args, node, .. } => {
+        GdExpr::Call {
+            callee, args, node, ..
+        } => {
             if let GdExpr::Ident { name: func, .. } = callee.as_ref()
                 && *func == "add_child"
                 && let Some(GdExpr::Ident { name, .. }) = args.first()
             {
-                return Some((name, node.start_position().row, node.start_position().column));
+                return Some((
+                    name,
+                    node.start_position().row,
+                    node.start_position().column,
+                ));
             }
             None
         }
         // parent.add_child(x) — method call
-        GdExpr::MethodCall { method: "add_child", args, node, .. } => {
+        GdExpr::MethodCall {
+            method: "add_child",
+            args,
+            node,
+            ..
+        } => {
             if let Some(GdExpr::Ident { name, .. }) = args.first() {
-                return Some((name, node.start_position().row, node.start_position().column));
+                return Some((
+                    name,
+                    node.start_position().row,
+                    node.start_position().column,
+                ));
             }
             None
         }
@@ -170,14 +193,18 @@ fn extract_add_child_arg<'a>(expr: &GdExpr<'a>) -> Option<(&'a str, usize, usize
 /// Detect `call_deferred("add_child", x)` or `parent.call_deferred("add_child", x)`.
 fn extract_deferred_add_child<'a>(expr: &GdExpr<'a>) -> Option<(&'a str, usize, usize)> {
     let (method, args, node) = match expr {
-        GdExpr::Call { callee, args, node, .. } => {
+        GdExpr::Call {
+            callee, args, node, ..
+        } => {
             if let GdExpr::Ident { name, .. } = callee.as_ref() {
                 (*name, args, node)
             } else {
                 return None;
             }
         }
-        GdExpr::MethodCall { method, args, node, .. } => (*method, args, node),
+        GdExpr::MethodCall {
+            method, args, node, ..
+        } => (*method, args, node),
         _ => return None,
     };
 
@@ -190,7 +217,11 @@ fn extract_deferred_add_child<'a>(expr: &GdExpr<'a>) -> Option<(&'a str, usize, 
         && value.trim_matches('"').trim_matches('\'') == "add_child"
         && let Some(GdExpr::Ident { name, .. }) = args.get(1)
     {
-        return Some((name, node.start_position().row, node.start_position().column));
+        return Some((
+            name,
+            node.start_position().row,
+            node.start_position().column,
+        ));
     }
     None
 }

@@ -22,8 +22,18 @@ impl LintRule for EnumNaming {
                 if !e.name.is_empty() && !is_pascal_case(e.name) {
                     let fixed = to_pascal_case(e.name);
                     let (line, col, end_col) = e.name_node.map_or(
-                        (e.node.start_position().row, e.node.start_position().column, None),
-                        |n| (n.start_position().row, n.start_position().column, Some(n.end_position().column)),
+                        (
+                            e.node.start_position().row,
+                            e.node.start_position().column,
+                            None,
+                        ),
+                        |n| {
+                            (
+                                n.start_position().row,
+                                n.start_position().column,
+                                Some(n.end_position().column),
+                            )
+                        },
                     );
                     let fix = e.name_node.map(|n| Fix {
                         byte_start: n.start_byte(),
@@ -47,8 +57,18 @@ impl LintRule for EnumNaming {
                     if !is_upper_snake_case(member.name) {
                         let fixed = to_upper_snake_case(member.name);
                         let (line, col, end_col) = member.name_node.map_or(
-                            (member.node.start_position().row, member.node.start_position().column, None),
-                            |n| (n.start_position().row, n.start_position().column, Some(n.end_position().column)),
+                            (
+                                member.node.start_position().row,
+                                member.node.start_position().column,
+                                None,
+                            ),
+                            |n| {
+                                (
+                                    n.start_position().row,
+                                    n.start_position().column,
+                                    Some(n.end_position().column),
+                                )
+                            },
                         );
                         let fix = member.name_node.map(|n| Fix {
                             byte_start: n.start_byte(),
@@ -142,8 +162,8 @@ fn to_upper_snake_case(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::parser;
     use crate::core::gd_ast;
+    use crate::core::parser;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();

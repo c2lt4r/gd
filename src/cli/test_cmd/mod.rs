@@ -774,7 +774,13 @@ fn list_tests(
             let class_tests: Vec<String> = cls
                 .declarations
                 .iter()
-                .filter_map(|d| if let gd_ast::GdDecl::Func(f) = d { Some(f) } else { None })
+                .filter_map(|d| {
+                    if let gd_ast::GdDecl::Func(f) = d {
+                        Some(f)
+                    } else {
+                        None
+                    }
+                })
                 .filter(|f| f.name.starts_with("test_"))
                 .map(|f| f.name.to_string())
                 .collect();

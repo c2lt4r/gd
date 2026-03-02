@@ -36,11 +36,7 @@ fn collect_functions(decls: &[GdDecl<'_>], diags: &mut Vec<LintDiagnostic>) {
 }
 
 /// Check a statement list for variable declarations that shadow outer scope names.
-fn check_body<'a>(
-    stmts: &[GdStmt<'a>],
-    outer: &HashSet<&'a str>,
-    diags: &mut Vec<LintDiagnostic>,
-) {
+fn check_body<'a>(stmts: &[GdStmt<'a>], outer: &HashSet<&'a str>, diags: &mut Vec<LintDiagnostic>) {
     let mut current_scope = outer.clone();
 
     for stmt in stmts {

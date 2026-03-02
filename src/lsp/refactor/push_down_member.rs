@@ -221,9 +221,7 @@ fn discover_child_files(
 
         let is_child = if let Some(ref extends) = fs.extends {
             // Match by class_name
-            let by_name = parent_gd
-                .class_name
-                .is_some_and(|cn| extends == cn);
+            let by_name = parent_gd.class_name.is_some_and(|cn| extends == cn);
             // Also match by res:// path in extends (e.g., extends "res://base.gd")
             by_name || extends == &parent_res || extends == &parent_relative
         } else {

@@ -18,7 +18,12 @@ impl LintRule for SelfAssignment {
         let source_bytes = source.as_bytes();
         let mut diags = Vec::new();
         gd_ast::visit_stmts(file, &mut |stmt| {
-            if let GdStmt::Assign { node, target, value } = stmt {
+            if let GdStmt::Assign {
+                node,
+                target,
+                value,
+            } = stmt
+            {
                 let left_text = &source[target.node().byte_range()];
                 let right_text = &source[value.node().byte_range()];
 

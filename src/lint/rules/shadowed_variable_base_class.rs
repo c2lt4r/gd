@@ -19,7 +19,12 @@ impl LintRule for ShadowedVariableBaseClass {
         false
     }
 
-    fn check(&self, _file: &GdFile<'_>, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(
+        &self,
+        _file: &GdFile<'_>,
+        _source: &str,
+        _config: &LintConfig,
+    ) -> Vec<LintDiagnostic> {
         Vec::new()
     }
 
@@ -45,39 +50,37 @@ impl LintRule for ShadowedVariableBaseClass {
         let base_names: Vec<&str> = base_vars.iter().map(|v| v.name.as_str()).collect();
 
         // Check function bodies for local variables and loop iterators that shadow base members
-        gd_ast::visit_stmts(file, &mut |stmt| {
-            match stmt {
-                GdStmt::Var(var) if base_names.contains(&var.name) => {
-                    diags.push(LintDiagnostic {
-                        rule: "shadowed-variable-base-class",
-                        message: format!(
-                            "local variable `{}` shadows a member of base class `{extends}`",
-                            var.name
-                        ),
-                        severity: Severity::Warning,
-                        line: var.node.start_position().row,
-                        column: var.node.start_position().column,
-                        end_column: None,
-                        fix: None,
-                        context_lines: None,
-                    });
-                }
-                GdStmt::For { node, var, .. } if base_names.contains(var) => {
-                    diags.push(LintDiagnostic {
-                        rule: "shadowed-variable-base-class",
-                        message: format!(
-                            "loop variable `{var}` shadows a member of base class `{extends}`"
-                        ),
-                        severity: Severity::Warning,
-                        line: node.start_position().row,
-                        column: node.start_position().column,
-                        end_column: None,
-                        fix: None,
-                        context_lines: None,
-                    });
-                }
-                _ => {}
+        gd_ast::visit_stmts(file, &mut |stmt| match stmt {
+            GdStmt::Var(var) if base_names.contains(&var.name) => {
+                diags.push(LintDiagnostic {
+                    rule: "shadowed-variable-base-class",
+                    message: format!(
+                        "local variable `{}` shadows a member of base class `{extends}`",
+                        var.name
+                    ),
+                    severity: Severity::Warning,
+                    line: var.node.start_position().row,
+                    column: var.node.start_position().column,
+                    end_column: None,
+                    fix: None,
+                    context_lines: None,
+                });
             }
+            GdStmt::For { node, var, .. } if base_names.contains(var) => {
+                diags.push(LintDiagnostic {
+                    rule: "shadowed-variable-base-class",
+                    message: format!(
+                        "loop variable `{var}` shadows a member of base class `{extends}`"
+                    ),
+                    severity: Severity::Warning,
+                    line: node.start_position().row,
+                    column: node.start_position().column,
+                    end_column: None,
+                    fix: None,
+                    context_lines: None,
+                });
+            }
+            _ => {}
         });
 
         diags
@@ -87,9 +90,9 @@ impl LintRule for ShadowedVariableBaseClass {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::workspace_index;
     use crate::core::gd_ast;
     use crate::core::parser;
+    use crate::core::workspace_index;
     use std::path::PathBuf;
 
     fn check_with_project(source: &str, project_files: &[(&str, &str)]) -> Vec<LintDiagnostic> {

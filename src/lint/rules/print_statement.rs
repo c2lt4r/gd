@@ -23,9 +23,7 @@ impl LintRule for PrintStatement {
             {
                 diags.push(LintDiagnostic {
                     rule: "print-statement",
-                    message: format!(
-                        "found `{name}()` call; consider removing before release"
-                    ),
+                    message: format!("found `{name}()` call; consider removing before release"),
                     severity: Severity::Info,
                     line: node.start_position().row,
                     column: node.start_position().column,
@@ -56,8 +54,8 @@ const PRINT_FUNCTIONS: &[&str] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::parser;
     use crate::core::gd_ast;
+    use crate::core::parser;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();

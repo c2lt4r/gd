@@ -19,7 +19,9 @@ impl LintRule for PrivateMethodAccess {
     fn check(&self, file: &GdFile<'_>, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
         gd_ast::visit_exprs(file, &mut |expr| {
-            if let GdExpr::MethodCall { receiver, method, .. } = expr
+            if let GdExpr::MethodCall {
+                receiver, method, ..
+            } = expr
                 && method.starts_with('_')
                 && !is_self_or_super(receiver)
                 && !ALLOWED_CALLBACKS.contains(method)
@@ -41,7 +43,13 @@ impl LintRule for PrivateMethodAccess {
 }
 
 fn is_self_or_super(expr: &GdExpr) -> bool {
-    matches!(expr, GdExpr::Ident { name: "self" | "super", .. })
+    matches!(
+        expr,
+        GdExpr::Ident {
+            name: "self" | "super",
+            ..
+        }
+    )
 }
 
 #[cfg(test)]

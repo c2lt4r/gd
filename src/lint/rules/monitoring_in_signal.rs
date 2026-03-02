@@ -1,5 +1,5 @@
-use std::collections::HashSet;
 use crate::core::gd_ast::{self, GdDecl, GdExpr, GdFile, GdStmt};
+use std::collections::HashSet;
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -57,7 +57,15 @@ impl LintRule for MonitoringInSignal {
 /// Find `signal.connect(callback)` where signal is an area signal, collect callback name.
 fn collect_signal_connect<'a>(expr: &GdExpr<'a>, callbacks: &mut HashSet<&'a str>) {
     // Pattern: signal_name.connect(callback_name)
-    let GdExpr::MethodCall { receiver, method, args, .. } = expr else { return };
+    let GdExpr::MethodCall {
+        receiver,
+        method,
+        args,
+        ..
+    } = expr
+    else {
+        return;
+    };
     if *method != "connect" {
         return;
     }
@@ -66,11 +74,11 @@ fn collect_signal_connect<'a>(expr: &GdExpr<'a>, callbacks: &mut HashSet<&'a str
     let signal_name = match receiver.as_ref() {
         GdExpr::Ident { name, .. } => *name,
         // self.signal_name.connect(...)
-        GdExpr::PropertyAccess { property, receiver: inner, .. }
-            if matches!(inner.as_ref(), GdExpr::Ident { name: "self", .. }) =>
-        {
-            *property
-        }
+        GdExpr::PropertyAccess {
+            property,
+            receiver: inner,
+            ..
+        } if matches!(inner.as_ref(), GdExpr::Ident { name: "self", .. }) => *property,
         _ => return,
     };
 
@@ -103,11 +111,7 @@ fn is_auto_connected_signal_handler(name: &str) -> bool {
 }
 
 /// Scan a function body for `monitoring = ...` or `monitorable = ...` direct assignments.
-fn check_body_for_monitoring(
-    stmts: &[GdStmt],
-    func_name: &str,
-    diags: &mut Vec<LintDiagnostic>,
-) {
+fn check_body_for_monitoring(stmts: &[GdStmt], func_name: &str, diags: &mut Vec<LintDiagnostic>) {
     gd_ast::visit_body_stmts(stmts, &mut |stmt| {
         if let GdStmt::Assign { target, node, .. } = stmt
             && let Some(prop) = extract_dangerous_prop(target)
@@ -134,11 +138,9 @@ fn check_body_for_monitoring(
 fn extract_dangerous_prop<'a>(target: &GdExpr<'a>) -> Option<&'a str> {
     let name = match target {
         GdExpr::Ident { name, .. } => *name,
-        GdExpr::PropertyAccess { receiver, property, .. }
-            if matches!(receiver.as_ref(), GdExpr::Ident { name: "self", .. }) =>
-        {
-            *property
-        }
+        GdExpr::PropertyAccess {
+            receiver, property, ..
+        } if matches!(receiver.as_ref(), GdExpr::Ident { name: "self", .. }) => *property,
         _ => return None,
     };
     if DANGEROUS_PROPS.contains(&name) {
@@ -151,8 +153,8 @@ fn extract_dangerous_prop<'a>(target: &GdExpr<'a>) -> Option<&'a str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::parser;
     use crate::core::gd_ast;
+    use crate::core::parser;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();

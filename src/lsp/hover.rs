@@ -606,7 +606,8 @@ fn hover_member_on_type(
             .or_else(|| ws.autoload_content(class));
         if let Some(content) = content
             && let Ok(tree) = crate::core::parser::parse(&content)
-            && let Some(mut hover) = resolve_identifier(&gd_ast::convert(&tree, &content), member, &content)
+            && let Some(mut hover) =
+                resolve_identifier(&gd_ast::convert(&tree, &content), member, &content)
         {
             // Annotate with origin class
             if let HoverContents::Markup(ref mut markup) = hover.contents {

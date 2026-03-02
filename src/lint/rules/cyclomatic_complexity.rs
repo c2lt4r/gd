@@ -114,43 +114,65 @@ fn count_branches(stmts: &[GdStmt], complexity: &mut usize) {
 /// Count `and`/`or` operators in expressions.
 fn count_expr_branches(expr: &GdExpr, complexity: &mut usize) {
     match expr {
-        GdExpr::BinOp { op, left, right, .. } => {
+        GdExpr::BinOp {
+            op, left, right, ..
+        } => {
             if matches!(*op, "and" | "or") {
                 *complexity += 1;
             }
             count_expr_branches(left, complexity);
             count_expr_branches(right, complexity);
         }
-        GdExpr::UnaryOp { operand, .. } | GdExpr::Cast { expr: operand, .. }
-        | GdExpr::Is { expr: operand, .. } | GdExpr::Await { expr: operand, .. } => {
+        GdExpr::UnaryOp { operand, .. }
+        | GdExpr::Cast { expr: operand, .. }
+        | GdExpr::Is { expr: operand, .. }
+        | GdExpr::Await { expr: operand, .. } => {
             count_expr_branches(operand, complexity);
         }
         GdExpr::Call { callee, args, .. } => {
             count_expr_branches(callee, complexity);
-            for a in args { count_expr_branches(a, complexity); }
+            for a in args {
+                count_expr_branches(a, complexity);
+            }
         }
         GdExpr::MethodCall { receiver, args, .. } => {
             count_expr_branches(receiver, complexity);
-            for a in args { count_expr_branches(a, complexity); }
+            for a in args {
+                count_expr_branches(a, complexity);
+            }
         }
         GdExpr::SuperCall { args, .. } => {
-            for a in args { count_expr_branches(a, complexity); }
+            for a in args {
+                count_expr_branches(a, complexity);
+            }
         }
         GdExpr::PropertyAccess { receiver, .. } => count_expr_branches(receiver, complexity),
-        GdExpr::Subscript { receiver, index, .. } => {
+        GdExpr::Subscript {
+            receiver, index, ..
+        } => {
             count_expr_branches(receiver, complexity);
             count_expr_branches(index, complexity);
         }
-        GdExpr::Ternary { true_val, condition, false_val, .. } => {
+        GdExpr::Ternary {
+            true_val,
+            condition,
+            false_val,
+            ..
+        } => {
             count_expr_branches(true_val, complexity);
             count_expr_branches(condition, complexity);
             count_expr_branches(false_val, complexity);
         }
         GdExpr::Array { elements, .. } => {
-            for e in elements { count_expr_branches(e, complexity); }
+            for e in elements {
+                count_expr_branches(e, complexity);
+            }
         }
         GdExpr::Dict { pairs, .. } => {
-            for (k, v) in pairs { count_expr_branches(k, complexity); count_expr_branches(v, complexity); }
+            for (k, v) in pairs {
+                count_expr_branches(k, complexity);
+                count_expr_branches(v, complexity);
+            }
         }
         // Don't recurse into lambdas — separate complexity scope
         _ => {}
@@ -175,8 +197,8 @@ fn is_guard_clause(if_stmt: &GdIf) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::parser;
     use crate::core::gd_ast;
+    use crate::core::parser;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();

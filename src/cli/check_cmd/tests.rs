@@ -1,5 +1,5 @@
-use crate::core::{gd_ast, parser};
 use crate::core::workspace_index::ProjectIndex;
+use crate::core::{gd_ast, parser};
 
 use super::*;
 
@@ -1101,11 +1101,17 @@ func f(x: int) -> void:
 \t\t\tprint(\"other\")
 ";
     let errs = structural_errors(source);
-    let indent_errs: Vec<_> = errs.iter().filter(|e| e.message.contains("indentation")).collect();
+    let indent_errs: Vec<_> = errs
+        .iter()
+        .filter(|e| e.message.contains("indentation"))
+        .collect();
     assert!(
         indent_errs.is_empty(),
         "unexpected indentation errors: {:?}",
-        indent_errs.iter().map(|e| format!("L{}: {}", e.line, &e.message)).collect::<Vec<_>>()
+        indent_errs
+            .iter()
+            .map(|e| format!("L{}: {}", e.line, &e.message))
+            .collect::<Vec<_>>()
     );
 }
 
@@ -1123,11 +1129,17 @@ func f(x: int) -> void:
 \t\t\tprint(\"c\")
 ";
     let errs = structural_errors(source);
-    let indent_errs: Vec<_> = errs.iter().filter(|e| e.message.contains("indentation")).collect();
+    let indent_errs: Vec<_> = errs
+        .iter()
+        .filter(|e| e.message.contains("indentation"))
+        .collect();
     assert!(
         indent_errs.is_empty(),
         "unexpected indentation errors: {:?}",
-        indent_errs.iter().map(|e| format!("L{}: {}", e.line, &e.message)).collect::<Vec<_>>()
+        indent_errs
+            .iter()
+            .map(|e| format!("L{}: {}", e.line, &e.message))
+            .collect::<Vec<_>>()
     );
 }
 
@@ -1144,7 +1156,8 @@ func _ready():
 ";
     let errs = classdb_errors(source);
     assert!(
-        errs.iter().any(|e| e.message.contains("returns void") && e.message.contains("argument")),
+        errs.iter()
+            .any(|e| e.message.contains("returns void") && e.message.contains("argument")),
         "expected void-as-argument error, got: {errs:?}"
     );
 }
@@ -1196,7 +1209,8 @@ func f():
 ";
     let errs = structural_errors(source);
     assert!(
-        errs.iter().any(|e| e.message.contains("constant") && e.message.contains("ARR")),
+        errs.iter()
+            .any(|e| e.message.contains("constant") && e.message.contains("ARR")),
         "expected const subscript error, got: {errs:?}"
     );
 }
@@ -1210,7 +1224,8 @@ func f():
 ";
     let errs = structural_errors(source);
     assert!(
-        errs.iter().any(|e| e.message.contains("signal") && e.message.contains("my_signal")),
+        errs.iter()
+            .any(|e| e.message.contains("signal") && e.message.contains("my_signal")),
         "expected signal assign error, got: {errs:?}"
     );
 }
@@ -1226,7 +1241,8 @@ static var cached = health
 ";
     let errs = structural_errors(source);
     assert!(
-        errs.iter().any(|e| e.message.contains("health") && e.message.contains("static")),
+        errs.iter()
+            .any(|e| e.message.contains("health") && e.message.contains("static")),
         "expected static context error, got: {errs:?}"
     );
 }
@@ -1282,7 +1298,8 @@ fn void_return_value_still_flagged() {
     let source = "func f() -> void:\n\treturn 42\n";
     let errs = structural_errors(source);
     assert!(
-        errs.iter().any(|e| e.message.contains("void") && e.message.contains("return")),
+        errs.iter()
+            .any(|e| e.message.contains("void") && e.message.contains("return")),
     );
 }
 

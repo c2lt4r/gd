@@ -42,7 +42,11 @@ impl LintRule for NullAfterAwait {
             if let GdDecl::Func(func) = decl
                 && body_contains_await(&func.body)
             {
-                collect_assignments_after_await(&func.body, &nullable_vars, &mut vars_assigned_after_await);
+                collect_assignments_after_await(
+                    &func.body,
+                    &nullable_vars,
+                    &mut vars_assigned_after_await,
+                );
             }
         }
         if vars_assigned_after_await.is_empty() {
@@ -119,20 +123,30 @@ fn collect_assign_targets<'a>(
             }
         }
         GdStmt::If(if_stmt) => {
-            for s in &if_stmt.body { collect_assign_targets(s, nullable_vars, result); }
+            for s in &if_stmt.body {
+                collect_assign_targets(s, nullable_vars, result);
+            }
             for (_, branch) in &if_stmt.elif_branches {
-                for s in branch { collect_assign_targets(s, nullable_vars, result); }
+                for s in branch {
+                    collect_assign_targets(s, nullable_vars, result);
+                }
             }
             if let Some(else_body) = &if_stmt.else_body {
-                for s in else_body { collect_assign_targets(s, nullable_vars, result); }
+                for s in else_body {
+                    collect_assign_targets(s, nullable_vars, result);
+                }
             }
         }
         GdStmt::For { body, .. } | GdStmt::While { body, .. } => {
-            for s in body { collect_assign_targets(s, nullable_vars, result); }
+            for s in body {
+                collect_assign_targets(s, nullable_vars, result);
+            }
         }
         GdStmt::Match { arms, .. } => {
             for arm in arms {
-                for s in &arm.body { collect_assign_targets(s, nullable_vars, result); }
+                for s in &arm.body {
+                    collect_assign_targets(s, nullable_vars, result);
+                }
             }
         }
         _ => {}
@@ -176,11 +190,15 @@ fn collect_idents_from_expr<'a>(expr: &GdExpr<'a>, out: &mut HashSet<&'a str>) {
         GdExpr::UnaryOp { operand, .. } => collect_idents_from_expr(operand, out),
         GdExpr::Call { callee, args, .. } => {
             collect_idents_from_expr(callee, out);
-            for a in args { collect_idents_from_expr(a, out); }
+            for a in args {
+                collect_idents_from_expr(a, out);
+            }
         }
         GdExpr::MethodCall { receiver, args, .. } => {
             collect_idents_from_expr(receiver, out);
-            for a in args { collect_idents_from_expr(a, out); }
+            for a in args {
+                collect_idents_from_expr(a, out);
+            }
         }
         GdExpr::PropertyAccess { receiver, .. } => collect_idents_from_expr(receiver, out),
         _ => {}
@@ -197,7 +215,8 @@ fn find_unguarded_idents(
     // Visit all expressions in this statement
     let mut check_expr = |expr: &GdExpr| {
         if let GdExpr::Ident { name, node, .. } = expr
-            && risky_vars.contains(name) && !guarded.contains(name)
+            && risky_vars.contains(name)
+            && !guarded.contains(name)
         {
             diags.push(LintDiagnostic {
                 rule: "null-after-await",
@@ -219,7 +238,9 @@ fn find_unguarded_idents(
     match stmt {
         GdStmt::Expr { expr, .. } => visit_expr_flat(expr, &mut check_expr),
         GdStmt::Var(var) => {
-            if let Some(value) = &var.value { visit_expr_flat(value, &mut check_expr); }
+            if let Some(value) = &var.value {
+                visit_expr_flat(value, &mut check_expr);
+            }
         }
         GdStmt::Assign { target, value, .. } | GdStmt::AugAssign { target, value, .. } => {
             visit_expr_flat(target, &mut check_expr);
@@ -238,36 +259,56 @@ fn visit_expr_flat(expr: &GdExpr, f: &mut impl FnMut(&GdExpr)) {
             visit_expr_flat(left, f);
             visit_expr_flat(right, f);
         }
-        GdExpr::UnaryOp { operand, .. } | GdExpr::Cast { expr: operand, .. }
-        | GdExpr::Is { expr: operand, .. } | GdExpr::Await { expr: operand, .. } => {
+        GdExpr::UnaryOp { operand, .. }
+        | GdExpr::Cast { expr: operand, .. }
+        | GdExpr::Is { expr: operand, .. }
+        | GdExpr::Await { expr: operand, .. } => {
             visit_expr_flat(operand, f);
         }
         GdExpr::Call { callee, args, .. } => {
             visit_expr_flat(callee, f);
-            for a in args { visit_expr_flat(a, f); }
+            for a in args {
+                visit_expr_flat(a, f);
+            }
         }
         GdExpr::MethodCall { receiver, args, .. } => {
             visit_expr_flat(receiver, f);
-            for a in args { visit_expr_flat(a, f); }
+            for a in args {
+                visit_expr_flat(a, f);
+            }
         }
         GdExpr::SuperCall { args, .. } => {
-            for a in args { visit_expr_flat(a, f); }
+            for a in args {
+                visit_expr_flat(a, f);
+            }
         }
         GdExpr::PropertyAccess { receiver, .. } => visit_expr_flat(receiver, f),
-        GdExpr::Subscript { receiver, index, .. } => {
+        GdExpr::Subscript {
+            receiver, index, ..
+        } => {
             visit_expr_flat(receiver, f);
             visit_expr_flat(index, f);
         }
-        GdExpr::Ternary { true_val, condition, false_val, .. } => {
+        GdExpr::Ternary {
+            true_val,
+            condition,
+            false_val,
+            ..
+        } => {
             visit_expr_flat(true_val, f);
             visit_expr_flat(condition, f);
             visit_expr_flat(false_val, f);
         }
         GdExpr::Array { elements, .. } => {
-            for e in elements { visit_expr_flat(e, f); }
+            for e in elements {
+                visit_expr_flat(e, f);
+            }
         }
         GdExpr::Dict { pairs, .. } => {
-            for (k, v) in pairs { visit_expr_flat(k, f); visit_expr_flat(v, f); }
+            for (k, v) in pairs {
+                visit_expr_flat(k, f);
+                visit_expr_flat(v, f);
+            }
         }
         _ => {}
     }
@@ -276,8 +317,8 @@ fn visit_expr_flat(expr: &GdExpr, f: &mut impl FnMut(&GdExpr)) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::parser;
     use crate::core::gd_ast;
+    use crate::core::parser;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();

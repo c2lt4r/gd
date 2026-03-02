@@ -57,7 +57,12 @@ impl LintRule for UnusedPrivateFunction {
         false
     }
 
-    fn check(&self, _file: &GdFile<'_>, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(
+        &self,
+        _file: &GdFile<'_>,
+        _source: &str,
+        _config: &LintConfig,
+    ) -> Vec<LintDiagnostic> {
         Vec::new()
     }
 
@@ -154,9 +159,9 @@ fn has_identifier_reference(node: tree_sitter::Node, source: &[u8], name: &str) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::workspace_index;
     use crate::core::gd_ast;
     use crate::core::parser;
+    use crate::core::workspace_index;
     use std::path::PathBuf;
 
     fn check_with_project(source: &str, project_files: &[(&str, &str)]) -> Vec<LintDiagnostic> {
@@ -203,12 +208,8 @@ func helper() -> void:
         let tree = parser::parse(utils_source).unwrap();
         let file = gd_ast::convert(&tree, utils_source);
         let config = LintConfig::default();
-        let diags = UnusedPrivateFunction.check_with_project(
-            &file,
-            utils_source,
-            &config,
-            &project,
-        );
+        let diags =
+            UnusedPrivateFunction.check_with_project(&file, utils_source, &config, &project);
         assert!(diags.is_empty(), "helper is called from main.gd");
     }
 

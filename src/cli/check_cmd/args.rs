@@ -38,11 +38,21 @@ fn check_arg_types_in_node(
     {
         // User-defined functions — check param types from GdFile
         if let Some(func) = file.funcs().find(|f| f.name == func_name) {
-            check_call_arg_types_user(func_name, &func.params, &args_node, source, file, project, errors);
+            check_call_arg_types_user(
+                func_name,
+                &func.params,
+                &args_node,
+                source,
+                file,
+                project,
+                errors,
+            );
         }
         // Self methods via ClassDB (extends chain)
         else if let Some(extends) = file.extends_class() {
-            check_call_arg_types_classdb(func_name, extends, &args_node, source, file, project, errors);
+            check_call_arg_types_classdb(
+                func_name, extends, &args_node, source, file, project, errors,
+            );
         }
         // Constructor: Vector2("bad", "args") or builtin conversion: int([])
         if callee.kind() == "identifier"
@@ -65,8 +75,9 @@ fn check_arg_types_in_node(
             {
                 // Infer receiver type
                 if let Some(receiver) = node.named_child(0) {
-                    let receiver_type =
-                        type_inference::infer_expression_type_with_project(&receiver, source, file, project);
+                    let receiver_type = type_inference::infer_expression_type_with_project(
+                        &receiver, source, file, project,
+                    );
                     let class = receiver_type
                         .as_ref()
                         .and_then(|t| match t {
@@ -129,7 +140,8 @@ fn check_call_arg_types_user(
             && !type_ann.is_inferred
             && !type_ann.name.is_empty()
             && type_ann.name != "Variant"
-            && let Some(actual) = type_inference::infer_expression_type_with_project(arg, source, file, project)
+            && let Some(actual) =
+                type_inference::infer_expression_type_with_project(arg, source, file, project)
             && let Some(actual_name) = inferred_type_name(&actual)
             && !types_assignable(type_ann.name, actual_name)
         {
@@ -169,7 +181,8 @@ fn check_call_arg_types_classdb(
         if let Some(&expected) = param_types.get(i)
             && !expected.is_empty()
             && expected != "Variant"
-            && let Some(actual) = type_inference::infer_expression_type_with_project(arg, source, file, project)
+            && let Some(actual) =
+                type_inference::infer_expression_type_with_project(arg, source, file, project)
             && let Some(actual_name) = inferred_type_name(&actual)
             && !types_assignable_classdb(expected, actual_name)
         {
@@ -207,8 +220,9 @@ fn check_constructor_arg_types(
             let mut cursor = args_node.walk();
             let args: Vec<_> = args_node.named_children(&mut cursor).collect();
             if args.len() == 1
-                && let Some(actual) =
-                    type_inference::infer_expression_type_with_project(&args[0], source, file, project)
+                && let Some(actual) = type_inference::infer_expression_type_with_project(
+                    &args[0], source, file, project,
+                )
                 && let Some(actual_name) = inferred_type_name(&actual)
                 && !matches!(actual_name, "int" | "float" | "bool" | "String" | "Variant")
             {
@@ -227,8 +241,9 @@ fn check_constructor_arg_types(
             let mut cursor = args_node.walk();
             let args: Vec<_> = args_node.named_children(&mut cursor).collect();
             if args.len() == 1
-                && let Some(actual) =
-                    type_inference::infer_expression_type_with_project(&args[0], source, file, project)
+                && let Some(actual) = type_inference::infer_expression_type_with_project(
+                    &args[0], source, file, project,
+                )
                 && let Some(actual_name) = inferred_type_name(&actual)
                 && !matches!(actual_name, "String" | "Color" | "Variant")
             {
@@ -259,7 +274,8 @@ fn check_constructor_arg_types(
 
     for (i, arg) in args.iter().enumerate() {
         if let Some(&expected_type) = expected.get(i)
-            && let Some(actual) = type_inference::infer_expression_type_with_project(arg, source, file, project)
+            && let Some(actual) =
+                type_inference::infer_expression_type_with_project(arg, source, file, project)
             && let Some(actual_name) = inferred_type_name(&actual)
             && !types_assignable(expected_type, actual_name)
         {
@@ -408,8 +424,10 @@ fn check_arg_count_in_node(
             && let Ok(method_name) = method_node.utf8_text(source.as_bytes())
         {
             // Try standard type inference first, then fall back to local var lookup
-            let ty = type_inference::infer_expression_type_with_project(&receiver, source, file, project)
-                .or_else(|| infer_local_var_type(&receiver, source, file, project));
+            let ty = type_inference::infer_expression_type_with_project(
+                &receiver, source, file, project,
+            )
+            .or_else(|| infer_local_var_type(&receiver, source, file, project));
             let class_name = ty.as_ref().and_then(|t| match t {
                 type_inference::InferredType::Builtin(b) => Some(*b),
                 type_inference::InferredType::Class(c) => Some(c.as_str()),
@@ -482,8 +500,9 @@ fn check_attribute_call_args(
         && let Ok(method_name) = method_ident.utf8_text(source.as_bytes())
     {
         let arg_count = count_call_args(&attr_call);
-        let ty = type_inference::infer_expression_type_with_project(&receiver, source, file, project)
-            .or_else(|| infer_local_var_type(&receiver, source, file, project));
+        let ty =
+            type_inference::infer_expression_type_with_project(&receiver, source, file, project)
+                .or_else(|| infer_local_var_type(&receiver, source, file, project));
         let class_name = ty.as_ref().and_then(|t| match t {
             type_inference::InferredType::Builtin(b) => Some(*b),
             type_inference::InferredType::Class(c) => Some(c.as_str()),

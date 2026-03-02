@@ -15,7 +15,12 @@ impl LintRule for OverrideSignatureMismatch {
         LintCategory::Correctness
     }
 
-    fn check(&self, _file: &GdFile<'_>, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(
+        &self,
+        _file: &GdFile<'_>,
+        _source: &str,
+        _config: &LintConfig,
+    ) -> Vec<LintDiagnostic> {
         Vec::new()
     }
 
@@ -85,9 +90,9 @@ impl LintRule for OverrideSignatureMismatch {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::workspace_index;
     use crate::core::gd_ast;
     use crate::core::parser;
+    use crate::core::workspace_index;
     use std::path::PathBuf;
 
     fn check_with_project(source: &str, project_files: &[(&str, &str)]) -> Vec<LintDiagnostic> {

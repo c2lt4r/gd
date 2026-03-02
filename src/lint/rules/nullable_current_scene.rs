@@ -37,20 +37,15 @@ impl LintRule for NullableCurrentScene {
 
 /// Recursively find `get_tree().current_scene.xxx` chains that are not inside
 /// a null-guard if-block. Uses raw tree-sitter nodes for text matching.
-fn check_direct_access(
-    node: tree_sitter::Node,
-    source: &str,
-    diags: &mut Vec<LintDiagnostic>,
-) {
+fn check_direct_access(node: tree_sitter::Node, source: &str, diags: &mut Vec<LintDiagnostic>) {
     if node.kind() == "attribute"
         && is_current_scene_chain(&node, source)
         && !is_inside_current_scene_guard(&node, source)
     {
         diags.push(LintDiagnostic {
             rule: "nullable-current-scene",
-            message:
-                "`get_tree().current_scene` can be null — add a null check before accessing"
-                    .to_string(),
+            message: "`get_tree().current_scene` can be null — add a null check before accessing"
+                .to_string(),
             severity: Severity::Warning,
             line: node.start_position().row,
             column: node.start_position().column,
@@ -132,9 +127,7 @@ fn check_aliased_access(body: &[GdStmt], source: &str, diags: &mut Vec<LintDiagn
     for &(alias, decl_line) in &aliases {
         let guarded = collect_guarded_lines(body, alias);
 
-        if let Some((line, col)) =
-            find_alias_access(body, source, alias, decl_line, &guarded)
-        {
+        if let Some((line, col)) = find_alias_access(body, source, alias, decl_line, &guarded) {
             diags.push(LintDiagnostic {
                 rule: "nullable-current-scene",
                 message: format!(
@@ -185,12 +178,10 @@ fn expr_contains_ident(expr: &GdExpr, name: &str) -> bool {
         }
         GdExpr::UnaryOp { operand, .. } => expr_contains_ident(operand, name),
         GdExpr::Call { callee, args, .. } => {
-            expr_contains_ident(callee, name)
-                || args.iter().any(|a| expr_contains_ident(a, name))
+            expr_contains_ident(callee, name) || args.iter().any(|a| expr_contains_ident(a, name))
         }
         GdExpr::MethodCall { receiver, args, .. } => {
-            expr_contains_ident(receiver, name)
-                || args.iter().any(|a| expr_contains_ident(a, name))
+            expr_contains_ident(receiver, name) || args.iter().any(|a| expr_contains_ident(a, name))
         }
         GdExpr::PropertyAccess { receiver, .. } => expr_contains_ident(receiver, name),
         _ => false,
@@ -235,39 +226,55 @@ fn find_alias_in_stmt(
 ) -> Option<(usize, usize)> {
     match stmt {
         GdStmt::Expr { expr, .. } => find_alias_in_expr(expr, alias, guarded_lines),
-        GdStmt::Var(var) => {
-            var.value.as_ref().and_then(|v| find_alias_in_expr(v, alias, guarded_lines))
-        }
+        GdStmt::Var(var) => var
+            .value
+            .as_ref()
+            .and_then(|v| find_alias_in_expr(v, alias, guarded_lines)),
         GdStmt::Assign { target, value, .. } | GdStmt::AugAssign { target, value, .. } => {
             find_alias_in_expr(target, alias, guarded_lines)
                 .or_else(|| find_alias_in_expr(value, alias, guarded_lines))
         }
         GdStmt::Return { value: Some(v), .. } => find_alias_in_expr(v, alias, guarded_lines),
-        GdStmt::If(gif) => {
-            find_alias_in_expr(&gif.condition, alias, guarded_lines)
-                .or_else(|| gif.body.iter().find_map(|s| find_alias_in_stmt(s, alias, guarded_lines)))
-                .or_else(|| gif.elif_branches.iter().find_map(|(c, b)| {
-                    find_alias_in_expr(c, alias, guarded_lines)
-                        .or_else(|| b.iter().find_map(|s| find_alias_in_stmt(s, alias, guarded_lines)))
-                }))
-                .or_else(|| gif.else_body.as_ref().and_then(|b| {
-                    b.iter().find_map(|s| find_alias_in_stmt(s, alias, guarded_lines))
-                }))
-        }
+        GdStmt::If(gif) => find_alias_in_expr(&gif.condition, alias, guarded_lines)
+            .or_else(|| {
+                gif.body
+                    .iter()
+                    .find_map(|s| find_alias_in_stmt(s, alias, guarded_lines))
+            })
+            .or_else(|| {
+                gif.elif_branches.iter().find_map(|(c, b)| {
+                    find_alias_in_expr(c, alias, guarded_lines).or_else(|| {
+                        b.iter()
+                            .find_map(|s| find_alias_in_stmt(s, alias, guarded_lines))
+                    })
+                })
+            })
+            .or_else(|| {
+                gif.else_body.as_ref().and_then(|b| {
+                    b.iter()
+                        .find_map(|s| find_alias_in_stmt(s, alias, guarded_lines))
+                })
+            }),
         GdStmt::For { iter, body, .. } => {
-            find_alias_in_expr(iter, alias, guarded_lines)
-                .or_else(|| body.iter().find_map(|s| find_alias_in_stmt(s, alias, guarded_lines)))
+            find_alias_in_expr(iter, alias, guarded_lines).or_else(|| {
+                body.iter()
+                    .find_map(|s| find_alias_in_stmt(s, alias, guarded_lines))
+            })
         }
-        GdStmt::While { condition, body, .. } => {
-            find_alias_in_expr(condition, alias, guarded_lines)
-                .or_else(|| body.iter().find_map(|s| find_alias_in_stmt(s, alias, guarded_lines)))
-        }
-        GdStmt::Match { value, arms, .. } => {
-            find_alias_in_expr(value, alias, guarded_lines)
-                .or_else(|| arms.iter().find_map(|a| {
-                    a.body.iter().find_map(|s| find_alias_in_stmt(s, alias, guarded_lines))
-                }))
-        }
+        GdStmt::While {
+            condition, body, ..
+        } => find_alias_in_expr(condition, alias, guarded_lines).or_else(|| {
+            body.iter()
+                .find_map(|s| find_alias_in_stmt(s, alias, guarded_lines))
+        }),
+        GdStmt::Match { value, arms, .. } => find_alias_in_expr(value, alias, guarded_lines)
+            .or_else(|| {
+                arms.iter().find_map(|a| {
+                    a.body
+                        .iter()
+                        .find_map(|s| find_alias_in_stmt(s, alias, guarded_lines))
+                })
+            }),
         _ => None,
     }
 }
@@ -287,35 +294,41 @@ fn find_alias_in_expr(
             Some((node.start_position().row, node.start_position().column))
         }
         // Recurse into sub-expressions
-        GdExpr::BinOp { left, right, .. } => {
-            find_alias_in_expr(left, alias, guarded_lines)
-                .or_else(|| find_alias_in_expr(right, alias, guarded_lines))
-        }
-        GdExpr::UnaryOp { operand, .. } | GdExpr::Cast { expr: operand, .. }
-        | GdExpr::Is { expr: operand, .. } | GdExpr::Await { expr: operand, .. } => {
-            find_alias_in_expr(operand, alias, guarded_lines)
-        }
-        GdExpr::Call { callee, args, .. } => {
-            find_alias_in_expr(callee, alias, guarded_lines)
-                .or_else(|| args.iter().find_map(|a| find_alias_in_expr(a, alias, guarded_lines)))
-        }
+        GdExpr::BinOp { left, right, .. } => find_alias_in_expr(left, alias, guarded_lines)
+            .or_else(|| find_alias_in_expr(right, alias, guarded_lines)),
+        GdExpr::UnaryOp { operand, .. }
+        | GdExpr::Cast { expr: operand, .. }
+        | GdExpr::Is { expr: operand, .. }
+        | GdExpr::Await { expr: operand, .. } => find_alias_in_expr(operand, alias, guarded_lines),
+        GdExpr::Call { callee, args, .. } => find_alias_in_expr(callee, alias, guarded_lines)
+            .or_else(|| {
+                args.iter()
+                    .find_map(|a| find_alias_in_expr(a, alias, guarded_lines))
+            }),
         GdExpr::MethodCall { receiver, args, .. } => {
+            find_alias_in_expr(receiver, alias, guarded_lines).or_else(|| {
+                args.iter()
+                    .find_map(|a| find_alias_in_expr(a, alias, guarded_lines))
+            })
+        }
+        GdExpr::PropertyAccess { receiver, .. } => {
             find_alias_in_expr(receiver, alias, guarded_lines)
-                .or_else(|| args.iter().find_map(|a| find_alias_in_expr(a, alias, guarded_lines)))
         }
-        GdExpr::PropertyAccess { receiver, .. } => find_alias_in_expr(receiver, alias, guarded_lines),
-        GdExpr::Subscript { receiver, index, .. } => {
-            find_alias_in_expr(receiver, alias, guarded_lines)
-                .or_else(|| find_alias_in_expr(index, alias, guarded_lines))
-        }
-        GdExpr::Ternary { true_val, condition, false_val, .. } => {
-            find_alias_in_expr(true_val, alias, guarded_lines)
-                .or_else(|| find_alias_in_expr(condition, alias, guarded_lines))
-                .or_else(|| find_alias_in_expr(false_val, alias, guarded_lines))
-        }
-        GdExpr::Array { elements, .. } => {
-            elements.iter().find_map(|e| find_alias_in_expr(e, alias, guarded_lines))
-        }
+        GdExpr::Subscript {
+            receiver, index, ..
+        } => find_alias_in_expr(receiver, alias, guarded_lines)
+            .or_else(|| find_alias_in_expr(index, alias, guarded_lines)),
+        GdExpr::Ternary {
+            true_val,
+            condition,
+            false_val,
+            ..
+        } => find_alias_in_expr(true_val, alias, guarded_lines)
+            .or_else(|| find_alias_in_expr(condition, alias, guarded_lines))
+            .or_else(|| find_alias_in_expr(false_val, alias, guarded_lines)),
+        GdExpr::Array { elements, .. } => elements
+            .iter()
+            .find_map(|e| find_alias_in_expr(e, alias, guarded_lines)),
         _ => None,
     }
 }
@@ -323,8 +336,8 @@ fn find_alias_in_expr(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::parser;
     use crate::core::gd_ast;
+    use crate::core::parser;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();

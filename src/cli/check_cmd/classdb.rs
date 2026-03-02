@@ -492,9 +492,7 @@ fn check_use_void_in_node(
         errors.push(StructuralError {
             line: pos.row as u32 + 1,
             column: pos.column as u32 + 1,
-            message: format!(
-                "cannot use return value of `{func_name}()` because it returns void",
-            ),
+            message: format!("cannot use return value of `{func_name}()` because it returns void",),
         });
     }
 
@@ -1289,7 +1287,8 @@ fn check_for_iterable_in_node(
 ) {
     if node.kind() == "for_statement"
         && let Some(iter_node) = node.child_by_field_name("right")
-        && let Some(ty) = type_inference::infer_expression_type_with_project(&iter_node, source, file, project)
+        && let Some(ty) =
+            type_inference::infer_expression_type_with_project(&iter_node, source, file, project)
         && !is_iterable_type(&ty)
     {
         let ty_name = match &ty {

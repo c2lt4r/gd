@@ -17,7 +17,12 @@ impl LintRule for LoopVariableName {
     fn check(&self, file: &GdFile<'_>, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
         gd_ast::visit_stmts(file, &mut |stmt| {
-            if let GdStmt::For { node, var, var_node, .. } = stmt
+            if let GdStmt::For {
+                node,
+                var,
+                var_node,
+                ..
+            } = stmt
                 && !var.is_empty()
                 && !is_snake_case(var)
             {
@@ -28,8 +33,18 @@ impl LintRule for LoopVariableName {
                     replacement: fixed.clone(),
                 });
                 let (line, col, end_col) = var_node.map_or(
-                    (node.start_position().row, node.start_position().column, None),
-                    |vn| (vn.start_position().row, vn.start_position().column, Some(vn.end_position().column)),
+                    (
+                        node.start_position().row,
+                        node.start_position().column,
+                        None,
+                    ),
+                    |vn| {
+                        (
+                            vn.start_position().row,
+                            vn.start_position().column,
+                            Some(vn.end_position().column),
+                        )
+                    },
                 );
 
                 diags.push(LintDiagnostic {
@@ -86,8 +101,8 @@ fn to_snake_case(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::parser;
     use crate::core::gd_ast;
+    use crate::core::parser;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();

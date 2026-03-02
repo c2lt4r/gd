@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use crate::core::gd_ast::{GdDecl, GdFile};
+use std::collections::HashMap;
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -29,7 +29,9 @@ fn check_scope(decls: &[GdDecl<'_>], diags: &mut Vec<LintDiagnostic>) {
     for decl in decls {
         if let GdDecl::Var(var) = decl {
             let line = var.node.start_position().row;
-            let col = var.name_node.map_or(var.node.start_position().column, |n| n.start_position().column);
+            let col = var.name_node.map_or(var.node.start_position().column, |n| {
+                n.start_position().column
+            });
 
             if let Some(&first_line) = variables.get(var.name) {
                 diags.push(LintDiagnostic {
@@ -61,8 +63,8 @@ fn check_scope(decls: &[GdDecl<'_>], diags: &mut Vec<LintDiagnostic>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::parser;
     use crate::core::gd_ast;
+    use crate::core::parser;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();

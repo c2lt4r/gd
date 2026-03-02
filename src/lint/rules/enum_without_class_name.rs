@@ -30,7 +30,11 @@ impl LintRule for EnumWithoutClassName {
             .iter()
             .filter_map(|d| {
                 if let GdDecl::Enum(e) = d {
-                    if e.name.is_empty() { None } else { Some(e.name) }
+                    if e.name.is_empty() {
+                        None
+                    } else {
+                        Some(e.name)
+                    }
                 } else {
                     None
                 }
@@ -45,19 +49,17 @@ impl LintRule for EnumWithoutClassName {
         let mut diags = Vec::new();
 
         // Check declaration-level type annotations (vars, func return types, params)
-        gd_ast::visit_decls(file, &mut |decl| {
-            match decl {
-                GdDecl::Var(var) => {
-                    check_type_ref(var.type_ann.as_ref(), &enum_names, &mut diags);
-                }
-                GdDecl::Func(func) => {
-                    check_type_ref(func.return_type.as_ref(), &enum_names, &mut diags);
-                    for param in &func.params {
-                        check_type_ref(param.type_ann.as_ref(), &enum_names, &mut diags);
-                    }
-                }
-                _ => {}
+        gd_ast::visit_decls(file, &mut |decl| match decl {
+            GdDecl::Var(var) => {
+                check_type_ref(var.type_ann.as_ref(), &enum_names, &mut diags);
             }
+            GdDecl::Func(func) => {
+                check_type_ref(func.return_type.as_ref(), &enum_names, &mut diags);
+                for param in &func.params {
+                    check_type_ref(param.type_ann.as_ref(), &enum_names, &mut diags);
+                }
+            }
+            _ => {}
         });
 
         // Check local variable type annotations in function bodies
@@ -99,8 +101,8 @@ fn check_type_ref(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::parser;
     use crate::core::gd_ast;
+    use crate::core::parser;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();

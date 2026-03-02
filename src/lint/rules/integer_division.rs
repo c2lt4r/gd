@@ -17,7 +17,13 @@ impl LintRule for IntegerDivision {
     fn check(&self, file: &GdFile<'_>, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
         gd_ast::visit_exprs(file, &mut |expr| {
-            if let GdExpr::BinOp { node, op: "/", left, right, .. } = expr
+            if let GdExpr::BinOp {
+                node,
+                op: "/",
+                left,
+                right,
+                ..
+            } = expr
                 && let GdExpr::IntLiteral { value: l, .. } = left.as_ref()
                 && let GdExpr::IntLiteral { value: r, .. } = right.as_ref()
             {

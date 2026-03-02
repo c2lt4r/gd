@@ -21,8 +21,14 @@ pub fn provide_signature_help(
     let tree = crate::core::parser::parse(source).ok()?;
     let file = gd_ast::convert(&tree, source);
 
-    let signature =
-        resolve_signature(&func_name, receiver.as_deref(), source, &tree, &file, workspace)?;
+    let signature = resolve_signature(
+        &func_name,
+        receiver.as_deref(),
+        source,
+        &tree,
+        &file,
+        workspace,
+    )?;
 
     Some(SignatureHelp {
         signatures: vec![signature],

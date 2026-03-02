@@ -78,14 +78,23 @@ fn check_filter_pattern(
 ) {
     // first must be `var result = []`
     let GdStmt::Var(var_decl) = first else { return };
-    let Some(GdExpr::Array { elements, .. }) = &var_decl.value else { return };
+    let Some(GdExpr::Array { elements, .. }) = &var_decl.value else {
+        return;
+    };
     if !elements.is_empty() {
         return;
     }
     let result_name = var_decl.name;
 
     // second must be a for loop
-    let GdStmt::For { node: for_node, var: loop_var, iter, body, .. } = second else {
+    let GdStmt::For {
+        node: for_node,
+        var: loop_var,
+        iter,
+        body,
+        ..
+    } = second
+    else {
         return;
     };
 
@@ -105,7 +114,13 @@ fn check_filter_pattern(
         return;
     }
     let GdStmt::Expr {
-        expr: GdExpr::MethodCall { receiver, method, args, .. },
+        expr:
+            GdExpr::MethodCall {
+                receiver,
+                method,
+                args,
+                ..
+            },
         ..
     } = &gif.body[0]
     else {
@@ -120,13 +135,24 @@ fn check_filter_pattern(
     }
 
     // Receiver must be the result variable
-    let GdExpr::Ident { name: recv_name, .. } = receiver.as_ref() else { return };
+    let GdExpr::Ident {
+        name: recv_name, ..
+    } = receiver.as_ref()
+    else {
+        return;
+    };
     if *recv_name != result_name {
         return;
     }
 
     // Appended value must be exactly the loop variable
-    let GdExpr::Ident { name: appended_name, .. } = &args[0] else { return };
+    let GdExpr::Ident {
+        name: appended_name,
+        ..
+    } = &args[0]
+    else {
+        return;
+    };
     if *appended_name != *loop_var {
         return;
     }
@@ -207,9 +233,11 @@ mod tests {
         let source = "func f(arr):\n\tvar result = []\n\tfor x in arr:\n\t\tif x > 0:\n\t\t\tresult.append(x)\n";
         let diags = check(source);
         assert_eq!(diags.len(), 1);
-        assert!(diags[0]
-            .message
-            .contains("arr.filter(func(x): return x > 0)"));
+        assert!(
+            diags[0]
+                .message
+                .contains("arr.filter(func(x): return x > 0)")
+        );
     }
 
     #[test]

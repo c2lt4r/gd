@@ -183,10 +183,9 @@ pub fn move_symbol(
                 // Insert into target class body
                 let target_tree = crate::core::parser::parse(&target_source)?;
                 let target_file = gd_ast::convert(&target_tree, &target_source);
-                let tc_node =
-                    find_class_definition(&target_file, tc).ok_or_else(|| {
-                        miette::miette!("target class '{tc}' not found in target file")
-                    })?;
+                let tc_node = find_class_definition(&target_file, tc).ok_or_else(|| {
+                    miette::miette!("target class '{tc}' not found in target file")
+                })?;
                 let insert_byte = tc_node.end_byte();
                 // Insert before end of class with proper spacing
                 let spacing = "\n";
@@ -424,7 +423,6 @@ fn find_preloads_in_tree(
 }
 
 // ── Caller update logic ─────────────────────────────────────────────────────
-
 
 /// Result of updating a single caller file.
 struct CallerFileUpdate {

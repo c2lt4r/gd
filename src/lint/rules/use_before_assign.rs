@@ -1,5 +1,5 @@
-use std::collections::{HashMap, HashSet};
 use crate::core::gd_ast::{GdDecl, GdExpr, GdExtends, GdFile, GdStmt};
+use std::collections::{HashMap, HashSet};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -166,7 +166,12 @@ fn collect_calls_in_expr(expr: &GdExpr, calls: &mut HashSet<String>) {
             }
         }
         // self.method()
-        GdExpr::MethodCall { receiver, method, args, .. } => {
+        GdExpr::MethodCall {
+            receiver,
+            method,
+            args,
+            ..
+        } => {
             if let GdExpr::Ident { name: "self", .. } = receiver.as_ref() {
                 calls.insert((*method).to_string());
             }
@@ -181,11 +186,18 @@ fn collect_calls_in_expr(expr: &GdExpr, calls: &mut HashSet<String>) {
         }
         GdExpr::UnaryOp { operand, .. } => collect_calls_in_expr(operand, calls),
         GdExpr::PropertyAccess { receiver, .. } => collect_calls_in_expr(receiver, calls),
-        GdExpr::Subscript { receiver, index, .. } => {
+        GdExpr::Subscript {
+            receiver, index, ..
+        } => {
             collect_calls_in_expr(receiver, calls);
             collect_calls_in_expr(index, calls);
         }
-        GdExpr::Ternary { condition, true_val, false_val, .. } => {
+        GdExpr::Ternary {
+            condition,
+            true_val,
+            false_val,
+            ..
+        } => {
             collect_calls_in_expr(condition, calls);
             collect_calls_in_expr(true_val, calls);
             collect_calls_in_expr(false_val, calls);
@@ -365,9 +377,10 @@ fn extract_member_assign(target: &GdExpr, members: &HashSet<String>) -> Option<S
         // member = value
         GdExpr::Ident { name, .. } if members.contains(*name) => Some((*name).to_string()),
         // self.member = value
-        GdExpr::PropertyAccess { receiver, property, .. }
-            if matches!(receiver.as_ref(), GdExpr::Ident { name: "self", .. })
-                && members.contains(*property) =>
+        GdExpr::PropertyAccess {
+            receiver, property, ..
+        } if matches!(receiver.as_ref(), GdExpr::Ident { name: "self", .. })
+            && members.contains(*property) =>
         {
             Some((*property).to_string())
         }
@@ -391,10 +404,11 @@ fn collect_member_reads_expr(
         }
 
         // self.member — flag member reads via self
-        GdExpr::PropertyAccess { receiver, property, .. }
-            if matches!(receiver.as_ref(), GdExpr::Ident { name: "self", .. })
-                && members.contains(*property)
-                && !assigned.contains(*property) =>
+        GdExpr::PropertyAccess {
+            receiver, property, ..
+        } if matches!(receiver.as_ref(), GdExpr::Ident { name: "self", .. })
+            && members.contains(*property)
+            && !assigned.contains(*property) =>
         {
             reads_before_assign.insert((*property).to_string());
         }
@@ -468,7 +482,9 @@ fn recurse_member_reads(
                 null_checked,
             );
         }
-        GdExpr::Subscript { receiver, index, .. } => {
+        GdExpr::Subscript {
+            receiver, index, ..
+        } => {
             collect_member_reads_expr(
                 receiver,
                 members,
@@ -478,7 +494,12 @@ fn recurse_member_reads(
             );
             collect_member_reads_expr(index, members, assigned, reads_before_assign, null_checked);
         }
-        GdExpr::Ternary { condition, true_val, false_val, .. } => {
+        GdExpr::Ternary {
+            condition,
+            true_val,
+            false_val,
+            ..
+        } => {
             collect_member_reads_expr(
                 condition,
                 members,
@@ -672,7 +693,9 @@ fn find_calls_in_expr(
 ) {
     match expr {
         // Plain call: func_name()
-        GdExpr::Call { callee, args, node, .. } => {
+        GdExpr::Call {
+            callee, args, node, ..
+        } => {
             if let GdExpr::Ident { name, .. } = callee.as_ref() {
                 check_callee(name, node, func_info, caller_name, assigned_so_far, diags);
             }
@@ -682,7 +705,13 @@ fn find_calls_in_expr(
             }
         }
         // self.method()
-        GdExpr::MethodCall { receiver, method, args, node, .. } => {
+        GdExpr::MethodCall {
+            receiver,
+            method,
+            args,
+            node,
+            ..
+        } => {
             if let GdExpr::Ident { name: "self", .. } = receiver.as_ref() {
                 check_callee(method, node, func_info, caller_name, assigned_so_far, diags);
             }
@@ -701,11 +730,18 @@ fn find_calls_in_expr(
         GdExpr::PropertyAccess { receiver, .. } => {
             find_calls_in_expr(receiver, func_info, caller_name, assigned_so_far, diags);
         }
-        GdExpr::Subscript { receiver, index, .. } => {
+        GdExpr::Subscript {
+            receiver, index, ..
+        } => {
             find_calls_in_expr(receiver, func_info, caller_name, assigned_so_far, diags);
             find_calls_in_expr(index, func_info, caller_name, assigned_so_far, diags);
         }
-        GdExpr::Ternary { condition, true_val, false_val, .. } => {
+        GdExpr::Ternary {
+            condition,
+            true_val,
+            false_val,
+            ..
+        } => {
             find_calls_in_expr(condition, func_info, caller_name, assigned_so_far, diags);
             find_calls_in_expr(true_val, func_info, caller_name, assigned_so_far, diags);
             find_calls_in_expr(false_val, func_info, caller_name, assigned_so_far, diags);
@@ -764,8 +800,8 @@ fn check_callee(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::parser;
     use crate::core::gd_ast;
+    use crate::core::parser;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();

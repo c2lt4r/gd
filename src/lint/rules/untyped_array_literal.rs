@@ -15,7 +15,12 @@ impl LintRule for UntypedArrayLiteral {
         LintCategory::TypeSafety
     }
 
-    fn check(&self, _file: &GdFile<'_>, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(
+        &self,
+        _file: &GdFile<'_>,
+        _source: &str,
+        _config: &LintConfig,
+    ) -> Vec<LintDiagnostic> {
         Vec::new()
     }
 
@@ -42,14 +47,11 @@ impl LintRule for UntypedArrayLiteral {
     }
 }
 
-fn check_var(
-    var: &GdVar,
-    source: &str,
-    file: &GdFile,
-    diags: &mut Vec<LintDiagnostic>,
-) {
+fn check_var(var: &GdVar, source: &str, file: &GdFile, diags: &mut Vec<LintDiagnostic>) {
     // Only check := (inferred type)
-    let Some(ref type_ann) = var.type_ann else { return };
+    let Some(ref type_ann) = var.type_ann else {
+        return;
+    };
     if !type_ann.is_inferred {
         return;
     }
@@ -60,7 +62,9 @@ fn check_var(
     }
 
     // Value must be a non-empty array literal
-    let Some(GdExpr::Array { elements, .. }) = &var.value else { return };
+    let Some(GdExpr::Array { elements, .. }) = &var.value else {
+        return;
+    };
     if elements.is_empty() {
         return;
     }

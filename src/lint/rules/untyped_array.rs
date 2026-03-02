@@ -44,11 +44,9 @@ fn check_var(var: &GdVar<'_>, diags: &mut Vec<LintDiagnostic>) {
         return;
     }
 
-    let col = var
-        .name_node
-        .map_or(var.node.start_position().column, |n| {
-            n.start_position().column
-        });
+    let col = var.name_node.map_or(var.node.start_position().column, |n| {
+        n.start_position().column
+    });
 
     diags.push(LintDiagnostic {
         rule: "untyped-array",

@@ -78,13 +78,7 @@ pub fn provide_semantic_tokens(
     let bytes = source.as_bytes();
 
     let mut raw_tokens = Vec::new();
-    walk_node(
-        tree.root_node(),
-        bytes,
-        &file,
-        workspace,
-        &mut raw_tokens,
-    );
+    walk_node(tree.root_node(), bytes, &file, workspace, &mut raw_tokens);
 
     // Sort by line, then column for delta encoding.
     raw_tokens.sort_by(|a, b| a.line.cmp(&b.line).then(a.col.cmp(&b.col)));

@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.3.14] - 2026-03-02
+## [0.3.15] - 2026-03-02
 
 ### Improved
 - **`gd check` — corpus-driven FP reduction and detection expansion** across 11 categories:

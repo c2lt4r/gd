@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 use miette::Result;
 use serde::Serialize;
 
-use crate::core::gd_ast;
 use super::invert_if::{get_line_indent, node_text};
+use crate::core::gd_ast;
 
 // ── Output structs ──────────────────────────────────────────────────────────
 

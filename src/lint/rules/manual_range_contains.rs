@@ -21,7 +21,14 @@ impl LintRule for ManualRangeContains {
     fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
         gd_ast::visit_exprs(file, &mut |expr| {
-            if let GdExpr::BinOp { node, op, left, right, .. } = expr {
+            if let GdExpr::BinOp {
+                node,
+                op,
+                left,
+                right,
+                ..
+            } = expr
+            {
                 match *op {
                     "and" => check_and_range(node, left, right, source, &mut diags),
                     "or" => check_or_range(node, left, right, source, &mut diags),
@@ -42,7 +49,10 @@ struct CmpParts<'a> {
 
 /// Extract comparison parts from a BinOp expression.
 fn parse_cmp<'a>(expr: &GdExpr<'a>, source: &'a str) -> Option<CmpParts<'a>> {
-    if let GdExpr::BinOp { op, left, right, .. } = expr {
+    if let GdExpr::BinOp {
+        op, left, right, ..
+    } = expr
+    {
         Some(CmpParts {
             variable: &source[left.node().byte_range()],
             op,
@@ -61,8 +71,12 @@ fn check_and_range(
     source: &str,
     diags: &mut Vec<LintDiagnostic>,
 ) {
-    let Some(l) = parse_cmp(left, source) else { return };
-    let Some(r) = parse_cmp(right, source) else { return };
+    let Some(l) = parse_cmp(left, source) else {
+        return;
+    };
+    let Some(r) = parse_cmp(right, source) else {
+        return;
+    };
 
     if let Some((var, lower, upper)) = match_and_pattern(&l, &r) {
         let suggestion = format!("{var} in range({lower}, {upper})");
@@ -91,8 +105,12 @@ fn check_or_range(
     source: &str,
     diags: &mut Vec<LintDiagnostic>,
 ) {
-    let Some(l) = parse_cmp(left, source) else { return };
-    let Some(r) = parse_cmp(right, source) else { return };
+    let Some(l) = parse_cmp(left, source) else {
+        return;
+    };
+    let Some(r) = parse_cmp(right, source) else {
+        return;
+    };
 
     if let Some((var, lower, upper)) = match_or_pattern(&l, &r) {
         let suggestion = format!("{var} not in range({lower}, {upper})");
@@ -150,8 +168,8 @@ fn match_or_pattern<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::parser;
     use crate::core::gd_ast;
+    use crate::core::parser;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();

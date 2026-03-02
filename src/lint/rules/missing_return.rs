@@ -85,9 +85,9 @@ fn stmt_always_returns(stmt: &GdStmt<'_>) -> bool {
             }
             // Must have a wildcard arm (otherwise can fall through)
             arms.iter().any(|arm| {
-                arm.patterns.iter().any(|pat| {
-                    matches!(pat, GdExpr::Ident { name: "_", .. })
-                })
+                arm.patterns
+                    .iter()
+                    .any(|pat| matches!(pat, GdExpr::Ident { name: "_", .. }))
             })
         }
         _ => false,
@@ -97,8 +97,8 @@ fn stmt_always_returns(stmt: &GdStmt<'_>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::parser;
     use crate::core::gd_ast;
+    use crate::core::parser;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();

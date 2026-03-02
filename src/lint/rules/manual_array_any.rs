@@ -77,12 +77,23 @@ fn check_any_pattern(
     diags: &mut Vec<LintDiagnostic>,
 ) {
     // second must be `return false`
-    let GdStmt::Return { value: Some(GdExpr::Bool { value: false, .. }), .. } = second else {
+    let GdStmt::Return {
+        value: Some(GdExpr::Bool { value: false, .. }),
+        ..
+    } = second
+    else {
         return;
     };
 
     // first must be a for loop
-    let GdStmt::For { node: for_node, var, iter, body, .. } = first else {
+    let GdStmt::For {
+        node: for_node,
+        var,
+        iter,
+        body,
+        ..
+    } = first
+    else {
         return;
     };
 
@@ -101,7 +112,10 @@ fn check_any_pattern(
     if gif.body.len() != 1 {
         return;
     }
-    let GdStmt::Return { value: Some(GdExpr::Bool { value: true, .. }), .. } = &gif.body[0]
+    let GdStmt::Return {
+        value: Some(GdExpr::Bool { value: true, .. }),
+        ..
+    } = &gif.body[0]
     else {
         return;
     };
@@ -178,7 +192,8 @@ mod tests {
 
     #[test]
     fn detects_basic_any_pattern() {
-        let source = "func f(arr):\n\tfor x in arr:\n\t\tif x > 0:\n\t\t\treturn true\n\treturn false\n";
+        let source =
+            "func f(arr):\n\tfor x in arr:\n\t\tif x > 0:\n\t\t\treturn true\n\treturn false\n";
         let diags = check(source);
         assert_eq!(diags.len(), 1);
         assert!(diags[0].message.contains("arr.any(func(x): return x > 0)"));
@@ -213,19 +228,22 @@ mod tests {
     #[test]
     fn no_warning_all_pattern() {
         // return false in if, return true after loop -- that's manual-array-all
-        let source = "func f(arr):\n\tfor x in arr:\n\t\tif x > 0:\n\t\t\treturn false\n\treturn true\n";
+        let source =
+            "func f(arr):\n\tfor x in arr:\n\t\tif x > 0:\n\t\t\treturn false\n\treturn true\n";
         assert!(check(source).is_empty());
     }
 
     #[test]
     fn no_warning_bare_for_without_return() {
-        let source = "func f(arr):\n\tfor x in arr:\n\t\tif x > 0:\n\t\t\treturn true\n\tprint(\"done\")\n";
+        let source =
+            "func f(arr):\n\tfor x in arr:\n\t\tif x > 0:\n\t\t\treturn true\n\tprint(\"done\")\n";
         assert!(check(source).is_empty());
     }
 
     #[test]
     fn fix_applies_correctly() {
-        let source = "func f(arr):\n\tfor x in arr:\n\t\tif x > 0:\n\t\t\treturn true\n\treturn false\n";
+        let source =
+            "func f(arr):\n\tfor x in arr:\n\t\tif x > 0:\n\t\t\treturn true\n\treturn false\n";
         let diags = check(source);
         assert_eq!(diags.len(), 1);
         let fix = diags[0].fix.as_ref().unwrap();

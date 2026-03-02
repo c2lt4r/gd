@@ -73,7 +73,9 @@ fn find_awaits_in_stmt(stmt: &GdStmt<'_>, diags: &mut Vec<LintDiagnostic>) {
             find_awaits_in_expr(iter, diags);
             find_awaits_in_stmts(body, diags);
         }
-        GdStmt::While { condition, body, .. } => {
+        GdStmt::While {
+            condition, body, ..
+        } => {
             find_awaits_in_expr(condition, diags);
             find_awaits_in_stmts(body, diags);
         }
@@ -96,8 +98,9 @@ fn find_awaits_in_expr(expr: &GdExpr<'_>, diags: &mut Vec<LintDiagnostic>) {
         GdExpr::Await { node, expr: inner } => {
             diags.push(LintDiagnostic {
                 rule: "await-in-ready",
-                message: "avoid `await` in _ready(); use call_deferred() or a separate async method"
-                    .to_string(),
+                message:
+                    "avoid `await` in _ready(); use call_deferred() or a separate async method"
+                        .to_string(),
                 severity: Severity::Warning,
                 line: node.start_position().row,
                 column: node.start_position().column,
@@ -130,14 +133,21 @@ fn find_awaits_in_expr(expr: &GdExpr<'_>, diags: &mut Vec<LintDiagnostic>) {
             }
         }
         GdExpr::PropertyAccess { receiver, .. } => find_awaits_in_expr(receiver, diags),
-        GdExpr::Subscript { receiver, index, .. } => {
+        GdExpr::Subscript {
+            receiver, index, ..
+        } => {
             find_awaits_in_expr(receiver, diags);
             find_awaits_in_expr(index, diags);
         }
         GdExpr::Cast { expr: inner, .. } | GdExpr::Is { expr: inner, .. } => {
             find_awaits_in_expr(inner, diags);
         }
-        GdExpr::Ternary { true_val, condition, false_val, .. } => {
+        GdExpr::Ternary {
+            true_val,
+            condition,
+            false_val,
+            ..
+        } => {
             find_awaits_in_expr(true_val, diags);
             find_awaits_in_expr(condition, diags);
             find_awaits_in_expr(false_val, diags);

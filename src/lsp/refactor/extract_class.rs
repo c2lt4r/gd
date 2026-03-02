@@ -113,8 +113,7 @@ pub fn extract_class(
                         continue;
                     }
                     let node = decl.node();
-                    if node.start_position().row <= ref_line
-                        && ref_line <= node.end_position().row
+                    if node.start_position().row <= ref_line && ref_line <= node.end_position().row
                     {
                         warnings.push(format!(
                             "'{decl_name}' (staying) references '{name}' (moving)"

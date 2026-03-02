@@ -19,7 +19,12 @@ impl LintRule for InferUnknownMember {
         true
     }
 
-    fn check(&self, _file: &GdFile<'_>, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(
+        &self,
+        _file: &GdFile<'_>,
+        _source: &str,
+        _config: &LintConfig,
+    ) -> Vec<LintDiagnostic> {
         Vec::new()
     }
 
@@ -30,16 +35,14 @@ impl LintRule for InferUnknownMember {
         _config: &LintConfig,
     ) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
-        gd_ast::visit_decls(file, &mut |decl| {
-            match decl {
-                GdDecl::Func(func) => {
-                    check_stmts_for_inferred(&func.body, Some(func), source, file, &mut diags);
-                }
-                GdDecl::Var(var) => {
-                    check_inferred_var(var, None, &[], source, file, &mut diags);
-                }
-                _ => {}
+        gd_ast::visit_decls(file, &mut |decl| match decl {
+            GdDecl::Func(func) => {
+                check_stmts_for_inferred(&func.body, Some(func), source, file, &mut diags);
             }
+            GdDecl::Var(var) => {
+                check_inferred_var(var, None, &[], source, file, &mut diags);
+            }
+            _ => {}
         });
         diags
     }
@@ -100,7 +103,10 @@ fn check_inferred_var<'a>(
     }
 
     // RHS must be a member access: obj.member
-    let Some(GdExpr::PropertyAccess { receiver, property, .. }) = &var.value else {
+    let Some(GdExpr::PropertyAccess {
+        receiver, property, ..
+    }) = &var.value
+    else {
         return;
     };
 

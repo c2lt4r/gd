@@ -17,7 +17,13 @@ impl LintRule for ComparisonWithItself {
     fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
         gd_ast::visit_exprs(file, &mut |expr| {
-            if let GdExpr::BinOp { node, op, left, right, .. } = expr
+            if let GdExpr::BinOp {
+                node,
+                op,
+                left,
+                right,
+                ..
+            } = expr
                 && matches!(*op, "==" | "!=" | "<" | ">" | "<=" | ">=")
             {
                 let left_text = &source[left.node().byte_range()];

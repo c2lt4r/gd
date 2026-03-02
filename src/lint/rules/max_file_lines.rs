@@ -42,8 +42,8 @@ impl LintRule for MaxFileLines {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::parser;
     use crate::core::gd_ast;
+    use crate::core::parser;
 
     const DEFAULT_MAX_FILE_LINES: usize = 500;
 

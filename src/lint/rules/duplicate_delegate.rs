@@ -43,14 +43,25 @@ fn check_function(func: &crate::core::gd_ast::GdFunc, diags: &mut Vec<LintDiagno
     }
 
     // Extract the call expression (from return or expression statement)
-    let (GdStmt::Return { value: Some(call_expr), .. } | GdStmt::Expr { expr: call_expr, .. }) =
-        stmts[0]
+    let (GdStmt::Return {
+        value: Some(call_expr),
+        ..
+    }
+    | GdStmt::Expr {
+        expr: call_expr, ..
+    }) = stmts[0]
     else {
         return;
     };
 
     // Must be a method call (self.ref.method(args) or ref.method(args))
-    let GdExpr::MethodCall { receiver, method, args, .. } = call_expr else {
+    let GdExpr::MethodCall {
+        receiver,
+        method,
+        args,
+        ..
+    } = call_expr
+    else {
         return;
     };
 
@@ -89,7 +100,9 @@ fn check_function(func: &crate::core::gd_ast::GdFunc, diags: &mut Vec<LintDiagno
 fn collect_chain_parts<'a>(expr: &GdExpr<'a>, parts: &mut Vec<&'a str>) {
     match expr {
         GdExpr::Ident { name, .. } => parts.push(name),
-        GdExpr::PropertyAccess { receiver, property, .. } => {
+        GdExpr::PropertyAccess {
+            receiver, property, ..
+        } => {
             collect_chain_parts(receiver, parts);
             parts.push(property);
         }
@@ -103,16 +116,16 @@ fn args_match_params(args: &[GdExpr], params: &[&str]) -> bool {
     if args.len() != params.len() {
         return false;
     }
-    args.iter().zip(params.iter()).all(|(arg, param)| {
-        matches!(arg, GdExpr::Ident { name, .. } if *name == *param)
-    })
+    args.iter()
+        .zip(params.iter())
+        .all(|(arg, param)| matches!(arg, GdExpr::Ident { name, .. } if *name == *param))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::parser;
     use crate::core::gd_ast;
+    use crate::core::parser;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();

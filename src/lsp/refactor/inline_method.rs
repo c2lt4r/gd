@@ -64,8 +64,8 @@ pub fn inline_method(
             .map_err(|e| miette::miette!("cannot read target file: {e}"))?;
         def_tree = crate::core::parser::parse(&def_source)?;
         let def_file = gd_ast::convert(&def_tree, &def_source);
-        func_def = find_declaration_by_name(&def_file, &call_info.method_name)
-            .ok_or_else(|| {
+        func_def =
+            find_declaration_by_name(&def_file, &call_info.method_name).ok_or_else(|| {
                 miette::miette!(
                     "cannot find definition of '{}' in {}",
                     call_info.method_name,
@@ -80,8 +80,8 @@ pub fn inline_method(
             def_source = source.clone();
             def_tree = crate::core::parser::parse(&def_source)?;
             let def_file = gd_ast::convert(&def_tree, &def_source);
-            func_def = find_declaration_by_name(&def_file, &call_info.method_name)
-                .unwrap_or(local_def);
+            func_def =
+                find_declaration_by_name(&def_file, &call_info.method_name).unwrap_or(local_def);
         } else {
             // Bare call not found in same file — try cross-file resolution
             let cross = resolve_cross_file_function(&call_info.method_name, file, project_root)?;
@@ -89,8 +89,8 @@ pub fn inline_method(
             def_source = cross.source;
             def_tree = crate::core::parser::parse(&def_source)?;
             let def_file = gd_ast::convert(&def_tree, &def_source);
-            func_def = find_declaration_by_name(&def_file, &call_info.method_name)
-                .ok_or_else(|| {
+            func_def =
+                find_declaration_by_name(&def_file, &call_info.method_name).ok_or_else(|| {
                     miette::miette!(
                         "cannot find definition of '{}' in resolved file",
                         call_info.method_name

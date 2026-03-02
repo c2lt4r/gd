@@ -339,9 +339,11 @@ fn resolve_chain(
         {
             let gd_file = crate::core::gd_ast::convert(&tree, &content);
             // Check if member is an enum in that file
-            if gd_file.declarations.iter().any(|d| {
-                matches!(d, crate::core::gd_ast::GdDecl::Enum(e) if e.name == member)
-            }) {
+            if gd_file
+                .declarations
+                .iter()
+                .any(|d| matches!(d, crate::core::gd_ast::GdDecl::Enum(e) if e.name == member))
+            {
                 return Some(ResolvedReceiver::WorkspaceEnum {
                     file_content: content,
                     enum_name: member.to_string(),
@@ -352,9 +354,11 @@ fn resolve_chain(
                 return Some(ResolvedReceiver::ClassName(member.to_string()));
             }
             // Check if member is a signal — signals have type "Signal"
-            if gd_file.declarations.iter().any(|d| {
-                matches!(d, crate::core::gd_ast::GdDecl::Signal(s) if s.name == member)
-            }) {
+            if gd_file
+                .declarations
+                .iter()
+                .any(|d| matches!(d, crate::core::gd_ast::GdDecl::Signal(s) if s.name == member))
+            {
                 let signal_type = "Signal".to_string();
                 if parts.len() > 1 {
                     let remaining = parts[1..].join(".");
@@ -370,9 +374,10 @@ fn resolve_chain(
         && let Ok(tree) = crate::core::parser::parse(source)
         && {
             let gd_file = crate::core::gd_ast::convert(&tree, source);
-            gd_file.declarations.iter().any(|d| {
-                matches!(d, crate::core::gd_ast::GdDecl::Signal(s) if s.name == member)
-            })
+            gd_file
+                .declarations
+                .iter()
+                .any(|d| matches!(d, crate::core::gd_ast::GdDecl::Signal(s) if s.name == member))
         }
     {
         let signal_type = "Signal".to_string();

@@ -118,8 +118,7 @@ fn check_method_not_found_in_node(
         if !is_known {
             // Check ProjectIndex for cross-file base class methods
             let extends = file.extends_str();
-            let mut found = extends
-                .is_some_and(|ext| project.method_exists(ext, func_name));
+            let mut found = extends.is_some_and(|ext| project.method_exists(ext, func_name));
             // Resolve to ClassDB ancestor and check there
             // Default to RefCounted when no extends (Godot's implicit base)
             if !found {
@@ -132,9 +131,9 @@ fn check_method_not_found_in_node(
             // Also check inner class functions (if inside an inner class body)
             if !found {
                 found = file.inner_classes().any(|c| {
-                    c.declarations.iter().any(|d| {
-                        d.as_func().is_some_and(|f| f.name == func_name)
-                    })
+                    c.declarations
+                        .iter()
+                        .any(|d| d.as_func().is_some_and(|f| f.name == func_name))
                 });
             }
             if !found {
@@ -638,8 +637,7 @@ fn check_super_method_in_node(
                 && let Some(method_node) = child.named_child(0)
                 && let Ok(method_name) = method_node.utf8_text(source.as_bytes())
             {
-                let mut found = extends
-                    .is_some_and(|ext| project.method_exists(ext, method_name));
+                let mut found = extends.is_some_and(|ext| project.method_exists(ext, method_name));
                 if !found {
                     let classdb_ext = match extends {
                         Some(ext) => resolve_to_classdb_type(ext, project),

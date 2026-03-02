@@ -208,7 +208,8 @@ impl WorkspaceIndex {
                         // Build and cache symbols
                         let file = gd_ast::convert(&tree, &content);
                         let cached = cache_from_gd_file(&file);
-                        self.extends_map.insert(path.clone(), cached.extends.clone());
+                        self.extends_map
+                            .insert(path.clone(), cached.extends.clone());
                         self.insert_declarations_from_cached(&path, &cached);
                         self.symbols.insert(path.clone(), cached);
                     }

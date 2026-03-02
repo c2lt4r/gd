@@ -19,7 +19,12 @@ impl LintRule for NarrowingConversion {
         false
     }
 
-    fn check(&self, _file: &GdFile<'_>, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(
+        &self,
+        _file: &GdFile<'_>,
+        _source: &str,
+        _config: &LintConfig,
+    ) -> Vec<LintDiagnostic> {
         Vec::new()
     }
 
@@ -44,12 +49,7 @@ impl LintRule for NarrowingConversion {
     }
 }
 
-fn check_var_decl(
-    var: &GdVar<'_>,
-    source: &str,
-    file: &GdFile,
-    diags: &mut Vec<LintDiagnostic>,
-) {
+fn check_var_decl(var: &GdVar<'_>, source: &str, file: &GdFile, diags: &mut Vec<LintDiagnostic>) {
     if let Some(type_ann) = &var.type_ann
         && type_ann.name == "int"
         && let Some(value) = &var.value
@@ -61,7 +61,10 @@ fn check_var_decl(
         let value_text = &source[value.node().byte_range()];
         diags.push(LintDiagnostic {
             rule: "narrowing-conversion",
-            message: format!("narrowing conversion: float value assigned to `{}: int`", var.name),
+            message: format!(
+                "narrowing conversion: float value assigned to `{}: int`",
+                var.name
+            ),
             severity: Severity::Warning,
             line: var.node.start_position().row,
             column: var.node.start_position().column,
@@ -76,19 +79,19 @@ fn check_var_decl(
     }
 }
 
-fn check_stmt(
-    stmt: &GdStmt<'_>,
-    source: &str,
-    file: &GdFile,
-    diags: &mut Vec<LintDiagnostic>,
-) {
+fn check_stmt(stmt: &GdStmt<'_>, source: &str, file: &GdFile, diags: &mut Vec<LintDiagnostic>) {
     // Variable declarations inside functions
     if let GdStmt::Var(var) = stmt {
         check_var_decl(var, source, file, diags);
     }
 
     // Assignments to int-typed variables
-    if let GdStmt::Assign { node, target, value, .. } = stmt
+    if let GdStmt::Assign {
+        node,
+        target,
+        value,
+        ..
+    } = stmt
         && let GdExpr::Ident { name: var_name, .. } = target
     {
         let is_int_var = file

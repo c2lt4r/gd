@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use crate::core::gd_ast::{GdDecl, GdFile};
+use std::collections::HashMap;
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -29,7 +29,9 @@ fn check_scope(decls: &[GdDecl<'_>], diags: &mut Vec<LintDiagnostic>) {
     for decl in decls {
         if let GdDecl::Signal(sig) = decl {
             let line = sig.node.start_position().row;
-            let col = sig.name_node.map_or(sig.node.start_position().column, |n| n.start_position().column);
+            let col = sig.name_node.map_or(sig.node.start_position().column, |n| {
+                n.start_position().column
+            });
 
             if let Some(&first_line) = signals.get(sig.name) {
                 diags.push(LintDiagnostic {

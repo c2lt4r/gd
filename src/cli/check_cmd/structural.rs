@@ -131,11 +131,7 @@ fn check_body_indentation(body: &Node, errors: &mut Vec<StructuralError>) {
 fn is_control_flow_child(kind: &str) -> bool {
     matches!(
         kind,
-        "elif_clause"
-            | "else_clause"
-            | "match_arm"
-            | "pattern_guard"
-            | "match_body"
+        "elif_clause" | "else_clause" | "match_arm" | "pattern_guard" | "match_body"
     )
 }
 
@@ -985,9 +981,7 @@ fn check_static_context_violations(
     let mut cursor = root.walk();
     for child in root.children(&mut cursor) {
         // Check static variable initializers
-        check_static_var_initializer(
-            &child, bytes, file, &instance_vars, &instance_funcs, errors,
-        );
+        check_static_var_initializer(&child, bytes, file, &instance_vars, &instance_funcs, errors);
 
         let func_node = match child.kind() {
             "function_definition" => child,
@@ -1031,9 +1025,7 @@ fn check_static_context_violations(
             let mut local_vars = std::collections::HashSet::new();
             collect_local_vars(&body, bytes, &mut local_vars);
             // Also add function parameters
-            for param in func_node
-                .children_by_field_name("parameters", &mut func_node.walk())
-            {
+            for param in func_node.children_by_field_name("parameters", &mut func_node.walk()) {
                 if let Ok(n) = param.utf8_text(bytes) {
                     local_vars.insert(n);
                 }
@@ -1098,7 +1090,11 @@ fn check_static_var_initializer(
     }
 }
 
-fn collect_local_vars<'a>(node: &Node<'a>, source: &'a [u8], locals: &mut std::collections::HashSet<&'a str>) {
+fn collect_local_vars<'a>(
+    node: &Node<'a>,
+    source: &'a [u8],
+    locals: &mut std::collections::HashSet<&'a str>,
+) {
     match node.kind() {
         "variable_statement" | "const_statement" => {
             if let Some(name) = node.child_by_field_name("name")
@@ -1212,19 +1208,13 @@ fn check_assign_to_constant(
     errors: &mut Vec<StructuralError>,
 ) {
     let bytes = source.as_bytes();
-    let constants: std::collections::HashSet<&str> = file
-        .vars()
-        .filter(|v| v.is_const)
-        .map(|v| v.name)
-        .collect();
+    let constants: std::collections::HashSet<&str> =
+        file.vars().filter(|v| v.is_const).map(|v| v.name).collect();
     let enum_members: std::collections::HashSet<&str> = file
         .enums()
         .flat_map(|e| e.members.iter().map(|m| m.name))
         .collect();
-    let signals: std::collections::HashSet<&str> = file
-        .signals()
-        .map(|s| s.name)
-        .collect();
+    let signals: std::collections::HashSet<&str> = file.signals().map(|s| s.name).collect();
 
     check_assign_to_const_in_node(*root, bytes, &constants, &enum_members, &signals, errors);
 }
@@ -1313,7 +1303,14 @@ fn check_assign_to_const_in_node(
     let mut cursor = node.walk();
     if cursor.goto_first_child() {
         loop {
-            check_assign_to_const_in_node(cursor.node(), source, constants, enum_members, signals, errors);
+            check_assign_to_const_in_node(
+                cursor.node(),
+                source,
+                constants,
+                enum_members,
+                signals,
+                errors,
+            );
             if !cursor.goto_next_sibling() {
                 break;
             }

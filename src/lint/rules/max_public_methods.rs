@@ -82,8 +82,8 @@ fn check_classes(decls: &[GdDecl<'_>], max_methods: usize, diags: &mut Vec<LintD
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::parser;
     use crate::core::gd_ast;
+    use crate::core::parser;
 
     const DEFAULT_MAX_PUBLIC_METHODS: usize = 20;
 

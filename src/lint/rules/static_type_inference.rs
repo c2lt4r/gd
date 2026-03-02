@@ -15,7 +15,12 @@ impl LintRule for StaticTypeInference {
         LintCategory::TypeSafety
     }
 
-    fn check(&self, _file: &GdFile<'_>, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(
+        &self,
+        _file: &GdFile<'_>,
+        _source: &str,
+        _config: &LintConfig,
+    ) -> Vec<LintDiagnostic> {
         Vec::new()
     }
 
@@ -40,12 +45,7 @@ impl LintRule for StaticTypeInference {
     }
 }
 
-fn check_var(
-    var: &GdVar<'_>,
-    source: &str,
-    file: &GdFile,
-    diags: &mut Vec<LintDiagnostic>,
-) {
+fn check_var(var: &GdVar<'_>, source: &str, file: &GdFile, diags: &mut Vec<LintDiagnostic>) {
     // Skip if already has any type annotation (explicit or inferred via :=)
     if var.type_ann.is_some() {
         return;

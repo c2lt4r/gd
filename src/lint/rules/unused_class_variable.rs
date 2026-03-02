@@ -19,7 +19,12 @@ impl LintRule for UnusedClassVariable {
         false
     }
 
-    fn check(&self, _file: &GdFile<'_>, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(
+        &self,
+        _file: &GdFile<'_>,
+        _source: &str,
+        _config: &LintConfig,
+    ) -> Vec<LintDiagnostic> {
         Vec::new()
     }
 
@@ -125,9 +130,9 @@ fn has_identifier_reference(node: tree_sitter::Node, source: &[u8], name: &str) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::workspace_index;
     use crate::core::gd_ast;
     use crate::core::parser;
+    use crate::core::workspace_index;
     use std::path::PathBuf;
 
     fn check_with_project(source: &str, project_files: &[(&str, &str)]) -> Vec<LintDiagnostic> {
@@ -170,12 +175,7 @@ var health: int = 100
         let tree = parser::parse(player_source).unwrap();
         let file = gd_ast::convert(&tree, player_source);
         let config = LintConfig::default();
-        let diags = UnusedClassVariable.check_with_project(
-            &file,
-            player_source,
-            &config,
-            &project,
-        );
+        let diags = UnusedClassVariable.check_with_project(&file, player_source, &config, &project);
         assert!(diags.is_empty(), "health is referenced from hud.gd");
     }
 
@@ -224,12 +224,7 @@ const MAX_SPEED: float = 300.0
         let tree = parser::parse(global_source).unwrap();
         let file = gd_ast::convert(&tree, global_source);
         let config = LintConfig::default();
-        let diags = UnusedClassVariable.check_with_project(
-            &file,
-            global_source,
-            &config,
-            &project,
-        );
+        let diags = UnusedClassVariable.check_with_project(&file, global_source, &config, &project);
         assert!(diags.is_empty(), "autoload members are globally accessible");
     }
 

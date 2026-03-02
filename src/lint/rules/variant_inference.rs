@@ -20,7 +20,12 @@ impl LintRule for VariantInference {
         false
     }
 
-    fn check(&self, _file: &GdFile<'_>, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(
+        &self,
+        _file: &GdFile<'_>,
+        _source: &str,
+        _config: &LintConfig,
+    ) -> Vec<LintDiagnostic> {
         Vec::new()
     }
 
@@ -56,7 +61,9 @@ fn check_var(
     diags: &mut Vec<LintDiagnostic>,
 ) {
     // Only check := (inferred type)
-    let Some(ref type_ann) = var.type_ann else { return };
+    let Some(ref type_ann) = var.type_ann else {
+        return;
+    };
     if !type_ann.is_inferred {
         return;
     }

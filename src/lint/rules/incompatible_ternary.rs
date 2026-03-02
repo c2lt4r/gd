@@ -19,7 +19,12 @@ impl LintRule for IncompatibleTernary {
         false
     }
 
-    fn check(&self, _file: &GdFile<'_>, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(
+        &self,
+        _file: &GdFile<'_>,
+        _source: &str,
+        _config: &LintConfig,
+    ) -> Vec<LintDiagnostic> {
         Vec::new()
     }
 
@@ -31,11 +36,18 @@ impl LintRule for IncompatibleTernary {
     ) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
         gd_ast::visit_exprs(file, &mut |expr| {
-            if let GdExpr::Ternary { node, true_val, false_val, .. } = expr {
+            if let GdExpr::Ternary {
+                node,
+                true_val,
+                false_val,
+                ..
+            } = expr
+            {
                 let Some(true_type) = infer_expression_type(&true_val.node(), source, file) else {
                     return;
                 };
-                let Some(false_type) = infer_expression_type(&false_val.node(), source, file) else {
+                let Some(false_type) = infer_expression_type(&false_val.node(), source, file)
+                else {
                     return;
                 };
 

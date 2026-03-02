@@ -1,5 +1,5 @@
-use std::collections::HashSet;
 use crate::core::gd_ast::{self, GdExpr, GdFile};
+use std::collections::HashSet;
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;

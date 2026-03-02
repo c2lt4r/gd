@@ -21,7 +21,9 @@ impl LintRule for AssertAlwaysTrue {
     fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
         gd_ast::visit_exprs(file, &mut |expr| {
-            if let GdExpr::Call { node, callee, args, .. } = expr
+            if let GdExpr::Call {
+                node, callee, args, ..
+            } = expr
                 && let GdExpr::Ident { name: "assert", .. } = callee.as_ref()
                 && let Some(first_arg) = args.first()
                 && is_always_truthy(first_arg, source)
@@ -63,9 +65,7 @@ fn is_always_truthy(expr: &GdExpr<'_>, source: &str) -> bool {
     match expr {
         GdExpr::Bool { value: true, .. } => true,
         GdExpr::IntLiteral { value, .. } => *value != "0",
-        GdExpr::FloatLiteral { value, .. } => {
-            *value != "0.0" && *value != "0." && *value != ".0"
-        }
+        GdExpr::FloatLiteral { value, .. } => *value != "0.0" && *value != "0." && *value != ".0",
         GdExpr::StringLiteral { .. } => {
             // Non-empty string is truthy: `"x"` has len >= 3
             let text = &source[expr.node().byte_range()];
@@ -78,8 +78,8 @@ fn is_always_truthy(expr: &GdExpr<'_>, source: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::parser;
     use crate::core::gd_ast;
+    use crate::core::parser;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();

@@ -101,12 +101,8 @@ pub fn pull_up_member(
     }
 
     // Check for references to child-only members (non-self references)
-    let child_only_refs = collect_child_only_references(
-        decl,
-        &child_source,
-        &child_gd_file,
-        &parent_gd_file,
-    );
+    let child_only_refs =
+        collect_child_only_references(decl, &child_source, &child_gd_file, &parent_gd_file);
     for member in &child_only_refs {
         warnings.push(format!(
             "'{member}' referenced in moved symbol but not found in parent class '{extends}'"

@@ -22,7 +22,12 @@ impl LintRule for UnsafeVoidReturn {
         false
     }
 
-    fn check(&self, _file: &GdFile<'_>, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(
+        &self,
+        _file: &GdFile<'_>,
+        _source: &str,
+        _config: &LintConfig,
+    ) -> Vec<LintDiagnostic> {
         Vec::new()
     }
 
@@ -56,16 +61,16 @@ fn check_stmts(
     project: Option<&ProjectIndex>,
     diags: &mut Vec<LintDiagnostic>,
 ) {
-    gd_ast::visit_stmts(file, &mut |stmt| {
-        match stmt {
-            GdStmt::Return { value: Some(expr), .. } => {
-                check_return_void(stmt, expr, source, file, project, diags);
-            }
-            GdStmt::Var(var) => {
-                check_assign_void(var, source, file, project, diags);
-            }
-            _ => {}
+    gd_ast::visit_stmts(file, &mut |stmt| match stmt {
+        GdStmt::Return {
+            value: Some(expr), ..
+        } => {
+            check_return_void(stmt, expr, source, file, project, diags);
         }
+        GdStmt::Var(var) => {
+            check_assign_void(var, source, file, project, diags);
+        }
+        _ => {}
     });
 }
 

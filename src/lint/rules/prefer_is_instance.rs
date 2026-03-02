@@ -21,7 +21,12 @@ impl LintRule for PreferIsInstance {
     fn check(&self, file: &GdFile<'_>, source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
         let mut diags = Vec::new();
         gd_ast::visit_exprs(file, &mut |expr| {
-            if let GdExpr::BinOp { node, op, left, right } = expr
+            if let GdExpr::BinOp {
+                node,
+                op,
+                left,
+                right,
+            } = expr
                 && (*op == "==" || *op == "!=")
             {
                 // Try both orders: typeof(x) == TYPE_* and TYPE_* == typeof(x)
@@ -126,8 +131,8 @@ fn type_constant_to_type(constant: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::parser;
     use crate::core::gd_ast;
+    use crate::core::parser;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();

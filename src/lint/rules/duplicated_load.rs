@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use crate::core::gd_ast::{self, GdExpr, GdFile};
+use std::collections::HashMap;
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -27,9 +27,9 @@ impl LintRule for DuplicatedLoad {
                     let t = path.trim_matches('"').trim_matches('\'');
                     (t, *node)
                 }
-                GdExpr::Call { node, callee, args, .. }
-                    if matches!(callee.as_ref(), GdExpr::Ident { name: "load", .. }) =>
-                {
+                GdExpr::Call {
+                    node, callee, args, ..
+                } if matches!(callee.as_ref(), GdExpr::Ident { name: "load", .. }) => {
                     if let Some(GdExpr::StringLiteral { value, .. }) = args.first() {
                         (value.trim_matches('"').trim_matches('\''), *node)
                     } else {
@@ -39,10 +39,11 @@ impl LintRule for DuplicatedLoad {
                 _ => return,
             };
             if !trimmed.is_empty() {
-                loads
-                    .entry(trimmed.to_string())
-                    .or_default()
-                    .push((node.start_position().row, node.start_position().column, node.end_position().column));
+                loads.entry(trimmed.to_string()).or_default().push((
+                    node.start_position().row,
+                    node.start_position().column,
+                    node.end_position().column,
+                ));
             }
         });
 
@@ -75,8 +76,8 @@ impl LintRule for DuplicatedLoad {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::parser;
     use crate::core::gd_ast;
+    use crate::core::parser;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();

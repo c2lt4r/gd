@@ -123,7 +123,8 @@ fn check_assign_type_in_node(
         };
         let declared_type = class_var_type.as_deref().or(local_var_type.as_deref());
         if let Some(declared_type) = declared_type
-            && let Some(actual) = type_inference::infer_expression_type_with_project(&rhs, source, file, project)
+            && let Some(actual) =
+                type_inference::infer_expression_type_with_project(&rhs, source, file, project)
             && let Some(actual_name) = inferred_type_name(&actual)
             && !types_assignable(declared_type, actual_name)
         {
@@ -204,7 +205,8 @@ fn check_return_type_in_body(
 ) {
     if node.kind() == "return_statement"
         && let Some(expr) = node.named_child(0)
-        && let Some(actual) = type_inference::infer_expression_type_with_project(&expr, source, file, project)
+        && let Some(actual) =
+            type_inference::infer_expression_type_with_project(&expr, source, file, project)
         && let Some(actual_name) = inferred_type_name(&actual)
         && !types_assignable(ret_type, actual_name)
     {
@@ -258,8 +260,10 @@ fn check_operators_in_node(
         && let Some(right) = node.child_by_field_name("right")
         && let Some(op_node) = node.child_by_field_name("op")
         && let Ok(op) = op_node.utf8_text(source.as_bytes())
-        && let Some(left_ty) = type_inference::infer_expression_type_with_project(&left, source, file, project)
-        && let Some(right_ty) = type_inference::infer_expression_type_with_project(&right, source, file, project)
+        && let Some(left_ty) =
+            type_inference::infer_expression_type_with_project(&left, source, file, project)
+        && let Some(right_ty) =
+            type_inference::infer_expression_type_with_project(&right, source, file, project)
         && let Some(lt) = inferred_type_name(&left_ty)
         && let Some(rt) = inferred_type_name(&right_ty)
         && !operator_valid(op, lt, rt)
@@ -278,22 +282,22 @@ fn check_operators_in_node(
     {
         // Extract the base operator from the augmented assignment text
         // The operator token (+=, -=, etc.) is an unnamed child between lhs and rhs
-        let op = node.utf8_text(source.as_bytes())
-            .ok()
-            .and_then(|text| {
-                // Find the operator by looking for the += -= *= /= %= pattern
-                for op_str in &["+=", "-=", "*=", "/=", "%="] {
-                    if text.contains(op_str) {
-                        return Some(&op_str[..1]); // strip the '='
-                    }
+        let op = node.utf8_text(source.as_bytes()).ok().and_then(|text| {
+            // Find the operator by looking for the += -= *= /= %= pattern
+            for op_str in &["+=", "-=", "*=", "/=", "%="] {
+                if text.contains(op_str) {
+                    return Some(&op_str[..1]); // strip the '='
                 }
-                None
-            });
+            }
+            None
+        });
 
         if let Some(op) = op
-            && let Some(left_ty) = type_inference::infer_expression_type_with_project(&lhs, source, file, project)
-                .or_else(|| infer_local_var_type(&lhs, source, file, project))
-            && let Some(right_ty) = type_inference::infer_expression_type_with_project(&rhs, source, file, project)
+            && let Some(left_ty) =
+                type_inference::infer_expression_type_with_project(&lhs, source, file, project)
+                    .or_else(|| infer_local_var_type(&lhs, source, file, project))
+            && let Some(right_ty) =
+                type_inference::infer_expression_type_with_project(&rhs, source, file, project)
             && let Some(lt) = inferred_type_name(&left_ty)
             && let Some(rt) = inferred_type_name(&right_ty)
             && !operator_valid(op, lt, rt)
@@ -461,8 +465,9 @@ fn check_cast_in_node(
 
     if let Some((expr, type_node)) = cast_parts
         && let Ok(target_type) = type_node.utf8_text(source.as_bytes())
-        && let Some(expr_ty) = type_inference::infer_expression_type_with_project(&expr, source, file, project)
-            .or_else(|| infer_local_var_type(&expr, source, file, project))
+        && let Some(expr_ty) =
+            type_inference::infer_expression_type_with_project(&expr, source, file, project)
+                .or_else(|| infer_local_var_type(&expr, source, file, project))
         && let Some(actual_name) = inferred_type_name(&expr_ty)
     {
         let is_invalid = if is_primitive_type(actual_name) {
@@ -470,7 +475,9 @@ fn check_cast_in_node(
             (crate::class_db::class_exists(target_type) && !is_primitive_type(target_type))
             // primitive → builtin container (e.g. int as Array)
             || is_builtin_container_type(target_type)
-        } else if crate::class_db::class_exists(actual_name) || is_builtin_container_type(actual_name) {
+        } else if crate::class_db::class_exists(actual_name)
+            || is_builtin_container_type(actual_name)
+        {
             // class/container → primitive (e.g. RefCounted as int)
             is_primitive_type(target_type)
         } else {
@@ -480,7 +487,9 @@ fn check_cast_in_node(
             errors.push(StructuralError {
                 line: node.start_position().row as u32 + 1,
                 column: node.start_position().column as u32 + 1,
-                message: format!("invalid cast: cannot cast \"{actual_name}\" to \"{target_type}\"",),
+                message: format!(
+                    "invalid cast: cannot cast \"{actual_name}\" to \"{target_type}\"",
+                ),
             });
         }
     }

@@ -321,8 +321,7 @@ fn lint_file(
     }
 
     // Include compiler-level checks (gd check parity) as error-severity diagnostics
-    let structural =
-        crate::cli::check_cmd::check_classdb_errors(&file, &source, project);
+    let structural = crate::cli::check_cmd::check_classdb_errors(&file, &source, project);
     for err in structural {
         all_diags.push(LintDiagnostic {
             rule: "compiler-error",

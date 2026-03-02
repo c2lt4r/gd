@@ -27,7 +27,10 @@ impl LintRule for NamingConvention {
                 rule: "naming-convention",
                 message: format!("class_name `{class_name}` should use PascalCase: `{fixed}`"),
                 severity: Severity::Warning,
-                line, column: col, end_column: end_col, fix,
+                line,
+                column: col,
+                end_column: end_col,
+                fix,
                 context_lines: None,
             });
         }
@@ -56,7 +59,10 @@ fn check_decl(decl: &GdDecl<'_>, diags: &mut Vec<LintDiagnostic>) {
                     rule: "naming-convention",
                     message: format!("function `{}` should use snake_case: `{fixed}`", func.name),
                     severity: Severity::Warning,
-                    line, column: col, end_column: end_col, fix,
+                    line,
+                    column: col,
+                    end_column: end_col,
+                    fix,
                     context_lines: None,
                 });
             }
@@ -68,9 +74,15 @@ fn check_decl(decl: &GdDecl<'_>, diags: &mut Vec<LintDiagnostic>) {
                     let (line, col, end_col, fix) = name_fix(var.name_node, var.node, &fixed);
                     diags.push(LintDiagnostic {
                         rule: "naming-convention",
-                        message: format!("constant `{}` should use UPPER_SNAKE_CASE: `{fixed}`", var.name),
+                        message: format!(
+                            "constant `{}` should use UPPER_SNAKE_CASE: `{fixed}`",
+                            var.name
+                        ),
                         severity: Severity::Warning,
-                        line, column: col, end_column: end_col, fix,
+                        line,
+                        column: col,
+                        end_column: end_col,
+                        fix,
                         context_lines: None,
                     });
                 }
@@ -81,7 +93,10 @@ fn check_decl(decl: &GdDecl<'_>, diags: &mut Vec<LintDiagnostic>) {
                     rule: "naming-convention",
                     message: format!("variable `{}` should use snake_case: `{fixed}`", var.name),
                     severity: Severity::Warning,
-                    line, column: col, end_column: end_col, fix,
+                    line,
+                    column: col,
+                    end_column: end_col,
+                    fix,
                     context_lines: None,
                 });
             }
@@ -94,7 +109,10 @@ fn check_decl(decl: &GdDecl<'_>, diags: &mut Vec<LintDiagnostic>) {
                     rule: "naming-convention",
                     message: format!("class `{}` should use PascalCase: `{fixed}`", class.name),
                     severity: Severity::Warning,
-                    line, column: col, end_column: end_col, fix,
+                    line,
+                    column: col,
+                    end_column: end_col,
+                    fix,
                     context_lines: None,
                 });
             }
@@ -111,9 +129,15 @@ fn check_local_var(stmt: &GdStmt<'_>, diags: &mut Vec<LintDiagnostic>) {
             let (line, col, end_col, fix) = name_fix(var.name_node, var.node, &fixed);
             diags.push(LintDiagnostic {
                 rule: "naming-convention",
-                message: format!("constant `{}` should use UPPER_SNAKE_CASE: `{fixed}`", var.name),
+                message: format!(
+                    "constant `{}` should use UPPER_SNAKE_CASE: `{fixed}`",
+                    var.name
+                ),
                 severity: Severity::Warning,
-                line, column: col, end_column: end_col, fix,
+                line,
+                column: col,
+                end_column: end_col,
+                fix,
                 context_lines: None,
             });
         }
@@ -124,7 +148,10 @@ fn check_local_var(stmt: &GdStmt<'_>, diags: &mut Vec<LintDiagnostic>) {
             rule: "naming-convention",
             message: format!("variable `{}` should use snake_case: `{fixed}`", var.name),
             severity: Severity::Warning,
-            line, column: col, end_column: end_col, fix,
+            line,
+            column: col,
+            end_column: end_col,
+            fix,
             context_lines: None,
         });
     }
@@ -141,7 +168,11 @@ fn name_fix(
             n.start_position().row,
             n.start_position().column,
             Some(n.end_position().column),
-            Some(Fix { byte_start: n.start_byte(), byte_end: n.end_byte(), replacement: replacement.to_string() }),
+            Some(Fix {
+                byte_start: n.start_byte(),
+                byte_end: n.end_byte(),
+                replacement: replacement.to_string(),
+            }),
         ),
         None => (
             decl_node.start_position().row,

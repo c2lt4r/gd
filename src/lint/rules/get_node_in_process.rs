@@ -77,12 +77,13 @@ fn visit_stmt_exprs<'a>(stmt: &GdStmt<'a>, f: &mut impl FnMut(&GdExpr<'a>)) {
                 visit_expr(val, f);
             }
         }
-        GdStmt::Assign { target, value, .. }
-        | GdStmt::AugAssign { target, value, .. } => {
+        GdStmt::Assign { target, value, .. } | GdStmt::AugAssign { target, value, .. } => {
             visit_expr(target, f);
             visit_expr(value, f);
         }
-        GdStmt::Return { value: Some(val), .. } => visit_expr(val, f),
+        GdStmt::Return {
+            value: Some(val), ..
+        } => visit_expr(val, f),
         GdStmt::If(gif) => visit_expr(&gif.condition, f),
         GdStmt::For { iter, .. } => visit_expr(iter, f),
         GdStmt::While { condition, .. } => visit_expr(condition, f),
@@ -111,7 +112,9 @@ fn visit_expr<'a>(expr: &GdExpr<'a>, f: &mut impl FnMut(&GdExpr<'a>)) {
         }
         GdExpr::UnaryOp { operand, .. } => visit_expr(operand, f),
         GdExpr::PropertyAccess { receiver, .. } => visit_expr(receiver, f),
-        GdExpr::Subscript { receiver, index, .. } => {
+        GdExpr::Subscript {
+            receiver, index, ..
+        } => {
             visit_expr(receiver, f);
             visit_expr(index, f);
         }
@@ -126,7 +129,12 @@ fn visit_expr<'a>(expr: &GdExpr<'a>, f: &mut impl FnMut(&GdExpr<'a>)) {
                 visit_expr(v, f);
             }
         }
-        GdExpr::Ternary { true_val, condition, false_val, .. } => {
+        GdExpr::Ternary {
+            true_val,
+            condition,
+            false_val,
+            ..
+        } => {
             visit_expr(true_val, f);
             visit_expr(condition, f);
             visit_expr(false_val, f);
@@ -206,8 +214,8 @@ fn check_get_node_expr(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::parser;
     use crate::core::gd_ast;
+    use crate::core::parser;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();

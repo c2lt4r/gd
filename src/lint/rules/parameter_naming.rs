@@ -22,8 +22,18 @@ impl LintRule for ParameterNaming {
                     if !is_snake_case(param.name) {
                         let fixed = to_snake_case(param.name);
                         let (line, col, end_col) = param.name_node.map_or(
-                            (param.node.start_position().row, param.node.start_position().column, None),
-                            |n| (n.start_position().row, n.start_position().column, Some(n.end_position().column)),
+                            (
+                                param.node.start_position().row,
+                                param.node.start_position().column,
+                                None,
+                            ),
+                            |n| {
+                                (
+                                    n.start_position().row,
+                                    n.start_position().column,
+                                    Some(n.end_position().column),
+                                )
+                            },
                         );
                         let fix = param.name_node.map(|n| Fix {
                             byte_start: n.start_byte(),
@@ -32,7 +42,10 @@ impl LintRule for ParameterNaming {
                         });
                         diags.push(LintDiagnostic {
                             rule: "parameter-naming",
-                            message: format!("parameter `{}` should use snake_case: `{fixed}`", param.name),
+                            message: format!(
+                                "parameter `{}` should use snake_case: `{fixed}`",
+                                param.name
+                            ),
                             severity: Severity::Warning,
                             line,
                             column: col,
@@ -86,8 +99,8 @@ fn to_snake_case(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::parser;
     use crate::core::gd_ast;
+    use crate::core::parser;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();

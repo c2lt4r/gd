@@ -44,8 +44,12 @@ fn check_if_else(stmt: &GdStmt<'_>, source: &str, diags: &mut Vec<LintDiagnostic
     let (if_var, if_val) = extract_assignment(&gif.body[0], source);
     let (else_var, else_val) = extract_assignment(&else_body[0], source);
 
-    let (Some(if_var), Some(if_val)) = (if_var, if_val) else { return };
-    let (Some(else_var), Some(else_val)) = (else_var, else_val) else { return };
+    let (Some(if_var), Some(if_val)) = (if_var, if_val) else {
+        return;
+    };
+    let (Some(else_var), Some(else_val)) = (else_var, else_val) else {
+        return;
+    };
 
     // Must assign to the same variable
     if if_var != else_var {
@@ -77,7 +81,10 @@ fn check_if_else(stmt: &GdStmt<'_>, source: &str, diags: &mut Vec<LintDiagnostic
 }
 
 /// Extract (variable_text, value_text) from an assignment statement.
-fn extract_assignment<'a>(stmt: &GdStmt<'a>, source: &'a str) -> (Option<&'a str>, Option<&'a str>) {
+fn extract_assignment<'a>(
+    stmt: &GdStmt<'a>,
+    source: &'a str,
+) -> (Option<&'a str>, Option<&'a str>) {
     if let GdStmt::Assign { target, value, .. } = stmt {
         return (
             Some(&source[target.node().byte_range()]),
@@ -123,8 +130,8 @@ fn generate_if_else_fix(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::parser;
     use crate::core::gd_ast;
+    use crate::core::parser;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();

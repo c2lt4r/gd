@@ -52,8 +52,8 @@ impl LintRule for MaxLineLength {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::parser;
     use crate::core::gd_ast;
+    use crate::core::parser;
 
     // Default from LintConfig::default().max_line_length
     const MAX_LEN: usize = 120;

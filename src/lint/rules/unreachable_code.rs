@@ -69,7 +69,9 @@ fn is_after_pending(stmts: &[GdStmt<'_>], idx: usize) -> bool {
     let prev = &stmts[idx - 1];
     if let GdStmt::Expr { expr, .. } = prev
         && let GdExpr::Call { callee, .. } = expr
-        && let GdExpr::Ident { name: "pending", .. } = callee.as_ref()
+        && let GdExpr::Ident {
+            name: "pending", ..
+        } = callee.as_ref()
     {
         return true;
     }
@@ -152,8 +154,8 @@ fn visit_nested_bodies(stmt: &GdStmt<'_>, source: &str, diags: &mut Vec<LintDiag
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::parser;
     use crate::core::gd_ast;
+    use crate::core::parser;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();

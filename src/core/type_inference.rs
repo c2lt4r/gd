@@ -48,11 +48,7 @@ impl InferredType {
 ///
 /// Returns `None` when the type cannot be determined (not the same as `Variant` —
 /// `None` means "we don't know", `Some(Variant)` means "we know it's dynamic").
-pub fn infer_expression_type(
-    node: &Node,
-    source: &str,
-    file: &GdFile,
-) -> Option<InferredType> {
+pub fn infer_expression_type(node: &Node, source: &str, file: &GdFile) -> Option<InferredType> {
     match node.kind() {
         // ── Literals ────────────────────────────────────────────────
         "integer" => Some(InferredType::Builtin("int")),
@@ -352,8 +348,7 @@ fn infer_binary(node: &Node, source: &str, file: &GdFile) -> Option<InferredType
             .or_else(|| node.named_child(0));
         if let Some(l) = left
             && (l.kind() == "string"
-                || infer_expression_type(&l, source, file)
-                    == Some(InferredType::Builtin("String")))
+                || infer_expression_type(&l, source, file) == Some(InferredType::Builtin("String")))
         {
             return Some(InferredType::Builtin("String"));
         }
@@ -1073,11 +1068,7 @@ mod tests {
         find_first_var_value(&root, source, &file)
     }
 
-    fn find_first_var_value(
-        node: &Node,
-        source: &str,
-        file: &GdFile,
-    ) -> Option<InferredType> {
+    fn find_first_var_value(node: &Node, source: &str, file: &GdFile) -> Option<InferredType> {
         if node.kind() == "variable_statement"
             && let Some(value) = node.child_by_field_name("value")
         {
@@ -1747,8 +1738,7 @@ func f():
             }
             let mut cursor = node.walk();
             for child in node.children(&mut cursor) {
-                if let Some(result) = find_first_var_value_project(&child, source, file, project)
-                {
+                if let Some(result) = find_first_var_value_project(&child, source, file, project) {
                     return Some(result);
                 }
             }

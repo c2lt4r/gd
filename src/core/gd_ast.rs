@@ -174,35 +174,102 @@ pub struct GdMatchArm<'a> {
 #[derive(Debug)]
 pub enum GdExpr<'a> {
     // Literals
-    IntLiteral { node: Node<'a>, value: &'a str },
-    FloatLiteral { node: Node<'a>, value: &'a str },
-    StringLiteral { node: Node<'a>, value: &'a str },
-    StringName { node: Node<'a>, value: &'a str },
-    Bool { node: Node<'a>, value: bool },
-    Null { node: Node<'a> },
+    IntLiteral {
+        node: Node<'a>,
+        value: &'a str,
+    },
+    FloatLiteral {
+        node: Node<'a>,
+        value: &'a str,
+    },
+    StringLiteral {
+        node: Node<'a>,
+        value: &'a str,
+    },
+    StringName {
+        node: Node<'a>,
+        value: &'a str,
+    },
+    Bool {
+        node: Node<'a>,
+        value: bool,
+    },
+    Null {
+        node: Node<'a>,
+    },
 
     // Identifiers
-    Ident { node: Node<'a>, name: &'a str },
+    Ident {
+        node: Node<'a>,
+        name: &'a str,
+    },
 
     // Collections
-    Array { node: Node<'a>, elements: Vec<GdExpr<'a>> },
-    Dict { node: Node<'a>, pairs: Vec<(GdExpr<'a>, GdExpr<'a>)> },
+    Array {
+        node: Node<'a>,
+        elements: Vec<GdExpr<'a>>,
+    },
+    Dict {
+        node: Node<'a>,
+        pairs: Vec<(GdExpr<'a>, GdExpr<'a>)>,
+    },
 
     // Calls
-    Call { node: Node<'a>, callee: Box<GdExpr<'a>>, args: Vec<GdExpr<'a>> },
-    MethodCall { node: Node<'a>, receiver: Box<GdExpr<'a>>, method: &'a str, args: Vec<GdExpr<'a>> },
-    SuperCall { node: Node<'a>, method: Option<&'a str>, args: Vec<GdExpr<'a>> },
+    Call {
+        node: Node<'a>,
+        callee: Box<GdExpr<'a>>,
+        args: Vec<GdExpr<'a>>,
+    },
+    MethodCall {
+        node: Node<'a>,
+        receiver: Box<GdExpr<'a>>,
+        method: &'a str,
+        args: Vec<GdExpr<'a>>,
+    },
+    SuperCall {
+        node: Node<'a>,
+        method: Option<&'a str>,
+        args: Vec<GdExpr<'a>>,
+    },
 
     // Access
-    PropertyAccess { node: Node<'a>, receiver: Box<GdExpr<'a>>, property: &'a str },
-    Subscript { node: Node<'a>, receiver: Box<GdExpr<'a>>, index: Box<GdExpr<'a>> },
-    GetNode { node: Node<'a>, path: &'a str },
+    PropertyAccess {
+        node: Node<'a>,
+        receiver: Box<GdExpr<'a>>,
+        property: &'a str,
+    },
+    Subscript {
+        node: Node<'a>,
+        receiver: Box<GdExpr<'a>>,
+        index: Box<GdExpr<'a>>,
+    },
+    GetNode {
+        node: Node<'a>,
+        path: &'a str,
+    },
 
     // Operators
-    BinOp { node: Node<'a>, left: Box<GdExpr<'a>>, op: &'a str, right: Box<GdExpr<'a>> },
-    UnaryOp { node: Node<'a>, op: &'a str, operand: Box<GdExpr<'a>> },
-    Cast { node: Node<'a>, expr: Box<GdExpr<'a>>, target_type: &'a str },
-    Is { node: Node<'a>, expr: Box<GdExpr<'a>>, type_name: &'a str },
+    BinOp {
+        node: Node<'a>,
+        left: Box<GdExpr<'a>>,
+        op: &'a str,
+        right: Box<GdExpr<'a>>,
+    },
+    UnaryOp {
+        node: Node<'a>,
+        op: &'a str,
+        operand: Box<GdExpr<'a>>,
+    },
+    Cast {
+        node: Node<'a>,
+        expr: Box<GdExpr<'a>>,
+        target_type: &'a str,
+    },
+    Is {
+        node: Node<'a>,
+        expr: Box<GdExpr<'a>>,
+        type_name: &'a str,
+    },
     Ternary {
         node: Node<'a>,
         true_val: Box<GdExpr<'a>>,
@@ -211,12 +278,23 @@ pub enum GdExpr<'a> {
     },
 
     // Misc
-    Await { node: Node<'a>, expr: Box<GdExpr<'a>> },
-    Lambda { node: Node<'a>, func: Box<GdFunc<'a>> },
-    Preload { node: Node<'a>, path: &'a str },
+    Await {
+        node: Node<'a>,
+        expr: Box<GdExpr<'a>>,
+    },
+    Lambda {
+        node: Node<'a>,
+        func: Box<GdFunc<'a>>,
+    },
+    Preload {
+        node: Node<'a>,
+        path: &'a str,
+    },
 
     // Error recovery
-    Invalid { node: Node<'a> },
+    Invalid {
+        node: Node<'a>,
+    },
 }
 
 // ── Statements ─────────────────────────────────────────────────────────
@@ -224,11 +302,26 @@ pub enum GdExpr<'a> {
 /// A GDScript statement.
 #[derive(Debug)]
 pub enum GdStmt<'a> {
-    Expr { node: Node<'a>, expr: GdExpr<'a> },
+    Expr {
+        node: Node<'a>,
+        expr: GdExpr<'a>,
+    },
     Var(GdVar<'a>),
-    Assign { node: Node<'a>, target: GdExpr<'a>, value: GdExpr<'a> },
-    AugAssign { node: Node<'a>, target: GdExpr<'a>, op: &'a str, value: GdExpr<'a> },
-    Return { node: Node<'a>, value: Option<GdExpr<'a>> },
+    Assign {
+        node: Node<'a>,
+        target: GdExpr<'a>,
+        value: GdExpr<'a>,
+    },
+    AugAssign {
+        node: Node<'a>,
+        target: GdExpr<'a>,
+        op: &'a str,
+        value: GdExpr<'a>,
+    },
+    Return {
+        node: Node<'a>,
+        value: Option<GdExpr<'a>>,
+    },
     If(GdIf<'a>),
     For {
         node: Node<'a>,
@@ -238,13 +331,31 @@ pub enum GdStmt<'a> {
         iter: GdExpr<'a>,
         body: Vec<GdStmt<'a>>,
     },
-    While { node: Node<'a>, condition: GdExpr<'a>, body: Vec<GdStmt<'a>> },
-    Match { node: Node<'a>, value: GdExpr<'a>, arms: Vec<GdMatchArm<'a>> },
-    Pass { node: Node<'a> },
-    Break { node: Node<'a> },
-    Continue { node: Node<'a> },
-    Breakpoint { node: Node<'a> },
-    Invalid { node: Node<'a> },
+    While {
+        node: Node<'a>,
+        condition: GdExpr<'a>,
+        body: Vec<GdStmt<'a>>,
+    },
+    Match {
+        node: Node<'a>,
+        value: GdExpr<'a>,
+        arms: Vec<GdMatchArm<'a>>,
+    },
+    Pass {
+        node: Node<'a>,
+    },
+    Break {
+        node: Node<'a>,
+    },
+    Continue {
+        node: Node<'a>,
+    },
+    Breakpoint {
+        node: Node<'a>,
+    },
+    Invalid {
+        node: Node<'a>,
+    },
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -399,31 +510,51 @@ impl<'a> GdDecl<'a> {
     /// Returns `Some(&GdFunc)` if this is a `Func` variant.
     #[must_use]
     pub fn as_func(&self) -> Option<&GdFunc<'a>> {
-        if let GdDecl::Func(f) = self { Some(f) } else { None }
+        if let GdDecl::Func(f) = self {
+            Some(f)
+        } else {
+            None
+        }
     }
 
     /// Returns `Some(&GdVar)` if this is a `Var` variant.
     #[must_use]
     pub fn as_var(&self) -> Option<&GdVar<'a>> {
-        if let GdDecl::Var(v) = self { Some(v) } else { None }
+        if let GdDecl::Var(v) = self {
+            Some(v)
+        } else {
+            None
+        }
     }
 
     /// Returns `Some(&GdSignal)` if this is a `Signal` variant.
     #[must_use]
     pub fn as_signal(&self) -> Option<&GdSignal<'a>> {
-        if let GdDecl::Signal(s) = self { Some(s) } else { None }
+        if let GdDecl::Signal(s) = self {
+            Some(s)
+        } else {
+            None
+        }
     }
 
     /// Returns `Some(&GdEnum)` if this is an `Enum` variant.
     #[must_use]
     pub fn as_enum(&self) -> Option<&GdEnum<'a>> {
-        if let GdDecl::Enum(e) = self { Some(e) } else { None }
+        if let GdDecl::Enum(e) = self {
+            Some(e)
+        } else {
+            None
+        }
     }
 
     /// Returns `Some(&GdClass)` if this is a `Class` variant.
     #[must_use]
     pub fn as_class(&self) -> Option<&GdClass<'a>> {
-        if let GdDecl::Class(c) = self { Some(c) } else { None }
+        if let GdDecl::Class(c) = self {
+            Some(c)
+        } else {
+            None
+        }
     }
 }
 
@@ -720,7 +851,9 @@ fn visit_stmt_exprs<'a>(stmt: &GdStmt<'a>, f: &mut impl FnMut(&GdExpr<'a>)) {
                 visit_stmt_exprs(s, f);
             }
         }
-        GdStmt::While { condition, body, .. } => {
+        GdStmt::While {
+            condition, body, ..
+        } => {
             visit_expr(condition, f);
             for s in body {
                 visit_stmt_exprs(s, f);
@@ -776,14 +909,21 @@ fn visit_expr<'a>(expr: &GdExpr<'a>, f: &mut impl FnMut(&GdExpr<'a>)) {
             }
         }
         GdExpr::PropertyAccess { receiver, .. } => visit_expr(receiver, f),
-        GdExpr::Subscript { receiver, index, .. } => {
+        GdExpr::Subscript {
+            receiver, index, ..
+        } => {
             visit_expr(receiver, f);
             visit_expr(index, f);
         }
         GdExpr::Cast { expr: inner, .. } | GdExpr::Is { expr: inner, .. } => {
             visit_expr(inner, f);
         }
-        GdExpr::Ternary { true_val, condition, false_val, .. } => {
+        GdExpr::Ternary {
+            true_val,
+            condition,
+            false_val,
+            ..
+        } => {
             visit_expr(true_val, f);
             visit_expr(condition, f);
             visit_expr(false_val, f);
@@ -885,8 +1025,9 @@ pub fn convert<'a>(tree: &'a Tree, source: &'a str) -> GdFile<'a> {
                         // byte range. On the first `##` line, start the span. On
                         // subsequent contiguous `##` lines, extend it. A non-`##`
                         // node resets.
-                        let start = pending_doc
-                            .map_or(child.start_byte(), |d| d.as_ptr() as usize - source.as_ptr() as usize);
+                        let start = pending_doc.map_or(child.start_byte(), |d| {
+                            d.as_ptr() as usize - source.as_ptr() as usize
+                        });
                         let end = child.end_byte();
                         pending_doc = source.get(start..end);
                     } else {
@@ -926,7 +1067,8 @@ pub fn convert<'a>(tree: &'a Tree, source: &'a str) -> GdFile<'a> {
                     set_decl_doc(&mut decl, pending_doc.take());
                     file.declarations.push(decl);
                 } else if is_stmt_node(child) {
-                    file.declarations.push(GdDecl::Stmt(convert_stmt(*child, source)));
+                    file.declarations
+                        .push(GdDecl::Stmt(convert_stmt(*child, source)));
                 }
                 pending_doc = None;
                 // If convert_decl returned None, any accumulated annotations
@@ -1102,7 +1244,13 @@ fn convert_typed_param<'a>(node: Node<'a>, source: &'a str) -> GdParam<'a> {
         .and_then(|n| n.utf8_text(source.as_bytes()).ok())
         .unwrap_or("");
     let type_ann = convert_type_ref_field(node, "type", source);
-    GdParam { node, name, name_node, type_ann, default: None }
+    GdParam {
+        node,
+        name,
+        name_node,
+        type_ann,
+        default: None,
+    }
 }
 
 fn convert_default_param<'a>(node: Node<'a>, source: &'a str, typed: bool) -> GdParam<'a> {
@@ -1118,7 +1266,13 @@ fn convert_default_param<'a>(node: Node<'a>, source: &'a str, typed: bool) -> Gd
     let default = node
         .child_by_field_name("value")
         .map(|v| convert_expr(v, source));
-    GdParam { node, name, name_node, type_ann, default }
+    GdParam {
+        node,
+        name,
+        name_node,
+        type_ann,
+        default,
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -1179,7 +1333,13 @@ fn convert_signal<'a>(node: Node<'a>, source: &'a str) -> GdSignal<'a> {
         .child_by_field_name("parameters")
         .map(|p| convert_params(p, source))
         .unwrap_or_default();
-    GdSignal { node, name, name_node, params, doc: None }
+    GdSignal {
+        node,
+        name,
+        name_node,
+        params,
+        doc: None,
+    }
 }
 
 fn convert_enum<'a>(node: Node<'a>, source: &'a str) -> GdEnum<'a> {
@@ -1200,11 +1360,22 @@ fn convert_enum<'a>(node: Node<'a>, source: &'a str) -> GdEnum<'a> {
                 let value = child
                     .child_by_field_name("right")
                     .map(|v| convert_expr(v, source));
-                members.push(GdEnumMember { node: child, name: member_name, name_node: member_name_node, value });
+                members.push(GdEnumMember {
+                    node: child,
+                    name: member_name,
+                    name_node: member_name_node,
+                    value,
+                });
             }
         }
     }
-    GdEnum { node, name, name_node, members, doc: None }
+    GdEnum {
+        node,
+        name,
+        name_node,
+        members,
+        doc: None,
+    }
 }
 
 fn convert_class<'a>(node: Node<'a>, source: &'a str) -> GdClass<'a> {
@@ -1245,7 +1416,14 @@ fn convert_class<'a>(node: Node<'a>, source: &'a str) -> GdClass<'a> {
         }
     }
 
-    GdClass { node, name, name_node, extends, declarations, doc: None }
+    GdClass {
+        node,
+        name,
+        name_node,
+        extends,
+        declarations,
+        doc: None,
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -1302,7 +1480,11 @@ fn convert_stmt<'a>(node: Node<'a>, source: &'a str) -> GdStmt<'a> {
                 .child_by_field_name("body")
                 .map(|b| convert_body(b, source))
                 .unwrap_or_default();
-            GdStmt::While { node, condition, body }
+            GdStmt::While {
+                node,
+                condition,
+                body,
+            }
         }
         "match_statement" => convert_match(node, source),
         "variable_statement" | "export_variable_statement" | "onready_variable_statement" => {
@@ -1331,7 +1513,11 @@ fn convert_expression_statement<'a>(node: Node<'a>, source: &'a str) -> GdStmt<'
                 .child_by_field_name("right")
                 .map(|n| convert_expr(n, source))
                 .unwrap_or(GdExpr::Invalid { node: inner });
-            GdStmt::Assign { node, target, value }
+            GdStmt::Assign {
+                node,
+                target,
+                value,
+            }
         }
         "augmented_assignment" => {
             let target = inner
@@ -1345,7 +1531,12 @@ fn convert_expression_statement<'a>(node: Node<'a>, source: &'a str) -> GdStmt<'
                 .child_by_field_name("right")
                 .map(|n| convert_expr(n, source))
                 .unwrap_or(GdExpr::Invalid { node: inner });
-            GdStmt::AugAssign { node, target, op, value }
+            GdStmt::AugAssign {
+                node,
+                target,
+                op,
+                value,
+            }
         }
         _ => {
             let expr = convert_expr(inner, source);
@@ -1392,15 +1583,20 @@ fn convert_if<'a>(node: Node<'a>, source: &'a str) -> GdIf<'a> {
         }
     }
 
-    GdIf { node, condition, body, elif_branches, else_body, else_node }
+    GdIf {
+        node,
+        condition,
+        body,
+        elif_branches,
+        else_body,
+        else_node,
+    }
 }
 
 fn convert_for<'a>(node: Node<'a>, source: &'a str) -> GdStmt<'a> {
     let bytes = source.as_bytes();
     let var_node = node.child_by_field_name("left");
-    let var = var_node
-        .and_then(|n| n.utf8_text(bytes).ok())
-        .unwrap_or("");
+    let var = var_node.and_then(|n| n.utf8_text(bytes).ok()).unwrap_or("");
     let var_type = convert_type_ref_field(node, "type", source);
     let iter = node
         .child_by_field_name("right")
@@ -1410,7 +1606,14 @@ fn convert_for<'a>(node: Node<'a>, source: &'a str) -> GdStmt<'a> {
         .child_by_field_name("body")
         .map(|b| convert_body(b, source))
         .unwrap_or_default();
-    GdStmt::For { node, var, var_node, var_type, iter, body }
+    GdStmt::For {
+        node,
+        var,
+        var_node,
+        var_type,
+        iter,
+        body,
+    }
 }
 
 fn convert_match<'a>(node: Node<'a>, source: &'a str) -> GdStmt<'a> {
@@ -1455,7 +1658,12 @@ fn convert_match_arm<'a>(node: Node<'a>, source: &'a str) -> GdMatchArm<'a> {
         .map(|b| convert_body(b, source))
         .unwrap_or_default();
 
-    GdMatchArm { node, patterns, guard, body }
+    GdMatchArm {
+        node,
+        patterns,
+        guard,
+        body,
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -1468,14 +1676,29 @@ fn convert_expr<'a>(node: Node<'a>, source: &'a str) -> GdExpr<'a> {
     }
     match node.kind() {
         // ── Literals ──────────────────────────────────────────────
-        "integer" => GdExpr::IntLiteral { node, value: txt(node, source) },
-        "float" => GdExpr::FloatLiteral { node, value: txt(node, source) },
-        "string" | "node_path" => GdExpr::StringLiteral { node, value: txt(node, source) },
-        "string_name" => GdExpr::StringName { node, value: txt(node, source) },
+        "integer" => GdExpr::IntLiteral {
+            node,
+            value: txt(node, source),
+        },
+        "float" => GdExpr::FloatLiteral {
+            node,
+            value: txt(node, source),
+        },
+        "string" | "node_path" => GdExpr::StringLiteral {
+            node,
+            value: txt(node, source),
+        },
+        "string_name" => GdExpr::StringName {
+            node,
+            value: txt(node, source),
+        },
         "true" => GdExpr::Bool { node, value: true },
         "false" => GdExpr::Bool { node, value: false },
         "null" => GdExpr::Null { node },
-        "identifier" | "self" => GdExpr::Ident { node, name: txt(node, source) },
+        "identifier" | "self" => GdExpr::Ident {
+            node,
+            name: txt(node, source),
+        },
 
         // ── Collections ───────────────────────────────────────────
         "array" => convert_array(node, source),
@@ -1492,7 +1715,10 @@ fn convert_expr<'a>(node: Node<'a>, source: &'a str) -> GdExpr<'a> {
         "subscript" => convert_subscript(node, source),
 
         // ── Get-node ──────────────────────────────────────────────
-        "get_node" => GdExpr::GetNode { node, path: txt(node, source) },
+        "get_node" => GdExpr::GetNode {
+            node,
+            path: txt(node, source),
+        },
 
         // ── Binary operators (including as/is) ────────────────────
         "binary_operator" => convert_binary(node, source),
@@ -1510,21 +1736,26 @@ fn convert_expr<'a>(node: Node<'a>, source: &'a str) -> GdExpr<'a> {
                 .named_child(0)
                 .map(|n| convert_expr(n, source))
                 .unwrap_or(GdExpr::Invalid { node });
-            GdExpr::Await { node, expr: Box::new(expr) }
+            GdExpr::Await {
+                node,
+                expr: Box::new(expr),
+            }
         }
 
         // ── Lambda ────────────────────────────────────────────────
         "lambda" => {
             let func = convert_func(node, source, false);
-            GdExpr::Lambda { node, func: Box::new(func) }
+            GdExpr::Lambda {
+                node,
+                func: Box::new(func),
+            }
         }
 
         // ── Parenthesized — unwrap ────────────────────────────────
-        "parenthesized_expression" => {
-            node.named_child(0)
-                .map(|n| convert_expr(n, source))
-                .unwrap_or(GdExpr::Invalid { node })
-        }
+        "parenthesized_expression" => node
+            .named_child(0)
+            .map(|n| convert_expr(n, source))
+            .unwrap_or(GdExpr::Invalid { node }),
 
         // ── Fallback ─────────────────────────────────────────────
         _ => GdExpr::Invalid { node },
@@ -1579,13 +1810,15 @@ fn convert_call<'a>(node: Node<'a>, source: &'a str) -> GdExpr<'a> {
     }
 
     let callee = convert_expr(callee_node, source);
-    GdExpr::Call { node, callee: Box::new(callee), args }
+    GdExpr::Call {
+        node,
+        callee: Box::new(callee),
+        args,
+    }
 }
 
 fn convert_base_call<'a>(node: Node<'a>, source: &'a str) -> GdExpr<'a> {
-    let method = node
-        .named_child(0)
-        .map(|n| txt(n, source));
+    let method = node.named_child(0).map(|n| txt(n, source));
     let args = node
         .child_by_field_name("arguments")
         .map(|a| convert_args(a, source))
@@ -1624,23 +1857,24 @@ fn convert_attribute<'a>(node: Node<'a>, source: &'a str) -> GdExpr<'a> {
     match last.kind() {
         "attribute_call" => {
             // Method call: `receiver.method(args)`
-            let method = last
-                .named_child(0)
-                .map_or("", |n| txt(n, source));
+            let method = last.named_child(0).map_or("", |n| txt(n, source));
             let args = last
                 .child_by_field_name("arguments")
                 .map(|a| convert_args(a, source))
                 .unwrap_or_default();
             let receiver = build_chain(count - 1);
-            GdExpr::MethodCall { node, receiver: Box::new(receiver), method, args }
+            GdExpr::MethodCall {
+                node,
+                receiver: Box::new(receiver),
+                method,
+                args,
+            }
         }
         "attribute_subscript" => {
             // Property subscript: `receiver.prop[index]`
             // Intermediate identifiers are siblings, property name is inside attribute_subscript.
             let receiver = build_chain(count - 1);
-            let property = last
-                .named_child(0)
-                .map_or("", |n| txt(n, source));
+            let property = last.named_child(0).map_or("", |n| txt(n, source));
             let prop = GdExpr::PropertyAccess {
                 node,
                 receiver: Box::new(receiver),
@@ -1651,13 +1885,21 @@ fn convert_attribute<'a>(node: Node<'a>, source: &'a str) -> GdExpr<'a> {
                 .and_then(|a| a.named_child(0))
                 .map(|n| convert_expr(n, source))
                 .unwrap_or(GdExpr::Invalid { node });
-            GdExpr::Subscript { node, receiver: Box::new(prop), index: Box::new(index) }
+            GdExpr::Subscript {
+                node,
+                receiver: Box::new(prop),
+                index: Box::new(index),
+            }
         }
         _ => {
             // Property access: `receiver.property`
             let receiver = build_chain(count - 1);
             let property = txt(last, source);
-            GdExpr::PropertyAccess { node, receiver: Box::new(receiver), property }
+            GdExpr::PropertyAccess {
+                node,
+                receiver: Box::new(receiver),
+                property,
+            }
         }
     }
 }
@@ -1672,7 +1914,11 @@ fn convert_subscript<'a>(node: Node<'a>, source: &'a str) -> GdExpr<'a> {
         .and_then(|a| a.named_child(0))
         .map(|n| convert_expr(n, source))
         .unwrap_or(GdExpr::Invalid { node });
-    GdExpr::Subscript { node, receiver: Box::new(receiver), index: Box::new(index) }
+    GdExpr::Subscript {
+        node,
+        receiver: Box::new(receiver),
+        index: Box::new(index),
+    }
 }
 
 fn convert_binary<'a>(node: Node<'a>, source: &'a str) -> GdExpr<'a> {
@@ -1689,7 +1935,11 @@ fn convert_binary<'a>(node: Node<'a>, source: &'a str) -> GdExpr<'a> {
             let target_type = node
                 .child_by_field_name("right")
                 .map_or("", |n| txt(n, source));
-            GdExpr::Cast { node, expr: Box::new(expr), target_type }
+            GdExpr::Cast {
+                node,
+                expr: Box::new(expr),
+                target_type,
+            }
         }
         "is" => {
             let expr = node
@@ -1699,7 +1949,11 @@ fn convert_binary<'a>(node: Node<'a>, source: &'a str) -> GdExpr<'a> {
             let type_name = node
                 .child_by_field_name("right")
                 .map_or("", |n| txt(n, source));
-            GdExpr::Is { node, expr: Box::new(expr), type_name }
+            GdExpr::Is {
+                node,
+                expr: Box::new(expr),
+                type_name,
+            }
         }
         _ => {
             let left = node
@@ -1710,7 +1964,12 @@ fn convert_binary<'a>(node: Node<'a>, source: &'a str) -> GdExpr<'a> {
                 .child_by_field_name("right")
                 .map(|n| convert_expr(n, source))
                 .unwrap_or(GdExpr::Invalid { node });
-            GdExpr::BinOp { node, left: Box::new(left), op, right: Box::new(right) }
+            GdExpr::BinOp {
+                node,
+                left: Box::new(left),
+                op,
+                right: Box::new(right),
+            }
         }
     }
 }
@@ -1720,10 +1979,12 @@ fn convert_cast_node<'a>(node: Node<'a>, source: &'a str) -> GdExpr<'a> {
         .named_child(0)
         .map(|n| convert_expr(n, source))
         .unwrap_or(GdExpr::Invalid { node });
-    let target_type = node
-        .named_child(1)
-        .map_or("", |n| txt(n, source));
-    GdExpr::Cast { node, expr: Box::new(expr), target_type }
+    let target_type = node.named_child(1).map_or("", |n| txt(n, source));
+    GdExpr::Cast {
+        node,
+        expr: Box::new(expr),
+        target_type,
+    }
 }
 
 fn convert_unary<'a>(node: Node<'a>, source: &'a str) -> GdExpr<'a> {
@@ -1733,7 +1994,11 @@ fn convert_unary<'a>(node: Node<'a>, source: &'a str) -> GdExpr<'a> {
         .named_child(0)
         .map(|n| convert_expr(n, source))
         .unwrap_or(GdExpr::Invalid { node });
-    GdExpr::UnaryOp { node, op, operand: Box::new(operand) }
+    GdExpr::UnaryOp {
+        node,
+        op,
+        operand: Box::new(operand),
+    }
 }
 
 fn convert_ternary<'a>(node: Node<'a>, source: &'a str) -> GdExpr<'a> {
@@ -1827,13 +2092,13 @@ fn collect_inline_annotations<'a>(node: Node<'a>, source: &'a str) -> Vec<GdAnno
 
 /// Get the text of the first `identifier` child.
 fn first_identifier<'a>(node: Node<'a>, source: &'a str) -> Option<&'a str> {
-    first_identifier_node(node)
-        .and_then(|n| n.utf8_text(source.as_bytes()).ok())
+    first_identifier_node(node).and_then(|n| n.utf8_text(source.as_bytes()).ok())
 }
 
 fn first_identifier_node(node: Node<'_>) -> Option<Node<'_>> {
     let mut cursor = node.walk();
-    node.children(&mut cursor).find(|child| child.kind() == "identifier")
+    node.children(&mut cursor)
+        .find(|child| child.kind() == "identifier")
 }
 
 /// Check whether `node` has a child of the given kind.
@@ -1850,10 +2115,18 @@ fn convert_type_ref_field<'a>(
 ) -> Option<GdTypeRef<'a>> {
     let type_node = node.child_by_field_name(field)?;
     if type_node.kind() == "inferred_type" {
-        return Some(GdTypeRef { node: type_node, name: "", is_inferred: true });
+        return Some(GdTypeRef {
+            node: type_node,
+            name: "",
+            is_inferred: true,
+        });
     }
     let name = type_node.utf8_text(source.as_bytes()).ok()?;
-    Some(GdTypeRef { node: type_node, name, is_inferred: false })
+    Some(GdTypeRef {
+        node: type_node,
+        name,
+        is_inferred: false,
+    })
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -1873,7 +2146,10 @@ mod tests {
         let tree = parser::parse(src).unwrap();
         let file = convert(&tree, src);
         assert_eq!(file.class_name, Some("Player"));
-        assert!(matches!(file.extends, Some(GdExtends::Class("CharacterBody2D"))));
+        assert!(matches!(
+            file.extends,
+            Some(GdExtends::Class("CharacterBody2D"))
+        ));
     }
 
     #[test]
@@ -1881,7 +2157,10 @@ mod tests {
         let src = "extends \"res://base.gd\"\n";
         let tree = parser::parse(src).unwrap();
         let file = convert(&tree, src);
-        assert!(matches!(file.extends, Some(GdExtends::Path("res://base.gd"))));
+        assert!(matches!(
+            file.extends,
+            Some(GdExtends::Path("res://base.gd"))
+        ));
     }
 
     #[test]
@@ -1900,7 +2179,9 @@ mod tests {
         let tree = parser::parse(src).unwrap();
         let file = convert(&tree, src);
         assert_eq!(file.declarations.len(), 1);
-        let GdDecl::Func(func) = &file.declarations[0] else { panic!("expected Func") };
+        let GdDecl::Func(func) = &file.declarations[0] else {
+            panic!("expected Func")
+        };
         assert_eq!(func.name, "add");
         assert_eq!(func.params.len(), 2);
         assert_eq!(func.params[0].name, "a");
@@ -1916,7 +2197,9 @@ mod tests {
         let src = "func _init():\n\tpass\n";
         let tree = parser::parse(src).unwrap();
         let file = convert(&tree, src);
-        let GdDecl::Func(func) = &file.declarations[0] else { panic!("expected Func") };
+        let GdDecl::Func(func) = &file.declarations[0] else {
+            panic!("expected Func")
+        };
         assert_eq!(func.name, "_init");
     }
 
@@ -1925,7 +2208,9 @@ mod tests {
         let src = "static func helper() -> void:\n\tpass\n";
         let tree = parser::parse(src).unwrap();
         let file = convert(&tree, src);
-        let GdDecl::Func(func) = &file.declarations[0] else { panic!("expected Func") };
+        let GdDecl::Func(func) = &file.declarations[0] else {
+            panic!("expected Func")
+        };
         assert!(func.is_static);
     }
 
@@ -1936,7 +2221,9 @@ mod tests {
         let src = "var speed: float = 10.0\n";
         let tree = parser::parse(src).unwrap();
         let file = convert(&tree, src);
-        let GdDecl::Var(var) = &file.declarations[0] else { panic!("expected Var") };
+        let GdDecl::Var(var) = &file.declarations[0] else {
+            panic!("expected Var")
+        };
         assert_eq!(var.name, "speed");
         assert!(!var.is_const);
         assert_eq!(var.type_ann.as_ref().unwrap().name, "float");
@@ -1948,7 +2235,9 @@ mod tests {
         let src = "var x := 42\n";
         let tree = parser::parse(src).unwrap();
         let file = convert(&tree, src);
-        let GdDecl::Var(var) = &file.declarations[0] else { panic!("expected Var") };
+        let GdDecl::Var(var) = &file.declarations[0] else {
+            panic!("expected Var")
+        };
         assert_eq!(var.name, "x");
         assert!(var.type_ann.as_ref().unwrap().is_inferred);
     }
@@ -1958,7 +2247,9 @@ mod tests {
         let src = "const MAX = 100\n";
         let tree = parser::parse(src).unwrap();
         let file = convert(&tree, src);
-        let GdDecl::Var(var) = &file.declarations[0] else { panic!("expected Var") };
+        let GdDecl::Var(var) = &file.declarations[0] else {
+            panic!("expected Var")
+        };
         assert_eq!(var.name, "MAX");
         assert!(var.is_const);
     }
@@ -1968,7 +2259,9 @@ mod tests {
         let src = "@export var health: int = 100\n";
         let tree = parser::parse(src).unwrap();
         let file = convert(&tree, src);
-        let GdDecl::Var(var) = &file.declarations[0] else { panic!("expected Var") };
+        let GdDecl::Var(var) = &file.declarations[0] else {
+            panic!("expected Var")
+        };
         assert_eq!(var.name, "health");
         assert!(var.annotations.iter().any(|a| a.name == "export"));
     }
@@ -1980,7 +2273,9 @@ mod tests {
         let src = "func f():\n\tvar a = 42\n\tvar b = 3.14\n\tvar c = \"hello\"\n\tvar d = true\n\tvar e = null\n";
         let tree = parser::parse(src).unwrap();
         let file = convert(&tree, src);
-        let GdDecl::Func(func) = &file.declarations[0] else { panic!() };
+        let GdDecl::Func(func) = &file.declarations[0] else {
+            panic!()
+        };
         assert!(func.body.len() >= 5);
     }
 
@@ -1989,8 +2284,12 @@ mod tests {
         let src = "func f():\n\tget_tree().quit()\n";
         let tree = parser::parse(src).unwrap();
         let file = convert(&tree, src);
-        let GdDecl::Func(func) = &file.declarations[0] else { panic!() };
-        let GdStmt::Expr { expr, .. } = &func.body[0] else { panic!() };
+        let GdDecl::Func(func) = &file.declarations[0] else {
+            panic!()
+        };
+        let GdStmt::Expr { expr, .. } = &func.body[0] else {
+            panic!()
+        };
         assert!(matches!(expr, GdExpr::MethodCall { method: "quit", .. }));
     }
 
@@ -1999,11 +2298,23 @@ mod tests {
         let src = "func f():\n\ta.b.c()\n";
         let tree = parser::parse(src).unwrap();
         let file = convert(&tree, src);
-        let GdDecl::Func(func) = &file.declarations[0] else { panic!() };
-        let GdStmt::Expr { expr, .. } = &func.body[0] else { panic!() };
-        let GdExpr::MethodCall { receiver, method, .. } = expr else { panic!("expected MethodCall, got {expr:?}") };
+        let GdDecl::Func(func) = &file.declarations[0] else {
+            panic!()
+        };
+        let GdStmt::Expr { expr, .. } = &func.body[0] else {
+            panic!()
+        };
+        let GdExpr::MethodCall {
+            receiver, method, ..
+        } = expr
+        else {
+            panic!("expected MethodCall, got {expr:?}")
+        };
         assert_eq!(*method, "c");
-        assert!(matches!(receiver.as_ref(), GdExpr::PropertyAccess { property: "b", .. }));
+        assert!(matches!(
+            receiver.as_ref(),
+            GdExpr::PropertyAccess { property: "b", .. }
+        ));
     }
 
     #[test]
@@ -2011,9 +2322,15 @@ mod tests {
         let src = "func f():\n\tvar x = obj.name\n";
         let tree = parser::parse(src).unwrap();
         let file = convert(&tree, src);
-        let GdDecl::Func(func) = &file.declarations[0] else { panic!() };
-        let GdStmt::Var(var) = &func.body[0] else { panic!() };
-        let Some(GdExpr::PropertyAccess { property, .. }) = &var.value else { panic!() };
+        let GdDecl::Func(func) = &file.declarations[0] else {
+            panic!()
+        };
+        let GdStmt::Var(var) = &func.body[0] else {
+            panic!()
+        };
+        let Some(GdExpr::PropertyAccess { property, .. }) = &var.value else {
+            panic!()
+        };
         assert_eq!(*property, "name");
     }
 
@@ -2022,10 +2339,19 @@ mod tests {
         let src = "func f():\n\tprint(42)\n";
         let tree = parser::parse(src).unwrap();
         let file = convert(&tree, src);
-        let GdDecl::Func(func) = &file.declarations[0] else { panic!() };
-        let GdStmt::Expr { expr, .. } = &func.body[0] else { panic!() };
-        let GdExpr::Call { callee, args, .. } = expr else { panic!() };
-        assert!(matches!(callee.as_ref(), GdExpr::Ident { name: "print", .. }));
+        let GdDecl::Func(func) = &file.declarations[0] else {
+            panic!()
+        };
+        let GdStmt::Expr { expr, .. } = &func.body[0] else {
+            panic!()
+        };
+        let GdExpr::Call { callee, args, .. } = expr else {
+            panic!()
+        };
+        assert!(matches!(
+            callee.as_ref(),
+            GdExpr::Ident { name: "print", .. }
+        ));
         assert_eq!(args.len(), 1);
     }
 
@@ -2034,8 +2360,12 @@ mod tests {
         let src = "func f():\n\tvar s = preload(\"res://scene.tscn\")\n";
         let tree = parser::parse(src).unwrap();
         let file = convert(&tree, src);
-        let GdDecl::Func(func) = &file.declarations[0] else { panic!() };
-        let GdStmt::Var(var) = &func.body[0] else { panic!() };
+        let GdDecl::Func(func) = &file.declarations[0] else {
+            panic!()
+        };
+        let GdStmt::Var(var) = &func.body[0] else {
+            panic!()
+        };
         let Some(GdExpr::Preload { path, .. }) = &var.value else {
             panic!("expected Preload, got {:?}", var.value);
         };
@@ -2047,8 +2377,12 @@ mod tests {
         let src = "func f():\n\tvar x = arr[0]\n";
         let tree = parser::parse(src).unwrap();
         let file = convert(&tree, src);
-        let GdDecl::Func(func) = &file.declarations[0] else { panic!() };
-        let GdStmt::Var(var) = &func.body[0] else { panic!() };
+        let GdDecl::Func(func) = &file.declarations[0] else {
+            panic!()
+        };
+        let GdStmt::Var(var) = &func.body[0] else {
+            panic!()
+        };
         assert!(matches!(&var.value, Some(GdExpr::Subscript { .. })));
     }
 
@@ -2057,9 +2391,15 @@ mod tests {
         let src = "func f():\n\tvar x = 1 + 2\n";
         let tree = parser::parse(src).unwrap();
         let file = convert(&tree, src);
-        let GdDecl::Func(func) = &file.declarations[0] else { panic!() };
-        let GdStmt::Var(var) = &func.body[0] else { panic!() };
-        let Some(GdExpr::BinOp { op, .. }) = &var.value else { panic!() };
+        let GdDecl::Func(func) = &file.declarations[0] else {
+            panic!()
+        };
+        let GdStmt::Var(var) = &func.body[0] else {
+            panic!()
+        };
+        let Some(GdExpr::BinOp { op, .. }) = &var.value else {
+            panic!()
+        };
         assert_eq!(*op, "+");
     }
 
@@ -2068,9 +2408,19 @@ mod tests {
         let src = "func f():\n\tvar x = node as Node2D\n";
         let tree = parser::parse(src).unwrap();
         let file = convert(&tree, src);
-        let GdDecl::Func(func) = &file.declarations[0] else { panic!() };
-        let GdStmt::Var(var) = &func.body[0] else { panic!() };
-        assert!(matches!(&var.value, Some(GdExpr::Cast { target_type: "Node2D", .. })));
+        let GdDecl::Func(func) = &file.declarations[0] else {
+            panic!()
+        };
+        let GdStmt::Var(var) = &func.body[0] else {
+            panic!()
+        };
+        assert!(matches!(
+            &var.value,
+            Some(GdExpr::Cast {
+                target_type: "Node2D",
+                ..
+            })
+        ));
     }
 
     #[test]
@@ -2078,9 +2428,19 @@ mod tests {
         let src = "func f():\n\tvar x = node is Node2D\n";
         let tree = parser::parse(src).unwrap();
         let file = convert(&tree, src);
-        let GdDecl::Func(func) = &file.declarations[0] else { panic!() };
-        let GdStmt::Var(var) = &func.body[0] else { panic!() };
-        assert!(matches!(&var.value, Some(GdExpr::Is { type_name: "Node2D", .. })));
+        let GdDecl::Func(func) = &file.declarations[0] else {
+            panic!()
+        };
+        let GdStmt::Var(var) = &func.body[0] else {
+            panic!()
+        };
+        assert!(matches!(
+            &var.value,
+            Some(GdExpr::Is {
+                type_name: "Node2D",
+                ..
+            })
+        ));
     }
 
     #[test]
@@ -2088,8 +2448,12 @@ mod tests {
         let src = "func f():\n\tvar x = a if cond else b\n";
         let tree = parser::parse(src).unwrap();
         let file = convert(&tree, src);
-        let GdDecl::Func(func) = &file.declarations[0] else { panic!() };
-        let GdStmt::Var(var) = &func.body[0] else { panic!() };
+        let GdDecl::Func(func) = &file.declarations[0] else {
+            panic!()
+        };
+        let GdStmt::Var(var) = &func.body[0] else {
+            panic!()
+        };
         assert!(matches!(&var.value, Some(GdExpr::Ternary { .. })));
     }
 
@@ -2098,8 +2462,12 @@ mod tests {
         let src = "func f():\n\tvar x = $Sprite2D\n";
         let tree = parser::parse(src).unwrap();
         let file = convert(&tree, src);
-        let GdDecl::Func(func) = &file.declarations[0] else { panic!() };
-        let GdStmt::Var(var) = &func.body[0] else { panic!() };
+        let GdDecl::Func(func) = &file.declarations[0] else {
+            panic!()
+        };
+        let GdStmt::Var(var) = &func.body[0] else {
+            panic!()
+        };
         assert!(matches!(&var.value, Some(GdExpr::GetNode { .. })));
     }
 
@@ -2108,8 +2476,12 @@ mod tests {
         let src = "func f():\n\tvar cb = func(): return 1\n";
         let tree = parser::parse(src).unwrap();
         let file = convert(&tree, src);
-        let GdDecl::Func(func) = &file.declarations[0] else { panic!() };
-        let GdStmt::Var(var) = &func.body[0] else { panic!() };
+        let GdDecl::Func(func) = &file.declarations[0] else {
+            panic!()
+        };
+        let GdStmt::Var(var) = &func.body[0] else {
+            panic!()
+        };
         assert!(matches!(&var.value, Some(GdExpr::Lambda { .. })));
     }
 
@@ -2118,8 +2490,12 @@ mod tests {
         let src = "func f():\n\tvar x = -1\n";
         let tree = parser::parse(src).unwrap();
         let file = convert(&tree, src);
-        let GdDecl::Func(func) = &file.declarations[0] else { panic!() };
-        let GdStmt::Var(var) = &func.body[0] else { panic!() };
+        let GdDecl::Func(func) = &file.declarations[0] else {
+            panic!()
+        };
+        let GdStmt::Var(var) = &func.body[0] else {
+            panic!()
+        };
         assert!(matches!(&var.value, Some(GdExpr::UnaryOp { op: "-", .. })));
     }
 
@@ -2130,8 +2506,12 @@ mod tests {
         let src = "func f():\n\tif a:\n\t\tpass\n\telif b:\n\t\tpass\n\telse:\n\t\tpass\n";
         let tree = parser::parse(src).unwrap();
         let file = convert(&tree, src);
-        let GdDecl::Func(func) = &file.declarations[0] else { panic!() };
-        let GdStmt::If(if_stmt) = &func.body[0] else { panic!("expected If") };
+        let GdDecl::Func(func) = &file.declarations[0] else {
+            panic!()
+        };
+        let GdStmt::If(if_stmt) = &func.body[0] else {
+            panic!("expected If")
+        };
         assert_eq!(if_stmt.elif_branches.len(), 1);
         assert!(if_stmt.else_body.is_some());
     }
@@ -2141,8 +2521,12 @@ mod tests {
         let src = "func f():\n\tfor i in range(10):\n\t\tpass\n";
         let tree = parser::parse(src).unwrap();
         let file = convert(&tree, src);
-        let GdDecl::Func(func) = &file.declarations[0] else { panic!() };
-        let GdStmt::For { var, .. } = &func.body[0] else { panic!("expected For") };
+        let GdDecl::Func(func) = &file.declarations[0] else {
+            panic!()
+        };
+        let GdStmt::For { var, .. } = &func.body[0] else {
+            panic!("expected For")
+        };
         assert_eq!(*var, "i");
     }
 
@@ -2151,7 +2535,9 @@ mod tests {
         let src = "func f():\n\twhile true:\n\t\tbreak\n";
         let tree = parser::parse(src).unwrap();
         let file = convert(&tree, src);
-        let GdDecl::Func(func) = &file.declarations[0] else { panic!() };
+        let GdDecl::Func(func) = &file.declarations[0] else {
+            panic!()
+        };
         assert!(matches!(&func.body[0], GdStmt::While { .. }));
     }
 
@@ -2160,8 +2546,12 @@ mod tests {
         let src = "func f():\n\tmatch x:\n\t\t1:\n\t\t\tpass\n\t\t_:\n\t\t\tpass\n";
         let tree = parser::parse(src).unwrap();
         let file = convert(&tree, src);
-        let GdDecl::Func(func) = &file.declarations[0] else { panic!() };
-        let GdStmt::Match { arms, .. } = &func.body[0] else { panic!("expected Match") };
+        let GdDecl::Func(func) = &file.declarations[0] else {
+            panic!()
+        };
+        let GdStmt::Match { arms, .. } = &func.body[0] else {
+            panic!("expected Match")
+        };
         assert_eq!(arms.len(), 2);
     }
 
@@ -2170,8 +2560,12 @@ mod tests {
         let src = "func f():\n\tmatch x:\n\t\tvar v when v > 0:\n\t\t\tpass\n";
         let tree = parser::parse(src).unwrap();
         let file = convert(&tree, src);
-        let GdDecl::Func(func) = &file.declarations[0] else { panic!() };
-        let GdStmt::Match { arms, .. } = &func.body[0] else { panic!("expected Match") };
+        let GdDecl::Func(func) = &file.declarations[0] else {
+            panic!()
+        };
+        let GdStmt::Match { arms, .. } = &func.body[0] else {
+            panic!("expected Match")
+        };
         assert!(arms[0].guard.is_some());
     }
 
@@ -2180,8 +2574,12 @@ mod tests {
         let src = "func f():\n\treturn 42\n";
         let tree = parser::parse(src).unwrap();
         let file = convert(&tree, src);
-        let GdDecl::Func(func) = &file.declarations[0] else { panic!() };
-        let GdStmt::Return { value, .. } = &func.body[0] else { panic!("expected Return") };
+        let GdDecl::Func(func) = &file.declarations[0] else {
+            panic!()
+        };
+        let GdStmt::Return { value, .. } = &func.body[0] else {
+            panic!("expected Return")
+        };
         assert!(value.is_some());
     }
 
@@ -2190,9 +2588,13 @@ mod tests {
         let src = "func f():\n\tx = 1\n\tx += 2\n";
         let tree = parser::parse(src).unwrap();
         let file = convert(&tree, src);
-        let GdDecl::Func(func) = &file.declarations[0] else { panic!() };
+        let GdDecl::Func(func) = &file.declarations[0] else {
+            panic!()
+        };
         assert!(matches!(&func.body[0], GdStmt::Assign { .. }));
-        let GdStmt::AugAssign { op, .. } = &func.body[1] else { panic!("expected AugAssign") };
+        let GdStmt::AugAssign { op, .. } = &func.body[1] else {
+            panic!("expected AugAssign")
+        };
         assert_eq!(*op, "+=");
     }
 
@@ -2203,7 +2605,9 @@ mod tests {
         let src = "class Inner:\n\tvar x = 1\n";
         let tree = parser::parse(src).unwrap();
         let file = convert(&tree, src);
-        let GdDecl::Class(cls) = &file.declarations[0] else { panic!("expected Class") };
+        let GdDecl::Class(cls) = &file.declarations[0] else {
+            panic!("expected Class")
+        };
         assert_eq!(cls.name, "Inner");
         assert_eq!(cls.declarations.len(), 1);
     }
@@ -2213,7 +2617,9 @@ mod tests {
         let src = "signal health_changed(new_hp: int)\n";
         let tree = parser::parse(src).unwrap();
         let file = convert(&tree, src);
-        let GdDecl::Signal(sig) = &file.declarations[0] else { panic!("expected Signal") };
+        let GdDecl::Signal(sig) = &file.declarations[0] else {
+            panic!("expected Signal")
+        };
         assert_eq!(sig.name, "health_changed");
         assert_eq!(sig.params.len(), 1);
         assert_eq!(sig.params[0].name, "new_hp");
@@ -2224,7 +2630,9 @@ mod tests {
         let src = "enum State { IDLE, RUN, JUMP = 5 }\n";
         let tree = parser::parse(src).unwrap();
         let file = convert(&tree, src);
-        let GdDecl::Enum(e) = &file.declarations[0] else { panic!("expected Enum") };
+        let GdDecl::Enum(e) = &file.declarations[0] else {
+            panic!("expected Enum")
+        };
         assert_eq!(e.name, "State");
         assert_eq!(e.members.len(), 3);
         assert_eq!(e.members[0].name, "IDLE");
@@ -2259,7 +2667,9 @@ func f():
 ";
         let tree = parser::parse(src).unwrap();
         let file = convert(&tree, src);
-        let GdDecl::Func(func) = &file.declarations[0] else { panic!() };
+        let GdDecl::Func(func) = &file.declarations[0] else {
+            panic!()
+        };
         for stmt in &func.body {
             let _ = stmt.node();
         }
@@ -2270,13 +2680,23 @@ func f():
         let src = "func f():\n\tvar a = [1, 2, 3]\n\tvar d = {\"a\": 1, \"b\": 2}\n";
         let tree = parser::parse(src).unwrap();
         let file = convert(&tree, src);
-        let GdDecl::Func(func) = &file.declarations[0] else { panic!() };
-        let GdStmt::Var(arr_var) = &func.body[0] else { panic!() };
-        let Some(GdExpr::Array { elements, .. }) = &arr_var.value else { panic!() };
+        let GdDecl::Func(func) = &file.declarations[0] else {
+            panic!()
+        };
+        let GdStmt::Var(arr_var) = &func.body[0] else {
+            panic!()
+        };
+        let Some(GdExpr::Array { elements, .. }) = &arr_var.value else {
+            panic!()
+        };
         assert_eq!(elements.len(), 3);
 
-        let GdStmt::Var(dict_var) = &func.body[1] else { panic!() };
-        let Some(GdExpr::Dict { pairs, .. }) = &dict_var.value else { panic!() };
+        let GdStmt::Var(dict_var) = &func.body[1] else {
+            panic!()
+        };
+        let Some(GdExpr::Dict { pairs, .. }) = &dict_var.value else {
+            panic!()
+        };
         assert_eq!(pairs.len(), 2);
     }
 
@@ -2285,8 +2705,12 @@ func f():
         let src = "func f():\n\tawait get_tree().process_frame\n";
         let tree = parser::parse(src).unwrap();
         let file = convert(&tree, src);
-        let GdDecl::Func(func) = &file.declarations[0] else { panic!() };
-        let GdStmt::Expr { expr, .. } = &func.body[0] else { panic!() };
+        let GdDecl::Func(func) = &file.declarations[0] else {
+            panic!()
+        };
+        let GdStmt::Expr { expr, .. } = &func.body[0] else {
+            panic!()
+        };
         assert!(matches!(expr, GdExpr::Await { .. }));
     }
 
@@ -2295,8 +2719,12 @@ func f():
         let src = "func f():\n\tvar x = &\"action_name\"\n";
         let tree = parser::parse(src).unwrap();
         let file = convert(&tree, src);
-        let GdDecl::Func(func) = &file.declarations[0] else { panic!() };
-        let GdStmt::Var(var) = &func.body[0] else { panic!() };
+        let GdDecl::Func(func) = &file.declarations[0] else {
+            panic!()
+        };
+        let GdStmt::Var(var) = &func.body[0] else {
+            panic!()
+        };
         assert!(matches!(&var.value, Some(GdExpr::StringName { .. })));
     }
 
@@ -2305,7 +2733,9 @@ func f():
         let src = "func f(x: int = 5):\n\tpass\n";
         let tree = parser::parse(src).unwrap();
         let file = convert(&tree, src);
-        let GdDecl::Func(func) = &file.declarations[0] else { panic!() };
+        let GdDecl::Func(func) = &file.declarations[0] else {
+            panic!()
+        };
         assert_eq!(func.params.len(), 1);
         assert!(func.params[0].default.is_some());
         assert_eq!(func.params[0].type_ann.as_ref().unwrap().name, "int");
@@ -2316,7 +2746,9 @@ func f():
         let src = "func f():\n\tpass\n";
         let tree = parser::parse(src).unwrap();
         let file = convert(&tree, src);
-        let GdDecl::Func(func) = &file.declarations[0] else { panic!() };
+        let GdDecl::Func(func) = &file.declarations[0] else {
+            panic!()
+        };
         assert!(matches!(&func.body[0], GdStmt::Pass { .. }));
     }
 }

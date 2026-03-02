@@ -272,7 +272,6 @@ pub fn extract_superclass(
     })
 }
 
-
 /// Determine blank-line spacing before inserting a declaration.
 fn insertion_spacing(decl_kind: &str, target_source: &str) -> String {
     let trimmed = target_source.trim_end();
@@ -303,7 +302,6 @@ fn insertion_spacing(decl_kind: &str, target_source: &str) -> String {
         "\n".repeat(2 - trailing_newlines)
     }
 }
-
 
 /// Quick check if `name` appears as an identifier reference (not part of another word).
 fn is_identifier_reference(text: &str, name: &str) -> bool {

@@ -25,7 +25,9 @@ impl LintRule for PreferInOperator {
                 // Only trigger on the top-level `or` — skip if parent is also `or`
                 if let Some(parent) = node.parent()
                     && parent.kind() == "binary_operator"
-                    && parent.child_by_field_name("op").is_some_and(|o| &source[o.byte_range()] == "or")
+                    && parent
+                        .child_by_field_name("op")
+                        .is_some_and(|o| &source[o.byte_range()] == "or")
                 {
                     return;
                 }
@@ -50,7 +52,9 @@ impl LintRule for PreferInOperator {
 
                 diags.push(LintDiagnostic {
                     rule: "prefer-in-operator",
-                    message: format!("use `{replacement}` instead of chained `==`/`or` comparisons"),
+                    message: format!(
+                        "use `{replacement}` instead of chained `==`/`or` comparisons"
+                    ),
                     severity: Severity::Warning,
                     line: node.start_position().row,
                     column: node.start_position().column,
@@ -72,13 +76,23 @@ impl LintRule for PreferInOperator {
 /// Returns Vec of (variable, value) pairs.
 fn collect_or_chain<'a>(expr: &GdExpr<'a>, source: &'a str) -> Option<Vec<(&'a str, &'a str)>> {
     match expr {
-        GdExpr::BinOp { op: "or", left, right, .. } => {
+        GdExpr::BinOp {
+            op: "or",
+            left,
+            right,
+            ..
+        } => {
             let mut comps = collect_or_chain(left, source)?;
             let eq = parse_eq(right, source)?;
             comps.push(eq);
             Some(comps)
         }
-        GdExpr::BinOp { op: "==", left, right, .. } => {
+        GdExpr::BinOp {
+            op: "==",
+            left,
+            right,
+            ..
+        } => {
             let lhs = &source[left.node().byte_range()];
             let rhs = &source[right.node().byte_range()];
             Some(vec![(lhs, rhs)])
@@ -89,7 +103,13 @@ fn collect_or_chain<'a>(expr: &GdExpr<'a>, source: &'a str) -> Option<Vec<(&'a s
 
 /// Extract (variable, value) from an `==` BinOp.
 fn parse_eq<'a>(expr: &GdExpr<'a>, source: &'a str) -> Option<(&'a str, &'a str)> {
-    if let GdExpr::BinOp { op: "==", left, right, .. } = expr {
+    if let GdExpr::BinOp {
+        op: "==",
+        left,
+        right,
+        ..
+    } = expr
+    {
         let lhs = &source[left.node().byte_range()];
         let rhs = &source[right.node().byte_range()];
         Some((lhs, rhs))
@@ -101,8 +121,8 @@ fn parse_eq<'a>(expr: &GdExpr<'a>, source: &'a str) -> Option<(&'a str, &'a str)
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::parser;
     use crate::core::gd_ast;
+    use crate::core::parser;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();

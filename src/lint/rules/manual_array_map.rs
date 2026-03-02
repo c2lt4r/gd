@@ -78,14 +78,23 @@ fn check_map_pattern(
 ) {
     // first must be `var result = []`
     let GdStmt::Var(var_decl) = first else { return };
-    let Some(GdExpr::Array { elements, .. }) = &var_decl.value else { return };
+    let Some(GdExpr::Array { elements, .. }) = &var_decl.value else {
+        return;
+    };
     if !elements.is_empty() {
         return;
     }
     let result_name = var_decl.name;
 
     // second must be a for loop
-    let GdStmt::For { node: for_node, var: loop_var, iter, body, .. } = second else {
+    let GdStmt::For {
+        node: for_node,
+        var: loop_var,
+        iter,
+        body,
+        ..
+    } = second
+    else {
         return;
     };
 
@@ -94,7 +103,13 @@ fn check_map_pattern(
         return;
     }
     let GdStmt::Expr {
-        expr: GdExpr::MethodCall { receiver, method, args, .. },
+        expr:
+            GdExpr::MethodCall {
+                receiver,
+                method,
+                args,
+                ..
+            },
         ..
     } = &body[0]
     else {
@@ -109,7 +124,12 @@ fn check_map_pattern(
     }
 
     // Receiver must be the result variable
-    let GdExpr::Ident { name: recv_name, .. } = receiver.as_ref() else { return };
+    let GdExpr::Ident {
+        name: recv_name, ..
+    } = receiver.as_ref()
+    else {
+        return;
+    };
     if *recv_name != result_name {
         return;
     }
@@ -195,25 +215,28 @@ mod tests {
 
     #[test]
     fn detects_basic_map_pattern() {
-        let source = "func f(arr):\n\tvar result = []\n\tfor x in arr:\n\t\tresult.append(transform(x))\n";
+        let source =
+            "func f(arr):\n\tvar result = []\n\tfor x in arr:\n\t\tresult.append(transform(x))\n";
         let diags = check(source);
         assert_eq!(diags.len(), 1);
-        assert!(diags[0]
-            .message
-            .contains("arr.map(func(x): return transform(x))"));
+        assert!(
+            diags[0]
+                .message
+                .contains("arr.map(func(x): return transform(x))")
+        );
     }
 
     #[test]
     fn no_warning_appended_is_loop_var() {
         // Just appending the loop var is a copy, not a map
-        let source =
-            "func f(arr):\n\tvar result = []\n\tfor x in arr:\n\t\tresult.append(x)\n";
+        let source = "func f(arr):\n\tvar result = []\n\tfor x in arr:\n\t\tresult.append(x)\n";
         assert!(check(source).is_empty());
     }
 
     #[test]
     fn no_warning_append_target_mismatch() {
-        let source = "func f(arr):\n\tvar result = []\n\tfor x in arr:\n\t\tother.append(transform(x))\n";
+        let source =
+            "func f(arr):\n\tvar result = []\n\tfor x in arr:\n\t\tother.append(transform(x))\n";
         assert!(check(source).is_empty());
     }
 
@@ -225,7 +248,8 @@ mod tests {
 
     #[test]
     fn fix_applies_correctly() {
-        let source = "func f(arr):\n\tvar result = []\n\tfor x in arr:\n\t\tresult.append(transform(x))\n";
+        let source =
+            "func f(arr):\n\tvar result = []\n\tfor x in arr:\n\t\tresult.append(transform(x))\n";
         let diags = check(source);
         assert_eq!(diags.len(), 1);
         let fix = diags[0].fix.as_ref().unwrap();

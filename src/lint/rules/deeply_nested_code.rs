@@ -66,9 +66,10 @@ fn check_stmts_depth(
                 if let Some(else_body) = &if_stmt.else_body {
                     let else_depth = new_depth + 1;
                     if else_depth > max_depth {
-                        let pos = else_body
-                            .first()
-                            .map_or_else(|| if_stmt.node.start_position(), |s| s.node().start_position());
+                        let pos = else_body.first().map_or_else(
+                            || if_stmt.node.start_position(),
+                            |s| s.node().start_position(),
+                        );
                         emit_at(pos.row, pos.column, func_name, else_depth, max_depth, diags);
                         return true;
                     }
@@ -148,8 +149,8 @@ fn emit_at(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::parser;
     use crate::core::gd_ast;
+    use crate::core::parser;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();

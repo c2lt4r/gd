@@ -16,7 +16,12 @@ impl LintRule for UntypedArrayArgument {
         LintCategory::TypeSafety
     }
 
-    fn check(&self, _file: &GdFile<'_>, _source: &str, _config: &LintConfig) -> Vec<LintDiagnostic> {
+    fn check(
+        &self,
+        _file: &GdFile<'_>,
+        _source: &str,
+        _config: &LintConfig,
+    ) -> Vec<LintDiagnostic> {
         Vec::new()
     }
 
@@ -77,7 +82,9 @@ fn check_stmts(
                 check_call_expr(iter, func, source, file, project, diags);
                 check_stmts(body, func, source, file, project, diags);
             }
-            GdStmt::While { condition, body, .. } => {
+            GdStmt::While {
+                condition, body, ..
+            } => {
                 check_call_expr(condition, func, source, file, project, diags);
                 check_stmts(body, func, source, file, project, diags);
             }
@@ -103,7 +110,9 @@ fn check_call_expr(
 ) {
     // Check if this is a plain call: func_name(args)
     if let GdExpr::Call { callee, args, .. } = expr
-        && let GdExpr::Ident { name: func_name, .. } = callee.as_ref()
+        && let GdExpr::Ident {
+            name: func_name, ..
+        } = callee.as_ref()
     {
         check_call_args(func_name, args, func, source, file, project, diags);
     }
@@ -129,7 +138,12 @@ fn check_call_expr(
         GdExpr::UnaryOp { operand, .. } => {
             check_call_expr(operand, func, source, file, project, diags);
         }
-        GdExpr::Ternary { condition, true_val, false_val, .. } => {
+        GdExpr::Ternary {
+            condition,
+            true_val,
+            false_val,
+            ..
+        } => {
             check_call_expr(condition, func, source, file, project, diags);
             check_call_expr(true_val, func, source, file, project, diags);
             check_call_expr(false_val, func, source, file, project, diags);
@@ -139,7 +153,9 @@ fn check_call_expr(
                 check_call_expr(e, func, source, file, project, diags);
             }
         }
-        GdExpr::Subscript { receiver, index, .. } => {
+        GdExpr::Subscript {
+            receiver, index, ..
+        } => {
             check_call_expr(receiver, func, source, file, project, diags);
             check_call_expr(index, func, source, file, project, diags);
         }
@@ -321,9 +337,9 @@ fn parse_array_element_type(type_name: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::workspace_index;
     use crate::core::gd_ast;
     use crate::core::parser;
+    use crate::core::workspace_index;
     use std::path::PathBuf;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {

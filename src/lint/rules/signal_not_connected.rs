@@ -1,5 +1,5 @@
-use std::collections::{HashMap, HashSet};
 use crate::core::gd_ast::{self, GdDecl, GdExpr, GdFile};
+use std::collections::{HashMap, HashSet};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -69,21 +69,33 @@ fn collect_signal_usage<'a>(
 ) {
     match expr {
         // signal_name.emit/connect/disconnect()
-        GdExpr::MethodCall { receiver, method, .. } => {
+        GdExpr::MethodCall {
+            receiver, method, ..
+        } => {
             if let Some(name) = signal_name_from_receiver(receiver) {
                 match *method {
-                    "emit" => { emitted.insert(name); }
-                    "connect" | "disconnect" => { connected.insert(name); }
+                    "emit" => {
+                        emitted.insert(name);
+                    }
+                    "connect" | "disconnect" => {
+                        connected.insert(name);
+                    }
                     _ => {}
                 }
             }
         }
         // Bare callable reference: signal_name.emit (no parentheses)
-        GdExpr::PropertyAccess { receiver, property, .. } => {
+        GdExpr::PropertyAccess {
+            receiver, property, ..
+        } => {
             if let Some(name) = signal_name_from_receiver(receiver) {
                 match *property {
-                    "emit" => { emitted.insert(name); }
-                    "connect" | "disconnect" => { connected.insert(name); }
+                    "emit" => {
+                        emitted.insert(name);
+                    }
+                    "connect" | "disconnect" => {
+                        connected.insert(name);
+                    }
                     _ => {}
                 }
             }
@@ -115,11 +127,11 @@ fn collect_signal_usage<'a>(
 fn signal_name_from_receiver<'a>(receiver: &GdExpr<'a>) -> Option<&'a str> {
     match receiver {
         GdExpr::Ident { name, .. } if *name != "self" => Some(name),
-        GdExpr::PropertyAccess { receiver: inner, property, .. }
-            if matches!(inner.as_ref(), GdExpr::Ident { name: "self", .. }) =>
-        {
-            Some(property)
-        }
+        GdExpr::PropertyAccess {
+            receiver: inner,
+            property,
+            ..
+        } if matches!(inner.as_ref(), GdExpr::Ident { name: "self", .. }) => Some(property),
         _ => None,
     }
 }
@@ -137,8 +149,8 @@ fn extract_string_arg<'a>(args: &[GdExpr<'a>]) -> Option<&'a str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::parser;
     use crate::core::gd_ast;
+    use crate::core::parser;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();

@@ -45,8 +45,7 @@ fn check_scope(decls: &[GdDecl<'_>], diags: &mut Vec<LintDiagnostic>) {
                     continue;
                 }
                 for param in &func.params {
-                    if fields.contains(param.name)
-                        && !body_uses_self_field(&func.body, param.name)
+                    if fields.contains(param.name) && !body_uses_self_field(&func.body, param.name)
                     {
                         diags.push(LintDiagnostic {
                             rule: "parameter-shadows-field",
@@ -88,35 +87,44 @@ fn body_uses_self_field(body: &[GdStmt], field_name: &str) -> bool {
 fn stmts_have_self_field(stmt: &GdStmt, field_name: &str) -> bool {
     match stmt {
         GdStmt::Expr { expr, .. } => expr_has_self_field(expr, field_name),
-        GdStmt::Var(var) => {
-            var.value.as_ref().is_some_and(|v| expr_has_self_field(v, field_name))
-        }
+        GdStmt::Var(var) => var
+            .value
+            .as_ref()
+            .is_some_and(|v| expr_has_self_field(v, field_name)),
         GdStmt::Assign { target, value, .. } | GdStmt::AugAssign { target, value, .. } => {
             expr_has_self_field(target, field_name) || expr_has_self_field(value, field_name)
         }
         GdStmt::Return { value: Some(v), .. } => expr_has_self_field(v, field_name),
         GdStmt::If(gif) => {
             expr_has_self_field(&gif.condition, field_name)
-                || gif.body.iter().any(|s| stmts_have_self_field(s, field_name))
+                || gif
+                    .body
+                    .iter()
+                    .any(|s| stmts_have_self_field(s, field_name))
                 || gif.elif_branches.iter().any(|(c, b)| {
                     expr_has_self_field(c, field_name)
                         || b.iter().any(|s| stmts_have_self_field(s, field_name))
                 })
-                || gif.else_body.as_ref().is_some_and(|b| {
-                    b.iter().any(|s| stmts_have_self_field(s, field_name))
-                })
+                || gif
+                    .else_body
+                    .as_ref()
+                    .is_some_and(|b| b.iter().any(|s| stmts_have_self_field(s, field_name)))
         }
         GdStmt::For { iter, body, .. } => {
             expr_has_self_field(iter, field_name)
                 || body.iter().any(|s| stmts_have_self_field(s, field_name))
         }
-        GdStmt::While { condition, body, .. } => {
+        GdStmt::While {
+            condition, body, ..
+        } => {
             expr_has_self_field(condition, field_name)
                 || body.iter().any(|s| stmts_have_self_field(s, field_name))
         }
         GdStmt::Match { value, arms, .. } => {
             expr_has_self_field(value, field_name)
-                || arms.iter().any(|a| a.body.iter().any(|s| stmts_have_self_field(s, field_name)))
+                || arms
+                    .iter()
+                    .any(|a| a.body.iter().any(|s| stmts_have_self_field(s, field_name)))
         }
         _ => false,
     }
@@ -125,16 +133,18 @@ fn stmts_have_self_field(stmt: &GdStmt, field_name: &str) -> bool {
 fn expr_has_self_field(expr: &GdExpr, field_name: &str) -> bool {
     match expr {
         // self.field_name — the target pattern
-        GdExpr::PropertyAccess { receiver, property, .. }
-            if matches!(receiver.as_ref(), GdExpr::Ident { name: "self", .. })
-                && *property == field_name =>
+        GdExpr::PropertyAccess {
+            receiver, property, ..
+        } if matches!(receiver.as_ref(), GdExpr::Ident { name: "self", .. })
+            && *property == field_name =>
         {
             true
         }
         // self.field_name() — method call on self with matching name
-        GdExpr::MethodCall { receiver, method, .. }
-            if matches!(receiver.as_ref(), GdExpr::Ident { name: "self", .. })
-                && *method == field_name =>
+        GdExpr::MethodCall {
+            receiver, method, ..
+        } if matches!(receiver.as_ref(), GdExpr::Ident { name: "self", .. })
+            && *method == field_name =>
         {
             true
         }
@@ -142,10 +152,10 @@ fn expr_has_self_field(expr: &GdExpr, field_name: &str) -> bool {
         GdExpr::BinOp { left, right, .. } => {
             expr_has_self_field(left, field_name) || expr_has_self_field(right, field_name)
         }
-        GdExpr::UnaryOp { operand, .. } | GdExpr::Cast { expr: operand, .. }
-        | GdExpr::Is { expr: operand, .. } | GdExpr::Await { expr: operand, .. } => {
-            expr_has_self_field(operand, field_name)
-        }
+        GdExpr::UnaryOp { operand, .. }
+        | GdExpr::Cast { expr: operand, .. }
+        | GdExpr::Is { expr: operand, .. }
+        | GdExpr::Await { expr: operand, .. } => expr_has_self_field(operand, field_name),
         GdExpr::Call { callee, args, .. } => {
             expr_has_self_field(callee, field_name)
                 || args.iter().any(|a| expr_has_self_field(a, field_name))
@@ -155,10 +165,15 @@ fn expr_has_self_field(expr: &GdExpr, field_name: &str) -> bool {
                 || args.iter().any(|a| expr_has_self_field(a, field_name))
         }
         GdExpr::PropertyAccess { receiver, .. } => expr_has_self_field(receiver, field_name),
-        GdExpr::Subscript { receiver, index, .. } => {
-            expr_has_self_field(receiver, field_name) || expr_has_self_field(index, field_name)
-        }
-        GdExpr::Ternary { true_val, condition, false_val, .. } => {
+        GdExpr::Subscript {
+            receiver, index, ..
+        } => expr_has_self_field(receiver, field_name) || expr_has_self_field(index, field_name),
+        GdExpr::Ternary {
+            true_val,
+            condition,
+            false_val,
+            ..
+        } => {
             expr_has_self_field(true_val, field_name)
                 || expr_has_self_field(condition, field_name)
                 || expr_has_self_field(false_val, field_name)
@@ -166,9 +181,9 @@ fn expr_has_self_field(expr: &GdExpr, field_name: &str) -> bool {
         GdExpr::Array { elements, .. } => {
             elements.iter().any(|e| expr_has_self_field(e, field_name))
         }
-        GdExpr::Dict { pairs, .. } => {
-            pairs.iter().any(|(k, v)| expr_has_self_field(k, field_name) || expr_has_self_field(v, field_name))
-        }
+        GdExpr::Dict { pairs, .. } => pairs
+            .iter()
+            .any(|(k, v)| expr_has_self_field(k, field_name) || expr_has_self_field(v, field_name)),
         _ => false,
     }
 }
@@ -176,8 +191,8 @@ fn expr_has_self_field(expr: &GdExpr, field_name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::parser;
     use crate::core::gd_ast;
+    use crate::core::parser;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();

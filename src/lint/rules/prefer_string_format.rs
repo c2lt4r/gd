@@ -95,11 +95,14 @@ enum Segment<'a> {
 }
 
 /// Recursively collect segments from a `+` concatenation chain.
-fn collect_concat_segments<'a>(
-    expr: &GdExpr<'a>,
-    source: &'a str,
-) -> Option<Vec<Segment<'a>>> {
-    if let GdExpr::BinOp { op: "+", left, right, .. } = expr {
+fn collect_concat_segments<'a>(expr: &GdExpr<'a>, source: &'a str) -> Option<Vec<Segment<'a>>> {
+    if let GdExpr::BinOp {
+        op: "+",
+        left,
+        right,
+        ..
+    } = expr
+    {
         let mut segments = collect_concat_segments(left, source)?;
         let right_segments = collect_concat_segments(right, source)?;
         segments.extend(right_segments);
@@ -142,8 +145,8 @@ fn extract_string_content(s: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::parser;
     use crate::core::gd_ast;
+    use crate::core::parser;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();
@@ -216,8 +219,7 @@ mod tests {
 
     #[test]
     fn only_one_diagnostic_for_chain() {
-        let source =
-            "func f(a, b, c):\n\tvar msg = str(a) + \"/\" + str(b) + \"/\" + str(c)\n";
+        let source = "func f(a, b, c):\n\tvar msg = str(a) + \"/\" + str(b) + \"/\" + str(c)\n";
         let diags = check(source);
         assert_eq!(diags.len(), 1);
     }

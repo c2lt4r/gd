@@ -1,5 +1,5 @@
-use std::collections::{HashMap, HashSet};
 use crate::core::gd_ast::{self, GdDecl, GdExpr, GdFile, GdStmt};
+use std::collections::{HashMap, HashSet};
 
 use super::{Fix, LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -72,7 +72,11 @@ fn collect_decls_and_refs<'a>(
             GdStmt::Var(var) => {
                 // Record local variable declaration
                 let (line, col, byte_start) = if let Some(n) = var.name_node {
-                    (n.start_position().row, n.start_position().column, n.start_byte())
+                    (
+                        n.start_position().row,
+                        n.start_position().column,
+                        n.start_byte(),
+                    )
                 } else {
                     let pos = var.node.start_position();
                     (pos.row, pos.column, var.node.start_byte())
@@ -121,7 +125,9 @@ fn collect_decls_and_refs<'a>(
                 collect_refs_from_expr(iter, references);
                 collect_decls_and_refs(body, declarations, references);
             }
-            GdStmt::While { condition, body, .. } => {
+            GdStmt::While {
+                condition, body, ..
+            } => {
                 collect_refs_from_expr(condition, references);
                 collect_decls_and_refs(body, declarations, references);
             }
@@ -137,8 +143,11 @@ fn collect_decls_and_refs<'a>(
                     collect_decls_and_refs(&arm.body, declarations, references);
                 }
             }
-            GdStmt::Pass { .. } | GdStmt::Break { .. } | GdStmt::Continue { .. }
-            | GdStmt::Breakpoint { .. } | GdStmt::Invalid { .. } => {}
+            GdStmt::Pass { .. }
+            | GdStmt::Break { .. }
+            | GdStmt::Continue { .. }
+            | GdStmt::Breakpoint { .. }
+            | GdStmt::Invalid { .. } => {}
         }
     }
 }
@@ -151,40 +160,59 @@ fn collect_refs_from_expr<'a>(expr: &GdExpr<'a>, refs: &mut HashSet<&'a str>) {
         return;
     }
     match expr {
-        GdExpr::Ident { name, .. } => { refs.insert(name); }
+        GdExpr::Ident { name, .. } => {
+            refs.insert(name);
+        }
         GdExpr::BinOp { left, right, .. } => {
             collect_refs_from_expr(left, refs);
             collect_refs_from_expr(right, refs);
         }
-        GdExpr::UnaryOp { operand, .. } | GdExpr::Cast { expr: operand, .. }
-        | GdExpr::Is { expr: operand, .. } | GdExpr::Await { expr: operand, .. } => {
+        GdExpr::UnaryOp { operand, .. }
+        | GdExpr::Cast { expr: operand, .. }
+        | GdExpr::Is { expr: operand, .. }
+        | GdExpr::Await { expr: operand, .. } => {
             collect_refs_from_expr(operand, refs);
         }
         GdExpr::Call { callee, args, .. } => {
             collect_refs_from_expr(callee, refs);
-            for a in args { collect_refs_from_expr(a, refs); }
+            for a in args {
+                collect_refs_from_expr(a, refs);
+            }
         }
         GdExpr::MethodCall { receiver, args, .. } => {
             collect_refs_from_expr(receiver, refs);
-            for a in args { collect_refs_from_expr(a, refs); }
+            for a in args {
+                collect_refs_from_expr(a, refs);
+            }
         }
         GdExpr::SuperCall { args, .. } => {
-            for a in args { collect_refs_from_expr(a, refs); }
+            for a in args {
+                collect_refs_from_expr(a, refs);
+            }
         }
         GdExpr::PropertyAccess { receiver, .. } => {
             collect_refs_from_expr(receiver, refs);
         }
-        GdExpr::Subscript { receiver, index, .. } => {
+        GdExpr::Subscript {
+            receiver, index, ..
+        } => {
             collect_refs_from_expr(receiver, refs);
             collect_refs_from_expr(index, refs);
         }
-        GdExpr::Ternary { true_val, condition, false_val, .. } => {
+        GdExpr::Ternary {
+            true_val,
+            condition,
+            false_val,
+            ..
+        } => {
             collect_refs_from_expr(true_val, refs);
             collect_refs_from_expr(condition, refs);
             collect_refs_from_expr(false_val, refs);
         }
         GdExpr::Array { elements, .. } => {
-            for e in elements { collect_refs_from_expr(e, refs); }
+            for e in elements {
+                collect_refs_from_expr(e, refs);
+            }
         }
         GdExpr::Dict { pairs, .. } => {
             for (k, v) in pairs {

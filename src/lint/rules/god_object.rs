@@ -54,7 +54,13 @@ impl LintRule for GodObject {
         }
 
         // Check inner classes
-        check_classes(&file.declarations, max_functions, max_members, max_lines, &mut diags);
+        check_classes(
+            &file.declarations,
+            max_functions,
+            max_members,
+            max_lines,
+            &mut diags,
+        );
 
         diags
     }
@@ -117,7 +123,13 @@ fn check_classes(
             }
 
             // Recurse for nested classes
-            check_classes(&class.declarations, max_functions, max_members, max_lines, diags);
+            check_classes(
+                &class.declarations,
+                max_functions,
+                max_members,
+                max_lines,
+                diags,
+            );
         }
     }
 }
@@ -125,8 +137,8 @@ fn check_classes(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::parser;
     use crate::core::gd_ast;
+    use crate::core::parser;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();

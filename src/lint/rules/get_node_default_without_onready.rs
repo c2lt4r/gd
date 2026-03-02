@@ -59,11 +59,18 @@ fn uses_get_node(expr: &GdExpr<'_>) -> bool {
     match expr {
         GdExpr::GetNode { .. } => true,
         GdExpr::Call { callee, .. } => {
-            matches!(callee.as_ref(), GdExpr::Ident { name: "get_node", .. })
+            matches!(
+                callee.as_ref(),
+                GdExpr::Ident {
+                    name: "get_node",
+                    ..
+                }
+            )
         }
         // Recurse into property access (e.g. $Sprite.texture)
-        GdExpr::PropertyAccess { receiver, .. }
-        | GdExpr::MethodCall { receiver, .. } => uses_get_node(receiver),
+        GdExpr::PropertyAccess { receiver, .. } | GdExpr::MethodCall { receiver, .. } => {
+            uses_get_node(receiver)
+        }
         _ => false,
     }
 }
@@ -71,8 +78,8 @@ fn uses_get_node(expr: &GdExpr<'_>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::parser;
     use crate::core::gd_ast;
+    use crate::core::parser;
 
     fn check(source: &str) -> Vec<LintDiagnostic> {
         let tree = parser::parse(source).unwrap();

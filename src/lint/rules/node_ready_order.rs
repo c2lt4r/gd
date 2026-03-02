@@ -72,12 +72,13 @@ fn visit_stmt_exprs<'a>(stmt: &GdStmt<'a>, f: &mut impl FnMut(&GdExpr<'a>)) {
                 visit_expr(val, f);
             }
         }
-        GdStmt::Assign { target, value, .. }
-        | GdStmt::AugAssign { target, value, .. } => {
+        GdStmt::Assign { target, value, .. } | GdStmt::AugAssign { target, value, .. } => {
             visit_expr(target, f);
             visit_expr(value, f);
         }
-        GdStmt::Return { value: Some(val), .. } => visit_expr(val, f),
+        GdStmt::Return {
+            value: Some(val), ..
+        } => visit_expr(val, f),
         GdStmt::If(gif) => visit_expr(&gif.condition, f),
         GdStmt::For { iter, .. } => visit_expr(iter, f),
         GdStmt::While { condition, .. } => visit_expr(condition, f),
@@ -90,11 +91,15 @@ fn visit_expr<'a>(expr: &GdExpr<'a>, f: &mut impl FnMut(&GdExpr<'a>)) {
     match expr {
         GdExpr::Call { callee, args, .. } => {
             visit_expr(callee, f);
-            for arg in args { visit_expr(arg, f); }
+            for arg in args {
+                visit_expr(arg, f);
+            }
         }
         GdExpr::MethodCall { receiver, args, .. } => {
             visit_expr(receiver, f);
-            for arg in args { visit_expr(arg, f); }
+            for arg in args {
+                visit_expr(arg, f);
+            }
         }
         GdExpr::BinOp { left, right, .. } => {
             visit_expr(left, f);
@@ -102,17 +107,29 @@ fn visit_expr<'a>(expr: &GdExpr<'a>, f: &mut impl FnMut(&GdExpr<'a>)) {
         }
         GdExpr::UnaryOp { operand, .. } => visit_expr(operand, f),
         GdExpr::PropertyAccess { receiver, .. } => visit_expr(receiver, f),
-        GdExpr::Subscript { receiver, index, .. } => {
+        GdExpr::Subscript {
+            receiver, index, ..
+        } => {
             visit_expr(receiver, f);
             visit_expr(index, f);
         }
         GdExpr::Array { elements, .. } => {
-            for e in elements { visit_expr(e, f); }
+            for e in elements {
+                visit_expr(e, f);
+            }
         }
         GdExpr::Dict { pairs, .. } => {
-            for (k, v) in pairs { visit_expr(k, f); visit_expr(v, f); }
+            for (k, v) in pairs {
+                visit_expr(k, f);
+                visit_expr(v, f);
+            }
         }
-        GdExpr::Ternary { true_val, condition, false_val, .. } => {
+        GdExpr::Ternary {
+            true_val,
+            condition,
+            false_val,
+            ..
+        } => {
             visit_expr(true_val, f);
             visit_expr(condition, f);
             visit_expr(false_val, f);
@@ -121,7 +138,9 @@ fn visit_expr<'a>(expr: &GdExpr<'a>, f: &mut impl FnMut(&GdExpr<'a>)) {
         | GdExpr::Cast { expr: inner, .. }
         | GdExpr::Is { expr: inner, .. } => visit_expr(inner, f),
         GdExpr::SuperCall { args, .. } => {
-            for arg in args { visit_expr(arg, f); }
+            for arg in args {
+                visit_expr(arg, f);
+            }
         }
         _ => {}
     }
@@ -132,9 +151,7 @@ fn check_node_access(expr: &GdExpr<'_>, source: &str, diags: &mut Vec<LintDiagno
     if let GdExpr::GetNode { node, path } = expr {
         diags.push(LintDiagnostic {
             rule: "node-ready-order",
-            message: format!(
-                "`{path}` in _init() may fail; nodes are not ready until _ready()"
-            ),
+            message: format!("`{path}` in _init() may fail; nodes are not ready until _ready()"),
             severity: Severity::Warning,
             line: node.start_position().row,
             column: node.start_position().column,
