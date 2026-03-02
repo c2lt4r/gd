@@ -1,8 +1,20 @@
 # Changelog
 
-## [0.3.14] - 2026-03-01
+## [0.3.14] - 2026-03-02
 
 ### Improved
+- **`gd check` — corpus-driven FP reduction and detection expansion** across 11 categories:
+  - **Indentation check**: nested control flow (`elif`/`else`/`match` arms) no longer falsely flagged as orphaned blocks (~110 FPs eliminated)
+  - **Void return detection**: void function calls used as arguments (`print(void_func())`) and void utility functions (`var x = print()`) now flagged
+  - **Invalid cast**: `primitive → container` (int as Array) and `class → primitive` (Node as int) casts now detected
+  - **Const assignment**: assigning to const subscripts (`CONST_ARR[0] = val`) and signals now detected
+  - **Static context**: static variable initializers (`static var x = instance_var`) now checked for instance references
+  - **Typed array check**: `const` declarations with typed arrays now checked for element type mismatches
+  - **Augmented assignment types**: `+=`, `-=`, `*=`, `/=`, `%=` now validated for operand type compatibility
+  - **Cross-file resolution**: files without `extends` now check `RefCounted` methods; inner class functions visible
+  - **Enum ↔ int coercion**: enum values allowed in int/float contexts and vice versa
+  - **Void return coercion**: `return void_func()` in void functions no longer flagged
+  - **Const expression handling**: `Type.new()` recognized as valid constant expression
 - **`gd check` — project-aware type inference**: all type-checking functions (assignment mismatch, return type mismatch, invalid operators, invalid cast, argument type/count, builtin method/property resolution) now use cross-file type inference via `ProjectIndex`, resolving user-defined base class methods, autoload types, and preloaded script types. Previously only file-local inference was used, causing ~238 false positives on real projects.
 - **`gd check` — 67% FP reduction on real Godot 4 projects** (4,062 → 1,350 across 4 projects, 100% mutation parity maintained):
   - **Extends chain variable resolution**: base class variables with inferred types (`:=`) now found via new `variable_exists()` method — previously only explicit type annotations were checked

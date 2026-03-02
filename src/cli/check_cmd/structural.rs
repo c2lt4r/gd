@@ -4,6 +4,7 @@ use tree_sitter::Node;
 
 use crate::core::gd_ast::{GdClass, GdFile, GdFunc};
 use crate::core::type_inference;
+use crate::core::workspace_index::ProjectIndex;
 
 use super::StructuralError;
 
@@ -13,12 +14,13 @@ pub(super) fn validate_structure(
     source: &str,
     file: &GdFile<'_>,
     project_root: Option<&Path>,
+    project: &ProjectIndex,
 ) -> Vec<StructuralError> {
     let mut errors = Vec::new();
     check_top_level_statements(root, &mut errors);
     check_indentation_consistency(root, &mut errors);
     check_class_constants(root, source, &mut errors);
-    check_variant_inference(root, source, &mut errors);
+    check_variant_inference(root, source, file, project, &mut errors);
     check_declaration_constraints(root, source, file, &mut errors);
     check_semantic_errors(root, source, file, &mut errors);
     check_preload_and_misc(root, source, project_root, &mut errors);
@@ -97,6 +99,13 @@ fn check_body_indentation(body: &Node, errors: &mut Vec<StructuralError>) {
         if !child.is_named() || child.kind() == "comment" {
             continue;
         }
+        // Skip children that are part of control flow structures — their
+        // indentation is managed by the parent statement (if/elif/else/match).
+        // Tree-sitter nests these deeper inside the body node, but they are
+        // not orphaned blocks.
+        if is_control_flow_child(child.kind()) {
+            continue;
+        }
         let col = child.start_position().column;
         match expected_col {
             None => expected_col = Some(col),
@@ -115,6 +124,19 @@ fn check_body_indentation(body: &Node, errors: &mut Vec<StructuralError>) {
             _ => {}
         }
     }
+}
+
+/// Children of control flow parents that tree-sitter nests inside `body` nodes
+/// at deeper indentation levels — these are legitimate and should not be flagged.
+fn is_control_flow_child(kind: &str) -> bool {
+    matches!(
+        kind,
+        "elif_clause"
+            | "else_clause"
+            | "match_arm"
+            | "pattern_guard"
+            | "match_body"
+    )
 }
 
 fn friendly_kind(kind: &str) -> &str {
@@ -191,18 +213,30 @@ fn is_upper_snake_case(s: &str) -> bool {
 }
 
 /// Check 4: Detect `:=` that resolves to Variant (common source of runtime errors).
-fn check_variant_inference(root: &Node, source: &str, errors: &mut Vec<StructuralError>) {
-    check_variant_node(*root, source, errors);
+fn check_variant_inference(
+    root: &Node,
+    source: &str,
+    file: &GdFile<'_>,
+    project: &ProjectIndex,
+    errors: &mut Vec<StructuralError>,
+) {
+    check_variant_node(*root, source, file, project, errors);
 }
 
-fn check_variant_node(node: Node, source: &str, errors: &mut Vec<StructuralError>) {
+fn check_variant_node(
+    node: Node,
+    source: &str,
+    file: &GdFile<'_>,
+    project: &ProjectIndex,
+    errors: &mut Vec<StructuralError>,
+) {
     if node.kind() == "variable_statement" {
         // Check for := (tree-sitter stores this as type field with "inferred_type" kind)
         let is_inferred = node
             .child_by_field_name("type")
             .is_some_and(|t| t.kind() == "inferred_type");
         if is_inferred && let Some(value) = node.child_by_field_name("value") {
-            let should_flag = if is_variant_producing_expr(&value, source) {
+            let should_flag = if is_variant_producing_expr(&value, source, file, project) {
                 true
             } else {
                 is_unresolvable_property_access(&value, source)
@@ -227,7 +261,7 @@ fn check_variant_node(node: Node, source: &str, errors: &mut Vec<StructuralError
     let mut cursor = node.walk();
     if cursor.goto_first_child() {
         loop {
-            check_variant_node(cursor.node(), source, errors);
+            check_variant_node(cursor.node(), source, file, project, errors);
             if !cursor.goto_next_sibling() {
                 break;
             }
@@ -462,10 +496,32 @@ fn first_identifier_text<'a>(node: &Node, source: &'a [u8]) -> Option<&'a str> {
 }
 
 /// Check if an expression is known to produce Variant (losing type information).
-fn is_variant_producing_expr(node: &Node, source: &str) -> bool {
+fn is_variant_producing_expr(
+    node: &Node,
+    source: &str,
+    file: &GdFile<'_>,
+    project: &ProjectIndex,
+) -> bool {
     match node.kind() {
-        // dict["key"], arr[idx]
-        "subscript" => true,
+        // dict["key"], arr[idx] — but typed arrays/strings/packed arrays have known element types
+        "subscript" => {
+            if let Some(receiver) = node.named_child(0)
+                && let Some(ty) = type_inference::infer_expression_type_with_project(
+                    &receiver, source, file, project,
+                )
+            {
+                match &ty {
+                    type_inference::InferredType::Builtin(b)
+                        if b.starts_with("Packed") || *b == "String" =>
+                    {
+                        return false;
+                    }
+                    type_inference::InferredType::TypedArray(_) => return false,
+                    _ => {}
+                }
+            }
+            true
+        }
         // method calls: attribute > attribute_call (tree-sitter pattern)
         // e.g. dict.get("key"), dict.values(), dict.keys()
         "attribute" => {
@@ -518,19 +574,19 @@ fn is_variant_producing_expr(node: &Node, source: &str) -> bool {
                 return true;
             }
             node.named_child(0)
-                .is_some_and(|c| is_variant_producing_expr(&c, source))
+                .is_some_and(|c| is_variant_producing_expr(&c, source, file, project))
                 || node
                     .named_child(1)
-                    .is_some_and(|c| is_variant_producing_expr(&c, source))
+                    .is_some_and(|c| is_variant_producing_expr(&c, source, file, project))
         }
         // Parenthesized: unwrap and check inner expression
         "parenthesized_expression" => node
             .named_child(0)
-            .is_some_and(|c| is_variant_producing_expr(&c, source)),
+            .is_some_and(|c| is_variant_producing_expr(&c, source, file, project)),
         // Unary operators: `not dict["key"]`
         "unary_operator" => node
             .child_by_field_name("operand")
-            .is_some_and(|c| is_variant_producing_expr(&c, source)),
+            .is_some_and(|c| is_variant_producing_expr(&c, source, file, project)),
         // Builtin function calls that return Variant (polymorphic builtins)
         "call" => {
             let func_node = node
@@ -928,6 +984,11 @@ fn check_static_context_violations(
     // Walk functions that are static
     let mut cursor = root.walk();
     for child in root.children(&mut cursor) {
+        // Check static variable initializers
+        check_static_var_initializer(
+            &child, bytes, file, &instance_vars, &instance_funcs, errors,
+        );
+
         let func_node = match child.kind() {
             "function_definition" => child,
             "decorated_definition" => {
@@ -987,6 +1048,53 @@ fn check_static_context_violations(
                 errors,
             );
         }
+    }
+}
+
+fn check_static_var_initializer(
+    child: &Node,
+    bytes: &[u8],
+    file: &GdFile<'_>,
+    instance_vars: &std::collections::HashSet<&str>,
+    instance_funcs: &std::collections::HashSet<&str>,
+    errors: &mut Vec<StructuralError>,
+) {
+    let var_node = match child.kind() {
+        "variable_statement" => Some(*child),
+        "decorated_definition" => {
+            let mut ic = child.walk();
+            child
+                .children(&mut ic)
+                .find(|c| c.kind() == "variable_statement")
+        }
+        _ => return,
+    };
+    if let Some(var_node) = var_node
+        && file.vars().any(|v| {
+            v.is_static
+                && !v.is_const
+                && var_node
+                    .child_by_field_name("name")
+                    .and_then(|n| n.utf8_text(bytes).ok())
+                    == Some(v.name)
+        })
+        && let Some(value) = var_node.child_by_field_name("value")
+    {
+        let var_name = var_node
+            .child_by_field_name("name")
+            .and_then(|n| n.utf8_text(bytes).ok())
+            .unwrap_or("?");
+        let label = format!("static var `{var_name}` initializer");
+        let empty = std::collections::HashSet::new();
+        check_static_body(
+            &value,
+            bytes,
+            &label,
+            instance_vars,
+            instance_funcs,
+            &empty,
+            errors,
+        );
     }
 }
 
@@ -1113,8 +1221,12 @@ fn check_assign_to_constant(
         .enums()
         .flat_map(|e| e.members.iter().map(|m| m.name))
         .collect();
+    let signals: std::collections::HashSet<&str> = file
+        .signals()
+        .map(|s| s.name)
+        .collect();
 
-    check_assign_to_const_in_node(*root, bytes, &constants, &enum_members, errors);
+    check_assign_to_const_in_node(*root, bytes, &constants, &enum_members, &signals, errors);
 }
 
 fn check_assign_to_const_in_node(
@@ -1122,6 +1234,7 @@ fn check_assign_to_const_in_node(
     source: &[u8],
     constants: &std::collections::HashSet<&str>,
     enum_members: &std::collections::HashSet<&str>,
+    signals: &std::collections::HashSet<&str>,
     errors: &mut Vec<StructuralError>,
 ) {
     // Assignments: assignment_statement/augmented_assignment_statement at top level,
@@ -1160,6 +1273,27 @@ fn check_assign_to_const_in_node(
                     column: pos.column as u32 + 1,
                     message: format!("cannot assign to enum value `{name}`"),
                 });
+            } else if signals.contains(name) {
+                let pos = lhs.start_position();
+                errors.push(StructuralError {
+                    line: pos.row as u32 + 1,
+                    column: pos.column as u32 + 1,
+                    message: format!("cannot assign to signal `{name}`"),
+                });
+            }
+        } else if lhs.kind() == "subscript" {
+            // const_arr[idx] = val — extract the base identifier
+            if let Some(base) = lhs.named_child(0)
+                && base.kind() == "identifier"
+                && let Ok(base_name) = base.utf8_text(source)
+                && constants.contains(base_name)
+            {
+                let pos = lhs.start_position();
+                errors.push(StructuralError {
+                    line: pos.row as u32 + 1,
+                    column: pos.column as u32 + 1,
+                    message: format!("cannot assign to element of constant `{base_name}`"),
+                });
             }
         } else if lhs.kind() == "attribute"
             && let Some(rhs) = lhs.named_child(1)
@@ -1179,7 +1313,7 @@ fn check_assign_to_const_in_node(
     let mut cursor = node.walk();
     if cursor.goto_first_child() {
         loop {
-            check_assign_to_const_in_node(cursor.node(), source, constants, enum_members, errors);
+            check_assign_to_const_in_node(cursor.node(), source, constants, enum_members, signals, errors);
             if !cursor.goto_next_sibling() {
                 break;
             }
@@ -1200,17 +1334,18 @@ fn check_void_return_value(
             && ret.name == "void"
         {
             // Find the AST node for this function and check for `return <value>`
-            check_void_func_returns(*root, bytes, func.name, errors);
+            check_void_func_returns(*root, bytes, func.name, file, errors);
         }
     }
     for inner in file.inner_classes() {
-        check_void_return_value_inner(root, source, inner, errors);
+        check_void_return_value_inner(root, source, file, inner, errors);
     }
 }
 
 fn check_void_return_value_inner(
     root: &Node,
     source: &str,
+    file: &GdFile<'_>,
     class: &GdClass<'_>,
     errors: &mut Vec<StructuralError>,
 ) {
@@ -1219,11 +1354,11 @@ fn check_void_return_value_inner(
         if let Some(ref ret) = func.return_type
             && ret.name == "void"
         {
-            check_void_func_returns(*root, bytes, func.name, errors);
+            check_void_func_returns(*root, bytes, func.name, file, errors);
         }
     }
     for inner in class.declarations.iter().filter_map(|d| d.as_class()) {
-        check_void_return_value_inner(root, source, inner, errors);
+        check_void_return_value_inner(root, source, file, inner, errors);
     }
 }
 
@@ -1231,6 +1366,7 @@ fn check_void_func_returns(
     root: Node,
     source: &[u8],
     func_name: &str,
+    file: &GdFile<'_>,
     errors: &mut Vec<StructuralError>,
 ) {
     let mut cursor = root.walk();
@@ -1264,21 +1400,48 @@ fn check_void_func_returns(
         }
 
         if let Some(body) = func_node.child_by_field_name("body") {
-            check_returns_in_body(&body, func_name, errors);
+            check_returns_in_body(&body, func_name, file, source, errors);
         }
     }
 }
 
-fn check_returns_in_body(node: &Node, func_name: &str, errors: &mut Vec<StructuralError>) {
+fn check_returns_in_body(
+    node: &Node,
+    func_name: &str,
+    file: &GdFile<'_>,
+    source: &[u8],
+    errors: &mut Vec<StructuralError>,
+) {
     if node.kind() == "return_statement" {
         // Check if there's a value after `return`
-        if node.named_child_count() > 0 {
-            let pos = node.start_position();
-            errors.push(StructuralError {
-                line: pos.row as u32 + 1,
-                column: pos.column as u32 + 1,
-                message: format!("void function `{func_name}()` cannot return a value",),
-            });
+        if let Some(child) = node.named_child(0) {
+            // Allow `return void_func()` — the returned expression is itself void
+            let is_void_return = child.kind() == "call"
+                && child
+                    .child_by_field_name("function")
+                    .or_else(|| child.named_child(0))
+                    .and_then(|f| {
+                        if f.kind() == "identifier" {
+                            f.utf8_text(source).ok()
+                        } else {
+                            None
+                        }
+                    })
+                    .is_some_and(|callee_name| {
+                        file.funcs().any(|f| {
+                            f.name == callee_name
+                                && f.return_type.as_ref().is_some_and(|r| r.name == "void")
+                        })
+                    });
+
+            if !is_void_return {
+                let pos = node.start_position();
+                errors.push(StructuralError {
+                    line: pos.row as u32 + 1,
+                    column: pos.column as u32 + 1,
+                    message: format!("void function `{func_name}()` cannot return a value",),
+                });
+            }
         }
         return;
     }
@@ -1294,7 +1457,7 @@ fn check_returns_in_body(node: &Node, func_name: &str, errors: &mut Vec<Structur
     let mut cursor = node.walk();
     if cursor.goto_first_child() {
         loop {
-            check_returns_in_body(&cursor.node(), func_name, errors);
+            check_returns_in_body(&cursor.node(), func_name, file, source, errors);
             if !cursor.goto_next_sibling() {
                 break;
             }
@@ -2014,12 +2177,22 @@ fn is_const_expression(node: &Node, source: &[u8]) -> bool {
             .is_some_and(|c| is_const_expression(&c, source)),
         // Class.CONSTANT or enum access
         "attribute" => {
-            // Check for a call suffix — if it has one, it's not constant (except preload)
+            // Check for a call suffix — if it has one, check if it's a .new() constructor
             let mut cursor = node.walk();
-            let has_call = node
+            let call_child = node
                 .children(&mut cursor)
-                .any(|c| c.kind() == "attribute_call");
-            !has_call
+                .find(|c| c.kind() == "attribute_call");
+            match call_child {
+                None => true, // No call — Class.CONSTANT is constant
+                Some(call) => {
+                    // Allow Type.new() as a constant expression
+                    let method = call
+                        .named_child(0)
+                        .and_then(|n| n.utf8_text(source).ok())
+                        .unwrap_or("");
+                    method == "new"
+                }
+            }
         }
         // preload() and type constructors with constant args are constant expressions
         "call" => {

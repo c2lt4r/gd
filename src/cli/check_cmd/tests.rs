@@ -6,7 +6,8 @@ use super::*;
 fn structural_errors(source: &str) -> Vec<StructuralError> {
     let tree = parser::parse(source).unwrap();
     let file = gd_ast::convert(&tree, source);
-    validate_structure(&tree.root_node(), source, &file, None)
+    let project = ProjectIndex::build(std::path::Path::new("/nonexistent"));
+    validate_structure(&tree.root_node(), source, &file, None, &project)
 }
 
 // -- Top-level statement checks --
@@ -1065,4 +1066,242 @@ fn b2_return_node_as_string() {
         errs.iter().any(|e| e.message.contains("cannot return")),
         "expected return type error, got: {errs:?}"
     );
+}
+
+// ====================================================================
+// Corpus fix tests
+// ====================================================================
+
+// -- Indentation: nested control flow should not be flagged --
+
+#[test]
+fn nested_if_elif_not_false_positive() {
+    let source = "\
+func f(x: int) -> int:
+\tif x > 10:
+\t\treturn 10
+\telif x > 5:
+\t\treturn 5
+\telse:
+\t\treturn 0
+";
+    assert!(structural_errors(source).is_empty());
+}
+
+#[test]
+fn nested_match_arms_not_false_positive() {
+    let source = "\
+func f(x: int) -> void:
+\tmatch x:
+\t\t0:
+\t\t\tprint(\"zero\")
+\t\t1:
+\t\t\tprint(\"one\")
+\t\t_:
+\t\t\tprint(\"other\")
+";
+    let errs = structural_errors(source);
+    let indent_errs: Vec<_> = errs.iter().filter(|e| e.message.contains("indentation")).collect();
+    assert!(
+        indent_errs.is_empty(),
+        "unexpected indentation errors: {:?}",
+        indent_errs.iter().map(|e| format!("L{}: {}", e.line, &e.message)).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn deeply_nested_if_in_match_not_false_positive() {
+    let source = "\
+func f(x: int) -> void:
+\tmatch x:
+\t\t0:
+\t\t\tif true:
+\t\t\t\tprint(\"a\")
+\t\t\telse:
+\t\t\t\tprint(\"b\")
+\t\t_:
+\t\t\tprint(\"c\")
+";
+    let errs = structural_errors(source);
+    let indent_errs: Vec<_> = errs.iter().filter(|e| e.message.contains("indentation")).collect();
+    assert!(
+        indent_errs.is_empty(),
+        "unexpected indentation errors: {:?}",
+        indent_errs.iter().map(|e| format!("L{}: {}", e.line, &e.message)).collect::<Vec<_>>()
+    );
+}
+
+// -- Void return value usage as argument --
+
+#[test]
+fn void_func_as_argument() {
+    let source = "\
+extends Node
+func do_nothing() -> void:
+\tpass
+func _ready():
+\tprint(do_nothing())
+";
+    let errs = classdb_errors(source);
+    assert!(
+        errs.iter().any(|e| e.message.contains("returns void") && e.message.contains("argument")),
+        "expected void-as-argument error, got: {errs:?}"
+    );
+}
+
+#[test]
+fn void_utility_as_value() {
+    let source = "\
+extends Node
+func _ready():
+\tvar x = print(\"hello\")
+";
+    let errs = classdb_errors(source);
+    assert!(
+        errs.iter().any(|e| e.message.contains("returns void")),
+        "expected void return error, got: {errs:?}"
+    );
+}
+
+// -- Invalid cast: primitive → container, class → primitive --
+
+#[test]
+fn b6_invalid_cast_int_to_array() {
+    let source = "extends Node\nfunc _ready():\n\tvar x: int = 42\n\tvar a := x as Array\n";
+    let errs = classdb_errors(source);
+    assert!(
+        errs.iter().any(|e| e.message.contains("invalid cast")),
+        "expected cast error for int→Array, got: {errs:?}"
+    );
+}
+
+#[test]
+fn b6_invalid_cast_node_to_int() {
+    let source = "extends Node\nfunc _ready():\n\tvar n := Node.new()\n\tvar x := n as int\n";
+    let errs = classdb_errors(source);
+    assert!(
+        errs.iter().any(|e| e.message.contains("invalid cast")),
+        "expected cast error for Node→int, got: {errs:?}"
+    );
+}
+
+// -- Const assignment: subscript and signal --
+
+#[test]
+fn assign_to_const_subscript() {
+    let source = "\
+const ARR := [1, 2, 3]
+func f():
+\tARR[0] = 99
+";
+    let errs = structural_errors(source);
+    assert!(
+        errs.iter().any(|e| e.message.contains("constant") && e.message.contains("ARR")),
+        "expected const subscript error, got: {errs:?}"
+    );
+}
+
+#[test]
+fn assign_to_signal() {
+    let source = "\
+signal my_signal
+func f():
+\tmy_signal = null
+";
+    let errs = structural_errors(source);
+    assert!(
+        errs.iter().any(|e| e.message.contains("signal") && e.message.contains("my_signal")),
+        "expected signal assign error, got: {errs:?}"
+    );
+}
+
+// -- Static context: static var initializer --
+
+#[test]
+fn static_var_uses_instance_var() {
+    let source = "\
+extends Node
+var health := 100
+static var cached = health
+";
+    let errs = structural_errors(source);
+    assert!(
+        errs.iter().any(|e| e.message.contains("health") && e.message.contains("static")),
+        "expected static context error, got: {errs:?}"
+    );
+}
+
+#[test]
+fn static_var_const_init_ok() {
+    let source = "\
+extends Node
+static var count = 0
+";
+    assert!(structural_errors(source).is_empty());
+}
+
+// -- Typed array check on const_statement --
+
+#[test]
+fn const_typed_array_wrong_element() {
+    let source = "extends Node\nconst ARR: Array[int] = [\"hello\"]\n";
+    let errs = classdb_errors(source);
+    assert!(
+        errs.iter().any(|e| e.message.contains("Array[int]")),
+        "expected typed array error on const, got: {errs:?}"
+    );
+}
+
+// -- Augmented assignment type check --
+
+#[test]
+fn augmented_assign_bool_plus_string() {
+    let source = "extends Node\nfunc _ready():\n\tvar x: bool = true\n\tx += \"hello\"\n";
+    let errs = classdb_errors(source);
+    assert!(
+        errs.iter().any(|e| e.message.contains("invalid operands")),
+        "expected operator error on +=, got: {errs:?}"
+    );
+}
+
+// -- Return void_func() in void function is OK --
+
+#[test]
+fn void_return_void_call_ok() {
+    let source = "\
+func helper() -> void:
+\tpass
+func f() -> void:
+\treturn helper()
+";
+    assert!(structural_errors(source).is_empty());
+}
+
+#[test]
+fn void_return_value_still_flagged() {
+    let source = "func f() -> void:\n\treturn 42\n";
+    let errs = structural_errors(source);
+    assert!(
+        errs.iter().any(|e| e.message.contains("void") && e.message.contains("return")),
+    );
+}
+
+// -- Const expression: Type.new() --
+
+#[test]
+fn const_with_type_new_ok() {
+    let source = "const OBJ = RefCounted.new()\n";
+    assert!(structural_errors(source).is_empty());
+}
+
+#[test]
+fn const_with_constructor_call_ok() {
+    let source = "const V = Vector2(1, 2)\n";
+    assert!(structural_errors(source).is_empty());
+}
+
+#[test]
+fn const_array_with_constructors_ok() {
+    let source = "const POINTS = [Vector2(0, 0), Vector2(1, 1)]\n";
+    assert!(structural_errors(source).is_empty());
 }

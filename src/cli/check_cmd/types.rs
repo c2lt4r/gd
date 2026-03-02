@@ -271,6 +271,41 @@ fn check_operators_in_node(
         });
     }
 
+    // Augmented assignment: +=, -=, *=, /=, %= imply a binary operation
+    if node.kind() == "augmented_assignment"
+        && let Some(lhs) = node.named_child(0)
+        && let Some(rhs) = node.named_child(1)
+    {
+        // Extract the base operator from the augmented assignment text
+        // The operator token (+=, -=, etc.) is an unnamed child between lhs and rhs
+        let op = node.utf8_text(source.as_bytes())
+            .ok()
+            .and_then(|text| {
+                // Find the operator by looking for the += -= *= /= %= pattern
+                for op_str in &["+=", "-=", "*=", "/=", "%="] {
+                    if text.contains(op_str) {
+                        return Some(&op_str[..1]); // strip the '='
+                    }
+                }
+                None
+            });
+
+        if let Some(op) = op
+            && let Some(left_ty) = type_inference::infer_expression_type_with_project(&lhs, source, file, project)
+                .or_else(|| infer_local_var_type(&lhs, source, file, project))
+            && let Some(right_ty) = type_inference::infer_expression_type_with_project(&rhs, source, file, project)
+            && let Some(lt) = inferred_type_name(&left_ty)
+            && let Some(rt) = inferred_type_name(&right_ty)
+            && !operator_valid(op, lt, rt)
+        {
+            errors.push(StructuralError {
+                line: node.start_position().row as u32 + 1,
+                column: node.start_position().column as u32 + 1,
+                message: format!("invalid operands \"{lt}\" and \"{rt}\" for operator \"{op}=\"",),
+            });
+        }
+    }
+
     let mut cursor = node.walk();
     if cursor.goto_first_child() {
         loop {
@@ -429,15 +464,25 @@ fn check_cast_in_node(
         && let Some(expr_ty) = type_inference::infer_expression_type_with_project(&expr, source, file, project)
             .or_else(|| infer_local_var_type(&expr, source, file, project))
         && let Some(actual_name) = inferred_type_name(&expr_ty)
-        && is_primitive_type(actual_name)
-        && crate::class_db::class_exists(target_type)
-        && !is_primitive_type(target_type)
     {
-        errors.push(StructuralError {
-            line: node.start_position().row as u32 + 1,
-            column: node.start_position().column as u32 + 1,
-            message: format!("invalid cast: cannot cast \"{actual_name}\" to \"{target_type}\"",),
-        });
+        let is_invalid = if is_primitive_type(actual_name) {
+            // primitive → ClassDB class (e.g. int as Node)
+            (crate::class_db::class_exists(target_type) && !is_primitive_type(target_type))
+            // primitive → builtin container (e.g. int as Array)
+            || is_builtin_container_type(target_type)
+        } else if crate::class_db::class_exists(actual_name) || is_builtin_container_type(actual_name) {
+            // class/container → primitive (e.g. RefCounted as int)
+            is_primitive_type(target_type)
+        } else {
+            false
+        };
+        if is_invalid {
+            errors.push(StructuralError {
+                line: node.start_position().row as u32 + 1,
+                column: node.start_position().column as u32 + 1,
+                message: format!("invalid cast: cannot cast \"{actual_name}\" to \"{target_type}\"",),
+            });
+        }
     }
 
     let mut cursor = node.walk();
@@ -453,6 +498,24 @@ fn check_cast_in_node(
 
 fn is_primitive_type(ty: &str) -> bool {
     matches!(ty, "int" | "float" | "bool" | "String")
+}
+
+fn is_builtin_container_type(ty: &str) -> bool {
+    matches!(
+        ty,
+        "Array"
+            | "Dictionary"
+            | "PackedByteArray"
+            | "PackedInt32Array"
+            | "PackedInt64Array"
+            | "PackedFloat32Array"
+            | "PackedFloat64Array"
+            | "PackedStringArray"
+            | "PackedVector2Array"
+            | "PackedVector3Array"
+            | "PackedColorArray"
+            | "PackedVector4Array"
+    ) || ty.starts_with("Array[")
 }
 
 /// Extract a human-readable type name from an `InferredType`.

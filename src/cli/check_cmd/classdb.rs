@@ -406,6 +406,11 @@ pub(super) fn is_known_type(name: &str, file: &GdFile, project: &ProjectIndex) -
         return true;
     }
 
+    // Enum types defined in other project files (cross-file enum namespaces)
+    if project.has_enum_type(name) {
+        return true;
+    }
+
     // @GlobalScope enum types (Error, Corner, EulerOrder, PropertyHint, etc.)
     if crate::class_db::enum_type_exists("@GlobalScope", name) {
         return true;
@@ -450,35 +455,68 @@ fn check_use_void_in_node(
     errors: &mut Vec<StructuralError>,
 ) {
     let bytes = source.as_bytes();
+    let extends = file.extends_class().unwrap_or("RefCounted");
+
+    // Helper: check if a call node is a void call (bare identifier calls)
+    let is_void_call = |call_node: &Node| -> Option<String> {
+        let func = call_node
+            .child_by_field_name("function")
+            .or_else(|| call_node.named_child(0))?;
+        if func.kind() == "identifier" {
+            let func_name = func.utf8_text(bytes).ok()?;
+            // User-defined void functions
+            if file.funcs().any(|f| {
+                f.name == func_name && f.return_type.as_ref().is_some_and(|r| r.name == "void")
+            }) {
+                return Some(func_name.to_string());
+            }
+            // ClassDB methods (bare call = self method)
+            if crate::class_db::method_return_type(extends, func_name) == Some("void") {
+                return Some(func_name.to_string());
+            }
+            // Void utility functions
+            if is_void_utility(func_name) {
+                return Some(func_name.to_string());
+            }
+        }
+        None
+    };
 
     // Check: var x = void_func()
     if node.kind() == "variable_statement"
         && let Some(value) = node.child_by_field_name("value")
         && value.kind() == "call"
-        && let Some(func) = value
-            .child_by_field_name("function")
-            .or_else(|| value.named_child(0))
-        && func.kind() == "identifier"
-        && let Ok(func_name) = func.utf8_text(bytes)
+        && let Some(func_name) = is_void_call(&value)
     {
-        // Check user-defined functions
-        let is_void = file.funcs().any(|f| {
-            f.name == func_name && f.return_type.as_ref().is_some_and(|r| r.name == "void")
+        let pos = value.start_position();
+        errors.push(StructuralError {
+            line: pos.row as u32 + 1,
+            column: pos.column as u32 + 1,
+            message: format!(
+                "cannot use return value of `{func_name}()` because it returns void",
+            ),
         });
-        // Check ClassDB methods (bare call = self method)
-        let extends = file.extends_class().unwrap_or("RefCounted");
-        let is_classdb_void =
-            !is_void && crate::class_db::method_return_type(extends, func_name) == Some("void");
+    }
 
-        if is_void || is_classdb_void {
-            let pos = value.start_position();
-            errors.push(StructuralError {
-                line: pos.row as u32 + 1,
-                column: pos.column as u32 + 1,
-                message: format!(
-                    "cannot use return value of `{func_name}()` because it returns void",
-                ),
-            });
+    // Check: void_func() used as argument inside another call
+    // e.g. print(void_func()) or some_func(a, void_func(), b)
+    if node.kind() == "call"
+        && let Some(args) = node.child_by_field_name("arguments")
+    {
+        let mut arg_cursor = args.walk();
+        for arg in args.children(&mut arg_cursor) {
+            if arg.kind() == "call"
+                && let Some(func_name) = is_void_call(&arg)
+            {
+                let pos = arg.start_position();
+                errors.push(StructuralError {
+                    line: pos.row as u32 + 1,
+                    column: pos.column as u32 + 1,
+                    message: format!(
+                        "cannot use return value of `{func_name}()` as argument because it returns void",
+                    ),
+                });
+            }
         }
     }
 
@@ -511,6 +549,23 @@ fn check_use_void_in_node(
             }
         }
     }
+}
+
+/// Utility functions that return void and should not be used as values.
+fn is_void_utility(name: &str) -> bool {
+    matches!(
+        name,
+        "print"
+            | "push_error"
+            | "push_warning"
+            | "printerr"
+            | "prints"
+            | "printraw"
+            | "print_rich"
+            | "print_debug"
+            | "print_stack"
+            | "seed"
+    )
 }
 
 /// C7: Calling a non-static method on a class name (e.g., `Node.get_children()`).
@@ -955,8 +1010,8 @@ fn check_typed_array_in_node(
     project: &ProjectIndex,
     errors: &mut Vec<StructuralError>,
 ) {
-    // Look for variable declarations with typed array annotation and array literal initializer
-    if node.kind() == "variable_statement"
+    // Look for variable/const declarations with typed array annotation and array literal initializer
+    if matches!(node.kind(), "variable_statement" | "const_statement")
         && let Some(type_node) = node.child_by_field_name("type")
         && let Ok(type_text) = type_node.utf8_text(source.as_bytes())
         && let Some(element_type) = type_text
@@ -1025,6 +1080,15 @@ pub(super) fn types_assignable(declared: &str, actual: &str) -> bool {
     }
     // int/float → bool coercion (valid in GDScript)
     if declared == "bool" && matches!(actual, "int" | "float") {
+        return true;
+    }
+    // Enum ↔ int implicit conversion (enum values are int constants in GDScript)
+    // An "enum name" is something that is not a builtin value type, not a ClassDB class,
+    // and not an array/dict family — this covers user-defined enum names.
+    if is_possible_enum_type(declared) && matches!(actual, "int" | "float") {
+        return true;
+    }
+    if is_possible_enum_type(actual) && matches!(declared, "int" | "float") {
         return true;
     }
     // Godot implicit conversions: String ↔ StringName, String ↔ NodePath
@@ -1129,6 +1193,17 @@ fn is_builtin_value_type(ty: &str) -> bool {
             | "Dictionary"
             | "void"
     )
+}
+
+/// A type name that could be a user-defined enum: not a builtin value type,
+/// not a ClassDB class, and not an array/dict family type.
+fn is_possible_enum_type(ty: &str) -> bool {
+    !is_builtin_value_type(ty)
+        && !crate::class_db::class_exists(ty)
+        && !is_array_family(ty)
+        && !is_dict_family(ty)
+        && !ty.is_empty()
+        && ty != "Variant"
 }
 
 /// H16: Cannot call a variable directly — e.g. `f()` where `f: Callable`.

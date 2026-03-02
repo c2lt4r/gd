@@ -121,9 +121,21 @@ fn check_method_not_found_in_node(
             let mut found = extends
                 .is_some_and(|ext| project.method_exists(ext, func_name));
             // Resolve to ClassDB ancestor and check there
-            if !found && let Some(ext) = extends {
-                let classdb_ext = resolve_to_classdb_type(ext, project);
+            // Default to RefCounted when no extends (Godot's implicit base)
+            if !found {
+                let classdb_ext = match extends {
+                    Some(ext) => resolve_to_classdb_type(ext, project),
+                    None => "RefCounted".to_string(),
+                };
                 found = crate::class_db::method_exists(&classdb_ext, func_name);
+            }
+            // Also check inner class functions (if inside an inner class body)
+            if !found {
+                found = file.inner_classes().any(|c| {
+                    c.declarations.iter().any(|d| {
+                        d.as_func().is_some_and(|f| f.name == func_name)
+                    })
+                });
             }
             if !found {
                 errors.push(StructuralError {
@@ -175,9 +187,17 @@ pub(super) fn check_undefined_identifiers(
             known.insert(member.name.to_string());
         }
     }
-    // Inner classes
+    // Inner classes and their enum members
     for c in file.inner_classes() {
         known.insert(c.name.to_string());
+        for decl in &c.declarations {
+            if let Some(e) = decl.as_enum() {
+                known.insert(e.name.to_string());
+                for member in &e.members {
+                    known.insert(member.name.to_string());
+                }
+            }
+        }
     }
     // Signals
     for s in file.signals() {
@@ -234,8 +254,8 @@ fn check_undefined_in_body(
     known: &mut std::collections::HashSet<String>,
     errors: &mut Vec<StructuralError>,
 ) {
-    // Track local variable declarations
-    if node.kind() == "variable_statement"
+    // Track local variable and const declarations
+    if matches!(node.kind(), "variable_statement" | "const_statement")
         && let Some(name_node) = node.child_by_field_name("name")
         && let Ok(name) = name_node.utf8_text(source.as_bytes())
     {
@@ -264,7 +284,35 @@ fn check_undefined_in_body(
     }
 
     // Don't recurse into nested function definitions (they have own scope)
-    if matches!(node.kind(), "function_definition" | "lambda") {
+    if node.kind() == "function_definition" {
+        return;
+    }
+    // Lambdas inherit enclosing scope — clone known set and add lambda params
+    if node.kind() == "lambda" {
+        let mut lambda_known = known.clone();
+        if let Some(params) = node.child_by_field_name("parameters") {
+            let mut pc = params.walk();
+            for param in params.named_children(&mut pc) {
+                let effective = if param.kind() == "variadic_parameter" {
+                    param.named_child(0).unwrap_or(param)
+                } else {
+                    param
+                };
+                if let Some(name_node) = effective.named_child(0)
+                    && name_node.kind() == "identifier"
+                    && let Ok(name) = name_node.utf8_text(source.as_bytes())
+                {
+                    lambda_known.insert(name.to_string());
+                } else if effective.kind() == "identifier"
+                    && let Ok(name) = effective.utf8_text(source.as_bytes())
+                {
+                    lambda_known.insert(name.to_string());
+                }
+            }
+        }
+        if let Some(body) = node.child_by_field_name("body") {
+            check_undefined_in_body(&body, source, file, project, &mut lambda_known, errors);
+        }
         return;
     }
 
@@ -324,6 +372,14 @@ fn is_identifier_in_declaration_context(node: &Node, source: &str) -> bool {
     }
     // Annotation name (e.g. @warning_ignore, @export, @onready)
     if parent.kind() == "annotation" {
+        return true;
+    }
+    // Dictionary literal key: { key = value }
+    if parent.kind() == "pair"
+        && parent
+            .named_child(0)
+            .is_some_and(|first| first.id() == node.id())
+    {
         return true;
     }
     // `as`/`is` type operand — already checked by A4
@@ -584,8 +640,11 @@ fn check_super_method_in_node(
             {
                 let mut found = extends
                     .is_some_and(|ext| project.method_exists(ext, method_name));
-                if !found && let Some(ext) = extends {
-                    let classdb_ext = resolve_to_classdb_type(ext, project);
+                if !found {
+                    let classdb_ext = match extends {
+                        Some(ext) => resolve_to_classdb_type(ext, project),
+                        None => "RefCounted".to_string(),
+                    };
                     found = crate::class_db::method_exists(&classdb_ext, method_name);
                 }
                 if !found {
