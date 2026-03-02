@@ -24,3 +24,4 @@ tools/check_parity.py
 .docs/
 .gd-mesh-bugs.md
 extension_api.json
+tests/corpus/godot-4.6.1/

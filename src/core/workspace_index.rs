@@ -362,6 +362,13 @@ impl ProjectIndex {
         &self.project_root
     }
 
+    /// Check if a name matches an enum type defined in any project file.
+    pub fn has_enum_type(&self, name: &str) -> bool {
+        self.files
+            .iter()
+            .any(|fs| fs.enums.iter().any(|e| e == name))
+    }
+
     /// Check if a name matches an autoload (by autoload name or class_name).
     pub fn is_autoload(&self, name: &str) -> bool {
         self.autoloads.contains_key(name)

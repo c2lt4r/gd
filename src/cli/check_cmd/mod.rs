@@ -116,8 +116,13 @@ pub fn exec(args: &CheckArgs) -> Result<()> {
                     let root_node = tree.root_node();
                     let has_parse_errors = root_node.has_error();
                     let gd_file = gd_ast::convert(&tree, &source);
-                    let structural =
-                        validate_structure(&root_node, &source, &gd_file, Some(&root_project));
+                    let structural = validate_structure(
+                        &root_node,
+                        &source,
+                        &gd_file,
+                        Some(&root_project),
+                        &project_index,
+                    );
                     let classdb =
                         check_classdb_errors(&gd_file, &source, &project_index);
                     let duplicates = check_duplicates(&tree, &source);

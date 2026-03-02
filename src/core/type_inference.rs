@@ -630,6 +630,14 @@ pub fn parse_class_db_type(raw: &str) -> InferredType {
 
 /// Classify a type name from source code into an `InferredType`.
 pub fn classify_type_name(name: &str) -> InferredType {
+    // Handle ClassDB `typedarray::X` format (e.g. from method return types)
+    if let Some(inner) = name.strip_prefix("typedarray::") {
+        return InferredType::TypedArray(Box::new(classify_type_name(inner)));
+    }
+    // Handle ClassDB `enum::X` format
+    if let Some(enum_name) = name.strip_prefix("enum::") {
+        return InferredType::Enum(enum_name.to_string());
+    }
     // Handle Array[T] syntax
     if let Some(inner) = name
         .strip_prefix("Array[")
