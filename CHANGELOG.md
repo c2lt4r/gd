@@ -3,6 +3,12 @@
 ## [0.3.17-dev]
 
 ### Fixed
+- **`gd check` — Godot 4.6.1 corpus false positive fixes (round 3)** (5 fixes across 3 files, 48→0 fixable FPs):
+  - Subscript access on const literals (`[1,2,3][0]`, `{"key": 5}["key"]`) now recognized as const expressions
+  - Lowercase const identifiers in same scope now resolved (e.g. `const x = other_const + 1`)
+  - Comments inside argument lists no longer counted as arguments (fixed `Vector3(3, 3.5, 4, #comment)` = 4 args)
+  - Top-level triple-quoted strings (docstring-style comments) no longer flagged as invalid top-level statements
+  - Inner class return-path analysis no longer matches wrong function when file-level function shares the same name
 - **`gd check` — Godot 4.6.1 corpus false positive fixes (round 2)** (7 fixes across 4 files):
   - Bare `new()` self-constructor calls no longer flagged as "function not found"
   - Variadic functions (`func f(...args)`) no longer flagged for too many arguments

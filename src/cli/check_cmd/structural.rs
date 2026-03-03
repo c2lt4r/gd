@@ -37,6 +37,13 @@ fn check_top_level_statements(root: &Node, errors: &mut Vec<StructuralError>) {
             continue;
         }
         if !is_valid_top_level(child.kind()) {
+            // Standalone string expressions are valid at top level in GDScript
+            // (used as docstring-style comments, e.g. triple-quoted strings).
+            if child.kind() == "expression_statement"
+                && child.named_child(0).is_some_and(|c| c.kind() == "string")
+            {
+                continue;
+            }
             let pos = child.start_position();
             errors.push(StructuralError {
                 line: pos.row as u32 + 1,
@@ -1905,12 +1912,16 @@ fn check_missing_return(
 }
 
 fn check_missing_return_inner(
-    root: &Node,
+    _root: &Node,
     source: &str,
     class: &GdClass<'_>,
     errors: &mut Vec<StructuralError>,
 ) {
     let bytes = source.as_bytes();
+    // Search within the class's own class_body, not the file root.
+    let class_body = class.node.child_by_field_name("body");
+    let Some(class_body) = class_body else { return };
+
     for func in class.declarations.iter().filter_map(|d| d.as_func()) {
         let Some(ref ret) = func.return_type else {
             continue;
@@ -1919,8 +1930,8 @@ fn check_missing_return_inner(
             continue;
         }
 
-        let mut cursor = root.walk();
-        for child in root.children(&mut cursor) {
+        let mut cursor = class_body.walk();
+        for child in class_body.children(&mut cursor) {
             let func_node = match child.kind() {
                 "function_definition" => child,
                 "decorated_definition" => {
@@ -1960,7 +1971,7 @@ fn check_missing_return_inner(
         }
     }
     for inner in class.declarations.iter().filter_map(|d| d.as_class()) {
-        check_missing_return_inner(root, source, inner, errors);
+        check_missing_return_inner(&class.node, source, inner, errors);
     }
 }
 
@@ -2121,6 +2132,7 @@ fn check_const_expr_in_node(node: Node, source: &str, errors: &mut Vec<Structura
 }
 
 /// Check if an expression is a compile-time constant.
+#[allow(clippy::too_many_lines)]
 fn is_const_expression(node: &Node, source: &[u8]) -> bool {
     match node.kind() {
         // Literals are always constant
@@ -2139,6 +2151,8 @@ fn is_const_expression(node: &Node, source: &[u8]) -> bool {
                 || text.starts_with(|c: char| c.is_ascii_uppercase())
                 // Bare function references (e.g. `absf`, `sqrt`) are valid const Callable values
                 || crate::class_db::utility_function(text).is_some()
+                // Check if identifier matches a const declaration in the enclosing scope
+                || is_local_const_name(node, text, source)
         }
         // Array/dictionary literals with all-constant elements
         "array" => {
@@ -2228,10 +2242,46 @@ fn is_const_expression(node: &Node, source: &[u8]) -> bool {
                 .is_some_and(|base| is_const_expression(&base, source))
                 && node
                     .named_child(1)
+                    .and_then(|idx| {
+                        // tree-sitter wraps the index in `subscript_arguments` — unwrap it
+                        if idx.kind() == "subscript_arguments" {
+                            idx.named_child(0)
+                        } else {
+                            Some(idx)
+                        }
+                    })
                     .is_some_and(|idx| is_const_expression(&idx, source))
         }
         _ => false,
     }
+}
+
+/// Check if an identifier matches a `const` declaration in the enclosing scope.
+/// Walks up the AST to find the nearest `body`/`class_body`/root and searches
+/// sibling `const_statement` nodes for a matching name.
+fn is_local_const_name(node: &Node, name: &str, source: &[u8]) -> bool {
+    // Walk up to find the enclosing scope (body, class_body, or root)
+    let mut current = *node;
+    while let Some(parent) = current.parent() {
+        match parent.kind() {
+            "body" | "class_body" | "source" => {
+                // Search sibling const_statement nodes for matching name
+                let mut cursor = parent.walk();
+                for child in parent.children(&mut cursor) {
+                    if child.kind() == "const_statement"
+                        && let Some(name_node) = child.child_by_field_name("name")
+                        && name_node.utf8_text(source).ok() == Some(name)
+                    {
+                        return true;
+                    }
+                }
+                break;
+            }
+            _ => {}
+        }
+        current = parent;
+    }
+    false
 }
 
 fn is_builtin_constructor(name: &str) -> bool {

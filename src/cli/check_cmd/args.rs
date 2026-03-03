@@ -363,8 +363,8 @@ fn count_call_args(node: &Node) -> usize {
     let mut count = 0;
     let mut cursor = args.walk();
     for child in args.children(&mut cursor) {
-        // Skip ERROR nodes produced by trailing commas (e.g. `Vector3(3, 3.5, 4,)`)
-        if child.is_named() && child.kind() != "ERROR" {
+        // Skip ERROR nodes and comments — comments inside argument lists are not arguments
+        if child.is_named() && !matches!(child.kind(), "ERROR" | "comment") {
             count += 1;
         }
     }
