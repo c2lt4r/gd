@@ -93,6 +93,7 @@ fn check_indentation_consistency(node: &Node, errors: &mut Vec<StructuralError>)
 fn check_body_indentation(body: &Node, errors: &mut Vec<StructuralError>) {
     // Find the expected indentation from the first non-comment named child.
     let mut expected_col: Option<usize> = None;
+    let mut prev_row: Option<usize> = None;
     let mut cursor = body.walk();
 
     for child in body.children(&mut cursor) {
@@ -106,7 +107,16 @@ fn check_body_indentation(body: &Node, errors: &mut Vec<StructuralError>) {
         if is_control_flow_child(child.kind()) {
             continue;
         }
+        let row = child.start_position().row;
         let col = child.start_position().column;
+        // Skip indentation check for children on the same line as a previous
+        // sibling — these are semicolon-separated one-liners like
+        // `func foo(): var x := 59; return x`
+        let same_line = prev_row.is_some_and(|r| r == row);
+        prev_row = Some(row);
+        if same_line {
+            continue;
+        }
         match expected_col {
             None => expected_col = Some(col),
             Some(exp) if col > exp => {
@@ -2127,6 +2137,8 @@ fn is_const_expression(node: &Node, source: &[u8]) -> bool {
             is_upper_snake_case(text)
                 || matches!(text, "INF" | "NAN" | "PI" | "TAU" | "INFINITY" | "preload")
                 || text.starts_with(|c: char| c.is_ascii_uppercase())
+                // Bare function references (e.g. `absf`, `sqrt`) are valid const Callable values
+                || crate::class_db::utility_function(text).is_some()
         }
         // Array/dictionary literals with all-constant elements
         "array" => {
@@ -2199,7 +2211,8 @@ fn is_const_expression(node: &Node, source: &[u8]) -> bool {
                 return true;
             }
             // Type constructors: Color(...), Vector2(...), etc. with all-constant args
-            if is_builtin_constructor(func_name) {
+            // Also @GDScript utility functions: Color8(), etc.
+            if is_builtin_constructor(func_name) || is_gdscript_utility_const(func_name) {
                 let args = node.child_by_field_name("arguments");
                 return args.is_none_or(|a| {
                     let mut cursor = a.walk();
@@ -2208,6 +2221,14 @@ fn is_const_expression(node: &Node, source: &[u8]) -> bool {
                 });
             }
             false
+        }
+        // Subscript on const base + const index: [1, 2, 3][0]
+        "subscript" => {
+            node.named_child(0)
+                .is_some_and(|base| is_const_expression(&base, source))
+                && node
+                    .named_child(1)
+                    .is_some_and(|idx| is_const_expression(&idx, source))
         }
         _ => false,
     }
@@ -2242,6 +2263,11 @@ fn is_builtin_constructor(name: &str) -> bool {
             | "bool"
             | "String"
     )
+}
+
+/// @GDScript utility functions that produce constant values when given constant args.
+fn is_gdscript_utility_const(name: &str) -> bool {
+    matches!(name, "Color8")
 }
 
 /// H1: Getter/setter signature mismatch.

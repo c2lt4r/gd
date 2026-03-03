@@ -1104,6 +1104,10 @@ pub(super) fn types_assignable(declared: &str, actual: &str) -> bool {
     ) {
         return true;
     }
+    // GDScript allows `var color: Color = "red"` (named color strings)
+    if declared == "Color" && actual == "String" {
+        return true;
+    }
     // Vector widening: Vector2i → Vector2, Vector3i → Vector3, etc.
     if is_vector_widening(declared, actual) {
         return true;

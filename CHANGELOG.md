@@ -3,7 +3,15 @@
 ## [0.3.17-dev]
 
 ### Fixed
-- **`gd check` — Godot 4.6.1 corpus false positive fixes** (12 fixes across 9 files):
+- **`gd check` — Godot 4.6.1 corpus false positive fixes (round 2)** (7 fixes across 4 files):
+  - Bare `new()` self-constructor calls no longer flagged as "function not found"
+  - Variadic functions (`func f(...args)`) no longer flagged for too many arguments
+  - Match pattern variable bindings (`var value` in match arms) now in scope for arm body and `when` guard
+  - Semicolon-separated one-line statements (`func f(): var x := 1; return x`) no longer flagged as indentation errors
+  - `super.method()` inside inner classes now resolves against the inner class's extends (not the file's top-level extends)
+  - `is_const_expression` expanded: subscript on const values, bare function references (`absf`), `Color8()` with const args
+  - `var color: Color = "red"` (named color strings) no longer flagged as type mismatch
+- **`gd check` — Godot 4.6.1 corpus false positive fixes (round 1)** (12 fixes across 9 files):
   - Trailing comma in function args no longer overcounts arguments (`Vector3(3, 3.5, 4,)`)
   - `return <call>()` in void functions allowed (Godot permits side-effect returns)
   - Enums are now recognized as iterable (`for key in MyEnum:`)

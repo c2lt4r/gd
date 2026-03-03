@@ -388,8 +388,9 @@ fn check_arg_count_in_node(
         {
             // 1. Check user-defined functions
             if let Some(func) = file.funcs().find(|f| f.name == name) {
+                let is_variadic = func_is_variadic(func);
                 let required = func.params.iter().filter(|p| p.default.is_none()).count();
-                let total = func.params.len();
+                let total = if is_variadic { usize::MAX } else { func.params.len() };
                 check_param_bounds(name, arg_count, required, total, node, errors);
             }
             // 2. Check utility/builtin functions
@@ -581,6 +582,20 @@ fn check_attribute_call_args(
             }
         }
     }
+}
+
+/// Check if a function has a variadic parameter (`...args`).
+/// Variadic params are not included in the `GdParam` vec, so we check the
+/// tree-sitter `parameters` node directly.
+fn func_is_variadic(func: &crate::core::gd_ast::GdFunc) -> bool {
+    func.node
+        .child_by_field_name("parameters")
+        .is_some_and(|params| {
+            let mut pc = params.walk();
+            params
+                .named_children(&mut pc)
+                .any(|p| p.kind() == "variadic_parameter")
+        })
 }
 
 fn check_param_bounds(

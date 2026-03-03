@@ -100,6 +100,7 @@ fn check_method_not_found_in_node(
                     | "len"
                     | "assert"
                     | "super"
+                    | "new"
                     | "is_instance_valid"
                     | "is_instance_of"
                     | "weakref"
@@ -287,6 +288,21 @@ fn check_undefined_in_body(
     if node.kind() == "function_definition" {
         return;
     }
+    // Match pattern sections: `var value` bindings in patterns introduce names
+    // scoped to the arm body and pattern guard.
+    if node.kind() == "pattern_section" {
+        let mut arm_known = known.clone();
+        // Collect pattern_binding identifiers from pattern children
+        collect_pattern_bindings(node, source, &mut arm_known);
+        // Check pattern_guard and body with the extended set
+        let mut cursor2 = node.walk();
+        for child in node.children(&mut cursor2) {
+            if child.kind() == "pattern_guard" || child.kind() == "body" {
+                check_undefined_in_body(&child, source, file, project, &mut arm_known, errors);
+            }
+        }
+        return;
+    }
     // Lambdas inherit enclosing scope — clone known set and add lambda params
     if node.kind() == "lambda" {
         let mut lambda_known = known.clone();
@@ -320,6 +336,37 @@ fn check_undefined_in_body(
     if cursor.goto_first_child() {
         loop {
             check_undefined_in_body(&cursor.node(), source, file, project, known, errors);
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+    }
+}
+
+/// Recursively collect `pattern_binding` identifiers from match pattern nodes.
+/// `pattern_binding` has a single `identifier` child — the bound variable name.
+fn collect_pattern_bindings(
+    node: &Node,
+    source: &str,
+    known: &mut std::collections::HashSet<String>,
+) {
+    if node.kind() == "pattern_binding" {
+        if let Some(ident) = node.named_child(0)
+            && ident.kind() == "identifier"
+            && let Ok(name) = ident.utf8_text(source.as_bytes())
+        {
+            known.insert(name.to_string());
+        }
+        return;
+    }
+    // Don't recurse into body or pattern_guard — those are checked separately
+    if matches!(node.kind(), "body" | "pattern_guard") {
+        return;
+    }
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            collect_pattern_bindings(&cursor.node(), source, known);
             if !cursor.goto_next_sibling() {
                 break;
             }
@@ -372,6 +419,10 @@ fn is_identifier_in_declaration_context(node: &Node, source: &str) -> bool {
     }
     // Annotation name (e.g. @warning_ignore, @export, @onready)
     if parent.kind() == "annotation" {
+        return true;
+    }
+    // Match pattern binding: `var value` in match arms
+    if parent.kind() == "pattern_binding" {
         return true;
     }
     // Dictionary literal key: { key = value }
@@ -618,6 +669,55 @@ pub(super) fn check_super_method_not_found(
     check_super_method_in_node(root, source, file, project, errors);
 }
 
+/// Find the enclosing `class_definition` node (inner class) and return its extends name.
+fn enclosing_inner_class_extends<'a>(node: &Node<'a>, source: &'a str) -> Option<&'a str> {
+    let mut current = node.parent()?;
+    loop {
+        if current.kind() == "class_definition" {
+            // The `extends` field is an `extends_statement` node; extract the class
+            // name from its `type` or `identifier` child.
+            let ext_stmt = current.child_by_field_name("extends")?;
+            let mut cursor = ext_stmt.walk();
+            for child in ext_stmt.named_children(&mut cursor) {
+                if matches!(child.kind(), "type" | "identifier") {
+                    return child.utf8_text(source.as_bytes()).ok();
+                }
+            }
+            return None;
+        }
+        // Stop at the source root (top-level)
+        if current.kind() == "source" {
+            return None;
+        }
+        current = current.parent()?;
+    }
+}
+
+/// Recursively search all inner classes (including nested) for a class with the given
+/// name that has a method with the given name.
+fn inner_class_has_method(file: &GdFile, class_name: &str, method_name: &str) -> bool {
+    fn search_in_class(c: &crate::core::gd_ast::GdClass, name: &str, method: &str) -> bool {
+        if c.name == name
+            && c.declarations
+                .iter()
+                .any(|d| d.as_func().is_some_and(|f| f.name == method))
+        {
+            return true;
+        }
+        // Recurse into nested inner classes
+        for d in &c.declarations {
+            if let Some(nested) = d.as_class()
+                && search_in_class(nested, name, method)
+            {
+                return true;
+            }
+        }
+        false
+    }
+    file.inner_classes()
+        .any(|c| search_in_class(c, class_name, method_name))
+}
+
 fn check_super_method_in_node(
     node: &Node,
     source: &str,
@@ -632,7 +732,10 @@ fn check_super_method_in_node(
         && let Ok(recv_name) = receiver.utf8_text(source.as_bytes())
         && recv_name == "super"
     {
-        let extends = file.extends_str();
+        // Determine the correct extends: if inside an inner class, use its extends;
+        // otherwise use the file's top-level extends.
+        let inner_ext = enclosing_inner_class_extends(node, source);
+        let extends = inner_ext.or_else(|| file.extends_str());
         let mut cursor2 = node.walk();
         for child in node.children(&mut cursor2) {
             if child.kind() == "attribute_call"
@@ -640,6 +743,12 @@ fn check_super_method_in_node(
                 && let Ok(method_name) = method_node.utf8_text(source.as_bytes())
             {
                 let mut found = extends.is_some_and(|ext| project.method_exists(ext, method_name));
+                // Check inner class definitions (recursively) for methods on the parent class
+                if !found
+                    && let Some(ext) = extends
+                {
+                    found = inner_class_has_method(file, ext, method_name);
+                }
                 if !found {
                     let classdb_ext = match extends {
                         Some(ext) => resolve_to_classdb_type(ext, project),
@@ -653,7 +762,7 @@ fn check_super_method_in_node(
                         column: method_node.start_position().column as u32 + 1,
                         message: format!(
                             "function \"{method_name}()\" not found in base {}",
-                            file.extends_str().unwrap_or("Node"),
+                            extends.unwrap_or("Node"),
                         ),
                     });
                 }
