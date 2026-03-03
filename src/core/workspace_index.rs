@@ -44,6 +44,16 @@ pub struct VarSummary {
     pub doc: Option<String>,
 }
 
+/// Summary of an inner class (for cross-file resolution of inner class members).
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct InnerClassSummary {
+    pub name: String,
+    pub extends: Option<String>,
+    pub consts: Vec<String>,
+    pub inner_classes: Vec<String>,
+}
+
 /// All symbols extracted from a single `.gd` file.
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -57,6 +67,7 @@ pub struct FileSymbols {
     pub signals: Vec<String>,
     pub enums: Vec<String>,
     pub enum_members: Vec<String>,
+    pub inner_classes: Vec<InnerClassSummary>,
 }
 
 /// Project-wide symbol index. Immutable after construction.
@@ -112,6 +123,7 @@ impl ProjectIndex {
                             signals: Vec::new(),
                             enums: Vec::new(),
                             enum_members: Vec::new(),
+                            inner_classes: Vec::new(), // empty vec of InnerClassSummary
                         },
                     );
                 }
@@ -362,6 +374,55 @@ impl ProjectIndex {
         &self.project_root
     }
 
+    /// Check if a constant exists on a user-defined class, walking the extends chain.
+    pub fn const_exists(&self, class: &str, name: &str) -> bool {
+        let mut current = class;
+        for _ in 0..64 {
+            if let Some(fs) = self.resolve_extends(current) {
+                if fs.variables.iter().any(|v| v.is_constant && v.name == name) {
+                    return true;
+                }
+                match fs.extends.as_deref() {
+                    Some(parent) => current = parent,
+                    None => return false,
+                }
+            } else {
+                return false;
+            }
+        }
+        false
+    }
+
+    /// Check if an inner class exists on a user-defined class, walking the extends chain.
+    pub fn inner_class_exists(&self, class: &str, name: &str) -> bool {
+        let mut current = class;
+        for _ in 0..64 {
+            if let Some(fs) = self.resolve_extends(current) {
+                if fs.inner_classes.iter().any(|c| c.name == name) {
+                    return true;
+                }
+                match fs.extends.as_deref() {
+                    Some(parent) => current = parent,
+                    None => return false,
+                }
+            } else {
+                return false;
+            }
+        }
+        false
+    }
+
+    /// Look up an inner class by name across all indexed files.
+    /// Returns the inner class summary if found.
+    pub fn lookup_inner_class(&self, name: &str) -> Option<&InnerClassSummary> {
+        for fs in &self.files {
+            if let Some(ic) = fs.inner_classes.iter().find(|c| c.name == name) {
+                return Some(ic);
+            }
+        }
+        None
+    }
+
     /// Check if a name matches an enum type defined in any project file.
     pub fn has_enum_type(&self, name: &str) -> bool {
         self.files
@@ -404,6 +465,32 @@ fn symbols_from_gd_file(path: PathBuf, file: &gd_ast::GdFile) -> FileSymbols {
         enum_members: file
             .enums()
             .flat_map(|e| e.members.iter().map(|m| m.name.to_string()))
+            .collect(),
+        inner_classes: file
+            .inner_classes()
+            .map(|c| InnerClassSummary {
+                name: c.name.to_string(),
+                extends: c
+                    .extends
+                    .as_ref()
+                    .map(|e| match e {
+                        GdExtends::Class(cls) => cls.to_string(),
+                        GdExtends::Path(p) => p.to_string(),
+                    }),
+                consts: c
+                    .declarations
+                    .iter()
+                    .filter_map(|d| d.as_var())
+                    .filter(|v| v.is_const)
+                    .map(|v| v.name.to_string())
+                    .collect(),
+                inner_classes: c
+                    .declarations
+                    .iter()
+                    .filter_map(|d| d.as_class())
+                    .map(|ic| ic.name.to_string())
+                    .collect(),
+            })
             .collect(),
     }
 }

@@ -18,7 +18,8 @@ pub(super) fn check_type_not_found(
     project: &ProjectIndex,
     errors: &mut Vec<StructuralError>,
 ) {
-    check_type_not_found_in_node(root, source, file, project, errors);
+    let mut local_types = std::collections::HashSet::new();
+    check_type_not_found_in_node(root, source, file, project, &mut local_types, errors);
 }
 
 fn check_type_not_found_in_node(
@@ -26,17 +27,36 @@ fn check_type_not_found_in_node(
     source: &str,
     file: &GdFile,
     project: &ProjectIndex,
+    local_types: &mut std::collections::HashSet<String>,
     errors: &mut Vec<StructuralError>,
 ) {
+    let bytes = source.as_bytes();
+
+    // Track inner class extends — add consts/inner classes from base to local scope
+    if node.kind() == "class_definition"
+        && let Some(ext_node) = node.child_by_field_name("extends")
+    {
+        let mut cursor_ext = ext_node.walk();
+        for child in ext_node.named_children(&mut cursor_ext) {
+            if matches!(child.kind(), "type" | "identifier")
+                && let Ok(ext_name) = child.utf8_text(bytes)
+            {
+                super::classdb::add_names_from_inner_class_extends(ext_name, project, local_types);
+                break;
+            }
+        }
+    }
+
     // `binary_operator` with op "as" or "is"
     if node.kind() == "binary_operator"
         && let Some(op_node) = node.child_by_field_name("op")
-        && let Ok(op) = op_node.utf8_text(source.as_bytes())
+        && let Ok(op) = op_node.utf8_text(bytes)
         && matches!(op, "as" | "is")
         && let Some(type_node) = node.child_by_field_name("right")
         && type_node.kind() == "identifier"
-        && let Ok(type_name) = type_node.utf8_text(source.as_bytes())
+        && let Ok(type_name) = type_node.utf8_text(bytes)
         && !is_known_type(type_name, file, project)
+        && !local_types.contains(type_name)
     {
         errors.push(StructuralError {
             line: type_node.start_position().row as u32 + 1,
@@ -48,7 +68,7 @@ fn check_type_not_found_in_node(
     let mut cursor = node.walk();
     if cursor.goto_first_child() {
         loop {
-            check_type_not_found_in_node(&cursor.node(), source, file, project, errors);
+            check_type_not_found_in_node(&cursor.node(), source, file, project, local_types, errors);
             if !cursor.goto_next_sibling() {
                 break;
             }
@@ -203,6 +223,10 @@ pub(super) fn check_undefined_identifiers(
     // Signals
     for s in file.signals() {
         known.insert(s.name.to_string());
+    }
+    // Own class_name
+    if let Some(cn) = file.class_name {
+        known.insert(cn.to_string());
     }
 
     // Walk function bodies looking for undefined identifiers

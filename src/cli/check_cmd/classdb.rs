@@ -1,6 +1,6 @@
 use tree_sitter::Node;
 
-use crate::core::gd_ast::{GdClass, GdDecl, GdFile};
+use crate::core::gd_ast::{GdClass, GdDecl, GdExpr, GdFile};
 use crate::core::type_inference;
 use crate::core::workspace_index::ProjectIndex;
 
@@ -215,17 +215,100 @@ fn check_type_annotations_resolve(
     project: &ProjectIndex,
     errors: &mut Vec<StructuralError>,
 ) {
-    check_type_annotations_in_node(*root, source, file, project, errors);
+    let mut local_types = std::collections::HashSet::new();
+    check_type_annotations_in_node(*root, source, file, project, &mut local_types, errors);
 }
 
+/// Add const and inner class names from a class's extends chain to the known set.
+/// Also used by `check_type_not_found` in identifiers.rs for `is`/`as` type checks.
+pub(super) fn add_names_from_inner_class_extends(
+    class: &str,
+    project: &ProjectIndex,
+    local_types: &mut std::collections::HashSet<String>,
+) {
+    // Try class_name-declared classes first
+    let mut current = class;
+    for _ in 0..64 {
+        if let Some(fs) = project.lookup_class(current) {
+            for v in &fs.variables {
+                if v.is_constant {
+                    local_types.insert(v.name.clone());
+                }
+            }
+            for c in &fs.inner_classes {
+                local_types.insert(c.name.clone());
+            }
+            match fs.extends.as_deref() {
+                Some(parent) => current = parent,
+                None => break,
+            }
+        } else {
+            break;
+        }
+    }
+    // Also look up inner classes by name (for inner class extends)
+    if let Some(ic) = project.lookup_inner_class(class) {
+        for c in &ic.consts {
+            local_types.insert(c.clone());
+        }
+        for c in &ic.inner_classes {
+            local_types.insert(c.clone());
+        }
+    }
+}
+
+/// Check if a const value node looks like a type alias (preload, known type, or dotted path).
+fn is_value_type_like(
+    node: &Node,
+    source: &str,
+    file: &GdFile,
+    project: &ProjectIndex,
+    local_types: &std::collections::HashSet<String>,
+) -> bool {
+    let text = node.utf8_text(source.as_bytes()).unwrap_or("");
+    text.starts_with("preload(")
+        || is_known_type(text, file, project)
+        || local_types.contains(text)
+        || text.split('.').next().is_some_and(|root| {
+            is_known_type(root, file, project) || local_types.contains(root)
+        })
+}
+
+#[allow(clippy::too_many_lines)]
 fn check_type_annotations_in_node(
     node: Node,
     source: &str,
     file: &GdFile,
     project: &ProjectIndex,
+    local_types: &mut std::collections::HashSet<String>,
     errors: &mut Vec<StructuralError>,
 ) {
     let bytes = source.as_bytes();
+
+    // Track local const type aliases: `const X = preload(...)` or `const X = KnownType`
+    if node.kind() == "const_statement"
+        && let Some(name_node) = node.child_by_field_name("name")
+        && let Ok(const_name) = name_node.utf8_text(bytes)
+        && let Some(value_node) = node.child_by_field_name("value")
+        && is_value_type_like(&value_node, source, file, project, local_types)
+    {
+        local_types.insert(const_name.to_string());
+    }
+
+    // Inner class: add consts and inner classes from its extends chain to local_types
+    if node.kind() == "class_definition"
+        && let Some(ext_node) = node.child_by_field_name("extends")
+    {
+        let mut cursor_ext = ext_node.walk();
+        for child in ext_node.named_children(&mut cursor_ext) {
+            if matches!(child.kind(), "type" | "identifier")
+                && let Ok(ext_name) = child.utf8_text(bytes)
+            {
+                add_names_from_inner_class_extends(ext_name, project, local_types);
+                break;
+            }
+        }
+    }
 
     // Check typed parameters, typed variables, return types
     let type_node = match node.kind() {
@@ -246,7 +329,10 @@ fn check_type_annotations_in_node(
             .strip_prefix("Array[")
             .and_then(|s| s.strip_suffix(']'))
         {
-            if !inner.is_empty() && !is_known_type(inner, file, project) {
+            if !inner.is_empty()
+                && !is_known_type(inner, file, project)
+                && !local_types.contains(inner)
+            {
                 let pos = type_node.start_position();
                 errors.push(StructuralError {
                     line: pos.row as u32 + 1,
@@ -258,7 +344,14 @@ fn check_type_annotations_in_node(
             let mut cursor = node.walk();
             if cursor.goto_first_child() {
                 loop {
-                    check_type_annotations_in_node(cursor.node(), source, file, project, errors);
+                    check_type_annotations_in_node(
+                        cursor.node(),
+                        source,
+                        file,
+                        project,
+                        local_types,
+                        errors,
+                    );
                     if !cursor.goto_next_sibling() {
                         break;
                     }
@@ -273,7 +366,10 @@ fn check_type_annotations_in_node(
             // Check each type in "K, V"
             for part in inner.split(',') {
                 let part = part.trim();
-                if !part.is_empty() && !is_known_type(part, file, project) {
+                if !part.is_empty()
+                    && !is_known_type(part, file, project)
+                    && !local_types.contains(part)
+                {
                     let pos = type_node.start_position();
                     errors.push(StructuralError {
                         line: pos.row as u32 + 1,
@@ -285,7 +381,14 @@ fn check_type_annotations_in_node(
             let mut cursor = node.walk();
             if cursor.goto_first_child() {
                 loop {
-                    check_type_annotations_in_node(cursor.node(), source, file, project, errors);
+                    check_type_annotations_in_node(
+                        cursor.node(),
+                        source,
+                        file,
+                        project,
+                        local_types,
+                        errors,
+                    );
                     if !cursor.goto_next_sibling() {
                         break;
                     }
@@ -295,14 +398,15 @@ fn check_type_annotations_in_node(
         }
         let base_type = type_name;
 
-        if !base_type.is_empty() && !is_known_type(base_type, file, project) {
+        if !base_type.is_empty()
+            && !is_known_type(base_type, file, project)
+            && !local_types.contains(base_type)
+        {
             // Handle inner class types: `ClassName.InnerClass` — check if the
             // base part before the dot is a known class.
             if base_type.contains('.') {
                 let root_type = base_type.split('.').next().unwrap_or("");
-                if is_known_type(root_type, file, project) {
-                    // Base class exists; assume the inner class is valid
-                } else {
+                if !is_known_type(root_type, file, project) && !local_types.contains(root_type) {
                     let pos = type_node.start_position();
                     errors.push(StructuralError {
                         line: pos.row as u32 + 1,
@@ -324,7 +428,14 @@ fn check_type_annotations_in_node(
     let mut cursor = node.walk();
     if cursor.goto_first_child() {
         loop {
-            check_type_annotations_in_node(cursor.node(), source, file, project, errors);
+            check_type_annotations_in_node(
+                cursor.node(),
+                source,
+                file,
+                project,
+                local_types,
+                errors,
+            );
             if !cursor.goto_next_sibling() {
                 break;
             }
@@ -332,7 +443,19 @@ fn check_type_annotations_in_node(
     }
 }
 
+/// Reconstruct a dotted name from nested `PropertyAccess` chains.
+fn expr_to_dotted_name(expr: &GdExpr) -> Option<String> {
+    match expr {
+        GdExpr::Ident { name, .. } => Some((*name).to_string()),
+        GdExpr::PropertyAccess {
+            receiver, property, ..
+        } => Some(format!("{}.{property}", expr_to_dotted_name(receiver)?)),
+        _ => None,
+    }
+}
+
 /// Check if a type name is known (builtin, ClassDB, user class, enum, or inner class).
+#[allow(clippy::too_many_lines)]
 pub(super) fn is_known_type(name: &str, file: &GdFile, project: &ProjectIndex) -> bool {
     // GDScript built-in types
     let builtins = [
@@ -422,6 +545,41 @@ pub(super) fn is_known_type(name: &str, file: &GdFile, project: &ProjectIndex) -
         if crate::class_db::enum_type_exists(&classdb_ext, name) {
             return true;
         }
+    }
+
+    // File-level const used as type alias (preload or known type)
+    for v in file.vars() {
+        if v.is_const && v.name == name {
+            match &v.value {
+                Some(GdExpr::Call { callee, .. }) => {
+                    if matches!(callee.as_ref(), GdExpr::Ident { name: "preload", .. }) {
+                        return true; // preload() always yields a Script type
+                    }
+                }
+                Some(GdExpr::Ident {
+                    name: alias_name, ..
+                }) => {
+                    if is_known_type(alias_name, file, project) {
+                        return true;
+                    }
+                }
+                Some(expr @ GdExpr::PropertyAccess { .. }) => {
+                    if let Some(dotted) = expr_to_dotted_name(expr)
+                        && is_known_type(&dotted, file, project)
+                    {
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // Const or inner class in extends chain used as type
+    if let Some(ext) = file.extends_str()
+        && (project.const_exists(ext, name) || project.inner_class_exists(ext, name))
+    {
+        return true;
     }
 
     // Dotted type: Class.EnumType or Class.InnerClass (e.g., BaseMaterial3D.BillboardMode)

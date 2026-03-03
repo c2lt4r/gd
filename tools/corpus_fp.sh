@@ -114,11 +114,14 @@ def categorize(filepath, msg):
     if fname in MATCH_PATTERN_FILES and "at top level" in msg:
         return ("grammar", fname)
 
-    # dollar_and_percent_get_node.gd — $%node parse errors and $/path type mismatches
+    # dollar_and_percent_get_node.gd — $%node parse errors, $/path type mismatches,
+    # and downstream identifier errors from unparsed get_node syntax
     if fname in GRAMMAR_GAP_PARTIAL:
         if "parse error" in msg:
             return ("grammar", fname)
         if "invalid operands" in msg and '"/"' in msg:
+            return ("grammar", fname)
+        if "not declared" in msg:
             return ("grammar", fname)
 
     # Cross-file identifier: "Utils", PascalCase class names from other files
@@ -145,9 +148,6 @@ def categorize(filepath, msg):
 
     # Method not found
     if "not found in base" in msg:
-        # Cross-file inner class method resolution (base contains .gd path or preloaded class)
-        if '.gd"' in msg or '.Inner' in msg:
-            return ("cross_file_type", msg)
         m = re.search(r'"(\w+)\(\)".*base\s+(\w+)', msg)
         sub = m.group(0) if m else msg
         return ("method_not_found", sub)
@@ -198,7 +198,7 @@ total_files = len(set(e[0] for e in errors))
 ALL_CATS = ["cross_file_ident", "cross_file_type", "grammar",
             "const_expr", "method_not_found", "undefined_ident",
             "type_mismatch", "indentation", "arg_count", "other"]
-UNFIXABLE = {"cross_file_ident", "cross_file_type", "grammar"}
+UNFIXABLE = {"grammar"}
 FIXABLE_CATS = [c for c in ALL_CATS if c not in UNFIXABLE]
 
 # Per-dir counts (reuse collected data)

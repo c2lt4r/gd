@@ -94,6 +94,12 @@ pub fn exec(args: &CheckArgs) -> Result<()> {
         } else {
             first.clone()
         };
+        // Resolve to absolute so find_project_root never returns ""
+        let start = if start.is_relative() {
+            cwd.join(&start)
+        } else {
+            start
+        };
         find_project_root(&start).unwrap_or(start)
     };
     let project_index = ProjectIndex::build(&index_root);
