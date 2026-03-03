@@ -24,6 +24,10 @@ impl LintRule for MissingReturn {
 fn check_decls(decls: &[GdDecl<'_>], diags: &mut Vec<LintDiagnostic>) {
     for decl in decls {
         if let GdDecl::Func(func) = decl {
+            // Skip abstract functions — they have no body to return from
+            if func.annotations.iter().any(|a| a.name == "abstract") {
+                continue;
+            }
             // Must have a non-void return type
             if let Some(ret_type) = &func.return_type
                 && ret_type.name != "void"

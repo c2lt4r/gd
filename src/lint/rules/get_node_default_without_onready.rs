@@ -25,11 +25,27 @@ impl LintRule for GetNodeDefaultWithoutOnready {
     }
 }
 
+fn has_warning_ignore(var: &crate::core::gd_ast::GdVar, warning: &str) -> bool {
+    var.annotations.iter().any(|a| {
+        a.name == "warning_ignore"
+            && a.args.iter().any(|arg| {
+                if let GdExpr::StringLiteral { value, .. } = arg {
+                    value.trim_matches('"') == warning
+                } else {
+                    false
+                }
+            })
+    })
+}
+
 fn check_decls(decls: &[GdDecl<'_>], diags: &mut Vec<LintDiagnostic>) {
     for decl in decls {
         if let GdDecl::Var(var) = decl {
             let Some(value) = &var.value else { continue };
             if !uses_get_node(value) {
+                continue;
+            }
+            if has_warning_ignore(var, "get_node_default_without_onready") {
                 continue;
             }
             let has_onready = var.annotations.iter().any(|a| a.name == "onready");

@@ -64,6 +64,19 @@ fn check_inner_class(class: &GdClass, diags: &mut Vec<LintDiagnostic>) {
     check_funcs(funcs, extends, diags);
 }
 
+fn has_warning_ignore(func: &GdFunc, warning: &str) -> bool {
+    func.annotations.iter().any(|a| {
+        a.name == "warning_ignore"
+            && a.args.iter().any(|arg| {
+                if let crate::core::gd_ast::GdExpr::StringLiteral { value, .. } = arg {
+                    value.trim_matches('"') == warning
+                } else {
+                    false
+                }
+            })
+    })
+}
+
 fn check_funcs<'a>(
     funcs: impl Iterator<Item = &'a GdFunc<'a>>,
     extends: &str,
@@ -72,6 +85,11 @@ fn check_funcs<'a>(
     for func in funcs {
         // Skip virtual methods (prefixed with _) — these are meant to be overridden
         if func.name.starts_with('_') {
+            continue;
+        }
+
+        // Respect @warning_ignore("native_method_override")
+        if has_warning_ignore(func, "native_method_override") {
             continue;
         }
 

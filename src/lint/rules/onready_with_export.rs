@@ -42,10 +42,24 @@ impl LintRule for OnreadyWithExport {
     }
 }
 
+fn has_warning_ignore(var: &GdVar, warning: &str) -> bool {
+    var.annotations.iter().any(|a| {
+        a.name == "warning_ignore"
+            && a.args.iter().any(|arg| {
+                if let crate::core::gd_ast::GdExpr::StringLiteral { value, .. } = arg {
+                    // value includes quotes, e.g. "\"onready_with_export\""
+                    value.trim_matches('"') == warning
+                } else {
+                    false
+                }
+            })
+    })
+}
+
 fn check_var(var: &GdVar, diags: &mut Vec<LintDiagnostic>) {
     let has_onready = var.annotations.iter().any(|a| a.name == "onready");
     let has_export = var.annotations.iter().any(|a| a.name == "export");
-    if has_onready && has_export {
+    if has_onready && has_export && !has_warning_ignore(var, "onready_with_export") {
         diags.push(LintDiagnostic {
             rule: "onready-with-export",
             message: format!(

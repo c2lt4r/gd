@@ -565,6 +565,14 @@ fn is_variant_producing_expr(
         // Binary/comparison operators with a Variant operand produce Variant
         // e.g., dict["key"] == "switch", dict["key"] + 1
         "binary_operator" | "comparison_operator" => {
+            // `as` cast produces a typed result, not Variant
+            if node
+                .child_by_field_name("op")
+                .and_then(|op| op.utf8_text(source.as_bytes()).ok())
+                .is_some_and(|op| op == "as")
+            {
+                return false;
+            }
             // `in` / `not in` return Variant in Godot's static type system
             if is_in_operator(node, source) {
                 return true;
@@ -1331,18 +1339,17 @@ fn check_void_return_value(
             && ret.name == "void"
         {
             // Find the AST node for this function and check for `return <value>`
-            check_void_func_returns(*root, bytes, func.name, file, errors);
+            check_void_func_returns(*root, bytes, func.name, errors);
         }
     }
     for inner in file.inner_classes() {
-        check_void_return_value_inner(root, source, file, inner, errors);
+        check_void_return_value_inner(root, source, inner, errors);
     }
 }
 
 fn check_void_return_value_inner(
     root: &Node,
     source: &str,
-    file: &GdFile<'_>,
     class: &GdClass<'_>,
     errors: &mut Vec<StructuralError>,
 ) {
@@ -1351,11 +1358,11 @@ fn check_void_return_value_inner(
         if let Some(ref ret) = func.return_type
             && ret.name == "void"
         {
-            check_void_func_returns(*root, bytes, func.name, file, errors);
+            check_void_func_returns(*root, bytes, func.name, errors);
         }
     }
     for inner in class.declarations.iter().filter_map(|d| d.as_class()) {
-        check_void_return_value_inner(root, source, file, inner, errors);
+        check_void_return_value_inner(root, source, inner, errors);
     }
 }
 
@@ -1363,7 +1370,6 @@ fn check_void_func_returns(
     root: Node,
     source: &[u8],
     func_name: &str,
-    file: &GdFile<'_>,
     errors: &mut Vec<StructuralError>,
 ) {
     let mut cursor = root.walk();
@@ -1397,41 +1403,20 @@ fn check_void_func_returns(
         }
 
         if let Some(body) = func_node.child_by_field_name("body") {
-            check_returns_in_body(&body, func_name, file, source, errors);
+            check_returns_in_body(&body, func_name, errors);
         }
     }
 }
 
-fn check_returns_in_body(
-    node: &Node,
-    func_name: &str,
-    file: &GdFile<'_>,
-    source: &[u8],
-    errors: &mut Vec<StructuralError>,
-) {
+fn check_returns_in_body(node: &Node, func_name: &str, errors: &mut Vec<StructuralError>) {
     if node.kind() == "return_statement" {
         // Check if there's a value after `return`
         if let Some(child) = node.named_child(0) {
-            // Allow `return void_func()` — the returned expression is itself void
-            let is_void_return = child.kind() == "call"
-                && child
-                    .child_by_field_name("function")
-                    .or_else(|| child.named_child(0))
-                    .and_then(|f| {
-                        if f.kind() == "identifier" {
-                            f.utf8_text(source).ok()
-                        } else {
-                            None
-                        }
-                    })
-                    .is_some_and(|callee_name| {
-                        file.funcs().any(|f| {
-                            f.name == callee_name
-                                && f.return_type.as_ref().is_some_and(|r| r.name == "void")
-                        })
-                    });
+            // Allow `return <call>()` in void functions — Godot permits this pattern
+            // for side-effect calls (e.g. `return print("hello")`, `return emit()`)
+            let is_call_return = child.kind() == "call" || child.kind() == "attribute";
 
-            if !is_void_return {
+            if !is_call_return {
                 let pos = node.start_position();
                 errors.push(StructuralError {
                     line: pos.row as u32 + 1,
@@ -1454,7 +1439,7 @@ fn check_returns_in_body(
     let mut cursor = node.walk();
     if cursor.goto_first_child() {
         loop {
-            check_returns_in_body(&cursor.node(), func_name, file, source, errors);
+            check_returns_in_body(&cursor.node(), func_name, errors);
             if !cursor.goto_next_sibling() {
                 break;
             }
@@ -2134,12 +2119,14 @@ fn is_const_expression(node: &Node, source: &[u8]) -> bool {
         "unary_operator" => node
             .named_child(0)
             .is_some_and(|c| is_const_expression(&c, source)),
-        // Constant identifier references (UPPER_CASE or known builtins)
+        // Constant identifier references (UPPER_CASE, PascalCase, or known builtins)
         "identifier" => {
             let text = node.utf8_text(source).unwrap_or("");
-            // Allow references to other constants (UPPER_CASE) or preload/INF/NAN/PI/TAU
+            // Allow references to other constants (UPPER_CASE), class/enum names (PascalCase),
+            // or preload/INF/NAN/PI/TAU
             is_upper_snake_case(text)
                 || matches!(text, "INF" | "NAN" | "PI" | "TAU" | "INFINITY" | "preload")
+                || text.starts_with(|c: char| c.is_ascii_uppercase())
         }
         // Array/dictionary literals with all-constant elements
         "array" => {
@@ -2162,11 +2149,21 @@ fn is_const_expression(node: &Node, source: &[u8]) -> bool {
         }
         // Binary operations on constants
         "binary_operator" => {
-            node.named_child(0)
-                .is_some_and(|c| is_const_expression(&c, source))
-                && node
-                    .named_child(1)
+            // `as` cast: only the left operand needs to be const (right is a type name)
+            let is_as_cast = node
+                .child_by_field_name("op")
+                .and_then(|op| op.utf8_text(source).ok())
+                .is_some_and(|op| op == "as");
+            if is_as_cast {
+                node.named_child(0)
                     .is_some_and(|c| is_const_expression(&c, source))
+            } else {
+                node.named_child(0)
+                    .is_some_and(|c| is_const_expression(&c, source))
+                    && node
+                        .named_child(1)
+                        .is_some_and(|c| is_const_expression(&c, source))
+            }
         }
         // Parenthesized expression
         "parenthesized_expression" => node
@@ -2238,6 +2235,12 @@ fn is_builtin_constructor(name: &str) -> bool {
             | "RID"
             | "NodePath"
             | "StringName"
+            | "Array"
+            | "Dictionary"
+            | "int"
+            | "float"
+            | "bool"
+            | "String"
     )
 }
 

@@ -1,4 +1,4 @@
-use crate::core::gd_ast::{GdDecl, GdFile, GdStmt};
+use crate::core::gd_ast::{GdDecl, GdExpr, GdFile, GdStmt};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use crate::core::config::LintConfig;
@@ -40,16 +40,26 @@ fn check_returns(stmts: &[GdStmt<'_>], is_void: bool, diags: &mut Vec<LintDiagno
     for stmt in stmts {
         if let GdStmt::Return { node, value } = stmt {
             if is_void && value.is_some() {
-                diags.push(LintDiagnostic {
-                    rule: "return-type-mismatch",
-                    message: "function declares -> void but returns a value".to_string(),
-                    severity: Severity::Warning,
-                    line: node.start_position().row,
-                    column: node.start_position().column,
-                    fix: None,
-                    end_column: None,
-                    context_lines: None,
+                // Allow `return <call>()` in void functions — Godot permits this
+                // pattern for side-effect calls (e.g. `return print("x")`)
+                let is_call = value.as_ref().is_some_and(|v| {
+                    matches!(
+                        v,
+                        GdExpr::Call { .. } | GdExpr::MethodCall { .. } | GdExpr::SuperCall { .. }
+                    )
                 });
+                if !is_call {
+                    diags.push(LintDiagnostic {
+                        rule: "return-type-mismatch",
+                        message: "function declares -> void but returns a value".to_string(),
+                        severity: Severity::Warning,
+                        line: node.start_position().row,
+                        column: node.start_position().column,
+                        fix: None,
+                        end_column: None,
+                        context_lines: None,
+                    });
+                }
             } else if !is_void && value.is_none() {
                 diags.push(LintDiagnostic {
                     rule: "return-type-mismatch",

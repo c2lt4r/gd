@@ -416,6 +416,14 @@ pub(super) fn is_known_type(name: &str, file: &GdFile, project: &ProjectIndex) -
         return true;
     }
 
+    // ClassDB enum types from the file's extends chain (e.g., AutoTranslateMode on Node subclass)
+    if let Some(ext) = file.extends_class() {
+        let classdb_ext = super::identifiers::resolve_to_classdb_type(ext, project);
+        if crate::class_db::enum_type_exists(&classdb_ext, name) {
+            return true;
+        }
+    }
+
     // Dotted type: Class.EnumType or Class.InnerClass (e.g., BaseMaterial3D.BillboardMode)
     if let Some((class, member)) = name.split_once('.') {
         // ClassDB class with enum type
@@ -1344,11 +1352,14 @@ fn is_iterable_type(ty: &type_inference::InferredType) -> bool {
                 | "Vector4"
                 | "Vector4i"
         ),
-        type_inference::InferredType::TypedArray(_) | type_inference::InferredType::Variant => true,
+        // Enums are iterable in GDScript (iterates over enum values)
+        type_inference::InferredType::TypedArray(_)
+        | type_inference::InferredType::Variant
+        | type_inference::InferredType::Enum(_) => true,
         // Typed dictionaries/arrays appear as Class("Dictionary[K, V]") or Class("Array[T]")
         type_inference::InferredType::Class(c) => {
             c.starts_with("Dictionary") || c.starts_with("Array")
         }
-        _ => false,
+        type_inference::InferredType::Void => false,
     }
 }

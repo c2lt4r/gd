@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.3.17-dev]
+
+### Fixed
+- **`gd check` — Godot 4.6.1 corpus false positive fixes** (12 fixes across 9 files):
+  - Trailing comma in function args no longer overcounts arguments (`Vector3(3, 3.5, 4,)`)
+  - `return <call>()` in void functions allowed (Godot permits side-effect returns)
+  - Enums are now recognized as iterable (`for key in MyEnum:`)
+  - `type_exists()` recognized as a known GDScript utility function
+  - `Array()`, `Dictionary()`, `int()`, `float()`, `bool()`, `String()` recognized as valid const constructors
+  - PascalCase identifiers (class/enum names) allowed as constant values
+  - `@abstract` functions no longer flagged for missing return
+  - `as` cast no longer treated as Variant-producing expression; `const x = 76 as float` now valid
+  - `@warning_ignore` annotations now respected by `onready-with-export`, `get-node-default-without-onready`, and `native-method-override` rules
+  - ClassDB enum types resolved from file's extends chain (fixes `AutoTranslateMode` on Node subclasses)
+
 ## [0.3.16] - 2026-03-03
 
 ### Added
