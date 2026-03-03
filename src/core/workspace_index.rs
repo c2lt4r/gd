@@ -51,7 +51,8 @@ pub struct InnerClassSummary {
     pub name: String,
     pub extends: Option<String>,
     pub consts: Vec<String>,
-    pub inner_classes: Vec<String>,
+    pub functions: Vec<String>,
+    pub inner_classes: Vec<InnerClassSummary>,
 }
 
 /// All symbols extracted from a single `.gd` file.
@@ -423,6 +424,106 @@ impl ProjectIndex {
         None
     }
 
+    /// Resolve a dotted extends string to an inner class and check if a method exists.
+    /// Handles patterns like `"path.gd".InnerA.InnerAB` and `ClassName.Inner`.
+    pub fn method_exists_in_dotted_extends(
+        &self,
+        extends: &str,
+        method: &str,
+        file_consts: &[(String, String)], // (const_name, preload_path) from current file
+    ) -> bool {
+        // Split the extends into base and inner class chain.
+        // For path-based: `"path.gd".InnerA.InnerAB` → base = file at path, chain = [InnerA, InnerAB]
+        // For class-based: `B.Inner` → base = resolve B (class or const), chain = [Inner]
+        let (base_fs, chain) = self.resolve_dotted_extends_base(extends, file_consts);
+        let Some(fs) = base_fs else {
+            return false;
+        };
+
+        // Walk the inner class chain
+        let Some(ic) = Self::walk_inner_class_chain(&fs.inner_classes, &chain) else {
+            return false;
+        };
+
+        // Check if method exists in the resolved inner class
+        ic.functions.iter().any(|f| f == method)
+    }
+
+    /// Resolve the base of a dotted extends path to `FileSymbols`.
+    fn resolve_dotted_extends_base<'a>(
+        &'a self,
+        extends: &str,
+        file_consts: &[(String, String)],
+    ) -> (Option<&'a FileSymbols>, Vec<String>) {
+        // Path-based: `"path.gd".InnerA.InnerAB`
+        if extends.contains(".gd\"") || extends.starts_with('"') {
+            // Find the closing quote of the path
+            if let Some(quote_end) = extends[1..].find('"') {
+                let path = &extends[1..=quote_end]; // strip surrounding quotes
+                let chain: Vec<String> = extends[quote_end + 2..]
+                    .split('.')
+                    .filter(|s| !s.is_empty())
+                    .map(String::from)
+                    .collect();
+                // Match on path separator boundary to avoid partial filename matches
+                let fs = self.files.iter().find(|f| {
+                    let p = f.path.to_string_lossy().replace('\\', "/");
+                    p.ends_with(&format!("/{path}")) || p == path
+                });
+                return (fs, chain);
+            }
+        }
+
+        // Class/const-based: `B.Inner` or `ClassName.Inner`
+        if let Some(dot_pos) = extends.find('.') {
+            let base = &extends[..dot_pos];
+            let chain: Vec<String> = extends[dot_pos + 1..]
+                .split('.')
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+                .collect();
+
+            // Try as const (preload) from file first — local consts shadow class names
+            for (const_name, preload_path) in file_consts {
+                if const_name == base {
+                    let fs = self.files.iter().find(|f| {
+                        let p = f.path.to_string_lossy().replace('\\', "/");
+                        p.ends_with(&format!("/{preload_path}")) || p == *preload_path
+                    });
+                    return (fs, chain);
+                }
+            }
+
+            // Try as class name
+            if let Some(fs) = self.resolve_extends(base) {
+                return (Some(fs), chain);
+            }
+        }
+
+        (None, Vec::new())
+    }
+
+    /// Walk a chain of inner class names to find the target inner class.
+    fn walk_inner_class_chain<'a>(
+        inner_classes: &'a [InnerClassSummary],
+        chain: &[String],
+    ) -> Option<&'a InnerClassSummary> {
+        if chain.is_empty() {
+            return None;
+        }
+
+        let mut current_classes = inner_classes;
+        let mut result = None;
+
+        for name in chain {
+            let ic = current_classes.iter().find(|c| c.name == *name)?;
+            result = Some(ic);
+            current_classes = &ic.inner_classes;
+        }
+
+        result
+    }
+
     /// Check if a name matches an enum type defined in any project file.
     pub fn has_enum_type(&self, name: &str) -> bool {
         self.files
@@ -447,6 +548,36 @@ fn parse_file_symbols(path: &Path) -> Option<FileSymbols> {
     Some(symbols_from_gd_file(path.to_path_buf(), &file))
 }
 
+/// Convert an inner class into `InnerClassSummary` (recursive for nested inner classes).
+fn inner_class_summary(c: &gd_ast::GdClass) -> InnerClassSummary {
+    InnerClassSummary {
+        name: c.name.to_string(),
+        extends: c.extends.as_ref().map(|e| match e {
+            GdExtends::Class(cls) => cls.to_string(),
+            GdExtends::Path(p) => p.to_string(),
+        }),
+        consts: c
+            .declarations
+            .iter()
+            .filter_map(|d| d.as_var())
+            .filter(|v| v.is_const)
+            .map(|v| v.name.to_string())
+            .collect(),
+        functions: c
+            .declarations
+            .iter()
+            .filter_map(|d| d.as_func())
+            .map(|f| f.name.to_string())
+            .collect(),
+        inner_classes: c
+            .declarations
+            .iter()
+            .filter_map(|d| d.as_class())
+            .map(|ic| inner_class_summary(ic))
+            .collect(),
+    }
+}
+
 /// Convert a `GdFile` into the lighter `FileSymbols`.
 fn symbols_from_gd_file(path: PathBuf, file: &gd_ast::GdFile) -> FileSymbols {
     FileSymbols {
@@ -468,29 +599,7 @@ fn symbols_from_gd_file(path: PathBuf, file: &gd_ast::GdFile) -> FileSymbols {
             .collect(),
         inner_classes: file
             .inner_classes()
-            .map(|c| InnerClassSummary {
-                name: c.name.to_string(),
-                extends: c
-                    .extends
-                    .as_ref()
-                    .map(|e| match e {
-                        GdExtends::Class(cls) => cls.to_string(),
-                        GdExtends::Path(p) => p.to_string(),
-                    }),
-                consts: c
-                    .declarations
-                    .iter()
-                    .filter_map(|d| d.as_var())
-                    .filter(|v| v.is_const)
-                    .map(|v| v.name.to_string())
-                    .collect(),
-                inner_classes: c
-                    .declarations
-                    .iter()
-                    .filter_map(|d| d.as_class())
-                    .map(|ic| ic.name.to_string())
-                    .collect(),
-            })
+            .map(|c| inner_class_summary(c))
             .collect(),
     }
 }

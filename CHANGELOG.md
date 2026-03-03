@@ -1,15 +1,17 @@
 # Changelog
 
-## [0.3.17-dev]
+## [0.3.17] - 2026-03-03
 
 ### Fixed
-- **`gd check` — cross-file identifier and type resolution** (442 FPs eliminated):
+- **`gd check` — cross-file identifier and type resolution** (453 FPs eliminated):
   - Relative paths (`gd check subdir/`) now resolve to absolute before project root lookup, fixing empty ProjectIndex
   - File's own `class_name` added to known identifier set
   - Const type aliases recognized: `const B = preload("file.gd")` and `const IC = InnerClass` now valid as types
   - Const and inner class names from extends chain recognized as types
   - Inner class scope tracking: consts and inner classes inherited from inner class base classes resolve in type annotations and `is`/`as` expressions
-  - `InnerClassSummary` added to workspace index for cross-file inner class resolution
+  - `InnerClassSummary` with recursive inner classes, functions, and consts for cross-file resolution
+  - Dotted extends resolution: `extends "path.gd".InnerA.InnerAB` and `extends B.Inner` (const preload) now resolve `super.method()` calls correctly
+  - `GdExpr::Preload` variant handled alongside `GdExpr::Call` for const preload detection
 - **`gd check` — Godot 4.6.1 corpus false positive fixes (round 3)** (5 fixes across 3 files, 48→0 fixable FPs):
   - Subscript access on const literals (`[1,2,3][0]`, `{"key": 5}["key"]`) now recognized as const expressions
   - Lowercase const identifiers in same scope now resolved (e.g. `const x = other_const + 1`)

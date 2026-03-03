@@ -3,7 +3,7 @@ use tree_sitter::Node;
 use super::StructuralError;
 use super::args::{constructor_param_counts, is_builtin_convertible};
 use super::classdb::is_known_type;
-use crate::core::gd_ast::GdFile;
+use crate::core::gd_ast::{GdExpr, GdFile};
 use crate::core::workspace_index::ProjectIndex;
 
 // ---------------------------------------------------------------------------
@@ -68,7 +68,14 @@ fn check_type_not_found_in_node(
     let mut cursor = node.walk();
     if cursor.goto_first_child() {
         loop {
-            check_type_not_found_in_node(&cursor.node(), source, file, project, local_types, errors);
+            check_type_not_found_in_node(
+                &cursor.node(),
+                source,
+                file,
+                project,
+                local_types,
+                errors,
+            );
             if !cursor.goto_next_sibling() {
                 break;
             }
@@ -629,6 +636,42 @@ fn is_identifier_context_ok(
     )
 }
 
+/// Collect const preload paths from a file (const_name, relative_path) pairs.
+fn collect_file_const_preloads(file: &GdFile) -> Vec<(String, String)> {
+    let mut result = Vec::new();
+    for v in file.vars() {
+        if !v.is_const {
+            continue;
+        }
+        match &v.value {
+            Some(GdExpr::Preload { path, .. }) => {
+                // path includes quotes, e.g. `"res://scene.gd"` or `"relative.gd"`
+                let clean = path
+                    .trim_matches('"')
+                    .strip_prefix("res://")
+                    .unwrap_or(path.trim_matches('"'));
+                result.push((v.name.to_string(), clean.to_string()));
+            }
+            Some(GdExpr::Call { callee, args, .. })
+                if matches!(
+                    callee.as_ref(),
+                    GdExpr::Ident {
+                        name: "preload",
+                        ..
+                    }
+                ) =>
+            {
+                if let Some(GdExpr::StringLiteral { value: path, .. }) = args.first() {
+                    let clean = path.strip_prefix("res://").unwrap_or(path);
+                    result.push((v.name.to_string(), clean.to_string()));
+                }
+            }
+            _ => {}
+        }
+    }
+    result
+}
+
 /// Check if a signal exists on a user class or its extends chain.
 fn project_has_signal(class: &str, signal_name: &str, project: &ProjectIndex) -> bool {
     let mut current = class;
@@ -768,9 +811,7 @@ fn check_super_method_in_node(
             {
                 let mut found = extends.is_some_and(|ext| project.method_exists(ext, method_name));
                 // Check inner class definitions (recursively) for methods on the parent class
-                if !found
-                    && let Some(ext) = extends
-                {
+                if !found && let Some(ext) = extends {
                     found = inner_class_has_method(file, ext, method_name);
                 }
                 if !found {
@@ -779,6 +820,14 @@ fn check_super_method_in_node(
                         None => "RefCounted".to_string(),
                     };
                     found = crate::class_db::method_exists(&classdb_ext, method_name);
+                }
+                // Dotted extends: "path.gd".InnerA.InnerAB or B.Inner
+                if !found
+                    && let Some(ext) = extends
+                    && ext.contains('.')
+                {
+                    let consts = collect_file_const_preloads(file);
+                    found = project.method_exists_in_dotted_extends(ext, method_name, &consts);
                 }
                 if !found {
                     errors.push(StructuralError {

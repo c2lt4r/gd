@@ -252,7 +252,7 @@ pub(super) fn add_names_from_inner_class_extends(
             local_types.insert(c.clone());
         }
         for c in &ic.inner_classes {
-            local_types.insert(c.clone());
+            local_types.insert(c.name.clone());
         }
     }
 }
@@ -269,9 +269,10 @@ fn is_value_type_like(
     text.starts_with("preload(")
         || is_known_type(text, file, project)
         || local_types.contains(text)
-        || text.split('.').next().is_some_and(|root| {
-            is_known_type(root, file, project) || local_types.contains(root)
-        })
+        || text
+            .split('.')
+            .next()
+            .is_some_and(|root| is_known_type(root, file, project) || local_types.contains(root))
 }
 
 #[allow(clippy::too_many_lines)]
@@ -551,8 +552,17 @@ pub(super) fn is_known_type(name: &str, file: &GdFile, project: &ProjectIndex) -
     for v in file.vars() {
         if v.is_const && v.name == name {
             match &v.value {
+                Some(GdExpr::Preload { .. }) => {
+                    return true; // preload() always yields a Script type
+                }
                 Some(GdExpr::Call { callee, .. }) => {
-                    if matches!(callee.as_ref(), GdExpr::Ident { name: "preload", .. }) {
+                    if matches!(
+                        callee.as_ref(),
+                        GdExpr::Ident {
+                            name: "preload",
+                            ..
+                        }
+                    ) {
                         return true; // preload() always yields a Script type
                     }
                 }

@@ -390,7 +390,11 @@ fn check_arg_count_in_node(
             if let Some(func) = file.funcs().find(|f| f.name == name) {
                 let is_variadic = func_is_variadic(func);
                 let required = func.params.iter().filter(|p| p.default.is_none()).count();
-                let total = if is_variadic { usize::MAX } else { func.params.len() };
+                let total = if is_variadic {
+                    usize::MAX
+                } else {
+                    func.params.len()
+                };
                 check_param_bounds(name, arg_count, required, total, node, errors);
             }
             // 2. Check utility/builtin functions
