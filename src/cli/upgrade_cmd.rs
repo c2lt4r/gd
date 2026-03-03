@@ -3,6 +3,7 @@ use clap::Args;
 use flate2::read::GzDecoder;
 use miette::{Result, miette};
 use owo_colors::OwoColorize;
+use sha2::{Digest, Sha256};
 use std::env;
 use std::fs;
 use std::io;
@@ -23,6 +24,10 @@ pub struct UpgradeArgs {
     /// Install a specific version instead of latest (e.g., "0.2.0" or "v0.2.0")
     #[arg(long)]
     pub version: Option<String>,
+
+    /// Skip SHA256 checksum verification
+    #[arg(long)]
+    pub skip_verify: bool,
 }
 
 pub fn exec(args: &UpgradeArgs) -> Result<()> {
@@ -80,6 +85,25 @@ pub fn exec(args: &UpgradeArgs) -> Result<()> {
         .into_body()
         .read_to_vec()
         .map_err(|e| miette!("Failed to read download: {e}"))?;
+
+    if !args.skip_verify {
+        let checksum_name = format!("{asset_name}.sha256");
+        if let Some(checksum_asset) = assets.iter().find(|a| a.name == checksum_name) {
+            cprintln!("Verifying checksum...");
+            let checksum_content = ureq::get(&checksum_asset.url)
+                .call()
+                .map_err(|e| miette!("Failed to download checksum: {e}"))?
+                .into_body()
+                .read_to_string()
+                .map_err(|e| miette!("Failed to read checksum: {e}"))?;
+            verify_checksum(&archive_data, &checksum_content)?;
+        } else {
+            cprintln!(
+                "{} No checksum file found, skipping verification",
+                "Warning:".yellow().bold()
+            );
+        }
+    }
 
     let binary_data = if cfg!(windows) {
         extract_from_zip(&archive_data)?
@@ -225,6 +249,33 @@ fn extract_from_zip(data: &[u8]) -> Result<Vec<u8>> {
     ))
 }
 
+fn verify_checksum(data: &[u8], checksum_content: &str) -> Result<()> {
+    let expected_hex = checksum_content
+        .split_whitespace()
+        .next()
+        .ok_or_else(|| miette!("Invalid checksum file: empty content"))?;
+
+    if expected_hex.len() != 64 || !expected_hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(miette!(
+            "Invalid checksum file: expected 64-character hex SHA256 hash, got '{expected_hex}'"
+        ));
+    }
+
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    let actual_hex = format!("{:x}", hasher.finalize());
+
+    if actual_hex != expected_hex.to_ascii_lowercase() {
+        return Err(miette!(
+            "Checksum mismatch!\n  Expected: {expected_hex}\n  Actual:   {actual_hex}"
+        ));
+    }
+
+    let short_hash = &actual_hex[..16];
+    cprintln!("Checksum verified (SHA256: {}...)", short_hash.green());
+    Ok(())
+}
+
 fn replace_current_exe(new_binary: &[u8]) -> Result<()> {
     let current_exe =
         env::current_exe().map_err(|e| miette!("Failed to determine current executable: {e}"))?;
@@ -281,6 +332,31 @@ mod tests {
         assert!(is_newer("0.1.1", "0.1.0"));
         assert!(!is_newer("0.1.0", "0.1.0"));
         assert!(!is_newer("0.1.0", "0.2.0"));
+    }
+
+    #[test]
+    fn test_verify_checksum_valid() {
+        let data = b"hello world";
+        // SHA256 of "hello world"
+        let checksum = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9  gd-v0.3.0-x86_64-unknown-linux-gnu.tar.gz\n";
+        assert!(verify_checksum(data, checksum).is_ok());
+    }
+
+    #[test]
+    fn test_verify_checksum_mismatch() {
+        let data = b"hello world";
+        let checksum =
+            "0000000000000000000000000000000000000000000000000000000000000000  gd.tar.gz\n";
+        let err = verify_checksum(data, checksum).unwrap_err();
+        assert!(err.to_string().contains("Checksum mismatch"));
+    }
+
+    #[test]
+    fn test_verify_checksum_malformed() {
+        let data = b"hello world";
+        assert!(verify_checksum(data, "").is_err());
+        assert!(verify_checksum(data, "not-a-hash  file.tar.gz").is_err());
+        assert!(verify_checksum(data, "abcd").is_err());
     }
 
     #[test]

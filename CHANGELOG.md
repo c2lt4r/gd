@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.3.16] - 2026-03-03
+
+### Added
+- **`gd upgrade` — SHA256 checksum verification**: downloaded binaries are now verified against `.sha256` checksum files from GitHub Releases. Warns and proceeds gracefully for older releases without checksums.
+- **`gd upgrade --skip-verify`**: flag to skip checksum verification when needed.
+- **Release CI generates `.sha256` files**: each platform archive now includes a companion SHA256 checksum file in GNU coreutils format.
+
+### Fixed
+- **Windows stack overflow in `gd check`**: main thread now spawns with 8MB stack (matching Unix defaults) to prevent stack overflow from deep AST walks on Windows' default 1MB stack.
+
 ## [0.3.15] - 2026-03-02
 
 ### Improved
