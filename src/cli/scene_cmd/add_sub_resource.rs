@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use miette::{Result, miette};
 use owo_colors::OwoColorize;
 
-use crate::cprintln;
+use gd_core::cprintln;
 
 use super::{
     AddSubResourceArgs, clean_double_blanks, find_node, increment_load_steps, next_sub_resource_id,
@@ -29,7 +29,7 @@ pub(crate) fn exec_add_sub_resource(args: &AddSubResourceArgs) -> Result<()> {
     // If --node and --key, also set the property
     let result = if let (Some(node_name), Some(key)) = (&args.node, &args.key) {
         // Re-parse to get updated data for node lookup
-        let updated_data = crate::core::scene::parse_scene(&result)?;
+        let updated_data = gd_core::scene::parse_scene(&result)?;
         let node = find_node(&updated_data, node_name)?;
         let value = format!("SubResource(\"{sub_id}\")");
         set_property::apply_set_property(&result, &node.name, node.parent.as_deref(), key, &value)?

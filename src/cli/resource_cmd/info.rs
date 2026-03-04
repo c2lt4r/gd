@@ -2,10 +2,10 @@ use std::path::PathBuf;
 
 use miette::{Result, miette};
 
-use crate::core::scene;
+use gd_core::scene;
 
 use super::InfoArgs;
-use crate::cprintln;
+use gd_core::cprintln;
 
 pub(crate) fn exec_info(args: &InfoArgs) -> Result<()> {
     let path = PathBuf::from(&args.file);

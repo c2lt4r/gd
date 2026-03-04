@@ -1,5 +1,5 @@
-use crate::{ceprintln, cprintln};
 use clap::{Args, Subcommand};
+use gd_core::{ceprintln, cprintln};
 use miette::{Result, miette};
 use owo_colors::OwoColorize;
 use std::fs;
@@ -79,7 +79,7 @@ pub fn exec(args: AddonsArgs) -> Result<()> {
 
 /// Build a search URL for the Asset Library, using the detected Godot version.
 fn asset_search_url(query: &str) -> String {
-    let version = crate::core::project::detect_godot_version();
+    let version = gd_core::project::detect_godot_version();
     format!(
         "{}?godot_version={}&filter={}&max_results=10",
         ASSET_API,
@@ -91,7 +91,7 @@ fn asset_search_url(query: &str) -> String {
 fn list_addons() -> Result<()> {
     let cwd =
         std::env::current_dir().map_err(|e| miette!("Failed to get current directory: {e}"))?;
-    let project = crate::core::project::GodotProject::discover(&cwd)?;
+    let project = gd_core::project::GodotProject::discover(&cwd)?;
     let addons_dir = project.root.join("addons");
 
     if !addons_dir.exists() {
@@ -147,7 +147,7 @@ fn list_addons() -> Result<()> {
 fn install_addon(args: InstallArgs) -> Result<()> {
     let cwd =
         std::env::current_dir().map_err(|e| miette!("Failed to get current directory: {e}"))?;
-    let project = crate::core::project::GodotProject::discover(&cwd)?;
+    let project = gd_core::project::GodotProject::discover(&cwd)?;
     let addons_dir = project.root.join("addons");
 
     // --locked: install everything from lock file
@@ -169,7 +169,7 @@ fn install_addon(args: InstallArgs) -> Result<()> {
 
     let godot_version = args
         .godot_version
-        .unwrap_or_else(crate::core::project::detect_godot_version);
+        .unwrap_or_else(gd_core::project::detect_godot_version);
 
     // Determine if source is an Asset Library ID, git URL, or name
     if args.source.chars().all(|c| c.is_ascii_digit()) {
@@ -537,7 +537,7 @@ fn install_from_asset_library_by_name(
 fn remove_addon(args: &RemoveArgs) -> Result<()> {
     let cwd =
         std::env::current_dir().map_err(|e| miette!("Failed to get current directory: {e}"))?;
-    let project = crate::core::project::GodotProject::discover(&cwd)?;
+    let project = gd_core::project::GodotProject::discover(&cwd)?;
     let addons_dir = project.root.join("addons");
     let addon_path = addons_dir.join(&args.name);
 
@@ -668,7 +668,7 @@ struct UpdateInfo {
 fn update_addons(args: &UpdateArgs) -> Result<()> {
     let cwd =
         std::env::current_dir().map_err(|e| miette!("Failed to get current directory: {e}"))?;
-    let project = crate::core::project::GodotProject::discover(&cwd)?;
+    let project = gd_core::project::GodotProject::discover(&cwd)?;
     let addons_dir = project.root.join("addons");
 
     if !addons_dir.exists() {
@@ -765,7 +765,7 @@ fn update_addons(args: &UpdateArgs) -> Result<()> {
 
     if args.apply {
         cprintln!();
-        let godot_version = crate::core::project::detect_godot_version();
+        let godot_version = gd_core::project::detect_godot_version();
         for info in &updatable {
             cprintln!("Updating {}...", info.addon_name.as_str().green().bold());
             let addon_path = addons_dir.join(&info.dir_name);
@@ -808,7 +808,7 @@ struct AddonLock {
 fn lock_addons() -> Result<()> {
     let cwd =
         std::env::current_dir().map_err(|e| miette!("Failed to get current directory: {e}"))?;
-    let project = crate::core::project::GodotProject::discover(&cwd)?;
+    let project = gd_core::project::GodotProject::discover(&cwd)?;
     let addons_dir = project.root.join("addons");
 
     if !addons_dir.exists() {
@@ -910,7 +910,7 @@ fn install_from_lockfile(
             .map_err(|e| miette!("Failed to create addons directory: {e}"))?;
     }
 
-    let godot_version = crate::core::project::detect_godot_version();
+    let godot_version = gd_core::project::detect_godot_version();
     let mut installed = 0;
 
     for addon in &lock_file.addon {

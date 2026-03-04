@@ -1,10 +1,10 @@
 use miette::{Result, miette};
 use owo_colors::OwoColorize;
 
-use crate::core::mesh::MeshState;
+use gd_mesh::MeshState;
 
 use super::{MoveVertexArgs, OutputFormat, inject_stats, parse_3d, project_root, run_eval};
-use crate::cprintln;
+use gd_core::cprintln;
 
 pub fn cmd_move_vertex(args: &MoveVertexArgs) -> Result<()> {
     let root = project_root()?;

@@ -5,9 +5,9 @@ use std::env;
 use std::fs;
 use std::path::Path;
 
-use crate::core::project::GodotProject;
-use crate::cprintln;
 use crate::scaffold::templates::GD_TOML_TEMPLATE;
+use gd_core::cprintln;
+use gd_core::project::GodotProject;
 
 #[derive(Args)]
 pub struct InitArgs {

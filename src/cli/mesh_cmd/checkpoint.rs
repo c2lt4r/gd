@@ -1,10 +1,10 @@
 use miette::{Result, miette};
 use owo_colors::OwoColorize;
 
-use crate::core::mesh::MeshState;
+use gd_mesh::MeshState;
 
 use super::{CheckpointArgs, OutputFormat, RestoreArgs, inject_stats, project_root, run_eval};
-use crate::{ceprintln, cprintln};
+use gd_core::{ceprintln, cprintln};
 
 pub fn cmd_checkpoint(args: &CheckpointArgs) -> Result<()> {
     let root = project_root()?;

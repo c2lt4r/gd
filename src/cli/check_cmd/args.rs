@@ -1,8 +1,8 @@
 use tree_sitter::Node;
 
-use crate::core::gd_ast::GdFile;
-use crate::core::type_inference;
-use crate::core::workspace_index::ProjectIndex;
+use gd_core::gd_ast::GdFile;
+use gd_core::type_inference;
+use gd_core::workspace_index::ProjectIndex;
 
 use super::StructuralError;
 use super::classdb::types_assignable;
@@ -56,7 +56,7 @@ fn check_arg_types_in_node(
         }
         // Constructor: Vector2("bad", "args") or builtin conversion: int([])
         if callee.kind() == "identifier"
-            && (crate::class_db::class_exists(func_name)
+            && (gd_class_db::class_exists(func_name)
                 || is_builtin_convertible(func_name)
                 || constructor_param_counts(func_name).is_some())
         {
@@ -87,9 +87,7 @@ fn check_arg_types_in_node(
                         })
                         .or_else(|| {
                             let name = receiver.utf8_text(source.as_bytes()).ok()?;
-                            if receiver.kind() == "identifier"
-                                && crate::class_db::class_exists(name)
-                            {
+                            if receiver.kind() == "identifier" && gd_class_db::class_exists(name) {
                                 Some(name)
                             } else {
                                 None
@@ -130,7 +128,7 @@ fn check_arg_types_in_node(
 /// Check user-defined function argument types.
 fn check_call_arg_types_user(
     func_name: &str,
-    params: &[crate::core::gd_ast::GdParam<'_>],
+    params: &[gd_core::gd_ast::GdParam<'_>],
     args_node: &Node,
     source: &str,
     file: &GdFile<'_>,
@@ -173,7 +171,7 @@ fn check_call_arg_types_classdb(
     project: &ProjectIndex,
     errors: &mut Vec<StructuralError>,
 ) {
-    let Some(sig) = crate::class_db::method_signature(class_name, method_name) else {
+    let Some(sig) = gd_class_db::method_signature(class_name, method_name) else {
         return;
     };
     if sig.param_types.is_empty() {
@@ -437,7 +435,7 @@ fn check_arg_count_in_node(
                 check_param_bounds(name, arg_count, required, total, node, errors);
             }
             // 2. Check utility/builtin functions
-            else if let Some(uf) = crate::class_db::utility_function(name) {
+            else if let Some(uf) = gd_class_db::utility_function(name) {
                 let (required, total) = parse_utility_param_count(uf.signature);
                 if total < 255 {
                     check_param_bounds(
@@ -479,7 +477,7 @@ fn check_arg_count_in_node(
                 _ => None,
             });
             if let Some(class_name) = class_name {
-                if let Some(sig) = crate::class_db::method_signature(class_name, method_name) {
+                if let Some(sig) = gd_class_db::method_signature(class_name, method_name) {
                     check_param_bounds(
                         method_name,
                         arg_count,
@@ -489,8 +487,8 @@ fn check_arg_count_in_node(
                         errors,
                     );
                 } else if let Some(member) =
-                    crate::lsp::builtins::lookup_member_for(class_name, method_name)
-                    && member.kind == crate::lsp::builtins::MemberKind::Method
+                    gd_class_db::builtins::lookup_member_for(class_name, method_name)
+                    && member.kind == gd_class_db::builtins::MemberKind::Method
                 {
                     let (required, total) = parse_utility_param_count(member.brief);
                     if total < 255 {
@@ -577,14 +575,12 @@ fn check_attribute_call_args(
                         break;
                     };
                     // Check if the property is a signal on the current type
-                    if crate::class_db::signal_exists(&current_type, prop_name) {
+                    if gd_class_db::signal_exists(&current_type, prop_name) {
                         current_type = "Signal".to_string();
                         continue;
                     }
                     // Check if it's a known property with a type in ClassDB
-                    if let Some(prop_type) =
-                        crate::class_db::property_type(&current_type, prop_name)
-                    {
+                    if let Some(prop_type) = gd_class_db::property_type(&current_type, prop_name) {
                         current_type = prop_type.to_string();
                         continue;
                     }
@@ -598,7 +594,7 @@ fn check_attribute_call_args(
         };
 
         if let Some(class_name) = resolved_class.as_deref() {
-            if let Some(sig) = crate::class_db::method_signature(class_name, method_name) {
+            if let Some(sig) = gd_class_db::method_signature(class_name, method_name) {
                 check_param_bounds(
                     method_name,
                     arg_count,
@@ -608,8 +604,8 @@ fn check_attribute_call_args(
                     errors,
                 );
             } else if let Some(member) =
-                crate::lsp::builtins::lookup_member_for(class_name, method_name)
-                && member.kind == crate::lsp::builtins::MemberKind::Method
+                gd_class_db::builtins::lookup_member_for(class_name, method_name)
+                && member.kind == gd_class_db::builtins::MemberKind::Method
             {
                 let (required, total) = parse_utility_param_count(member.brief);
                 if total < 255 {
@@ -630,7 +626,7 @@ fn check_attribute_call_args(
 /// Check if a function has a variadic parameter (`...args`).
 /// Variadic params are not included in the `GdParam` vec, so we check the
 /// tree-sitter `parameters` node directly.
-fn func_is_variadic(func: &crate::core::gd_ast::GdFunc) -> bool {
+fn func_is_variadic(func: &gd_core::gd_ast::GdFunc) -> bool {
     func.node
         .child_by_field_name("parameters")
         .is_some_and(|params| {

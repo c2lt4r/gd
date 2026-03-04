@@ -4,10 +4,10 @@ use std::path::PathBuf;
 use miette::{Result, miette};
 use owo_colors::OwoColorize;
 
-use crate::core::config::find_project_root;
+use gd_core::config::find_project_root;
 
 use super::{CreateArgs, write_or_dry_run};
-use crate::cprintln;
+use gd_core::cprintln;
 
 pub(crate) fn exec_create(args: &CreateArgs) -> Result<()> {
     let path = PathBuf::from(&args.path);

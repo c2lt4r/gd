@@ -14,6 +14,7 @@ pub mod eval_cmd;
 pub mod fmt_cmd;
 pub mod init_cmd;
 pub mod lint_cmd;
+pub mod live_eval;
 pub mod llm_cmd;
 pub mod log_cmd;
 pub mod lsp_cmd;

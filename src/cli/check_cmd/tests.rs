@@ -1,5 +1,5 @@
-use crate::core::workspace_index::ProjectIndex;
-use crate::core::{gd_ast, parser};
+use gd_core::workspace_index::ProjectIndex;
+use gd_core::{gd_ast, parser};
 
 use super::*;
 
@@ -490,7 +490,7 @@ fn validate_scene_orphaned_ext_resource() {
 
 [node name="Root" type="Node2D"]
 "#;
-    let data = crate::core::scene::parse_scene(source).unwrap();
+    let data = gd_core::scene::parse_scene(source).unwrap();
     let root = std::path::Path::new("/nonexistent");
     let cwd = std::path::Path::new("/cwd");
     let file = std::path::Path::new("/cwd/test.tscn");

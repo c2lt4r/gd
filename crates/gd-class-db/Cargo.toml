@@ -1,0 +1,13 @@
+[package]
+name = "gd-class-db"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Static Godot 4.x class database for gd toolchain"
+
+[dependencies]
+strsim.workspace = true
+
+[lints]
+workspace = true

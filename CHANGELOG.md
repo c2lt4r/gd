@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.3.19] - 2026-03-04
+
+### Changed
+- **Cargo workspace split** — monolith restructured into 7 workspace members (6 library crates + 1 binary) for dramatically faster incremental builds:
+  - `gd-class-db` (271k lines) — static Godot class data, compiles once and stays cached
+  - `gd-core` — AST, parsing, type inference, project model
+  - `gd-mesh` — half-edge mesh operations (experimental, fully independent)
+  - `gd-lint` — 96 lint rules + diagnostics
+  - `gd-fmt` — formatter + printer
+  - `gd-lsp` — LSP server, refactoring, daemon, debug protocol
+- Touching a lint rule no longer recompiles the class database (66% of code)
+- All 2,748 tests pass, zero behavior changes
+
 ## [0.3.18] - 2026-03-04
 
 ### Fixed

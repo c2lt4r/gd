@@ -1,11 +1,11 @@
 use miette::{Result, miette};
 use owo_colors::OwoColorize;
 
-use crate::core::mesh::MeshState;
-use crate::core::mesh::spatial_filter;
+use gd_mesh::MeshState;
+use gd_mesh::spatial_filter;
 
 use super::{ExtrudeFaceArgs, OutputFormat, inject_stats, project_root, run_eval};
-use crate::cprintln;
+use gd_core::cprintln;
 
 pub fn cmd_extrude_face(args: &ExtrudeFaceArgs) -> Result<()> {
     let root = project_root()?;
@@ -25,7 +25,7 @@ pub fn cmd_extrude_face(args: &ExtrudeFaceArgs) -> Result<()> {
         ));
     }
 
-    let result = crate::core::mesh::extrude_face::extrude_faces(&part.mesh, args.depth, &selected);
+    let result = gd_mesh::extrude_face::extrude_faces(&part.mesh, args.depth, &selected);
 
     let vc = result.vertex_count();
     let fc = result.face_count();

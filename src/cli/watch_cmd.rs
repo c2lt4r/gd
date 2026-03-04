@@ -1,5 +1,5 @@
-use crate::{ceprintln, cprintln};
 use clap::Args;
+use gd_core::{ceprintln, cprintln};
 use miette::{Result, miette};
 use notify::RecursiveMode;
 use notify_debouncer_mini::{DebouncedEventKind, new_debouncer};
@@ -99,7 +99,7 @@ pub fn exec(args: &WatchArgs) -> Result<()> {
                 if args.fmt {
                     let paths: Vec<String> =
                         gd_files.iter().map(|p| p.display().to_string()).collect();
-                    match crate::fmt::run_fmt(&paths, false, false) {
+                    match gd_fmt::run_fmt(&paths, false, false) {
                         Ok(()) => {}
                         Err(e) => {
                             ceprintln!("{} {e}", "fmt error:".red().bold());
@@ -112,8 +112,8 @@ pub fn exec(args: &WatchArgs) -> Result<()> {
                 if !args.no_lint {
                     let paths: Vec<String> =
                         gd_files.iter().map(|p| p.display().to_string()).collect();
-                    let lint_opts = crate::lint::LintOptions::default();
-                    match crate::lint::run_lint(&paths, &lint_opts) {
+                    let lint_opts = gd_lint::LintOptions::default();
+                    match gd_lint::run_lint(&paths, &lint_opts, None) {
                         Ok(()) => {}
                         Err(e) => {
                             ceprintln!("{} {e}", "lint error:".red().bold());

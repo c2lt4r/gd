@@ -1,5 +1,5 @@
-use crate::{ceprintln, cprintln};
 use clap::Args;
+use gd_core::{ceprintln, cprintln};
 use miette::{Result, miette};
 use owo_colors::OwoColorize;
 use serde::Serialize;
@@ -38,7 +38,7 @@ pub fn exec(args: &DepsArgs) -> Result<()> {
         PathBuf::from(&args.paths[0])
     };
 
-    let files = crate::core::fs::collect_gdscript_files(&root)?;
+    let files = gd_core::fs::collect_gdscript_files(&root)?;
 
     if files.is_empty() {
         cprintln!("No GDScript files found in {}", root.display());
@@ -48,16 +48,16 @@ pub fn exec(args: &DepsArgs) -> Result<()> {
     // Build dependency map
     let mut dep_map: HashMap<String, Vec<String>> = HashMap::new();
     for file_path in &files {
-        let rel = crate::core::fs::relative_slash(file_path, &root);
+        let rel = gd_core::fs::relative_slash(file_path, &root);
         let deps = extract_dependencies(file_path)?;
         dep_map.insert(rel, deps);
     }
 
     // Include scene/resource file dependencies
     if args.include_resources {
-        let resource_files = crate::core::fs::collect_resource_files(&root)?;
+        let resource_files = gd_core::fs::collect_resource_files(&root)?;
         for file_path in &resource_files {
-            let rel = crate::core::fs::relative_slash(file_path, &root);
+            let rel = gd_core::fs::relative_slash(file_path, &root);
             let deps = extract_resource_dependencies(file_path);
             if !deps.is_empty() {
                 dep_map.insert(rel, deps);
@@ -126,7 +126,7 @@ pub fn exec(args: &DepsArgs) -> Result<()> {
 }
 
 fn extract_dependencies(path: &Path) -> Result<Vec<String>> {
-    let (source, tree) = crate::core::parser::parse_file(path)?;
+    let (source, tree) = gd_core::parser::parse_file(path)?;
     let root = tree.root_node();
     let mut deps = Vec::new();
 
@@ -205,7 +205,7 @@ fn extract_resource_dependencies(path: &Path) -> Vec<String> {
 
     match ext {
         Some("tscn") => {
-            if let Ok(data) = crate::core::scene::parse_scene(&source) {
+            if let Ok(data) = gd_core::scene::parse_scene(&source) {
                 for ext_res in &data.ext_resources {
                     if !ext_res.path.is_empty() {
                         // Convert res:// paths to relative
@@ -216,7 +216,7 @@ fn extract_resource_dependencies(path: &Path) -> Vec<String> {
             }
         }
         Some("tres") => {
-            if let Ok(data) = crate::core::scene::parse_tres(&source) {
+            if let Ok(data) = gd_core::scene::parse_tres(&source) {
                 for ext_res in &data.ext_resources {
                     if !ext_res.path.is_empty() {
                         let dep = ext_res.path.strip_prefix("res://").unwrap_or(&ext_res.path);

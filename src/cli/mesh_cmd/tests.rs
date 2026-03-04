@@ -1,7 +1,7 @@
 use super::gdscript;
 
 fn assert_parses(script: &str) {
-    let tree = crate::core::parser::parse(script).unwrap();
+    let tree = gd_core::parser::parse(script).unwrap();
     assert!(
         !tree.root_node().has_error(),
         "Script has parse errors:\n{script}"
@@ -432,7 +432,7 @@ fn remove_edge_overlay_parses() {
 
 #[test]
 fn classified_edges_cube() {
-    let mesh = crate::core::mesh::primitives::cube();
+    let mesh = gd_mesh::primitives::cube();
     let edges = mesh.classified_edges();
     // A closed cube has 12 edges, all sharp (90° dihedral)
     assert!(
@@ -448,7 +448,7 @@ fn classified_edges_cube() {
 
 #[test]
 fn classified_edges_sphere() {
-    let mesh = crate::core::mesh::primitives::sphere(8, 4);
+    let mesh = gd_mesh::primitives::sphere(8, 4);
     let edges = mesh.classified_edges();
     assert!(
         edges.boundary.is_empty(),

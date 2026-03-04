@@ -1,13 +1,13 @@
 use miette::{Result, miette};
 use owo_colors::OwoColorize;
 
-use crate::core::mesh::MeshState;
+use gd_mesh::MeshState;
 
 use super::{
     GroupArgs, GroupsArgs, OutputFormat, UngroupArgs, inject_stats, match_part_pattern,
     project_root,
 };
-use crate::cprintln;
+use gd_core::cprintln;
 
 pub fn cmd_group(args: &GroupArgs) -> Result<()> {
     let root = project_root()?;

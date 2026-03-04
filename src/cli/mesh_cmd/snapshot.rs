@@ -3,7 +3,7 @@ use owo_colors::OwoColorize;
 
 use super::gdscript;
 use super::{OutputFormat, SnapshotArgs, run_eval};
-use crate::cprintln;
+use gd_core::cprintln;
 
 pub fn cmd_snapshot(args: &SnapshotArgs) -> Result<()> {
     // Convert path to res:// if needed

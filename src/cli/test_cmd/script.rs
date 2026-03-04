@@ -6,13 +6,13 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use crate::core::project::GodotProject;
+use gd_core::project::GodotProject;
 
 use super::{
     RunArgs, RunContext, TestResult, TestRunner, TestStatus, TestSummary, extract_errors,
     filter_files_by_tests, filter_noise, hprintln,
 };
-use crate::{ceprintln, cprintln};
+use gd_core::{ceprintln, cprintln};
 
 pub struct ScriptRunner;
 
@@ -64,7 +64,7 @@ pub fn run_script_tests(
     let mut results = Vec::new();
 
     for (i, test_file) in effective_files.iter().enumerate() {
-        let rel = crate::core::fs::relative_slash(test_file, &project.root);
+        let rel = gd_core::fs::relative_slash(test_file, &project.root);
         let label = format!("[{}/{}] {rel}", i + 1, effective_files.len());
 
         let spinner = if !json_mode && !args.quiet {

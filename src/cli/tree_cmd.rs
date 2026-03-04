@@ -5,8 +5,8 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use crate::core::scene;
-use crate::cprintln;
+use gd_core::cprintln;
+use gd_core::scene;
 
 #[derive(Args)]
 pub struct TreeArgs {
@@ -56,7 +56,7 @@ pub fn exec(args: &TreeArgs) -> Result<()> {
     };
 
     // Collect all .gd files
-    let files = crate::core::fs::collect_gdscript_files(&root)?;
+    let files = gd_core::fs::collect_gdscript_files(&root)?;
 
     if files.is_empty() {
         cprintln!("No GDScript files found in {}", root.display());
@@ -88,7 +88,7 @@ pub fn exec(args: &TreeArgs) -> Result<()> {
 }
 
 fn extract_class_info(path: &Path) -> Result<ClassInfo> {
-    let (source, tree) = crate::core::parser::parse_file(path)?;
+    let (source, tree) = gd_core::parser::parse_file(path)?;
     let root = tree.root_node();
 
     let mut class_name = None;
@@ -304,7 +304,7 @@ fn exec_scene(scene_path: &str, format: &str) -> Result<()> {
 
     if path.is_dir() {
         // Show all scenes in the directory
-        let files = crate::core::fs::collect_resource_files(&path)?;
+        let files = gd_core::fs::collect_resource_files(&path)?;
         let tscn_files: Vec<_> = files
             .iter()
             .filter(|f| f.extension().is_some_and(|e| e == "tscn"))
@@ -319,7 +319,7 @@ fn exec_scene(scene_path: &str, format: &str) -> Result<()> {
             let mut scenes = Vec::new();
             for file in &tscn_files {
                 if let Ok(data) = scene::parse_scene_file(file) {
-                    let rel = crate::core::fs::relative_slash(file, &path);
+                    let rel = gd_core::fs::relative_slash(file, &path);
                     let tree = build_scene_tree(&data);
                     scenes.push(serde_json::json!({
                         "file": rel,
@@ -332,7 +332,7 @@ fn exec_scene(scene_path: &str, format: &str) -> Result<()> {
             cprintln!("{json}");
         } else {
             for (i, file) in tscn_files.iter().enumerate() {
-                let rel = crate::core::fs::relative_slash(file, &path);
+                let rel = gd_core::fs::relative_slash(file, &path);
                 if let Ok(data) = scene::parse_scene_file(file) {
                     let tree = build_scene_tree(&data);
                     cprintln!("{}", rel.cyan().bold());

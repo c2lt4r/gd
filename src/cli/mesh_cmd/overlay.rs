@@ -2,8 +2,8 @@ use miette::Result;
 use owo_colors::OwoColorize;
 
 use super::{OutputFormat, OverlayArgs, OverlayMode, gdscript, project_root, run_eval};
-use crate::core::mesh::MeshState;
-use crate::cprintln;
+use gd_core::cprintln;
+use gd_mesh::MeshState;
 
 /// Data for the edge overlay GDScript generator.
 pub struct EdgeOverlayData {

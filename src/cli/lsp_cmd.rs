@@ -18,6 +18,6 @@ pub fn exec(args: &LspArgs) -> Result<()> {
     } else {
         args.godot_port
     };
-    crate::lsp::run_server_with_options(port);
+    gd_lsp::run_server_with_options(port);
     Ok(())
 }

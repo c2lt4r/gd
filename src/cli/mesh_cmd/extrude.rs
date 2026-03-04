@@ -1,10 +1,10 @@
 use miette::{Result, miette};
 use owo_colors::OwoColorize;
 
-use crate::core::mesh::MeshState;
+use gd_mesh::MeshState;
 
 use super::{ExtrudeArgs, OutputFormat, inject_stats, project_root, run_eval};
-use crate::cprintln;
+use gd_core::cprintln;
 
 pub fn cmd_extrude(args: &ExtrudeArgs) -> Result<()> {
     let root = project_root()?;
@@ -33,23 +33,11 @@ pub fn cmd_extrude(args: &ExtrudeArgs) -> Result<()> {
             None => 0.0,
         };
 
-        crate::core::mesh::extrude::extrude_with_inset(
-            &profile,
-            plane,
-            args.depth,
-            args.segments,
-            inset,
-        )
-        .ok_or_else(|| miette!("Failed to extrude (invalid profile?)"))?
+        gd_mesh::extrude::extrude_with_inset(&profile, plane, args.depth, args.segments, inset)
+            .ok_or_else(|| miette!("Failed to extrude (invalid profile?)"))?
     } else {
-        crate::core::mesh::extrude::extrude_with_holes(
-            &profile,
-            &holes,
-            plane,
-            args.depth,
-            args.segments,
-        )
-        .ok_or_else(|| miette!("Failed to extrude with holes (invalid profile?)"))?
+        gd_mesh::extrude::extrude_with_holes(&profile, &holes, plane, args.depth, args.segments)
+            .ok_or_else(|| miette!("Failed to extrude with holes (invalid profile?)"))?
     };
 
     let vc = mesh.vertex_count();

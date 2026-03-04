@@ -1,15 +1,15 @@
 use miette::Result;
 use owo_colors::OwoColorize;
 
-use crate::core::mesh::MeshState;
-use crate::core::mesh::boolean::{self, BooleanMode};
-use crate::core::mesh::half_edge::HalfEdgeMesh;
+use gd_mesh::MeshState;
+use gd_mesh::boolean::{self, BooleanMode};
+use gd_mesh::half_edge::HalfEdgeMesh;
 
 use super::{BooleanArgs, BooleanOp, OutputFormat, inject_stats, parse_3d, project_root, run_eval};
-use crate::cprintln;
+use gd_core::cprintln;
 
 /// Apply a `Transform3D` to all vertices in a mesh (scale → rotate → translate).
-fn transform_mesh(mesh: &HalfEdgeMesh, t: &crate::core::mesh::Transform3D) -> HalfEdgeMesh {
+fn transform_mesh(mesh: &HalfEdgeMesh, t: &gd_mesh::Transform3D) -> HalfEdgeMesh {
     if t.is_identity() {
         return mesh.clone();
     }
@@ -21,7 +21,7 @@ fn transform_mesh(mesh: &HalfEdgeMesh, t: &crate::core::mesh::Transform3D) -> Ha
 }
 
 /// Apply inverse transform to all vertices (un-translate → un-rotate → un-scale).
-fn inverse_transform_mesh(mesh: &HalfEdgeMesh, t: &crate::core::mesh::Transform3D) -> HalfEdgeMesh {
+fn inverse_transform_mesh(mesh: &HalfEdgeMesh, t: &gd_mesh::Transform3D) -> HalfEdgeMesh {
     if t.is_identity() {
         return mesh.clone();
     }

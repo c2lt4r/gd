@@ -1,10 +1,10 @@
 use miette::Result;
 use owo_colors::OwoColorize;
 
-use crate::core::mesh::MeshState;
+use gd_mesh::MeshState;
 
 use super::{InfoArgs, OutputFormat, project_root};
-use crate::cprintln;
+use gd_core::cprintln;
 
 pub fn cmd_info(args: &InfoArgs) -> Result<()> {
     let root = project_root()?;

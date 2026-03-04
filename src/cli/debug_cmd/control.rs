@@ -5,7 +5,7 @@ use super::args::{BreakpointBinArgs, EvalBinArgs, OutputFormat, StepArgs, VarsAr
 use super::rewrite::rewrite_eval_expression;
 use super::scene::format_variant_display;
 use super::{daemon_cmd, debug_break_for_eval, ensure_binary_debug};
-use crate::{ceprintln, cprintln};
+use gd_core::{ceprintln, cprintln};
 
 // ── Execution control (binary protocol) ─────────────────────────────
 
@@ -171,8 +171,8 @@ pub(crate) fn cmd_breakpoint(args: &BreakpointBinArgs) -> Result<()> {
 /// Resolve a function name to a res:// path and line number by searching project GDScript files.
 fn resolve_function_to_location(func_name: &str) -> Result<(String, u32)> {
     let cwd = std::env::current_dir().unwrap_or_default();
-    let project = crate::core::project::GodotProject::discover(&cwd)?;
-    let files = crate::core::fs::collect_gdscript_files(&project.root)?;
+    let project = gd_core::project::GodotProject::discover(&cwd)?;
+    let files = gd_core::fs::collect_gdscript_files(&project.root)?;
 
     for file in &files {
         let Ok(source) = std::fs::read_to_string(file) else {
@@ -321,11 +321,11 @@ pub(crate) fn cmd_evaluate(args: &EvalBinArgs) -> Result<()> {
     let script = crate::cli::eval_cmd::generate_live_eval_script(&input);
 
     let cwd = std::env::current_dir().unwrap_or_default();
-    let project_root = crate::core::config::find_project_root(&cwd)
+    let project_root = gd_core::config::find_project_root(&cwd)
         .ok_or_else(|| miette!("No Godot project found (missing project.godot)"))?;
 
     let timeout = std::time::Duration::from_secs(args.timeout);
-    let response = crate::core::live_eval::send_eval(&script, &project_root, timeout)?;
+    let response = crate::cli::live_eval::send_eval(&script, &project_root, timeout)?;
 
     // Show captured print output
     for line in &response.output {

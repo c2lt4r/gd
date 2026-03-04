@@ -5,7 +5,7 @@ use std::io;
 use std::path::Path;
 use std::process::Command;
 
-use crate::cprintln;
+use gd_core::cprintln;
 use miette::{Context, IntoDiagnostic, bail};
 use owo_colors::OwoColorize;
 
@@ -23,7 +23,7 @@ pub fn create_project(name: &str, template: &str) -> miette::Result<()> {
         )
     })?;
 
-    let godot_version = crate::core::project::detect_godot_version();
+    let godot_version = gd_core::project::detect_godot_version();
 
     let project_dir = Path::new(name);
     if project_dir.exists() {

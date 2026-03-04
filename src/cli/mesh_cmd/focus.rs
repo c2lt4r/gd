@@ -1,11 +1,11 @@
 use miette::Result;
 use owo_colors::OwoColorize;
 
-use crate::core::mesh::MeshState;
+use gd_mesh::MeshState;
 
 use super::gdscript;
 use super::{FocusArgs, OutputFormat, project_root, run_eval};
-use crate::cprintln;
+use gd_core::cprintln;
 
 pub fn cmd_focus(args: &FocusArgs) -> Result<()> {
     if !args.all && args.part.is_none() {

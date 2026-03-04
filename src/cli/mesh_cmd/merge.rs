@@ -1,10 +1,10 @@
 use miette::Result;
 use owo_colors::OwoColorize;
 
-use crate::core::mesh::MeshState;
+use gd_mesh::MeshState;
 
 use super::{MergeArgs, OutputFormat, inject_stats, project_root, run_eval};
-use crate::cprintln;
+use gd_core::cprintln;
 
 pub fn cmd_merge(args: &MergeArgs) -> Result<()> {
     let root = project_root()?;
@@ -17,8 +17,7 @@ pub fn cmd_merge(args: &MergeArgs) -> Result<()> {
 
         for name in &names {
             let part = state.parts.get_mut(name).unwrap();
-            let (result, merged) =
-                crate::core::mesh::merge::merge_by_distance(&part.mesh, args.distance);
+            let (result, merged) = gd_mesh::merge::merge_by_distance(&part.mesh, args.distance);
             let vc = result.vertex_count();
             let fc = result.face_count();
             part.mesh = result;
@@ -60,8 +59,7 @@ pub fn cmd_merge(args: &MergeArgs) -> Result<()> {
         }
     } else {
         let part = state.active_part_mut()?;
-        let (result, merged) =
-            crate::core::mesh::merge::merge_by_distance(&part.mesh, args.distance);
+        let (result, merged) = gd_mesh::merge::merge_by_distance(&part.mesh, args.distance);
         let vc = result.vertex_count();
         let fc = result.face_count();
         part.mesh = result;

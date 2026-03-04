@@ -1,5 +1,5 @@
-use crate::cprintln;
 use clap::Args;
+use gd_core::cprintln;
 use miette::{Result, miette};
 use owo_colors::OwoColorize;
 use rayon::prelude::*;
@@ -144,7 +144,7 @@ pub fn exec(args: &StatsArgs) -> Result<()> {
 }
 
 fn collect_current_stats(root: &Path, args: &StatsArgs) -> Result<ProjectStats> {
-    let files = crate::core::fs::collect_gdscript_files(root)?;
+    let files = gd_core::fs::collect_gdscript_files(root)?;
 
     if files.is_empty() {
         return Err(miette!("No .gd files found in {}", root.display()));
@@ -239,10 +239,10 @@ fn collect_current_stats(root: &Path, args: &StatsArgs) -> Result<ProjectStats> 
 }
 
 fn analyze_file(path: &Path, root: &Path) -> Result<FileStats> {
-    let (source, tree) = crate::core::parser::parse_file(path)?;
+    let (source, tree) = gd_core::parser::parse_file(path)?;
     let root_node = tree.root_node();
 
-    let rel_path = crate::core::fs::relative_slash(path, root);
+    let rel_path = gd_core::fs::relative_slash(path, root);
 
     let mut stats = FileStats {
         path: path.to_path_buf(),
@@ -292,7 +292,7 @@ fn analyze_source(source: &str, rel_path: &str) -> FileStats {
     }
 
     // Walk AST to count nodes
-    if let Ok(tree) = crate::core::parser::parse(source) {
+    if let Ok(tree) = gd_core::parser::parse(source) {
         walk_node(tree.root_node(), source, rel_path, &mut stats);
     }
 

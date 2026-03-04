@@ -1,8 +1,8 @@
 use tree_sitter::Node;
 
-use crate::core::gd_ast::GdFile;
-use crate::core::type_inference;
-use crate::core::workspace_index::ProjectIndex;
+use gd_core::gd_ast::GdFile;
+use gd_core::type_inference;
+use gd_core::workspace_index::ProjectIndex;
 
 use super::StructuralError;
 use super::classdb::types_assignable;
@@ -178,7 +178,7 @@ fn check_return_in_func(
     source: &str,
     file: &GdFile<'_>,
     project: &ProjectIndex,
-    func: &crate::core::gd_ast::GdFunc<'_>,
+    func: &gd_core::gd_ast::GdFunc<'_>,
     ret_type: &str,
     errors: &mut Vec<StructuralError>,
 ) {
@@ -472,12 +472,10 @@ fn check_cast_in_node(
     {
         let is_invalid = if is_primitive_type(actual_name) {
             // primitive → ClassDB class (e.g. int as Node)
-            (crate::class_db::class_exists(target_type) && !is_primitive_type(target_type))
+            (gd_class_db::class_exists(target_type) && !is_primitive_type(target_type))
             // primitive → builtin container (e.g. int as Array)
             || is_builtin_container_type(target_type)
-        } else if crate::class_db::class_exists(actual_name)
-            || is_builtin_container_type(actual_name)
-        {
+        } else if gd_class_db::class_exists(actual_name) || is_builtin_container_type(actual_name) {
             // class/container → primitive (e.g. RefCounted as int)
             is_primitive_type(target_type)
         } else {

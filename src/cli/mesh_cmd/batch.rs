@@ -3,12 +3,10 @@ use std::path::Path;
 use miette::{Result, miette};
 use owo_colors::OwoColorize;
 
-use crate::core::mesh::half_edge::HalfEdgeMesh;
-use crate::core::mesh::{
-    MeshPart, MeshState, PlaneKind, ShadingMode, Transform3D, normals, spatial,
-};
+use gd_mesh::half_edge::HalfEdgeMesh;
+use gd_mesh::{MeshPart, MeshState, PlaneKind, ShadingMode, Transform3D, normals, spatial};
 
-use crate::cprintln;
+use gd_core::cprintln;
 
 use super::gdscript;
 use super::{BatchArgs, OutputFormat, project_root, run_eval};
@@ -94,8 +92,7 @@ pub fn execute_batch_command(
                 part.profile_points = Some(points.clone());
                 part.profile_plane = Some(plane);
                 part.profile_holes = holes;
-                if let Some(mesh) = crate::core::mesh::profile::triangulate_profile(&points, plane)
-                {
+                if let Some(mesh) = gd_mesh::profile::triangulate_profile(&points, plane) {
                     part.mesh = mesh;
                 }
 
@@ -138,7 +135,7 @@ pub fn execute_batch_command(
             part.profile_points = Some(points_2d.clone());
             part.profile_plane = Some(plane);
             part.profile_holes = holes;
-            if let Some(mesh) = crate::core::mesh::profile::triangulate_profile(&points_2d, plane) {
+            if let Some(mesh) = gd_mesh::profile::triangulate_profile(&points_2d, plane) {
                 part.mesh = mesh;
             }
 
@@ -176,10 +173,9 @@ pub fn execute_batch_command(
                 None if profile.len() >= 8 => 0.15,
                 None => 0.0,
             };
-            let mesh = crate::core::mesh::extrude::extrude_with_inset(
-                &profile, plane, depth, segments, inset,
-            )
-            .ok_or_else(|| miette!("Command {index}: extrude failed"))?;
+            let mesh =
+                gd_mesh::extrude::extrude_with_inset(&profile, plane, depth, segments, inset)
+                    .ok_or_else(|| miette!("Command {index}: extrude failed"))?;
             let vc = mesh.vertex_count();
             let fc = mesh.face_count();
             state.active_part_mut()?.mesh = mesh;
@@ -213,14 +209,8 @@ pub fn execute_batch_command(
             };
 
             let part = state.active_part_mut()?;
-            let count = crate::core::mesh::taper::taper(
-                &mut part.mesh,
-                axis_idx,
-                start,
-                end,
-                midpoint,
-                range,
-            );
+            let count =
+                gd_mesh::taper::taper(&mut part.mesh, axis_idx, start, end, midpoint, range);
 
             save_push_active(state, root)?;
             Ok(ok_result(
@@ -242,11 +232,11 @@ pub fn execute_batch_command(
 
             let where_expr = cmd["where"].as_str();
             let spatial = where_expr
-                .map(crate::core::mesh::spatial_filter::parse_where)
+                .map(gd_mesh::spatial_filter::parse_where)
                 .transpose()?;
 
             let part = state.active_part_mut()?;
-            let beveled = crate::core::mesh::bevel::bevel_with_profile(
+            let beveled = gd_mesh::bevel::bevel_with_profile(
                 &part.mesh,
                 radius,
                 segments,
@@ -275,7 +265,7 @@ pub fn execute_batch_command(
                 .map_or_else(|| state.active.clone(), String::from);
 
             let part = state.resolve_part_mut(cmd["part"].as_str())?;
-            let result_mesh = crate::core::mesh::subdivide::subdivide(&part.mesh, iterations);
+            let result_mesh = gd_mesh::subdivide::subdivide(&part.mesh, iterations);
             let vc = result_mesh.vertex_count();
             let fc = result_mesh.face_count();
             part.mesh = result_mesh;
@@ -305,8 +295,7 @@ pub fn execute_batch_command(
                 .map_or_else(|| state.active.clone(), String::from);
 
             let part = state.resolve_part_mut(cmd["part"].as_str())?;
-            let (result_mesh, splits) =
-                crate::core::mesh::loop_cut::loop_cut(&part.mesh, axis_idx, at);
+            let (result_mesh, splits) = gd_mesh::loop_cut::loop_cut(&part.mesh, axis_idx, at);
             let vc = result_mesh.vertex_count();
             part.mesh = result_mesh;
 
@@ -360,9 +349,9 @@ pub fn execute_batch_command(
                 _ => "subtract",
             });
             let mode = match mode_str {
-                "union" => crate::core::mesh::boolean::BooleanMode::Union,
-                "intersect" => crate::core::mesh::boolean::BooleanMode::Intersect,
-                _ => crate::core::mesh::boolean::BooleanMode::Subtract,
+                "union" => gd_mesh::boolean::BooleanMode::Union,
+                "intersect" => gd_mesh::boolean::BooleanMode::Intersect,
+                _ => gd_mesh::boolean::BooleanMode::Subtract,
             };
 
             #[allow(clippy::cast_possible_truncation)]
@@ -391,12 +380,7 @@ pub fn execute_batch_command(
                     offset[1] + spacing[1] * k as f64,
                     offset[2] + spacing[2] * k as f64,
                 ];
-                current = crate::core::mesh::boolean::boolean_op(
-                    &current,
-                    &tool_world,
-                    iter_offset,
-                    mode,
-                );
+                current = gd_mesh::boolean::boolean_op(&current, &tool_world, iter_offset, mode);
             }
 
             // Transform result back to target's local coordinate space
@@ -423,13 +407,12 @@ pub fn execute_batch_command(
             let where_str = cmd["where"]
                 .as_str()
                 .ok_or_else(|| miette!("Command {index}: extrude-face needs 'where'"))?;
-            let sf = crate::core::mesh::spatial_filter::parse_where(where_str)?;
+            let sf = gd_mesh::spatial_filter::parse_where(where_str)?;
             let part = state.active_part_mut()?;
             let selected: Vec<usize> = (0..part.mesh.faces.len())
-                .filter(|&fi| crate::core::mesh::spatial_filter::face_matches(&part.mesh, fi, &sf))
+                .filter(|&fi| gd_mesh::spatial_filter::face_matches(&part.mesh, fi, &sf))
                 .collect();
-            let result =
-                crate::core::mesh::extrude_face::extrude_faces(&part.mesh, depth, &selected);
+            let result = gd_mesh::extrude_face::extrude_faces(&part.mesh, depth, &selected);
             let vc = result.vertex_count();
             let fc = result.face_count();
             part.mesh = result;
@@ -449,18 +432,16 @@ pub fn execute_batch_command(
             let factor = cmd["factor"].as_f64().unwrap_or(0.2);
             let where_expr = cmd["where"].as_str();
             let spatial = where_expr
-                .map(crate::core::mesh::spatial_filter::parse_where)
+                .map(gd_mesh::spatial_filter::parse_where)
                 .transpose()?;
             let part = state.active_part_mut()?;
             let result = if let Some(ref sf) = spatial {
                 let selected: Vec<usize> = (0..part.mesh.faces.len())
-                    .filter(|&fi| {
-                        crate::core::mesh::spatial_filter::face_matches(&part.mesh, fi, sf)
-                    })
+                    .filter(|&fi| gd_mesh::spatial_filter::face_matches(&part.mesh, fi, sf))
                     .collect();
-                crate::core::mesh::inset::inset_selected(&part.mesh, factor, Some(&selected))
+                gd_mesh::inset::inset_selected(&part.mesh, factor, Some(&selected))
             } else {
-                crate::core::mesh::inset::inset(&part.mesh, factor)
+                gd_mesh::inset::inset(&part.mesh, factor)
             };
             let vc = result.vertex_count();
             let fc = result.face_count();
@@ -481,7 +462,7 @@ pub fn execute_batch_command(
                 .as_f64()
                 .ok_or_else(|| miette!("Command {index}: solidify needs 'thickness'"))?;
             let part = state.active_part_mut()?;
-            let result = crate::core::mesh::solidify::solidify(&part.mesh, thickness);
+            let result = gd_mesh::solidify::solidify(&part.mesh, thickness);
             let vc = result.vertex_count();
             let fc = result.face_count();
             part.mesh = result;
@@ -499,8 +480,7 @@ pub fn execute_batch_command(
         "merge-verts" => {
             let distance = cmd["distance"].as_f64().unwrap_or(0.001);
             let part = state.active_part_mut()?;
-            let (result, merged) =
-                crate::core::mesh::merge::merge_by_distance(&part.mesh, distance);
+            let (result, merged) = gd_mesh::merge::merge_by_distance(&part.mesh, distance);
             let vc = result.vertex_count();
             let fc = result.face_count();
             part.mesh = result;
@@ -527,7 +507,7 @@ pub fn execute_batch_command(
                 .ok_or_else(|| miette!("Command {index}: array needs 'offset'"))?;
             let (x, y, z) = super::parse_3d(offset_str)?;
             let part = state.active_part_mut()?;
-            let result = crate::core::mesh::array::array(&part.mesh, count, [x, y, z]);
+            let result = gd_mesh::array::array(&part.mesh, count, [x, y, z]);
             let vc = result.vertex_count();
             let fc = result.face_count();
             part.mesh = result;
@@ -970,7 +950,7 @@ pub fn execute_batch_command(
 
             if let Some(axis_str) = mirror_axis {
                 let axis_idx = parse_axis(axis_str, index)?;
-                crate::core::mesh::mirror::mirror(&mut new_part.mesh, axis_idx);
+                gd_mesh::mirror::mirror(&mut new_part.mesh, axis_idx);
                 new_part.transform.position[axis_idx] = -new_part.transform.position[axis_idx];
             }
 
@@ -1017,10 +997,8 @@ pub fn execute_batch_command(
                 (p, k)
             };
 
-            let mesh = crate::core::mesh::revolve::revolve(
-                &profile, plane, axis_idx, degrees, segments, cap,
-            )
-            .ok_or_else(|| miette!("Command {index}: revolve failed"))?;
+            let mesh = gd_mesh::revolve::revolve(&profile, plane, axis_idx, degrees, segments, cap)
+                .ok_or_else(|| miette!("Command {index}: revolve failed"))?;
             let vc = mesh.vertex_count();
             let fc = mesh.face_count();
             state.active_part_mut()?.mesh = mesh;

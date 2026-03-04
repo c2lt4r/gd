@@ -1,5 +1,5 @@
-use crate::cprintln;
 use clap::{Args, Subcommand};
+use gd_core::cprintln;
 use miette::Result;
 
 #[derive(Args)]
@@ -578,7 +578,7 @@ fn dry_run_suffix(applied: bool) -> &'static str {
     if applied { "" } else { " (dry run)" }
 }
 
-fn print_rename_human(r: &crate::lsp::query::RenameOutput) {
+fn print_rename_human(r: &gd_lsp::query::RenameOutput) {
     use owo_colors::OwoColorize;
     if let Some(ref summary) = r.summary {
         // Applied: show summary
@@ -620,7 +620,7 @@ fn print_rename_human(r: &crate::lsp::query::RenameOutput) {
     }
 }
 
-fn print_delete_symbol_human(r: &crate::lsp::refactor::DeleteSymbolOutput) {
+fn print_delete_symbol_human(r: &gd_lsp::refactor::DeleteSymbolOutput) {
     use owo_colors::OwoColorize;
     cprintln!(
         "{} {} {} (lines {}-{}){}",
@@ -643,7 +643,7 @@ fn print_delete_symbol_human(r: &crate::lsp::refactor::DeleteSymbolOutput) {
     }
 }
 
-fn print_move_symbol_human(r: &crate::lsp::refactor::MoveSymbolOutput) {
+fn print_move_symbol_human(r: &gd_lsp::refactor::MoveSymbolOutput) {
     use owo_colors::OwoColorize;
     cprintln!(
         "Moved {} ({}) from {} {} {}{}",
@@ -673,7 +673,7 @@ fn print_move_symbol_human(r: &crate::lsp::refactor::MoveSymbolOutput) {
     }
 }
 
-fn print_extract_method_human(r: &crate::lsp::refactor::ExtractMethodOutput) {
+fn print_extract_method_human(r: &gd_lsp::refactor::ExtractMethodOutput) {
     use owo_colors::OwoColorize;
     cprintln!(
         "Extracted into {}() in {}{}",
@@ -686,7 +686,7 @@ fn print_extract_method_human(r: &crate::lsp::refactor::ExtractMethodOutput) {
     }
 }
 
-fn print_inline_method_human(r: &crate::lsp::refactor::InlineMethodOutput) {
+fn print_inline_method_human(r: &gd_lsp::refactor::InlineMethodOutput) {
     use owo_colors::OwoColorize;
     cprintln!(
         "Inlined {}() at {}:{} ({} line{}){}",
@@ -708,7 +708,7 @@ fn print_inline_method_human(r: &crate::lsp::refactor::InlineMethodOutput) {
     }
 }
 
-fn print_inline_method_by_name_human(r: &crate::lsp::refactor::InlineMethodByNameOutput) {
+fn print_inline_method_by_name_human(r: &gd_lsp::refactor::InlineMethodByNameOutput) {
     use owo_colors::OwoColorize;
     cprintln!(
         "Inlined {}() in {} ({} call site{}){}",
@@ -726,7 +726,7 @@ fn print_inline_method_by_name_human(r: &crate::lsp::refactor::InlineMethodByNam
     }
 }
 
-fn print_inline_variable_human(r: &crate::lsp::refactor::InlineVariableOutput) {
+fn print_inline_variable_human(r: &gd_lsp::refactor::InlineVariableOutput) {
     use owo_colors::OwoColorize;
     cprintln!(
         "Inlined {} = {} ({} usage{}, line {}) in {}{}",
@@ -743,7 +743,7 @@ fn print_inline_variable_human(r: &crate::lsp::refactor::InlineVariableOutput) {
     }
 }
 
-fn print_inline_delegate_human(r: &crate::lsp::refactor::InlineDelegateOutput) {
+fn print_inline_delegate_human(r: &gd_lsp::refactor::InlineDelegateOutput) {
     use owo_colors::OwoColorize;
     cprintln!(
         "Inlined delegate {}() {} {}() ({} call site{}){}",
@@ -762,7 +762,7 @@ fn print_inline_delegate_human(r: &crate::lsp::refactor::InlineDelegateOutput) {
     }
 }
 
-fn print_introduce_variable_human(r: &crate::lsp::refactor::IntroduceVariableOutput) {
+fn print_introduce_variable_human(r: &gd_lsp::refactor::IntroduceVariableOutput) {
     use owo_colors::OwoColorize;
     let keyword = if r.is_const { "const" } else { "var" };
     let type_suffix = r
@@ -786,7 +786,7 @@ fn print_introduce_variable_human(r: &crate::lsp::refactor::IntroduceVariableOut
     }
 }
 
-fn print_introduce_parameter_human(r: &crate::lsp::refactor::IntroduceParameterOutput) {
+fn print_introduce_parameter_human(r: &gd_lsp::refactor::IntroduceParameterOutput) {
     use owo_colors::OwoColorize;
     cprintln!(
         "Added parameter {} to {}() in {}{}",
@@ -797,7 +797,7 @@ fn print_introduce_parameter_human(r: &crate::lsp::refactor::IntroduceParameterO
     );
 }
 
-fn print_invert_if_human(r: &crate::lsp::refactor::InvertIfOutput) {
+fn print_invert_if_human(r: &gd_lsp::refactor::InvertIfOutput) {
     use owo_colors::OwoColorize;
     cprintln!(
         "Inverted if at {}:{} ({} {} {}){}",
@@ -810,7 +810,7 @@ fn print_invert_if_human(r: &crate::lsp::refactor::InvertIfOutput) {
     );
 }
 
-fn print_convert_node_path_human(r: &crate::lsp::refactor::ConvertNodePathOutput) {
+fn print_convert_node_path_human(r: &gd_lsp::refactor::ConvertNodePathOutput) {
     use owo_colors::OwoColorize;
     cprintln!(
         "Converted {} {} {} in {}:{}{}",
@@ -823,7 +823,7 @@ fn print_convert_node_path_human(r: &crate::lsp::refactor::ConvertNodePathOutput
     );
 }
 
-fn print_convert_onready_human(r: &crate::lsp::refactor::ConvertOnreadyOutput) {
+fn print_convert_onready_human(r: &gd_lsp::refactor::ConvertOnreadyOutput) {
     use owo_colors::OwoColorize;
     let dir = if r.direction == "to-ready" {
         "@onready → _ready()"
@@ -840,7 +840,7 @@ fn print_convert_onready_human(r: &crate::lsp::refactor::ConvertOnreadyOutput) {
     );
 }
 
-fn print_encapsulate_field_human(r: &crate::lsp::refactor::EncapsulateFieldOutput) {
+fn print_encapsulate_field_human(r: &gd_lsp::refactor::EncapsulateFieldOutput) {
     use owo_colors::OwoColorize;
     cprintln!(
         "Encapsulated {} ({}) in {}:{}{}",
@@ -855,7 +855,7 @@ fn print_encapsulate_field_human(r: &crate::lsp::refactor::EncapsulateFieldOutpu
     }
 }
 
-fn print_convert_signal_human(r: &crate::lsp::refactor::ConvertSignalOutput) {
+fn print_convert_signal_human(r: &gd_lsp::refactor::ConvertSignalOutput) {
     use owo_colors::OwoColorize;
     let dir = if r.direction == "to-code" {
         "scene → code"
@@ -875,7 +875,7 @@ fn print_convert_signal_human(r: &crate::lsp::refactor::ConvertSignalOutput) {
     );
 }
 
-fn print_extract_guards_human(r: &crate::lsp::refactor::ExtractGuardsOutput) {
+fn print_extract_guards_human(r: &gd_lsp::refactor::ExtractGuardsOutput) {
     use owo_colors::OwoColorize;
     cprintln!(
         "Extracted {} guard{} in {} ({}){}",
@@ -897,7 +897,7 @@ fn print_extract_guards_human(r: &crate::lsp::refactor::ExtractGuardsOutput) {
     }
 }
 
-fn print_split_declaration_human(r: &crate::lsp::refactor::SplitDeclarationOutput) {
+fn print_split_declaration_human(r: &gd_lsp::refactor::SplitDeclarationOutput) {
     use owo_colors::OwoColorize;
     cprintln!(
         "Split {} at {}:{}{}",
@@ -908,7 +908,7 @@ fn print_split_declaration_human(r: &crate::lsp::refactor::SplitDeclarationOutpu
     );
 }
 
-fn print_join_declaration_human(r: &crate::lsp::refactor::JoinDeclarationOutput) {
+fn print_join_declaration_human(r: &gd_lsp::refactor::JoinDeclarationOutput) {
     use owo_colors::OwoColorize;
     cprintln!(
         "Joined {} at {}:{}{}",
@@ -919,7 +919,7 @@ fn print_join_declaration_human(r: &crate::lsp::refactor::JoinDeclarationOutput)
     );
 }
 
-fn print_bulk_delete_human(r: &crate::lsp::refactor::BulkDeleteSymbolOutput) {
+fn print_bulk_delete_human(r: &gd_lsp::refactor::BulkDeleteSymbolOutput) {
     use owo_colors::OwoColorize;
     if !r.deleted.is_empty() {
         let names: Vec<&str> = r.deleted.iter().map(|d| d.name.as_str()).collect();
@@ -937,7 +937,7 @@ fn print_bulk_delete_human(r: &crate::lsp::refactor::BulkDeleteSymbolOutput) {
     }
 }
 
-fn print_bulk_rename_human(r: &crate::lsp::refactor::BulkRenameOutput) {
+fn print_bulk_rename_human(r: &gd_lsp::refactor::BulkRenameOutput) {
     use owo_colors::OwoColorize;
     if !r.renames.is_empty() {
         let pairs: Vec<String> = r
@@ -970,7 +970,7 @@ fn print_bulk_rename_human(r: &crate::lsp::refactor::BulkRenameOutput) {
     }
 }
 
-fn print_extract_class_human(r: &crate::lsp::refactor::ExtractClassOutput) {
+fn print_extract_class_human(r: &gd_lsp::refactor::ExtractClassOutput) {
     use owo_colors::OwoColorize;
     let names: Vec<&str> = r.extracted.iter().map(|s| s.name.as_str()).collect();
     cprintln!(
@@ -988,7 +988,7 @@ fn print_extract_class_human(r: &crate::lsp::refactor::ExtractClassOutput) {
     }
 }
 
-fn print_extract_superclass_human(r: &crate::lsp::refactor::ExtractSuperclassOutput) {
+fn print_extract_superclass_human(r: &gd_lsp::refactor::ExtractSuperclassOutput) {
     use owo_colors::OwoColorize;
     let names: Vec<&str> = r.extracted.iter().map(|s| s.name.as_str()).collect();
     cprintln!(
@@ -1010,7 +1010,7 @@ fn print_extract_superclass_human(r: &crate::lsp::refactor::ExtractSuperclassOut
     }
 }
 
-fn print_pull_up_member_human(r: &crate::lsp::refactor::PullUpMemberOutput) {
+fn print_pull_up_member_human(r: &gd_lsp::refactor::PullUpMemberOutput) {
     use owo_colors::OwoColorize;
     cprintln!(
         "{} {} ({}) from {} {} {} (parent: {}){}",
@@ -1032,7 +1032,7 @@ fn print_pull_up_member_human(r: &crate::lsp::refactor::PullUpMemberOutput) {
     }
 }
 
-fn print_push_down_member_human(r: &crate::lsp::refactor::PushDownMemberOutput) {
+fn print_push_down_member_human(r: &gd_lsp::refactor::PushDownMemberOutput) {
     use owo_colors::OwoColorize;
     let applied_targets: Vec<&str> = r
         .targets
@@ -1065,7 +1065,7 @@ fn print_push_down_member_human(r: &crate::lsp::refactor::PushDownMemberOutput) 
     }
 }
 
-fn print_safe_delete_file_human(r: &crate::lsp::query::SafeDeleteFileOutput) {
+fn print_safe_delete_file_human(r: &gd_lsp::query::SafeDeleteFileOutput) {
     use owo_colors::OwoColorize;
     if r.references.is_empty() {
         if r.deleted {
@@ -1097,7 +1097,7 @@ fn print_safe_delete_file_human(r: &crate::lsp::query::SafeDeleteFileOutput) {
     }
 }
 
-fn print_move_file_human(r: &crate::lsp::refactor::MoveFileOutput) {
+fn print_move_file_human(r: &gd_lsp::refactor::MoveFileOutput) {
     use owo_colors::OwoColorize;
     let total = r.updated_scripts.len() + r.updated_resources.len();
     cprintln!(
@@ -1124,7 +1124,7 @@ fn print_move_file_human(r: &crate::lsp::refactor::MoveFileOutput) {
     }
 }
 
-fn print_change_signature_human(r: &crate::lsp::refactor::ChangeSignatureOutput) {
+fn print_change_signature_human(r: &gd_lsp::refactor::ChangeSignatureOutput) {
     use owo_colors::OwoColorize;
     cprintln!(
         "{} {} {} ({} call site{}){}",
@@ -1140,7 +1140,7 @@ fn print_change_signature_human(r: &crate::lsp::refactor::ChangeSignatureOutput)
     }
 }
 
-fn print_undo_list_human(entries: &[crate::lsp::refactor::UndoEntry]) {
+fn print_undo_list_human(entries: &[gd_lsp::refactor::UndoEntry]) {
     use owo_colors::OwoColorize;
     if entries.is_empty() {
         cprintln!("No undo entries.");
@@ -1165,7 +1165,7 @@ fn print_undo_list_human(entries: &[crate::lsp::refactor::UndoEntry]) {
     }
 }
 
-fn print_undo_human(entry: &crate::lsp::refactor::UndoEntry, dry_run: bool) {
+fn print_undo_human(entry: &gd_lsp::refactor::UndoEntry, dry_run: bool) {
     use owo_colors::OwoColorize;
     cprintln!(
         "{} {} {}{}",
@@ -1192,7 +1192,7 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
             format,
         } => {
             let mut result = if let Some(ref sym_name) = name {
-                crate::lsp::query::query_rename_by_name(sym_name, &new_name, file.as_deref())?
+                gd_lsp::query::query_rename_by_name(sym_name, &new_name, file.as_deref())?
             } else {
                 let file_str = file
                     .as_deref()
@@ -1201,7 +1201,7 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
                     .ok_or_else(|| miette::miette!("--line is required when not using --name"))?;
                 let column = column
                     .ok_or_else(|| miette::miette!("--column is required when not using --name"))?;
-                crate::lsp::query::query_rename(file_str, line, column, &new_name)?
+                gd_lsp::query::query_rename(file_str, line, column, &new_name)?
             };
 
             if !dry_run {
@@ -1212,7 +1212,7 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
                 } else {
                     std::env::current_dir().map_err(|e| miette::miette!("{e}"))?
                 };
-                let project_root = crate::core::config::find_project_root(&anchor)
+                let project_root = gd_core::config::find_project_root(&anchor)
                     .ok_or_else(|| miette::miette!("no project.godot found"))?;
 
                 // Snapshot affected files for undo before applying
@@ -1225,10 +1225,10 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
                     }
                 }
 
-                let count = crate::lsp::query::apply_rename(&result, &project_root)?;
+                let count = gd_lsp::query::apply_rename(&result, &project_root)?;
 
                 // Record undo
-                let stack = crate::lsp::refactor::UndoStack::open(&project_root);
+                let stack = gd_lsp::refactor::UndoStack::open(&project_root);
                 let _ = stack.record(
                     "rename",
                     &format!("rename {} → {}", result.symbol, result.new_name),
@@ -1270,7 +1270,7 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
                     ));
                 }
                 let result =
-                    crate::lsp::query::query_bulk_delete_symbol(&file, names_str, force, dry_run)?;
+                    gd_lsp::query::query_bulk_delete_symbol(&file, names_str, force, dry_run)?;
                 if is_json(format.as_ref()) {
                     let json = serde_json::to_string_pretty(&result)
                         .map_err(|e| miette::miette!("{e}"))?;
@@ -1290,7 +1290,7 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
             if name.is_some() && line.is_some() {
                 return Err(miette::miette!("--name and --line are mutually exclusive"));
             }
-            let result = crate::lsp::query::query_delete_symbol(
+            let result = gd_lsp::query::query_delete_symbol(
                 &file,
                 name.as_deref(),
                 line,
@@ -1332,13 +1332,9 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
             } else {
                 let source = std::fs::read_to_string(&from)
                     .map_err(|e| miette::miette!("cannot read {from}: {e}"))?;
-                crate::lsp::refactor::resolve_line_to_name(
-                    &source,
-                    line.unwrap(),
-                    class.as_deref(),
-                )?
+                gd_lsp::refactor::resolve_line_to_name(&source, line.unwrap(), class.as_deref())?
             };
-            let result = crate::lsp::query::query_move_symbol(
+            let result = gd_lsp::query::query_move_symbol(
                 &resolved_name,
                 &from,
                 &to,
@@ -1364,9 +1360,8 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
             dry_run,
             format,
         } => {
-            let result = crate::lsp::query::query_extract_method(
-                &file, start_line, end_line, &name, dry_run,
-            )?;
+            let result =
+                gd_lsp::query::query_extract_method(&file, start_line, end_line, &name, dry_run)?;
             if is_json(format.as_ref()) {
                 let json =
                     serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
@@ -1387,7 +1382,7 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
         } => {
             if let Some(ref func_name) = name {
                 let result =
-                    crate::lsp::query::query_inline_method_by_name(&file, func_name, all, dry_run)?;
+                    gd_lsp::query::query_inline_method_by_name(&file, func_name, all, dry_run)?;
                 if is_json(format.as_ref()) {
                     let json = serde_json::to_string_pretty(&result)
                         .map_err(|e| miette::miette!("{e}"))?;
@@ -1400,7 +1395,7 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
                     .ok_or_else(|| miette::miette!("--line is required when not using --name"))?;
                 let column = column
                     .ok_or_else(|| miette::miette!("--column is required when not using --name"))?;
-                let result = crate::lsp::query::query_inline_method(&file, line, column, dry_run)?;
+                let result = gd_lsp::query::query_inline_method(&file, line, column, dry_run)?;
                 if is_json(format.as_ref()) {
                     let json = serde_json::to_string_pretty(&result)
                         .map_err(|e| miette::miette!("{e}"))?;
@@ -1428,14 +1423,14 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
             let (line, column) = if let Some(ref n) = name {
                 let source = std::fs::read_to_string(&file)
                     .map_err(|e| miette::miette!("cannot read {file}: {e}"))?;
-                crate::lsp::refactor::resolve_name_to_position(&source, n, None)?
+                gd_lsp::refactor::resolve_name_to_position(&source, n, None)?
             } else {
                 let line = line.unwrap();
                 let column = column
                     .ok_or_else(|| miette::miette!("--column is required when using --line"))?;
                 (line, column)
             };
-            let result = crate::lsp::query::query_inline_variable(&file, line, column, dry_run)?;
+            let result = gd_lsp::query::query_inline_variable(&file, line, column, dry_run)?;
             if is_json(format.as_ref()) {
                 let json =
                     serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
@@ -1463,9 +1458,9 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
             } else {
                 let source = std::fs::read_to_string(&file)
                     .map_err(|e| miette::miette!("cannot read {file}: {e}"))?;
-                crate::lsp::refactor::resolve_line_to_name(&source, line.unwrap(), None)?
+                gd_lsp::refactor::resolve_line_to_name(&source, line.unwrap(), None)?
             };
-            let result = crate::lsp::query::query_inline_delegate(&file, &resolved_name, dry_run)?;
+            let result = gd_lsp::query::query_inline_delegate(&file, &resolved_name, dry_run)?;
             if is_json(format.as_ref()) {
                 let json =
                     serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
@@ -1486,7 +1481,7 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
             dry_run,
             format,
         } => {
-            let result = crate::lsp::query::query_introduce_variable(
+            let result = gd_lsp::query::query_introduce_variable(
                 &file,
                 line,
                 column,
@@ -1515,7 +1510,7 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
             dry_run,
             format,
         } => {
-            let result = crate::lsp::query::query_introduce_parameter(
+            let result = gd_lsp::query::query_introduce_parameter(
                 &file,
                 line,
                 column,
@@ -1539,7 +1534,7 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
             dry_run,
             format,
         } => {
-            let result = crate::lsp::query::query_invert_if(&file, line, dry_run)?;
+            let result = gd_lsp::query::query_invert_if(&file, line, dry_run)?;
             if is_json(format.as_ref()) {
                 let json =
                     serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
@@ -1556,7 +1551,7 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
             dry_run,
             format,
         } => {
-            let result = crate::lsp::query::query_convert_node_path(&file, line, column, dry_run)?;
+            let result = gd_lsp::query::query_convert_node_path(&file, line, column, dry_run)?;
             if is_json(format.as_ref()) {
                 let json =
                     serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
@@ -1586,7 +1581,7 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
             } else {
                 let source = std::fs::read_to_string(&file)
                     .map_err(|e| miette::miette!("cannot read {file}: {e}"))?;
-                crate::lsp::refactor::resolve_line_to_name(&source, line.unwrap(), None)?
+                gd_lsp::refactor::resolve_line_to_name(&source, line.unwrap(), None)?
             };
             let direction = match (to_ready, to_onready) {
                 (true, false) => true,
@@ -1597,12 +1592,8 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
                     ));
                 }
             };
-            let result = crate::lsp::query::query_convert_onready(
-                &file,
-                &resolved_name,
-                direction,
-                dry_run,
-            )?;
+            let result =
+                gd_lsp::query::query_convert_onready(&file, &resolved_name, direction, dry_run)?;
             if is_json(format.as_ref()) {
                 let json =
                     serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
@@ -1631,9 +1622,9 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
             } else {
                 let source = std::fs::read_to_string(&file)
                     .map_err(|e| miette::miette!("cannot read {file}: {e}"))?;
-                crate::lsp::refactor::resolve_line_to_name(&source, line.unwrap(), None)?
+                gd_lsp::refactor::resolve_line_to_name(&source, line.unwrap(), None)?
             };
-            let result = crate::lsp::query::query_encapsulate_field(
+            let result = gd_lsp::query::query_encapsulate_field(
                 &file,
                 &resolved_name,
                 backing_field,
@@ -1667,7 +1658,7 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
                     ));
                 }
             };
-            let result = crate::lsp::query::query_convert_signal(
+            let result = gd_lsp::query::query_convert_signal(
                 &file, &signal, &from, &method, direction, dry_run,
             )?;
             if is_json(format.as_ref()) {
@@ -1697,9 +1688,9 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
             } else {
                 let source = std::fs::read_to_string(&file)
                     .map_err(|e| miette::miette!("cannot read {file}: {e}"))?;
-                crate::lsp::refactor::resolve_line_to_name(&source, line.unwrap(), None)?
+                gd_lsp::refactor::resolve_line_to_name(&source, line.unwrap(), None)?
             };
-            let result = crate::lsp::query::query_extract_guards(&file, &resolved_name, dry_run)?;
+            let result = gd_lsp::query::query_extract_guards(&file, &resolved_name, dry_run)?;
             if is_json(format.as_ref()) {
                 let json =
                     serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
@@ -1725,11 +1716,11 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
             let line = if let Some(ref n) = name {
                 let source = std::fs::read_to_string(&file)
                     .map_err(|e| miette::miette!("cannot read {file}: {e}"))?;
-                crate::lsp::refactor::resolve_name_to_position(&source, n, None)?.0
+                gd_lsp::refactor::resolve_name_to_position(&source, n, None)?.0
             } else {
                 line.unwrap()
             };
-            let result = crate::lsp::query::query_split_declaration(&file, line, dry_run)?;
+            let result = gd_lsp::query::query_split_declaration(&file, line, dry_run)?;
             if is_json(format.as_ref()) {
                 let json =
                     serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
@@ -1755,11 +1746,11 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
             let line = if let Some(ref n) = name {
                 let source = std::fs::read_to_string(&file)
                     .map_err(|e| miette::miette!("cannot read {file}: {e}"))?;
-                crate::lsp::refactor::resolve_name_to_position(&source, n, None)?.0
+                gd_lsp::refactor::resolve_name_to_position(&source, n, None)?.0
             } else {
                 line.unwrap()
             };
-            let result = crate::lsp::query::query_join_declaration(&file, line, dry_run)?;
+            let result = gd_lsp::query::query_join_declaration(&file, line, dry_run)?;
             if is_json(format.as_ref()) {
                 let json =
                     serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
@@ -1777,7 +1768,7 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
             format,
         } => {
             let result =
-                crate::lsp::query::query_bulk_rename(&file, &renames, scope.as_deref(), dry_run)?;
+                gd_lsp::query::query_bulk_rename(&file, &renames, scope.as_deref(), dry_run)?;
             if is_json(format.as_ref()) {
                 let json =
                     serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
@@ -1794,7 +1785,7 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
             dry_run,
             format,
         } => {
-            let result = crate::lsp::query::query_extract_class(&file, &symbols, &to, dry_run)?;
+            let result = gd_lsp::query::query_extract_class(&file, &symbols, &to, dry_run)?;
             if is_json(format.as_ref()) {
                 let json =
                     serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
@@ -1812,7 +1803,7 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
             dry_run,
             format,
         } => {
-            let result = crate::lsp::query::query_extract_superclass(
+            let result = gd_lsp::query::query_extract_superclass(
                 &file,
                 &symbols,
                 &to,
@@ -1834,7 +1825,7 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
             dry_run,
             format,
         } => {
-            let result = crate::lsp::query::query_safe_delete_file(&file, force, dry_run)?;
+            let result = gd_lsp::query::query_safe_delete_file(&file, force, dry_run)?;
             if is_json(format.as_ref()) {
                 let json =
                     serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
@@ -1853,7 +1844,7 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
             dry_run,
             format,
         } => {
-            let result = crate::lsp::query::query_move_file(&from, &to, dry_run)?;
+            let result = gd_lsp::query::query_move_file(&from, &to, dry_run)?;
             if is_json(format.as_ref()) {
                 let json =
                     serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
@@ -1886,13 +1877,9 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
             } else {
                 let source = std::fs::read_to_string(&file)
                     .map_err(|e| miette::miette!("cannot read {file}: {e}"))?;
-                crate::lsp::refactor::resolve_line_to_name(
-                    &source,
-                    line.unwrap(),
-                    class.as_deref(),
-                )?
+                gd_lsp::refactor::resolve_line_to_name(&source, line.unwrap(), class.as_deref())?
             };
-            let result = crate::lsp::query::query_change_signature(
+            let result = gd_lsp::query::query_change_signature(
                 &file,
                 &resolved_name,
                 &add_param,
@@ -1929,9 +1916,9 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
             } else {
                 let source = std::fs::read_to_string(&file)
                     .map_err(|e| miette::miette!("cannot read {file}: {e}"))?;
-                crate::lsp::refactor::resolve_line_to_name(&source, line.unwrap(), None)?
+                gd_lsp::refactor::resolve_line_to_name(&source, line.unwrap(), None)?
             };
-            let result = crate::lsp::query::query_pull_up_member(&file, &resolved_name, dry_run)?;
+            let result = gd_lsp::query::query_pull_up_member(&file, &resolved_name, dry_run)?;
             if is_json(format.as_ref()) {
                 let json =
                     serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
@@ -1961,13 +1948,13 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
             } else {
                 let source = std::fs::read_to_string(&file)
                     .map_err(|e| miette::miette!("cannot read {file}: {e}"))?;
-                crate::lsp::refactor::resolve_line_to_name(&source, line.unwrap(), None)?
+                gd_lsp::refactor::resolve_line_to_name(&source, line.unwrap(), None)?
             };
             let targets: Vec<String> = to
                 .as_deref()
                 .map(|s| s.split(',').map(|t| t.trim().to_string()).collect())
                 .unwrap_or_default();
-            let result = crate::lsp::query::query_push_down_member(
+            let result = gd_lsp::query::query_push_down_member(
                 &file,
                 &resolved_name,
                 &targets,
@@ -1990,7 +1977,7 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
             format,
         } => {
             if list {
-                let entries = crate::lsp::query::query_undo_list()?;
+                let entries = gd_lsp::query::query_undo_list()?;
                 if is_json(format.as_ref()) {
                     let json = serde_json::to_string_pretty(&entries)
                         .map_err(|e| miette::miette!("{e}"))?;
@@ -1999,7 +1986,7 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
                     print_undo_list_human(&entries);
                 }
             } else {
-                let entry = crate::lsp::query::query_undo(id, dry_run)?;
+                let entry = gd_lsp::query::query_undo(id, dry_run)?;
                 if is_json(format.as_ref()) {
                     let json =
                         serde_json::to_string_pretty(&entry).map_err(|e| miette::miette!("{e}"))?;

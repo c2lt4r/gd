@@ -5,9 +5,9 @@ use owo_colors::OwoColorize;
 
 use super::gdscript;
 use super::{DescribeArgs, OutputFormat, project_root, run_eval};
-use crate::core::mesh::MeshState;
-use crate::core::mesh::spatial;
-use crate::cprintln;
+use gd_core::cprintln;
+use gd_mesh::MeshState;
+use gd_mesh::spatial;
 
 #[expect(clippy::too_many_lines)]
 pub fn cmd_describe(args: &DescribeArgs) -> Result<()> {

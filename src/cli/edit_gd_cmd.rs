@@ -1,7 +1,7 @@
 use std::io::{IsTerminal, Read};
 
-use crate::cprintln;
 use clap::{Args, Subcommand};
+use gd_core::cprintln;
 use miette::Result;
 
 #[derive(Args)]
@@ -147,7 +147,7 @@ fn dry_run_suffix(applied: bool) -> &'static str {
     if applied { "" } else { " (dry run)" }
 }
 
-fn print_edit_human(r: &crate::lsp::refactor::EditOutput) {
+fn print_edit_human(r: &gd_lsp::refactor::EditOutput) {
     use owo_colors::OwoColorize;
     let verb = match r.operation {
         "replace_body" => "Replaced body of",
@@ -173,7 +173,7 @@ fn print_edit_human(r: &crate::lsp::refactor::EditOutput) {
     }
 }
 
-fn print_create_file_human(r: &crate::lsp::query::CreateFileOutput) {
+fn print_create_file_human(r: &gd_lsp::query::CreateFileOutput) {
     use owo_colors::OwoColorize;
     let class_part = r
         .class_name
@@ -299,7 +299,7 @@ pub fn exec(args: EditGdArgs) -> Result<()> {
             } else {
                 None
             };
-            let result = crate::lsp::query::query_create_file(
+            let result = gd_lsp::query::query_create_file(
                 &file,
                 &extends,
                 class_name.as_deref(),
@@ -326,7 +326,7 @@ pub fn exec(args: EditGdArgs) -> Result<()> {
             format,
         } => {
             let content = read_content(input_file.as_deref())?;
-            let result = crate::lsp::query::query_replace_body(
+            let result = gd_lsp::query::query_replace_body(
                 &file,
                 &name,
                 class.as_deref(),
@@ -363,7 +363,7 @@ pub fn exec(args: EditGdArgs) -> Result<()> {
                 }
             };
             let content = read_content(input_file.as_deref())?;
-            let result = crate::lsp::query::query_insert(
+            let result = gd_lsp::query::query_insert(
                 &file,
                 &anchor,
                 is_after,
@@ -391,7 +391,7 @@ pub fn exec(args: EditGdArgs) -> Result<()> {
             format,
         } => {
             let content = read_content(input_file.as_deref())?;
-            let result = crate::lsp::query::query_replace_symbol(
+            let result = gd_lsp::query::query_replace_symbol(
                 &file,
                 &name,
                 class.as_deref(),
@@ -428,9 +428,8 @@ pub fn exec(args: EditGdArgs) -> Result<()> {
                 (s, e)
             };
             let content = read_content(input_file.as_deref())?;
-            let result = crate::lsp::query::query_edit_range(
-                &file, start, end, &content, no_format, dry_run,
-            )?;
+            let result =
+                gd_lsp::query::query_edit_range(&file, start, end, &content, no_format, dry_run)?;
             if is_json(format.as_ref()) {
                 let json =
                     serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;

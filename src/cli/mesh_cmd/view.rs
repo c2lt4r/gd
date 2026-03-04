@@ -5,7 +5,7 @@ use owo_colors::OwoColorize;
 
 use super::gdscript;
 use super::{OutputFormat, ViewArgs, run_eval};
-use crate::{ceprintln, cprintln};
+use gd_core::{ceprintln, cprintln};
 
 /// Capture a screenshot from a named camera. Returns (view_name, file_path).
 fn capture_view(

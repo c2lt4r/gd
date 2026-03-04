@@ -1,10 +1,10 @@
 use miette::Result;
 use owo_colors::OwoColorize;
 
-use crate::core::mesh::{MeshState, Transform3D};
+use gd_mesh::{MeshState, Transform3D};
 
 use super::{OutputFormat, RotateArgs, inject_stats, parse_3d, project_root, run_eval};
-use crate::cprintln;
+use gd_core::cprintln;
 
 pub fn cmd_rotate(args: &RotateArgs) -> Result<()> {
     if let Some(ref group_name) = args.group {

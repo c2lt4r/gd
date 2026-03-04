@@ -1,10 +1,10 @@
 use miette::Result;
 use owo_colors::OwoColorize;
 
-use crate::core::mesh::MeshState;
+use gd_mesh::MeshState;
 
 use super::{LoopCutArgs, OutputFormat, inject_stats, project_root, run_eval};
-use crate::cprintln;
+use gd_core::cprintln;
 
 pub fn cmd_loop_cut(args: &LoopCutArgs) -> Result<()> {
     let root = project_root()?;
@@ -15,8 +15,7 @@ pub fn cmd_loop_cut(args: &LoopCutArgs) -> Result<()> {
     let part_name = args.part.clone().unwrap_or_else(|| state.active.clone());
 
     let part = state.resolve_part_mut(args.part.as_deref())?;
-    let (result_mesh, splits) =
-        crate::core::mesh::loop_cut::loop_cut(&part.mesh, axis_idx, args.at);
+    let (result_mesh, splits) = gd_mesh::loop_cut::loop_cut(&part.mesh, axis_idx, args.at);
 
     let vc = result_mesh.vertex_count();
     part.mesh = result_mesh;

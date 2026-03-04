@@ -49,9 +49,9 @@ use std::time::Duration;
 use clap::{Args, Subcommand, ValueEnum};
 use miette::{Result, miette};
 
-use crate::core::live_eval::send_eval;
-use crate::core::mesh::MeshState;
-use crate::core::project::GodotProject;
+use crate::cli::live_eval::send_eval;
+use gd_core::project::GodotProject;
+use gd_mesh::MeshState;
 
 thread_local! {
     static CURRENT_COMMAND: RefCell<String> = const { RefCell::new(String::new()) };
@@ -190,11 +190,11 @@ impl Plane {
         }
     }
 
-    fn to_plane_kind(&self) -> crate::core::mesh::PlaneKind {
+    fn to_plane_kind(&self) -> gd_mesh::PlaneKind {
         match self {
-            Self::Front => crate::core::mesh::PlaneKind::Front,
-            Self::Side => crate::core::mesh::PlaneKind::Side,
-            Self::Top => crate::core::mesh::PlaneKind::Top,
+            Self::Front => gd_mesh::PlaneKind::Front,
+            Self::Side => gd_mesh::PlaneKind::Side,
+            Self::Top => gd_mesh::PlaneKind::Top,
         }
     }
 }
@@ -1231,64 +1231,7 @@ fn match_part_pattern<'a>(names: &'a [String], pattern: &str) -> Vec<&'a str> {
     matched
 }
 
-/// Compute per-response stats from mesh state.
-pub fn mesh_stats(state: &MeshState) -> serde_json::Value {
-    let active = &state.active;
-    let mut total_tris_godot: usize = 0;
-    let mut part_faces = 0;
-    let mut part_quads = 0;
-    let mut part_tris = 0;
-    let mut part_ngons = 0;
-    let mut boundary = 0;
-
-    for (name, part) in &state.parts {
-        let mesh = &part.mesh;
-        let mut q = 0usize;
-        let mut t = 0usize;
-        let mut ng = 0usize;
-        let mut godot_tris = 0usize;
-        for f in 0..mesh.face_count() {
-            let n = mesh.face_vertices(f).len();
-            match n {
-                3 => {
-                    t += 1;
-                    godot_tris += 1;
-                }
-                4 => {
-                    q += 1;
-                    godot_tris += 2;
-                }
-                _ => {
-                    ng += 1;
-                    godot_tris += n - 2;
-                }
-            }
-        }
-        total_tris_godot += godot_tris;
-        if name == active {
-            part_faces = mesh.face_count();
-            part_quads = q;
-            part_tris = t;
-            part_ngons = ng;
-            boundary = mesh
-                .half_edges
-                .iter()
-                .filter(|he| he.face.is_none())
-                .count();
-        }
-    }
-
-    serde_json::json!({
-        "active_part": active,
-        "part_faces": part_faces,
-        "part_quads": part_quads,
-        "part_tris": part_tris,
-        "part_ngons": part_ngons,
-        "boundary_edges": boundary,
-        "total_parts": state.parts.len(),
-        "total_tris_godot": total_tris_godot,
-    })
-}
+pub use gd_mesh::mesh_stats;
 
 /// Inject `_stats` into a JSON response object.
 pub fn inject_stats(response: &mut serde_json::Value, state: &MeshState) {
@@ -1302,7 +1245,7 @@ pub fn inject_stats(response: &mut serde_json::Value, state: &MeshState) {
 /// Replaces the old Godot round-trip approach. All primitives are CCW winding,
 /// eliminating the winding mismatch that caused boolean normal inversion.
 pub fn build_primitive_mesh(primitive: &str, state: &mut MeshState) {
-    use crate::core::mesh::primitives;
+    use gd_mesh::primitives;
 
     let mesh = match primitive {
         "cube" => primitives::cube(),

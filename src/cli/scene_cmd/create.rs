@@ -4,7 +4,7 @@ use miette::{Result, miette};
 use owo_colors::OwoColorize;
 
 use super::{CreateArgs, write_or_dry_run};
-use crate::cprintln;
+use gd_core::cprintln;
 
 pub(crate) fn exec_create(args: &CreateArgs) -> Result<()> {
     let path = PathBuf::from(&args.path);

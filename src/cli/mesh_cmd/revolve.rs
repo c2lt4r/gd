@@ -1,10 +1,10 @@
 use miette::{Result, miette};
 use owo_colors::OwoColorize;
 
-use crate::core::mesh::MeshState;
+use gd_mesh::MeshState;
 
 use super::{OutputFormat, RevolveArgs, inject_stats, project_root, run_eval};
-use crate::cprintln;
+use gd_core::cprintln;
 
 pub fn cmd_revolve(args: &RevolveArgs) -> Result<()> {
     let root = project_root()?;
@@ -25,7 +25,7 @@ pub fn cmd_revolve(args: &RevolveArgs) -> Result<()> {
 
     let axis_idx = args.axis.as_index();
 
-    let mesh = crate::core::mesh::revolve::revolve(
+    let mesh = gd_mesh::revolve::revolve(
         &profile,
         plane,
         axis_idx,

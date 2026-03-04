@@ -1,17 +1,17 @@
 use miette::Result;
 use owo_colors::OwoColorize;
 
-use crate::core::mesh::MeshState;
+use gd_mesh::MeshState;
 
 use super::{OutputFormat, SolidifyArgs, inject_stats, project_root, run_eval};
-use crate::cprintln;
+use gd_core::cprintln;
 
 pub fn cmd_solidify(args: &SolidifyArgs) -> Result<()> {
     let root = project_root()?;
     let mut state = MeshState::load(&root)?;
 
     let part = state.active_part_mut()?;
-    let result = crate::core::mesh::solidify::solidify(&part.mesh, args.thickness);
+    let result = gd_mesh::solidify::solidify(&part.mesh, args.thickness);
     let vc = result.vertex_count();
     let fc = result.face_count();
     part.mesh = result;

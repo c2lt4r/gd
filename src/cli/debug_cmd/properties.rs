@@ -7,7 +7,7 @@ use super::args::{
 };
 use super::camera::take_screenshot;
 use super::{daemon_cmd, ensure_binary_debug};
-use crate::cprintln;
+use gd_core::cprintln;
 
 // ── One-shot: set-prop ──────────────────────────────────────────────
 

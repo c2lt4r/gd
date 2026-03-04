@@ -14,5 +14,5 @@ pub struct FmtArgs {
 }
 
 pub fn exec(args: &FmtArgs) -> Result<()> {
-    crate::fmt::run_fmt(&args.paths, args.check, args.diff)
+    gd_fmt::run_fmt(&args.paths, args.check, args.diff)
 }

@@ -4,10 +4,10 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use crate::core::config::Config;
-use crate::core::fs;
-use crate::core::project::GodotProject;
-use crate::{ceprintln, cprintln};
+use gd_core::config::Config;
+use gd_core::fs;
+use gd_core::project::GodotProject;
+use gd_core::{ceprintln, cprintln};
 
 /// Binary names to search for on PATH.
 const GODOT_BINARY_NAMES: &[&str] = &["godot", "godot4", "godot-4"];
@@ -96,7 +96,7 @@ fn resolve_configured_path(path: &Path) -> PathBuf {
 /// Returns the WSL-converted path if found.
 fn find_godot_from_daemon() -> Option<String> {
     let result =
-        crate::lsp::daemon_client::query_daemon("cached_godot_path", serde_json::json!({}), None)?;
+        gd_lsp::daemon_client::query_daemon("cached_godot_path", serde_json::json!({}), None)?;
     let path = result.get("godot_path").and_then(|p| p.as_str())?;
     if path.is_empty() {
         return None;
@@ -480,7 +480,7 @@ pub fn run_project(
     cmd.arg("--path").arg(path_for_godot(&godot, &project.root));
 
     // Always wire up remote debug via daemon (silent — no user-facing port args)
-    let debug_port = match crate::lsp::daemon_client::query_daemon(
+    let debug_port = match gd_lsp::daemon_client::query_daemon(
         "debug_start_server",
         serde_json::json!({}),
         None,
@@ -604,7 +604,7 @@ pub fn run_project(
     // Tell the daemon to accept the debug connection (fire-and-forget)
     if debug_port.is_some() {
         std::thread::spawn(|| {
-            let _ = crate::lsp::daemon_client::query_daemon(
+            let _ = gd_lsp::daemon_client::query_daemon(
                 "debug_accept",
                 serde_json::json!({"timeout": 30}),
                 Some(std::time::Duration::from_secs(35)),
@@ -619,13 +619,10 @@ pub fn run_project(
 
 fn report_game_to_daemon(child: &std::process::Child, eval: bool) {
     let pid = child.id();
-    let _ = crate::lsp::daemon_client::query_daemon(
-        "set_game_pid",
-        serde_json::json!({"pid": pid}),
-        None,
-    );
+    let _ =
+        gd_lsp::daemon_client::query_daemon("set_game_pid", serde_json::json!({"pid": pid}), None);
     if eval {
-        let _ = crate::lsp::daemon_client::query_daemon(
+        let _ = gd_lsp::daemon_client::query_daemon(
             "set_eval_mode",
             serde_json::json!({"enabled": true}),
             None,

@@ -1,11 +1,11 @@
 use miette::Result;
 use owo_colors::OwoColorize;
 
-use crate::core::mesh::MeshState;
-use crate::core::mesh::normals;
+use gd_mesh::MeshState;
+use gd_mesh::normals;
 
 use super::{FixNormalsArgs, OutputFormat, inject_stats, project_root, run_eval};
-use crate::{ceprintln, cprintln};
+use gd_core::{ceprintln, cprintln};
 
 pub fn cmd_fix_normals(args: &FixNormalsArgs) -> Result<()> {
     if args.all {

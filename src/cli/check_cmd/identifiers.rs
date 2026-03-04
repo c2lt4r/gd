@@ -3,8 +3,8 @@ use tree_sitter::Node;
 use super::StructuralError;
 use super::args::{constructor_param_counts, is_builtin_convertible};
 use super::classdb::is_known_type;
-use crate::core::gd_ast::{GdExpr, GdFile};
-use crate::core::workspace_index::ProjectIndex;
+use gd_core::gd_ast::{GdExpr, GdFile};
+use gd_core::workspace_index::ProjectIndex;
 
 // ---------------------------------------------------------------------------
 // Round 6: A1-A4 — Name resolution
@@ -109,9 +109,9 @@ fn check_method_not_found_in_node(
     {
         // Skip known identifiers: user functions, utility functions, constructors, etc.
         let is_known = file.funcs().any(|f| f.name == func_name)
-            || crate::class_db::utility_function(func_name).is_some()
-            || crate::class_db::class_exists(func_name)
-            || crate::core::type_inference::is_builtin_type(func_name)
+            || gd_class_db::utility_function(func_name).is_some()
+            || gd_class_db::class_exists(func_name)
+            || gd_core::type_inference::is_builtin_type(func_name)
             || is_builtin_convertible(func_name)
             || constructor_param_counts(func_name).is_some()
             || matches!(
@@ -155,7 +155,7 @@ fn check_method_not_found_in_node(
                     Some(ext) => resolve_to_classdb_type(ext, project),
                     None => "RefCounted".to_string(),
                 };
-                found = crate::class_db::method_exists(&classdb_ext, func_name);
+                found = gd_class_db::method_exists(&classdb_ext, func_name);
             }
             // Also check inner class functions (if inside an inner class body)
             if !found {
@@ -540,7 +540,7 @@ fn is_identifier_context_ok(
     }
 
     // Utility functions
-    if crate::class_db::utility_function(name).is_some() {
+    if gd_class_db::utility_function(name).is_some() {
         return true;
     }
 
@@ -578,10 +578,10 @@ fn is_identifier_context_ok(
         Some(ext) => resolve_to_classdb_type(ext, project),
         None => "RefCounted".to_string(),
     };
-    if crate::class_db::property_exists(&classdb_ext, name)
-        || crate::class_db::method_exists(&classdb_ext, name)
-        || crate::class_db::constant_exists(&classdb_ext, name)
-        || crate::class_db::signal_exists(&classdb_ext, name)
+    if gd_class_db::property_exists(&classdb_ext, name)
+        || gd_class_db::method_exists(&classdb_ext, name)
+        || gd_class_db::constant_exists(&classdb_ext, name)
+        || gd_class_db::signal_exists(&classdb_ext, name)
     {
         return true;
     }
@@ -592,12 +592,12 @@ fn is_identifier_context_ok(
     }
 
     // Singletons used as identifiers (e.g., passing Input as argument)
-    if crate::class_db::is_singleton(name) {
+    if gd_class_db::is_singleton(name) {
         return true;
     }
 
     // Global scope constants/enums (MOUSE_BUTTON_LEFT, KEY_ESCAPE, TYPE_INT, etc.)
-    if crate::class_db::constant_exists("@GlobalScope", name) {
+    if gd_class_db::constant_exists("@GlobalScope", name) {
         return true;
     }
 
@@ -675,12 +675,12 @@ fn collect_file_const_preloads(file: &GdFile) -> Vec<(String, String)> {
 /// Walk the project extends chain from `ext` (class name or `res://` path) until we find
 /// a ClassDB-known type. Returns the ClassDB ancestor or `ext` itself if already in ClassDB.
 pub(super) fn resolve_to_classdb_type<'a>(ext: &'a str, project: &'a ProjectIndex) -> String {
-    if crate::class_db::class_exists(ext) {
+    if gd_class_db::class_exists(ext) {
         return ext.to_string();
     }
     let chain = project.extends_chain(ext);
     for ancestor in &chain {
-        if crate::class_db::class_exists(ancestor) {
+        if gd_class_db::class_exists(ancestor) {
             return (*ancestor).to_string();
         }
     }
@@ -725,7 +725,7 @@ fn enclosing_inner_class_extends<'a>(node: &Node<'a>, source: &'a str) -> Option
 /// Recursively search all inner classes (including nested) for a class with the given
 /// name that has a method with the given name.
 fn inner_class_has_method(file: &GdFile, class_name: &str, method_name: &str) -> bool {
-    fn search_in_class(c: &crate::core::gd_ast::GdClass, name: &str, method: &str) -> bool {
+    fn search_in_class(c: &gd_core::gd_ast::GdClass, name: &str, method: &str) -> bool {
         if c.name == name
             && c.declarations
                 .iter()
@@ -781,7 +781,7 @@ fn check_super_method_in_node(
                         Some(ext) => resolve_to_classdb_type(ext, project),
                         None => "RefCounted".to_string(),
                     };
-                    found = crate::class_db::method_exists(&classdb_ext, method_name);
+                    found = gd_class_db::method_exists(&classdb_ext, method_name);
                 }
                 // Dotted extends: "path.gd".InnerA.InnerAB or B.Inner
                 if !found

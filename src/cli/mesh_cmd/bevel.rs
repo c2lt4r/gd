@@ -1,11 +1,11 @@
 use miette::Result;
 use owo_colors::OwoColorize;
 
-use crate::core::mesh::MeshState;
-use crate::core::mesh::spatial_filter;
+use gd_mesh::MeshState;
+use gd_mesh::spatial_filter;
 
 use super::{BevelArgs, OutputFormat, inject_stats, project_root, run_eval};
-use crate::cprintln;
+use gd_core::cprintln;
 
 pub fn cmd_bevel(args: &BevelArgs) -> Result<()> {
     let root = project_root()?;
@@ -19,7 +19,7 @@ pub fn cmd_bevel(args: &BevelArgs) -> Result<()> {
 
     let part = state.active_part_mut()?;
     let original_fc = part.mesh.face_count();
-    let beveled = crate::core::mesh::bevel::bevel_with_profile(
+    let beveled = gd_mesh::bevel::bevel_with_profile(
         &part.mesh,
         args.radius,
         args.segments,

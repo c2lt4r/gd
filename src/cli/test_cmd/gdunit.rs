@@ -5,9 +5,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use crate::core::project::GodotProject;
+use gd_core::project::GodotProject;
 
-use crate::{ceprintln, cprintln};
+use gd_core::{ceprintln, cprintln};
 
 use super::{
     RunArgs, RunContext, TestError, TestResult, TestRunner, TestStatus, TestSummary,
@@ -704,7 +704,7 @@ pub fn build_gdunit4_filter_args(
                 } else {
                     abs
                 };
-                let rel = crate::core::fs::relative_slash(&dir, project_root);
+                let rel = gd_core::fs::relative_slash(&dir, project_root);
                 let entry = format!("res://{rel}");
                 if !dirs.contains(&entry) {
                     dirs.push(entry);
@@ -722,7 +722,7 @@ pub fn build_gdunit4_filter_args(
     let mut ignore_args = Vec::new();
 
     for info in &file_infos {
-        let rel = crate::core::fs::relative_slash(&info.path, project_root);
+        let rel = gd_core::fs::relative_slash(&info.path, project_root);
         let res_path = format!("res://{rel}");
         add_args.push(res_path.clone());
 

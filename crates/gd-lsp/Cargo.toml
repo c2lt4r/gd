@@ -1,0 +1,41 @@
+[package]
+name = "gd-lsp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "LSP server, daemon, debug protocol, and refactoring for gd toolchain"
+
+[dependencies]
+gd-core.workspace = true
+gd-class-db.workspace = true
+gd-fmt.workspace = true
+gd-lint.workspace = true
+
+tree-sitter.workspace = true
+
+serde.workspace = true
+serde_json.workspace = true
+
+miette.workspace = true
+
+owo-colors.workspace = true
+path-slash.workspace = true
+
+tower-lsp.workspace = true
+tokio.workspace = true
+dashmap.workspace = true
+
+walkdir.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

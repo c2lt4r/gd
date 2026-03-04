@@ -1,0 +1,24 @@
+[package]
+name = "gd-fmt"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "GDScript formatter for gd toolchain"
+
+[dependencies]
+gd-core.workspace = true
+
+tree-sitter.workspace = true
+
+miette.workspace = true
+
+rayon.workspace = true
+owo-colors.workspace = true
+similar.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

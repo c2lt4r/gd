@@ -1,11 +1,11 @@
 use miette::Result;
 use owo_colors::OwoColorize;
 
-use crate::core::mesh::MeshState;
+use gd_mesh::MeshState;
 
 use super::gdscript;
 use super::{MaterialArgs, MaterialPreset, OutputFormat, inject_stats, project_root, run_eval};
-use crate::cprintln;
+use gd_core::cprintln;
 
 /// Normalize a color string: strip leading '#', expand named colors to hex.
 fn normalize_color(input: &str) -> String {
@@ -119,7 +119,7 @@ pub fn cmd_material(args: &MaterialArgs) -> Result<()> {
 
     // Inject stats from current state
     if let Ok(root) = project_root()
-        && let Ok(st) = crate::core::mesh::MeshState::load(&root)
+        && let Ok(st) = gd_mesh::MeshState::load(&root)
     {
         inject_stats(&mut parsed, &st);
     }
@@ -175,7 +175,7 @@ fn cmd_material_batch(args: &MaterialArgs, pattern: &str, color: Option<&str>) -
 
     // Inject stats from current state
     if let Ok(root) = project_root()
-        && let Ok(st) = crate::core::mesh::MeshState::load(&root)
+        && let Ok(st) = gd_mesh::MeshState::load(&root)
     {
         inject_stats(&mut parsed, &st);
     }

@@ -3,7 +3,7 @@ use owo_colors::OwoColorize;
 
 use super::gdscript;
 use super::{CheckArgs, OutputFormat, run_eval};
-use crate::cprintln;
+use gd_core::cprintln;
 
 pub fn cmd_check(args: &CheckArgs) -> Result<()> {
     let script = gdscript::generate_check(args.margin, args.max_overlap);

@@ -1,8 +1,10 @@
 use clap::Args;
 use miette::Result;
 
-use crate::lint::LintOptions;
-use crate::lint::rules::Severity;
+use gd_lint::LintOptions;
+use gd_lint::rules::{LintDiagnostic, Severity};
+
+use super::check_cmd;
 
 #[derive(Args)]
 #[command(after_long_help = "\
@@ -75,5 +77,21 @@ pub fn exec(args: LintArgs) -> Result<()> {
         context: args.context,
     };
 
-    crate::lint::run_lint(&args.paths, &opts)
+    let extra: &gd_lint::ExtraDiagnosticsFn = &|file, source, project| {
+        check_cmd::check_classdb_errors(file, source, project)
+            .into_iter()
+            .map(|err| LintDiagnostic {
+                rule: "compiler-error",
+                message: err.message,
+                severity: Severity::Error,
+                line: err.line as usize,
+                column: err.column as usize,
+                end_column: None,
+                fix: None,
+                context_lines: None,
+            })
+            .collect()
+    };
+
+    gd_lint::run_lint(&args.paths, &opts, Some(extra))
 }

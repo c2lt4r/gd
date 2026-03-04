@@ -3,9 +3,9 @@ use std::path::PathBuf;
 use miette::{Result, miette};
 use owo_colors::OwoColorize;
 
-use crate::core::scene;
+use gd_core::scene;
 
-use crate::cprintln;
+use gd_core::cprintln;
 
 use super::{
     RemoveNodeArgs, clean_double_blanks, compute_node_path, decrement_load_steps,

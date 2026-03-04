@@ -11,9 +11,9 @@ use std::time::Duration;
 
 use crate::build::{find_godot, path_for_godot};
 use crate::cli::test_cmd::{extract_errors, filter_noise, run_with_timeout};
-use crate::core::config::Config;
-use crate::core::project::GodotProject;
-use crate::{ceprintln, cprintln};
+use gd_core::config::Config;
+use gd_core::project::GodotProject;
+use gd_core::{ceprintln, cprintln};
 
 #[derive(Args)]
 pub struct EvalArgs {
@@ -128,7 +128,7 @@ fn write_temp_script(project_root: &Path, content: &str) -> Result<PathBuf> {
 
 /// Parse-validate a script without running Godot.
 pub fn pre_check(source: &str) -> Result<String> {
-    let tree = crate::core::parser::parse(source)?;
+    let tree = gd_core::parser::parse(source)?;
     if tree.root_node().has_error() {
         let details = find_parse_errors(&tree, source);
         return Err(miette!("Script has syntax errors:\n{details}"));
@@ -421,7 +421,7 @@ fn looks_like_void_call(expr: &str) -> bool {
     if let Some(method_name) = extract_last_method_name(trimmed) {
         // Check every class in ClassDB — if this method returns void on ANY class,
         // assume it's void (safe: we lose the return value of null/void, no crash)
-        if crate::class_db::is_method_void_anywhere(method_name) {
+        if gd_class_db::is_method_void_anywhere(method_name) {
             return true;
         }
     }
@@ -702,7 +702,7 @@ fn try_live_eval(
     let godot_dir = project_root.join(".godot");
     let ready_path = godot_dir.join("gd-eval-ready");
 
-    let eval_ready = crate::lsp::daemon_client::query_daemon(
+    let eval_ready = gd_lsp::daemon_client::query_daemon(
         "eval_status",
         serde_json::json!({"timeout": timeout.as_secs()}),
         Some(timeout + Duration::from_secs(5)),
@@ -722,7 +722,7 @@ fn try_live_eval(
     }
 
     // 5. Delegate to shared send_eval (with output capture for REPL)
-    match crate::core::live_eval::send_eval_with_output(&script, project_root, timeout) {
+    match crate::cli::live_eval::send_eval_with_output(&script, project_root, timeout) {
         Ok(response) => {
             // Show captured print output first
             if !json_mode {
@@ -1070,7 +1070,7 @@ mod tests {
         let cases = ["1 + 1", "Vector2(1,2).normalized()", "var x = 1; print(x)"];
         for input in cases {
             let script = generate_wrapper_script(input);
-            let tree = crate::core::parser::parse(&script).unwrap();
+            let tree = gd_core::parser::parse(&script).unwrap();
             assert!(
                 !tree.root_node().has_error(),
                 "Wrapper for '{input}' should parse cleanly, got:\n{script}"
@@ -1156,7 +1156,7 @@ mod tests {
         ];
         for input in cases {
             let script = generate_live_eval_script(input);
-            let tree = crate::core::parser::parse(&script).unwrap();
+            let tree = gd_core::parser::parse(&script).unwrap();
             assert!(
                 !tree.root_node().has_error(),
                 "Live script for '{input}' should parse cleanly, got:\n{script}"
@@ -1434,7 +1434,7 @@ mod tests {
         ];
         for input in cases {
             let script = generate_live_eval_script(input);
-            let tree = crate::core::parser::parse(&script).unwrap();
+            let tree = gd_core::parser::parse(&script).unwrap();
             assert!(
                 !tree.root_node().has_error(),
                 "Multi-stmt script for '{input}' should parse cleanly, got:\n{script}"
@@ -1477,7 +1477,7 @@ mod tests {
         );
         assert!(script.contains("return x"), "Should return last expression");
         // The script should parse cleanly (comment doesn't corrupt code)
-        let tree = crate::core::parser::parse(&script).unwrap();
+        let tree = gd_core::parser::parse(&script).unwrap();
         assert!(
             !tree.root_node().has_error(),
             "Script with comment containing semicolons should parse cleanly:\n{script}"

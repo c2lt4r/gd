@@ -1,5 +1,5 @@
-use crate::cprintln;
 use clap::{Args, Subcommand};
+use gd_core::cprintln;
 use miette::Result;
 
 #[derive(Args)]
@@ -32,7 +32,7 @@ pub fn exec(args: DaemonArgs) -> Result<()> {
     match args.command {
         DaemonCommand::Status => {
             if let Some(result) =
-                crate::lsp::daemon_client::query_daemon("status", serde_json::json!({}), None)
+                gd_lsp::daemon_client::query_daemon("status", serde_json::json!({}), None)
             {
                 cprintln!("{}", serde_json::to_string_pretty(&result).unwrap());
             } else {
@@ -42,9 +42,9 @@ pub fn exec(args: DaemonArgs) -> Result<()> {
         }
         DaemonCommand::Stop => {
             let cwd = std::env::current_dir().unwrap_or_default();
-            match crate::core::config::find_project_root(&cwd) {
+            match gd_core::config::find_project_root(&cwd) {
                 Some(root) => {
-                    if crate::lsp::daemon_client::stop_daemon(&root) {
+                    if gd_lsp::daemon_client::stop_daemon(&root) {
                         cprintln!("Daemon stopped");
                     } else {
                         cprintln!("No daemon running");
@@ -56,14 +56,12 @@ pub fn exec(args: DaemonArgs) -> Result<()> {
         }
         DaemonCommand::Restart => {
             let cwd = std::env::current_dir().unwrap_or_default();
-            match crate::core::config::find_project_root(&cwd) {
+            match gd_core::config::find_project_root(&cwd) {
                 Some(root) => {
-                    crate::lsp::daemon_client::stop_daemon(&root);
-                    if let Some(result) = crate::lsp::daemon_client::query_daemon(
-                        "status",
-                        serde_json::json!({}),
-                        None,
-                    ) {
+                    gd_lsp::daemon_client::stop_daemon(&root);
+                    if let Some(result) =
+                        gd_lsp::daemon_client::query_daemon("status", serde_json::json!({}), None)
+                    {
                         cprintln!(
                             "Daemon restarted\n{}",
                             serde_json::to_string_pretty(&result).unwrap()
@@ -84,7 +82,7 @@ pub fn exec(args: DaemonArgs) -> Result<()> {
             if !root.join("project.godot").exists() {
                 return Err(miette::miette!("no project.godot found in {project_root}"));
             }
-            crate::lsp::daemon::run(&root, godot_port)
+            gd_lsp::daemon::run(&root, godot_port)
         }
     }
 }

@@ -4,10 +4,10 @@ use std::path::PathBuf;
 use miette::{Result, miette};
 use owo_colors::OwoColorize;
 
-use crate::core::config::find_project_root;
-use crate::core::scene;
+use gd_core::config::find_project_root;
+use gd_core::scene;
 
-use crate::cprintln;
+use gd_core::cprintln;
 
 use super::{
     AttachScriptArgs, build_node_pattern, find_node, increment_load_steps, is_non_ext_section,

@@ -6,7 +6,7 @@ use super::args::{
     ServerArgs,
 };
 use super::{daemon_cmd, daemon_cmd_timeout, ensure_binary_debug};
-use crate::cprintln;
+use gd_core::cprintln;
 
 // ── One-shot: mute-audio ────────────────────────────────────────────
 
@@ -233,10 +233,10 @@ pub(crate) fn cmd_server(args: &ServerArgs) -> Result<()> {
 pub(crate) fn print_launch_hint(port: u64) {
     let project_path = std::env::current_dir()
         .ok()
-        .and_then(|cwd| crate::core::config::find_project_root(&cwd))
+        .and_then(|cwd| gd_core::config::find_project_root(&cwd))
         .map(|root| {
             let s = root.to_string_lossy();
-            crate::core::fs::wsl_to_windows_path(&s).unwrap_or_else(|| s.to_string())
+            gd_core::fs::wsl_to_windows_path(&s).unwrap_or_else(|| s.to_string())
         });
 
     if let Some(path) = project_path {

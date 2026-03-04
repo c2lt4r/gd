@@ -784,7 +784,7 @@ dependencies = [
 
 [[package]]
 name = "gd"
-version = "0.3.18"
+version = "0.3.19"
 dependencies = [
  "bincode",
  "clap",
@@ -794,6 +794,12 @@ dependencies = [
  "dashmap 6.1.0",
  "earcutr",
  "flate2",
+ "gd-class-db",
+ "gd-core",
+ "gd-fmt",
+ "gd-lint",
+ "gd-lsp",
+ "gd-mesh",
  "ignore",
  "indexmap",
  "indicatif",
@@ -823,6 +829,100 @@ dependencies = [
  "walkdir",
  "windows-sys 0.59.0",
  "zip",
+]
+
+[[package]]
+name = "gd-class-db"
+version = "0.3.19"
+dependencies = [
+ "strsim",
+]
+
+[[package]]
+name = "gd-core"
+version = "0.3.19"
+dependencies = [
+ "gd-class-db",
+ "libc",
+ "miette",
+ "owo-colors",
+ "path-slash",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "toml",
+ "tree-sitter",
+ "tree-sitter-gdscript",
+ "tree-sitter-godot-resource",
+ "walkdir",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "gd-fmt"
+version = "0.3.19"
+dependencies = [
+ "gd-core",
+ "miette",
+ "owo-colors",
+ "rayon",
+ "similar",
+ "tempfile",
+ "tree-sitter",
+]
+
+[[package]]
+name = "gd-lint"
+version = "0.3.19"
+dependencies = [
+ "gd-class-db",
+ "gd-core",
+ "miette",
+ "owo-colors",
+ "path-slash",
+ "rayon",
+ "serde",
+ "serde_json",
+ "similar",
+ "tempfile",
+ "tree-sitter",
+]
+
+[[package]]
+name = "gd-lsp"
+version = "0.3.19"
+dependencies = [
+ "dashmap 6.1.0",
+ "gd-class-db",
+ "gd-core",
+ "gd-fmt",
+ "gd-lint",
+ "libc",
+ "miette",
+ "owo-colors",
+ "path-slash",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tower-lsp",
+ "tree-sitter",
+ "walkdir",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "gd-mesh"
+version = "0.3.19"
+dependencies = [
+ "bincode",
+ "earcutr",
+ "gd-core",
+ "indexmap",
+ "miette",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

@@ -1,10 +1,10 @@
 use miette::Result;
 use owo_colors::OwoColorize;
 
-use crate::core::mesh::{MeshPart, MeshState};
+use gd_mesh::{MeshPart, MeshState};
 
 use super::{OutputFormat, TranslateArgs, inject_stats, parse_3d, project_root, run_eval};
-use crate::cprintln;
+use gd_core::cprintln;
 
 /// Compute the AABB center of a mesh part.
 fn aabb_center(part: &MeshPart) -> [f64; 3] {

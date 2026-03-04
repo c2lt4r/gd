@@ -18,23 +18,23 @@ use miette::Result;
 use owo_colors::OwoColorize;
 use serde::Serialize;
 
-use crate::core::gd_ast::{self, GdFile};
-use crate::core::workspace_index::ProjectIndex;
-use crate::core::{
+use gd_core::gd_ast::{self, GdFile};
+use gd_core::workspace_index::ProjectIndex;
+use gd_core::{ceprintln, cprintln};
+use gd_core::{
     config::Config, config::find_project_root, fs::collect_gdscript_files,
     fs::collect_resource_files, parser, resource_parser, scene,
 };
-use crate::lint::matches_ignore_pattern;
-use crate::lint::rules::LintRule;
-use crate::lint::rules::duplicate_function::DuplicateFunction;
-use crate::lint::rules::duplicate_key::DuplicateKey;
-use crate::lint::rules::duplicate_signal::DuplicateSignal;
-use crate::lint::rules::duplicate_variable::DuplicateVariable;
-use crate::lint::rules::get_node_default_without_onready::GetNodeDefaultWithoutOnready;
-use crate::lint::rules::native_method_override::NativeMethodOverride;
-use crate::lint::rules::onready_with_export::OnreadyWithExport;
-use crate::lint::rules::override_signature_mismatch::OverrideSignatureMismatch;
-use crate::{ceprintln, cprintln};
+use gd_lint::matches_ignore_pattern;
+use gd_lint::rules::LintRule;
+use gd_lint::rules::duplicate_function::DuplicateFunction;
+use gd_lint::rules::duplicate_key::DuplicateKey;
+use gd_lint::rules::duplicate_signal::DuplicateSignal;
+use gd_lint::rules::duplicate_variable::DuplicateVariable;
+use gd_lint::rules::get_node_default_without_onready::GetNodeDefaultWithoutOnready;
+use gd_lint::rules::native_method_override::NativeMethodOverride;
+use gd_lint::rules::onready_with_export::OnreadyWithExport;
+use gd_lint::rules::override_signature_mismatch::OverrideSignatureMismatch;
 
 use structural::validate_structure;
 
@@ -143,7 +143,7 @@ pub fn exec(args: &CheckArgs) -> Result<()> {
                     if has_errors {
                         error_count += 1;
                         if json_mode {
-                            let rel = crate::core::fs::relative_slash(file, &cwd);
+                            let rel = gd_core::fs::relative_slash(file, &cwd);
                             if has_parse_errors {
                                 let mut cursor = root_node.walk();
                                 collect_errors(&mut cursor, file, &cwd, &mut parse_errors);
@@ -184,7 +184,7 @@ pub fn exec(args: &CheckArgs) -> Result<()> {
                 Err(e) => {
                     error_count += 1;
                     if json_mode {
-                        let rel = crate::core::fs::relative_slash(file, &cwd);
+                        let rel = gd_core::fs::relative_slash(file, &cwd);
                         parse_errors.push(ParseError {
                             file: rel,
                             line: 0,
@@ -242,7 +242,7 @@ pub fn exec(args: &CheckArgs) -> Result<()> {
                 Err(e) => {
                     error_count += 1;
                     if json_mode {
-                        let rel = crate::core::fs::relative_slash(file, &cwd);
+                        let rel = gd_core::fs::relative_slash(file, &cwd);
                         parse_errors.push(ParseError {
                             file: rel,
                             line: 0,
@@ -331,12 +331,9 @@ fn report_structural(errors: &[StructuralError], source: &str, file: &Path) {
 // Duplicate declaration checks (compile errors in Godot)
 // ---------------------------------------------------------------------------
 
-fn check_duplicates(
-    tree: &tree_sitter::Tree,
-    source: &str,
-) -> Vec<crate::lint::rules::LintDiagnostic> {
-    let file = crate::core::gd_ast::convert(tree, source);
-    let lint_config = crate::core::config::LintConfig::default();
+fn check_duplicates(tree: &tree_sitter::Tree, source: &str) -> Vec<gd_lint::rules::LintDiagnostic> {
+    let file = gd_core::gd_ast::convert(tree, source);
+    let lint_config = gd_core::config::LintConfig::default();
     let rules: [&dyn LintRule; 3] = [&DuplicateFunction, &DuplicateSignal, &DuplicateVariable];
     let mut diags = Vec::new();
     for rule in rules {
@@ -354,8 +351,8 @@ fn check_overrides(
     source: &str,
     file: &GdFile,
     project: &ProjectIndex,
-) -> Vec<crate::lint::rules::LintDiagnostic> {
-    let lint_config = crate::core::config::LintConfig::default();
+) -> Vec<gd_lint::rules::LintDiagnostic> {
+    let lint_config = gd_core::config::LintConfig::default();
     OverrideSignatureMismatch.check_with_project(file, source, &lint_config, project)
 }
 
@@ -367,8 +364,8 @@ fn check_promoted_rules(
     _tree: &tree_sitter::Tree,
     source: &str,
     file: &GdFile,
-) -> Vec<crate::lint::rules::LintDiagnostic> {
-    let lint_config = crate::core::config::LintConfig::default();
+) -> Vec<gd_lint::rules::LintDiagnostic> {
+    let lint_config = gd_core::config::LintConfig::default();
     let mut diags = Vec::new();
 
     // duplicate-key: duplicate dictionary keys are a compile error
@@ -386,7 +383,7 @@ fn check_promoted_rules(
     diags
 }
 
-fn report_duplicates(diags: &[crate::lint::rules::LintDiagnostic], source: &str, file: &Path) {
+fn report_duplicates(diags: &[gd_lint::rules::LintDiagnostic], source: &str, file: &Path) {
     for diag in diags {
         let line = source.lines().nth(diag.line).unwrap_or("");
         ceprintln!(
@@ -411,7 +408,7 @@ fn validate_scene(
     file: &Path,
     cwd: &Path,
 ) -> Vec<ParseError> {
-    let rel = crate::core::fs::relative_slash(file, cwd);
+    let rel = gd_core::fs::relative_slash(file, cwd);
     let mut errors = Vec::new();
 
     // Check ext_resource paths exist on disk
@@ -497,7 +494,7 @@ fn collect_errors(
         let node = cursor.node();
         if node.is_error() || node.is_missing() {
             let start = node.start_position();
-            let rel = crate::core::fs::relative_slash(file, base);
+            let rel = gd_core::fs::relative_slash(file, base);
             out.push(ParseError {
                 file: rel,
                 line: start.row as u32 + 1,

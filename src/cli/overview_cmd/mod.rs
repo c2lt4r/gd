@@ -6,9 +6,9 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use tree_sitter::Node;
 
-use crate::core::project::GodotProject;
-use crate::cprintln;
-use crate::lsp::workspace::WorkspaceIndex;
+use gd_core::cprintln;
+use gd_core::project::GodotProject;
+use gd_lsp::workspace::WorkspaceIndex;
 
 #[derive(Args)]
 pub struct OverviewArgs {
@@ -276,7 +276,7 @@ fn collect_code_connections(
         let Some(content) = workspace.get_content(abs_path) else {
             continue;
         };
-        let Ok(tree) = crate::core::parser::parse(&content) else {
+        let Ok(tree) = gd_core::parser::parse(&content) else {
             continue;
         };
 

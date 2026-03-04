@@ -3,8 +3,8 @@ use miette::{IntoDiagnostic, Result, miette};
 use owo_colors::OwoColorize;
 use std::fs;
 
-use crate::core::project::GodotProject;
-use crate::cprintln;
+use gd_core::cprintln;
+use gd_core::project::GodotProject;
 
 #[derive(Args)]
 pub struct CiArgs {
@@ -45,7 +45,7 @@ pub fn exec(args: CiArgs) -> Result<()> {
 fn resolve_godot_version(args: &CiPlatformArgs) -> String {
     args.godot_version
         .clone()
-        .unwrap_or_else(crate::core::project::detect_godot_version)
+        .unwrap_or_else(gd_core::project::detect_godot_version)
 }
 
 fn generate_github(project: &GodotProject, args: &CiPlatformArgs) -> Result<()> {

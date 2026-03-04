@@ -4,7 +4,7 @@ use miette::{Result, miette};
 use owo_colors::OwoColorize;
 
 use super::{OutputFormat, Plane, ReferenceArgs};
-use crate::cprintln;
+use gd_core::cprintln;
 
 pub fn cmd_reference(args: &ReferenceArgs) -> Result<()> {
     let path = Path::new(&args.path);

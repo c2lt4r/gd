@@ -1,5 +1,5 @@
-use crate::cprintln;
 use clap::{Args, Subcommand};
+use gd_core::cprintln;
 use miette::Result;
 
 #[derive(Args)]
@@ -182,7 +182,7 @@ pub struct QueryPositionArgs {
     pub column: usize,
 }
 
-fn print_references_human(result: &crate::lsp::query::ReferencesOutput) {
+fn print_references_human(result: &gd_lsp::query::ReferencesOutput) {
     use owo_colors::OwoColorize;
     cprintln!(
         "{} ({} reference{})",
@@ -205,7 +205,7 @@ fn print_references_human(result: &crate::lsp::query::ReferencesOutput) {
     }
 }
 
-fn print_definition_human(result: &crate::lsp::query::DefinitionOutput) {
+fn print_definition_human(result: &gd_lsp::query::DefinitionOutput) {
     use owo_colors::OwoColorize;
     cprintln!(
         "{} {} {}:{}:{}",
@@ -237,7 +237,7 @@ fn print_definition_from_json(val: &serde_json::Value) {
     );
 }
 
-fn print_completions_human(items: &[crate::lsp::query::CompletionOutput]) {
+fn print_completions_human(items: &[gd_lsp::query::CompletionOutput]) {
     use owo_colors::OwoColorize;
     if items.is_empty() {
         cprintln!("  (no completions)");
@@ -275,7 +275,7 @@ fn color_kind(kind: &str, width: usize) -> String {
     }
 }
 
-fn print_symbols_human(symbols: &[crate::lsp::query::SymbolOutput]) {
+fn print_symbols_human(symbols: &[gd_lsp::query::SymbolOutput]) {
     use owo_colors::OwoColorize;
     if symbols.is_empty() {
         cprintln!("  (no symbols)");
@@ -299,7 +299,7 @@ fn print_symbols_human(symbols: &[crate::lsp::query::SymbolOutput]) {
     }
 }
 
-fn print_code_actions_human(actions: &[crate::lsp::query::CodeActionOutput]) {
+fn print_code_actions_human(actions: &[gd_lsp::query::CodeActionOutput]) {
     use owo_colors::OwoColorize;
     if actions.is_empty() {
         cprintln!("  (no code actions)");
@@ -314,7 +314,7 @@ fn print_code_actions_human(actions: &[crate::lsp::query::CodeActionOutput]) {
     }
 }
 
-fn print_scene_info_human(r: &crate::lsp::query::SceneInfoOutput) {
+fn print_scene_info_human(r: &gd_lsp::query::SceneInfoOutput) {
     use owo_colors::OwoColorize;
     cprintln!("{}", r.file.bold());
 
@@ -379,7 +379,7 @@ fn print_scene_info_human(r: &crate::lsp::query::SceneInfoOutput) {
     }
 }
 
-fn print_scene_refs_human(refs: &[crate::lsp::query::SceneRefOutput]) {
+fn print_scene_refs_human(refs: &[gd_lsp::query::SceneRefOutput]) {
     use owo_colors::OwoColorize;
     if refs.is_empty() {
         cprintln!("  (no scenes reference this script)");
@@ -399,7 +399,7 @@ fn print_scene_refs_human(refs: &[crate::lsp::query::SceneRefOutput]) {
     }
 }
 
-fn print_signal_connections_human(conns: &[crate::lsp::query::SignalConnectionOutput]) {
+fn print_signal_connections_human(conns: &[gd_lsp::query::SignalConnectionOutput]) {
     use owo_colors::OwoColorize;
     if conns.is_empty() {
         cprintln!("  (no signal connections)");
@@ -423,7 +423,7 @@ fn print_signal_connections_human(conns: &[crate::lsp::query::SignalConnectionOu
     }
 }
 
-fn print_find_implementations_human(r: &crate::lsp::query::ImplementationsOutput) {
+fn print_find_implementations_human(r: &gd_lsp::query::ImplementationsOutput) {
     use owo_colors::OwoColorize;
     let count = r.implementations.len();
     cprintln!(
@@ -483,7 +483,7 @@ pub fn exec(args: QueryArgs) -> Result<()> {
             class,
             format,
         } => {
-            let results: Vec<crate::lsp::query::ReferencesOutput> = if let Some(ref name) = name {
+            let results: Vec<gd_lsp::query::ReferencesOutput> = if let Some(ref name) = name {
                 // Support comma-separated names: --name "foo,bar,baz"
                 let names: Vec<&str> = name
                     .split(',')
@@ -492,7 +492,7 @@ pub fn exec(args: QueryArgs) -> Result<()> {
                     .collect();
                 let mut all = Vec::with_capacity(names.len());
                 for n in &names {
-                    all.push(crate::lsp::query::query_references_by_name(
+                    all.push(gd_lsp::query::query_references_by_name(
                         n,
                         file.as_deref(),
                         class.as_deref(),
@@ -506,7 +506,7 @@ pub fn exec(args: QueryArgs) -> Result<()> {
                     .ok_or_else(|| miette::miette!("--line is required when not using --name"))?;
                 let column = column
                     .ok_or_else(|| miette::miette!("--column is required when not using --name"))?;
-                vec![crate::lsp::query::query_references(&file, line, column)?]
+                vec![gd_lsp::query::query_references(&file, line, column)?]
             };
             if format == "json" {
                 // Single symbol: unwrap for backward compat; multi: array
@@ -538,7 +538,7 @@ pub fn exec(args: QueryArgs) -> Result<()> {
                 }
                 let source = std::fs::read_to_string(&file)
                     .map_err(|e| miette::miette!("cannot read {file}: {e}"))?;
-                crate::lsp::refactor::resolve_name_to_position(&source, n, None)?
+                gd_lsp::refactor::resolve_name_to_position(&source, n, None)?
             } else {
                 let line = line
                     .ok_or_else(|| miette::miette!("--line is required when not using --name"))?;
@@ -548,7 +548,7 @@ pub fn exec(args: QueryArgs) -> Result<()> {
             };
             // Try daemon for rich Godot results
             if !args.no_godot_proxy
-                && let Some(result) = crate::lsp::daemon_client::query_daemon(
+                && let Some(result) = gd_lsp::daemon_client::query_daemon(
                     "definition",
                     serde_json::json!({"file": file, "line": line, "column": column}),
                     None,
@@ -566,7 +566,7 @@ pub fn exec(args: QueryArgs) -> Result<()> {
                 return Ok(());
             }
             // Fallback: static analysis only
-            let result = crate::lsp::query::query_definition(&file, line, column, None)?;
+            let result = gd_lsp::query::query_definition(&file, line, column, None)?;
             if format == "json" {
                 let j =
                     serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
@@ -590,7 +590,7 @@ pub fn exec(args: QueryArgs) -> Result<()> {
                 }
                 let source = std::fs::read_to_string(&file)
                     .map_err(|e| miette::miette!("cannot read {file}: {e}"))?;
-                crate::lsp::refactor::resolve_name_to_position(&source, n, None)?
+                gd_lsp::refactor::resolve_name_to_position(&source, n, None)?
             } else {
                 let line = line
                     .ok_or_else(|| miette::miette!("--line is required when not using --name"))?;
@@ -600,7 +600,7 @@ pub fn exec(args: QueryArgs) -> Result<()> {
             };
             // Try daemon for rich Godot results
             if !args.no_godot_proxy
-                && let Some(result) = crate::lsp::daemon_client::query_daemon(
+                && let Some(result) = gd_lsp::daemon_client::query_daemon(
                     "hover",
                     serde_json::json!({"file": file, "line": line, "column": column}),
                     None,
@@ -618,7 +618,7 @@ pub fn exec(args: QueryArgs) -> Result<()> {
                 return Ok(());
             }
             // Fallback: static analysis only
-            let result = crate::lsp::query::query_hover(&file, line, column, None)?;
+            let result = gd_lsp::query::query_hover(&file, line, column, None)?;
             if format == "json" {
                 let j =
                     serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
@@ -636,7 +636,7 @@ pub fn exec(args: QueryArgs) -> Result<()> {
         } => {
             // Try daemon for rich Godot results
             if !args.no_godot_proxy
-                && let Some(result) = crate::lsp::daemon_client::query_daemon(
+                && let Some(result) = gd_lsp::daemon_client::query_daemon(
                     "completion",
                     serde_json::json!({"file": pos.file, "line": pos.line, "column": pos.column}),
                     None,
@@ -665,7 +665,7 @@ pub fn exec(args: QueryArgs) -> Result<()> {
             }
             // Fallback: static analysis only
             let mut result =
-                crate::lsp::query::query_completions(&pos.file, pos.line, pos.column, None)?;
+                gd_lsp::query::query_completions(&pos.file, pos.line, pos.column, None)?;
             if let Some(ref filter) = kind {
                 result.retain(|c| c.kind == *filter);
             }
@@ -682,7 +682,7 @@ pub fn exec(args: QueryArgs) -> Result<()> {
             Ok(())
         }
         QueryCommand::CodeActions { pos, format } => {
-            let result = crate::lsp::query::query_code_actions(&pos.file, pos.line, pos.column)?;
+            let result = gd_lsp::query::query_code_actions(&pos.file, pos.line, pos.column)?;
             if is_json(format.as_ref()) {
                 let json =
                     serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
@@ -693,7 +693,7 @@ pub fn exec(args: QueryArgs) -> Result<()> {
             Ok(())
         }
         QueryCommand::Symbols { file, kind, format } => {
-            let mut result = crate::lsp::query::query_symbols(&file)?;
+            let mut result = gd_lsp::query::query_symbols(&file)?;
             let kind_filter: Vec<String> = kind
                 .iter()
                 .flat_map(|s| s.split(',').map(|k| k.trim().to_lowercase()))
@@ -729,7 +729,7 @@ pub fn exec(args: QueryArgs) -> Result<()> {
             } else {
                 (start_line, end_line)
             };
-            let result = crate::lsp::query::query_view(&file, start_line, end_line, context)?;
+            let result = gd_lsp::query::query_view(&file, start_line, end_line, context)?;
             if format.as_deref() == Some("json") {
                 let json =
                     serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
@@ -753,7 +753,7 @@ pub fn exec(args: QueryArgs) -> Result<()> {
             nodes_only,
             format,
         } => {
-            let result = crate::lsp::query::query_scene_info(&file, nodes_only)?;
+            let result = gd_lsp::query::query_scene_info(&file, nodes_only)?;
             if is_json(format.as_ref()) {
                 let json =
                     serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
@@ -764,7 +764,7 @@ pub fn exec(args: QueryArgs) -> Result<()> {
             Ok(())
         }
         QueryCommand::SceneRefs { file, format } => {
-            let result = crate::lsp::query::query_scene_refs(&file)?;
+            let result = gd_lsp::query::query_scene_refs(&file)?;
             if is_json(format.as_ref()) {
                 let json =
                     serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
@@ -775,7 +775,7 @@ pub fn exec(args: QueryArgs) -> Result<()> {
             Ok(())
         }
         QueryCommand::SignalConnections { file, format } => {
-            let result = crate::lsp::query::query_signal_connections(&file)?;
+            let result = gd_lsp::query::query_signal_connections(&file)?;
             if is_json(format.as_ref()) {
                 let json =
                     serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
@@ -786,7 +786,7 @@ pub fn exec(args: QueryArgs) -> Result<()> {
             Ok(())
         }
         QueryCommand::FindImplementations { name, base, format } => {
-            let result = crate::lsp::query::query_find_implementations(&name, base.as_deref())?;
+            let result = gd_lsp::query::query_find_implementations(&name, base.as_deref())?;
             if is_json(format.as_ref()) {
                 let json =
                     serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;

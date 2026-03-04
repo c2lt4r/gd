@@ -3,13 +3,13 @@ use std::f64::consts::TAU;
 use miette::{Result, miette};
 use owo_colors::OwoColorize;
 
-use crate::core::mesh::{MeshState, PlaneKind};
+use gd_mesh::{MeshState, PlaneKind};
 
 use super::gdscript;
 use super::{
     OutputFormat, ProfileArgs, ProfileShape, inject_stats, parse_points, project_root, run_eval,
 };
-use crate::cprintln;
+use gd_core::cprintln;
 
 pub fn cmd_profile(args: &ProfileArgs) -> Result<()> {
     let root = project_root()?;
@@ -30,9 +30,7 @@ pub fn cmd_profile(args: &ProfileArgs) -> Result<()> {
         Some(holes.clone())
     };
 
-    if let Some(mesh) =
-        crate::core::mesh::profile::triangulate_profile(&resolved.points, resolved.plane)
-    {
+    if let Some(mesh) = gd_mesh::profile::triangulate_profile(&resolved.points, resolved.plane) {
         part.mesh = mesh;
     }
 

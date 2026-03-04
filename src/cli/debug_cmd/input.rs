@@ -4,9 +4,9 @@ use miette::{Result, miette};
 use owo_colors::OwoColorize;
 
 use super::args::{ClickArgs, KeyArgs, OutputFormat, PressArgs, TypeTextArgs, WaitArgs};
-use crate::core::live_eval::send_eval;
-use crate::core::project::GodotProject;
-use crate::cprintln;
+use crate::cli::live_eval::send_eval;
+use gd_core::cprintln;
+use gd_core::project::GodotProject;
 
 /// Default timeout for input eval commands.
 const INPUT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -527,7 +527,7 @@ mod tests {
     #[test]
     fn click_pos_script_parses() {
         let script = generate_click_pos_script("100", "200", "left", false).unwrap();
-        let tree = crate::core::parser::parse(&script).unwrap();
+        let tree = gd_core::parser::parse(&script).unwrap();
         assert!(
             !tree.root_node().has_error(),
             "Click pos script has parse errors:\n{script}"
@@ -537,7 +537,7 @@ mod tests {
     #[test]
     fn click_pos_double_script_parses() {
         let script = generate_click_pos_script("50", "75", "right", true).unwrap();
-        let tree = crate::core::parser::parse(&script).unwrap();
+        let tree = gd_core::parser::parse(&script).unwrap();
         assert!(
             !tree.root_node().has_error(),
             "Click double script has parse errors:\n{script}"
@@ -547,20 +547,20 @@ mod tests {
     #[test]
     fn click_pos_hold_scripts_parse() {
         let down = generate_click_pos_down_script("100", "200", "left").unwrap();
-        let tree = crate::core::parser::parse(&down).unwrap();
+        let tree = gd_core::parser::parse(&down).unwrap();
         assert!(
             !tree.root_node().has_error(),
             "Down script has errors:\n{down}"
         );
         let up = generate_click_pos_up_script("100", "200", "left").unwrap();
-        let tree = crate::core::parser::parse(&up).unwrap();
+        let tree = gd_core::parser::parse(&up).unwrap();
         assert!(!tree.root_node().has_error(), "Up script has errors:\n{up}");
     }
 
     #[test]
     fn click_node_script_parses() {
         let script = generate_click_node_script("Button", "left", false).unwrap();
-        let tree = crate::core::parser::parse(&script).unwrap();
+        let tree = gd_core::parser::parse(&script).unwrap();
         assert!(
             !tree.root_node().has_error(),
             "Click node script has parse errors:\n{script}"
@@ -570,7 +570,7 @@ mod tests {
     #[test]
     fn click_node_path_script_parses() {
         let script = generate_click_node_script("/root/UI/Button", "middle", true).unwrap();
-        let tree = crate::core::parser::parse(&script).unwrap();
+        let tree = gd_core::parser::parse(&script).unwrap();
         assert!(
             !tree.root_node().has_error(),
             "Click node path script has parse errors:\n{script}"
@@ -580,7 +580,7 @@ mod tests {
     #[test]
     fn press_script_parses() {
         let script = generate_press_script("ui_accept", false);
-        let tree = crate::core::parser::parse(&script).unwrap();
+        let tree = gd_core::parser::parse(&script).unwrap();
         assert!(
             !tree.root_node().has_error(),
             "Press script has parse errors:\n{script}"
@@ -590,20 +590,20 @@ mod tests {
     #[test]
     fn press_hold_scripts_parse() {
         let down = generate_press_down_script("accelerate");
-        let tree = crate::core::parser::parse(&down).unwrap();
+        let tree = gd_core::parser::parse(&down).unwrap();
         assert!(
             !tree.root_node().has_error(),
             "Down script has errors:\n{down}"
         );
         let up = generate_press_script("accelerate", true);
-        let tree = crate::core::parser::parse(&up).unwrap();
+        let tree = gd_core::parser::parse(&up).unwrap();
         assert!(!tree.root_node().has_error(), "Up script has errors:\n{up}");
     }
 
     #[test]
     fn key_script_parses() {
         let script = generate_key_script("KEY_SPACE", "space");
-        let tree = crate::core::parser::parse(&script).unwrap();
+        let tree = gd_core::parser::parse(&script).unwrap();
         assert!(
             !tree.root_node().has_error(),
             "Key script has parse errors:\n{script}"
@@ -613,20 +613,20 @@ mod tests {
     #[test]
     fn key_hold_scripts_parse() {
         let down = generate_key_down_script("KEY_UP", "up");
-        let tree = crate::core::parser::parse(&down).unwrap();
+        let tree = gd_core::parser::parse(&down).unwrap();
         assert!(
             !tree.root_node().has_error(),
             "Down script has errors:\n{down}"
         );
         let up = generate_key_up_script("KEY_UP", "up");
-        let tree = crate::core::parser::parse(&up).unwrap();
+        let tree = gd_core::parser::parse(&up).unwrap();
         assert!(!tree.root_node().has_error(), "Up script has errors:\n{up}");
     }
 
     #[test]
     fn type_script_parses() {
         let script = generate_type_script("hello world");
-        let tree = crate::core::parser::parse(&script).unwrap();
+        let tree = gd_core::parser::parse(&script).unwrap();
         assert!(
             !tree.root_node().has_error(),
             "Type script has parse errors:\n{script}"
@@ -636,7 +636,7 @@ mod tests {
     #[test]
     fn type_char_script_parses() {
         let script = generate_type_char_script('a');
-        let tree = crate::core::parser::parse(&script).unwrap();
+        let tree = gd_core::parser::parse(&script).unwrap();
         assert!(
             !tree.root_node().has_error(),
             "Type char script has errors:\n{script}"
@@ -647,14 +647,14 @@ mod tests {
     fn type_script_escapes_quotes() {
         let script = generate_type_script("say \"hi\"");
         assert!(script.contains("say \\\"hi\\\""));
-        let tree = crate::core::parser::parse(&script).unwrap();
+        let tree = gd_core::parser::parse(&script).unwrap();
         assert!(!tree.root_node().has_error());
     }
 
     #[test]
     fn wait_script_parses() {
         let script = generate_wait_script(1000, "1s");
-        let tree = crate::core::parser::parse(&script).unwrap();
+        let tree = gd_core::parser::parse(&script).unwrap();
         assert!(
             !tree.root_node().has_error(),
             "Wait script has parse errors:\n{script}"

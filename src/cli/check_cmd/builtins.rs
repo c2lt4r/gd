@@ -1,8 +1,8 @@
 use tree_sitter::Node;
 
-use crate::core::gd_ast::GdFile;
-use crate::core::type_inference;
-use crate::core::workspace_index::ProjectIndex;
+use gd_core::gd_ast::GdFile;
+use gd_core::type_inference;
+use gd_core::workspace_index::ProjectIndex;
 
 use super::StructuralError;
 use super::types::infer_local_var_type;
@@ -66,7 +66,7 @@ fn check_builtin_method_in_node(
                 ty = ty.and_then(|t| {
                     let type_name = resolve_builtin_type_name(&t)?;
                     type_inference::builtin_member_type(type_name, prop_name).or_else(|| {
-                        crate::class_db::property_type(type_name, prop_name)
+                        gd_class_db::property_type(type_name, prop_name)
                             .map(type_inference::parse_class_db_type)
                     })
                 });
@@ -78,8 +78,8 @@ fn check_builtin_method_in_node(
             && !method_name.starts_with('_')
             && type_name != "Dictionary"
         {
-            let exists = crate::lsp::builtins::lookup_member_for(type_name, method_name)
-                .is_some_and(|m| m.kind == crate::lsp::builtins::MemberKind::Method);
+            let exists = gd_class_db::builtins::lookup_member_for(type_name, method_name)
+                .is_some_and(|m| m.kind == gd_class_db::builtins::MemberKind::Method);
             if !exists {
                 errors.push(StructuralError {
                     line: method_ident.start_position().row as u32 + 1,
@@ -141,7 +141,7 @@ fn check_builtin_property_in_node(
             && !member_name.starts_with('_')
             && type_name != "Dictionary"
         {
-            let exists = crate::lsp::builtins::lookup_member_for(type_name, member_name).is_some();
+            let exists = gd_class_db::builtins::lookup_member_for(type_name, member_name).is_some();
             let hardcoded = type_inference::builtin_member_type(type_name, member_name).is_some();
             if !exists && !hardcoded {
                 errors.push(StructuralError {

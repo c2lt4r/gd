@@ -2,9 +2,9 @@ use std::path::Path;
 
 use tree_sitter::Node;
 
-use crate::core::gd_ast::{GdClass, GdFile, GdFunc};
-use crate::core::type_inference;
-use crate::core::workspace_index::ProjectIndex;
+use gd_core::gd_ast::{GdClass, GdFile, GdFunc};
+use gd_core::type_inference;
+use gd_core::workspace_index::ProjectIndex;
 
 use super::StructuralError;
 use super::types::infer_local_var_type;
@@ -193,13 +193,13 @@ fn check_constants_in_node(node: Node, source: &str, errors: &mut Vec<Structural
         && let Ok(const_name) = rhs.utf8_text(source.as_bytes())
     {
         // Only check if LHS looks like a Godot class and RHS is UPPER_CASE
-        if crate::class_db::class_exists(class_name)
+        if gd_class_db::class_exists(class_name)
             && is_upper_snake_case(const_name)
-            && !crate::class_db::constant_exists(class_name, const_name)
-            && !crate::class_db::enum_member_exists(class_name, const_name)
-            && !crate::class_db::enum_type_exists(class_name, const_name)
+            && !gd_class_db::constant_exists(class_name, const_name)
+            && !gd_class_db::enum_member_exists(class_name, const_name)
+            && !gd_class_db::enum_type_exists(class_name, const_name)
         {
-            let suggestions = crate::class_db::suggest_constant(class_name, const_name, 3);
+            let suggestions = gd_class_db::suggest_constant(class_name, const_name, 3);
             let hint = if suggestions.is_empty() {
                 String::new()
             } else {
@@ -326,7 +326,7 @@ fn is_unresolvable_property_access(value: &Node, source: &str) -> bool {
     let Some(receiver_type) = find_receiver_type(value, obj_name, source) else {
         return false;
     };
-    if !crate::class_db::class_exists(&receiver_type) {
+    if !gd_class_db::class_exists(&receiver_type) {
         return false;
     }
 
@@ -339,7 +339,7 @@ fn is_unresolvable_property_access(value: &Node, source: &str) -> bool {
     };
 
     // If the property exists on the receiver's class, it's resolvable — not Variant
-    if crate::class_db::property_exists(&receiver_type, prop_name) {
+    if gd_class_db::property_exists(&receiver_type, prop_name) {
         return false;
     }
 
@@ -575,7 +575,7 @@ fn is_variant_producing_expr(
                         && let Ok(obj_name) = obj.utf8_text(source.as_bytes())
                         && obj_name != "self"
                         && let Some(receiver_type) = find_receiver_type(node, obj_name, source)
-                        && crate::class_db::method_return_type(&receiver_type, method_name)
+                        && gd_class_db::method_return_type(&receiver_type, method_name)
                             == Some("Variant")
                     {
                         return true;
@@ -2200,7 +2200,7 @@ fn is_const_expression(node: &Node, source: &[u8]) -> bool {
                 || matches!(text, "INF" | "NAN" | "PI" | "TAU" | "INFINITY" | "preload")
                 || text.starts_with(|c: char| c.is_ascii_uppercase())
                 // Bare function references (e.g. `absf`, `sqrt`) are valid const Callable values
-                || crate::class_db::utility_function(text).is_some()
+                || gd_class_db::utility_function(text).is_some()
                 // Check if identifier matches a const declaration in the enclosing scope
                 || is_local_const_name(node, text, source)
         }

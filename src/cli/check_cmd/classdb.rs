@@ -1,8 +1,8 @@
 use tree_sitter::Node;
 
-use crate::core::gd_ast::{GdClass, GdDecl, GdExpr, GdFile};
-use crate::core::type_inference;
-use crate::core::workspace_index::ProjectIndex;
+use gd_core::gd_ast::{GdClass, GdDecl, GdExpr, GdFile};
+use gd_core::type_inference;
+use gd_core::workspace_index::ProjectIndex;
 
 use super::StructuralError;
 use super::identifiers::resolve_to_classdb_type;
@@ -23,7 +23,7 @@ fn check_onready_non_node(
     // Check if extends chain reaches Node — resolve through project types
     let extends = file.extends_str().unwrap_or("RefCounted");
     let classdb_type = resolve_to_classdb_type(extends, project);
-    if classdb_type == "Node" || crate::class_db::inherits(&classdb_type, "Node") {
+    if classdb_type == "Node" || gd_class_db::inherits(&classdb_type, "Node") {
         return;
     }
 
@@ -86,7 +86,7 @@ pub fn check_classdb_errors(
 /// H5: `class_name` shadows a native Godot class.
 fn check_class_name_shadows_native(file: &GdFile, errors: &mut Vec<StructuralError>) {
     if let Some(name) = file.class_name
-        && crate::class_db::class_exists(name)
+        && gd_class_db::class_exists(name)
     {
         errors.push(StructuralError {
             line: 1,
@@ -95,7 +95,7 @@ fn check_class_name_shadows_native(file: &GdFile, errors: &mut Vec<StructuralErr
         });
     }
     for inner in file.inner_classes() {
-        if crate::class_db::class_exists(inner.name) {
+        if gd_class_db::class_exists(inner.name) {
             errors.push(StructuralError {
                 line: 1,
                 column: 1,
@@ -111,7 +111,7 @@ fn check_class_name_shadows_native(file: &GdFile, errors: &mut Vec<StructuralErr
 
 fn check_class_name_shadows_native_inner(class: &GdClass, errors: &mut Vec<StructuralError>) {
     for inner in class.declarations.iter().filter_map(GdDecl::as_class) {
-        if crate::class_db::class_exists(inner.name) {
+        if gd_class_db::class_exists(inner.name) {
             errors.push(StructuralError {
                 line: 1,
                 column: 1,
@@ -506,7 +506,7 @@ pub(super) fn is_known_type(name: &str, file: &GdFile, project: &ProjectIndex) -
     }
 
     // ClassDB class
-    if crate::class_db::class_exists(name) {
+    if gd_class_db::class_exists(name) {
         return true;
     }
 
@@ -536,14 +536,14 @@ pub(super) fn is_known_type(name: &str, file: &GdFile, project: &ProjectIndex) -
     }
 
     // @GlobalScope enum types (Error, Corner, EulerOrder, PropertyHint, etc.)
-    if crate::class_db::enum_type_exists("@GlobalScope", name) {
+    if gd_class_db::enum_type_exists("@GlobalScope", name) {
         return true;
     }
 
     // ClassDB enum types from the file's extends chain (e.g., AutoTranslateMode on Node subclass)
     if let Some(ext) = file.extends_class() {
         let classdb_ext = super::identifiers::resolve_to_classdb_type(ext, project);
-        if crate::class_db::enum_type_exists(&classdb_ext, name) {
+        if gd_class_db::enum_type_exists(&classdb_ext, name) {
             return true;
         }
     }
@@ -595,8 +595,7 @@ pub(super) fn is_known_type(name: &str, file: &GdFile, project: &ProjectIndex) -
     // Dotted type: Class.EnumType or Class.InnerClass (e.g., BaseMaterial3D.BillboardMode)
     if let Some((class, member)) = name.split_once('.') {
         // ClassDB class with enum type
-        if crate::class_db::class_exists(class) && crate::class_db::enum_type_exists(class, member)
-        {
+        if gd_class_db::class_exists(class) && gd_class_db::enum_type_exists(class, member) {
             return true;
         }
         // Project class with enum
@@ -647,7 +646,7 @@ fn check_use_void_in_node(
                 return Some(func_name.to_string());
             }
             // ClassDB methods (bare call = self method)
-            if crate::class_db::method_return_type(extends, func_name) == Some("void") {
+            if gd_class_db::method_return_type(extends, func_name) == Some("void") {
                 return Some(func_name.to_string());
             }
             // Void utility functions
@@ -755,8 +754,8 @@ fn check_instance_method_in_node(node: Node, source: &str, errors: &mut Vec<Stru
         && let Some(lhs) = node.named_child(0)
         && lhs.kind() == "identifier"
         && let Ok(class_name) = lhs.utf8_text(bytes)
-        && crate::class_db::class_exists(class_name)
-        && !crate::class_db::is_singleton(class_name)
+        && gd_class_db::class_exists(class_name)
+        && !gd_class_db::is_singleton(class_name)
     {
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
@@ -764,8 +763,8 @@ fn check_instance_method_in_node(node: Node, source: &str, errors: &mut Vec<Stru
                 && let Some(name_node) = child.named_child(0)
                 && let Ok(method_name) = name_node.utf8_text(bytes)
                 && method_name != "new"
-                && crate::class_db::method_exists(class_name, method_name)
-                && !crate::class_db::method_is_static(class_name, method_name)
+                && gd_class_db::method_exists(class_name, method_name)
+                && !gd_class_db::method_is_static(class_name, method_name)
             {
                 let pos = node.start_position();
                 errors.push(StructuralError {
@@ -816,14 +815,14 @@ fn check_virtual_override_signature(file: &GdFile, errors: &mut Vec<StructuralEr
         }
 
         // Try ClassDB first, fall back to well-known virtuals
-        let (ret_type, total) =
-            if let Some(sig) = crate::class_db::method_signature(extends, func.name) {
-                (sig.return_type, sig.total_params as usize)
-            } else if let Some((ret, params)) = known_virtual_signature(func.name) {
-                (ret, params as usize)
-            } else {
-                continue;
-            };
+        let (ret_type, total) = if let Some(sig) = gd_class_db::method_signature(extends, func.name)
+        {
+            (sig.return_type, sig.total_params as usize)
+        } else if let Some((ret, params)) = known_virtual_signature(func.name) {
+            (ret, params as usize)
+        } else {
+            continue;
+        };
 
         // D1: Wrong return type
         // Normalize enum:: prefix from ClassDB (e.g. "enum::Error" → "Error")
@@ -867,22 +866,22 @@ fn check_virtual_override_signature_inner(class: &GdClass, errors: &mut Vec<Stru
         .extends
         .as_ref()
         .and_then(|e| match e {
-            crate::core::gd_ast::GdExtends::Class(c) => Some(*c),
-            crate::core::gd_ast::GdExtends::Path(_) => None,
+            gd_core::gd_ast::GdExtends::Class(c) => Some(*c),
+            gd_core::gd_ast::GdExtends::Path(_) => None,
         })
         .unwrap_or("RefCounted");
     for func in class.declarations.iter().filter_map(GdDecl::as_func) {
         if !func.name.starts_with('_') {
             continue;
         }
-        let (ret_type, total) =
-            if let Some(sig) = crate::class_db::method_signature(extends, func.name) {
-                (sig.return_type, sig.total_params as usize)
-            } else if let Some((ret, params)) = known_virtual_signature(func.name) {
-                (ret, params as usize)
-            } else {
-                continue;
-            };
+        let (ret_type, total) = if let Some(sig) = gd_class_db::method_signature(extends, func.name)
+        {
+            (sig.return_type, sig.total_params as usize)
+        } else if let Some((ret, params)) = known_virtual_signature(func.name) {
+            (ret, params as usize)
+        } else {
+            continue;
+        };
         let normalized_ret = ret_type.strip_prefix("enum::").unwrap_or(ret_type);
         if let Some(ref ret) = func.return_type
             && !ret.name.is_empty()
@@ -923,8 +922,8 @@ fn check_cyclic_inner_class(file: &GdFile, errors: &mut Vec<StructuralError>) {
         .inner_classes()
         .filter_map(|c| {
             c.extends.as_ref().and_then(|e| match e {
-                crate::core::gd_ast::GdExtends::Class(ext) => Some((c.name, *ext)),
-                crate::core::gd_ast::GdExtends::Path(_) => None,
+                gd_core::gd_ast::GdExtends::Class(ext) => Some((c.name, *ext)),
+                gd_core::gd_ast::GdExtends::Path(_) => None,
             })
         })
         .collect();
@@ -1084,7 +1083,7 @@ fn check_export_node_path_in_node(node: Node, source: &str, errors: &mut Vec<Str
                     {
                         let type_name = raw.trim_matches('"').trim_matches('\'');
                         if !type_name.is_empty()
-                            && !crate::class_db::inherits(type_name, "Node")
+                            && !gd_class_db::inherits(type_name, "Node")
                             && type_name != "Node"
                         {
                             let pos = arg.start_position();
@@ -1290,13 +1289,13 @@ pub(super) fn types_assignable(declared: &str, actual: &str) -> bool {
     // Class-to-class assignment: allow if both are ClassDB types.
     // GDScript defers type checking to runtime for object references, and our static
     // type inference may be imprecise (e.g. $Button infers Node, not Button).
-    if crate::class_db::class_exists(declared) && crate::class_db::class_exists(actual) {
+    if gd_class_db::class_exists(declared) && gd_class_db::class_exists(actual) {
         return true;
     }
     // If one type is a ClassDB class and the other is a user class (not a primitive),
     // allow it — we can't verify user class hierarchies without project context.
-    let is_decl_classdb = crate::class_db::class_exists(declared);
-    let is_actual_classdb = crate::class_db::class_exists(actual);
+    let is_decl_classdb = gd_class_db::class_exists(declared);
+    let is_actual_classdb = gd_class_db::class_exists(actual);
     if is_decl_classdb != is_actual_classdb {
         let non_classdb = if is_decl_classdb { actual } else { declared };
         if !is_builtin_value_type(non_classdb) {
@@ -1378,7 +1377,7 @@ fn is_builtin_value_type(ty: &str) -> bool {
 /// not a ClassDB class, and not an array/dict family type.
 fn is_possible_enum_type(ty: &str) -> bool {
     !is_builtin_value_type(ty)
-        && !crate::class_db::class_exists(ty)
+        && !gd_class_db::class_exists(ty)
         && !is_array_family(ty)
         && !is_dict_family(ty)
         && !ty.is_empty()

@@ -1,0 +1,134 @@
+use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity, NumberOrString, Position, Range, Url};
+
+/// Lint source code and return LSP diagnostics.
+pub fn lint_source(source: &str, uri: &Url) -> Vec<Diagnostic> {
+    // Parse with tree-sitter
+    let Ok(tree) = gd_core::parser::parse(source) else {
+        return vec![];
+    };
+    let file = gd_core::gd_ast::convert(&tree, source);
+
+    // Load config, searching upward from the file's directory
+    let config = uri
+        .to_file_path()
+        .ok()
+        .and_then(|p| p.parent().map(std::path::Path::to_path_buf))
+        .and_then(|dir| gd_core::config::Config::load(&dir).ok())
+        .unwrap_or_default();
+
+    // Check if this file matches ignore patterns
+    if let Ok(file_path) = uri.to_file_path() {
+        let base = uri
+            .to_file_path()
+            .ok()
+            .and_then(|p| gd_core::config::find_project_root(&p))
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+        if gd_core::fs::matches_ignore_pattern(&file_path, &base, &config.lint.ignore_patterns) {
+            return vec![];
+        }
+    }
+
+    // Run all lint rules, respecting [[lint.overrides]]
+    let rules = gd_lint::rules::all_rules(
+        &config.lint.disabled_rules,
+        &config.lint.rules,
+        &config.lint,
+        &[],
+    );
+    let file_path = uri.to_file_path().ok();
+    let override_base = file_path
+        .as_deref()
+        .and_then(gd_core::config::find_project_root)
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+    let mut diags = Vec::new();
+    for rule in &rules {
+        if let Some(ref fp) = file_path
+            && gd_core::fs::is_rule_excluded_by_override(
+                fp,
+                &override_base,
+                rule.name(),
+                &config.lint.overrides,
+            )
+        {
+            continue;
+        }
+        diags.extend(rule.check(&file, source, &config.lint));
+    }
+
+    // Parse suppressions and filter
+    let suppressions = parse_suppressions(source);
+
+    // Convert to LSP diagnostics
+    diags
+        .into_iter()
+        .filter(|d| !is_suppressed(d, &suppressions))
+        .map(|d| {
+            let start = Position::new(d.line as u32, d.column as u32);
+            let end = Position::new(d.line as u32, d.end_column.unwrap_or(d.column + 1) as u32);
+            Diagnostic {
+                range: Range::new(start, end),
+                severity: Some(match d.severity {
+                    gd_lint::rules::Severity::Info => DiagnosticSeverity::INFORMATION,
+                    gd_lint::rules::Severity::Warning => DiagnosticSeverity::WARNING,
+                    gd_lint::rules::Severity::Error => DiagnosticSeverity::ERROR,
+                }),
+                code: Some(NumberOrString::String(d.rule.to_string())),
+                source: Some("gd".to_string()),
+                message: d.message,
+                ..Default::default()
+            }
+        })
+        .collect()
+}
+
+/// Minimal inline suppression parsing (replicates lint/mod.rs logic).
+fn parse_suppressions(
+    source: &str,
+) -> std::collections::HashMap<usize, Option<std::collections::HashSet<String>>> {
+    let mut suppressions = std::collections::HashMap::new();
+    for (line_idx, line) in source.lines().enumerate() {
+        if let Some(pos) = line.find("# gd:ignore") {
+            let rest = &line[pos + "# gd:ignore".len()..];
+            if let Some(rule_rest) = rest.strip_prefix("-next-line") {
+                let rules = parse_rule_list(rule_rest);
+                suppressions.insert(line_idx + 1, rules);
+            } else {
+                let rules = parse_rule_list(rest);
+                suppressions.insert(line_idx, rules);
+            }
+        }
+    }
+    suppressions
+}
+
+fn parse_rule_list(text: &str) -> Option<std::collections::HashSet<String>> {
+    let text = text.trim();
+    if text.starts_with('[') {
+        if let Some(end) = text.find(']') {
+            let rules: std::collections::HashSet<String> = text[1..end]
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            if rules.is_empty() { None } else { Some(rules) }
+        } else {
+            None
+        }
+    } else {
+        None
+    }
+}
+
+fn is_suppressed(
+    diag: &gd_lint::rules::LintDiagnostic,
+    suppressions: &std::collections::HashMap<usize, Option<std::collections::HashSet<String>>>,
+) -> bool {
+    if let Some(rules) = suppressions.get(&diag.line) {
+        match rules {
+            None => true,
+            Some(rule_set) => rule_set.contains(diag.rule),
+        }
+    } else {
+        false
+    }
+}

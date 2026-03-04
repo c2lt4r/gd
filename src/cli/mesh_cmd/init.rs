@@ -2,7 +2,7 @@ use miette::{Result, miette};
 use owo_colors::OwoColorize;
 
 use super::{InitArgs, OutputFormat, project_root};
-use crate::cprintln;
+use gd_core::cprintln;
 
 /// Minimal 3D workspace scene with lighting and a neutral background.
 const WORKSPACE_SCENE: &str = "\

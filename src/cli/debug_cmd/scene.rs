@@ -3,7 +3,7 @@ use owo_colors::OwoColorize;
 
 use super::args::{CameraViewArgs, InspectArgs, InspectObjectsArgs, OutputFormat, SceneTreeArgs};
 use super::{daemon_cmd, daemon_cmd_timeout, ensure_binary_debug};
-use crate::cprintln;
+use gd_core::cprintln;
 
 // ── One-shot: scene-tree ─────────────────────────────────────────────
 
@@ -142,7 +142,7 @@ pub(crate) fn cmd_inspect(args: &InspectArgs) -> Result<()> {
 
     // Optionally enrich with ClassDB docs
     let result = if args.rich {
-        crate::debug::enrich::enrich_inspect(&result)
+        gd_lsp::debug::enrich::enrich_inspect(&result)
     } else {
         result
     };
@@ -320,8 +320,8 @@ pub(crate) fn cmd_camera_view(args: &CameraViewArgs) -> Result<()> {
     fn is_spatial_engine_class(class: &str) -> bool {
         class == "Node3D"
             || class == "Node2D"
-            || crate::class_db::inherits(class, "Node3D")
-            || crate::class_db::inherits(class, "Node2D")
+            || gd_class_db::inherits(class, "Node3D")
+            || gd_class_db::inherits(class, "Node2D")
     }
 
     /// Check if a class (engine name or script path) looks like a camera.
@@ -329,8 +329,8 @@ pub(crate) fn cmd_camera_view(args: &CameraViewArgs) -> Result<()> {
     fn is_camera_class(class: &str, node_name: &str) -> bool {
         class == "Camera3D"
             || class == "Camera2D"
-            || crate::class_db::inherits(class, "Camera3D")
-            || crate::class_db::inherits(class, "Camera2D")
+            || gd_class_db::inherits(class, "Camera3D")
+            || gd_class_db::inherits(class, "Camera2D")
             || class.to_ascii_lowercase().contains("camera")
             || node_name.to_ascii_lowercase().contains("camera")
     }

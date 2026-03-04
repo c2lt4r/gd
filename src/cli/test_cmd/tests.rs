@@ -10,7 +10,7 @@ use crate::cli::test_cmd::{
     extract_errors, filter_files_by_tests, filter_noise, group_results_by_file, is_engine_noise,
     is_test_file, parse_res_location, strip_res_prefix,
 };
-use crate::core::gd_ast;
+use gd_core::gd_ast;
 
 #[test]
 fn test_is_test_file() {

@@ -1,4 +1,4 @@
-use crate::core::scene::{self, Connection, ExtResource, SceneData, SceneNode};
+use gd_core::scene::{self, Connection, ExtResource, SceneData, SceneNode};
 
 use super::attach_script::insert_script_attachment;
 use super::*;
@@ -1037,12 +1037,12 @@ fn next_sub_resource_id_empty() {
 #[test]
 fn next_sub_resource_id_increments() {
     let subs = vec![
-        crate::core::scene::SubResource {
+        gd_core::scene::SubResource {
             id: "BoxShape3D_1".to_string(),
             type_name: "BoxShape3D".to_string(),
             properties: Vec::new(),
         },
-        crate::core::scene::SubResource {
+        gd_core::scene::SubResource {
             id: "BoxShape3D_2".to_string(),
             type_name: "BoxShape3D".to_string(),
             properties: Vec::new(),

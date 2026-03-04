@@ -17,7 +17,7 @@ mod tests;
 use clap::{Args, Subcommand};
 use miette::{Result, miette};
 
-use crate::core::scene;
+use gd_core::scene;
 
 #[derive(Args)]
 pub struct SceneArgs {

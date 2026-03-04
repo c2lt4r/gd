@@ -1,6 +1,6 @@
-use crate::cprintln;
 use clap::Args;
 use flate2::read::GzDecoder;
+use gd_core::cprintln;
 use miette::{Result, miette};
 use owo_colors::OwoColorize;
 use sha2::{Digest, Sha256};

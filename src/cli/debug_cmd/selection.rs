@@ -3,7 +3,7 @@ use owo_colors::OwoColorize;
 
 use super::args::{NodeSelectIntArgs, OutputFormat, StepArgs, ToggleFmtArgs};
 use super::{daemon_cmd, ensure_binary_debug};
-use crate::cprintln;
+use gd_core::cprintln;
 
 // ── Node selection (binary protocol) ────────────────────────────────
 

@@ -5,7 +5,7 @@ use owo_colors::OwoColorize;
 
 use super::args::{OutputFormat, ScreenshotArgs, TransformCamera2dArgs, TransformCamera3dArgs};
 use super::{daemon_cmd, ensure_binary_debug};
-use crate::cprintln;
+use gd_core::cprintln;
 
 // ── Camera transforms (binary protocol) ──────────────────────────────
 

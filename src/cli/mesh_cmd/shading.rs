@@ -1,10 +1,10 @@
 use miette::Result;
 use owo_colors::OwoColorize;
 
-use crate::core::mesh::{MeshState, ShadingMode};
+use gd_mesh::{MeshState, ShadingMode};
 
 use super::{AutoSmoothArgs, OutputFormat, ShadingArgs, inject_stats, project_root, run_eval};
-use crate::cprintln;
+use gd_core::cprintln;
 
 pub fn cmd_shade_smooth(args: &ShadingArgs) -> Result<()> {
     apply_shading(

@@ -2,8 +2,8 @@ use miette::Result;
 use owo_colors::OwoColorize;
 use serde::Serialize;
 
-use crate::core::config::Config;
-use crate::cprintln;
+use gd_core::config::Config;
+use gd_core::cprintln;
 
 #[derive(clap::Args)]
 pub struct EnvArgs {
@@ -29,7 +29,7 @@ pub fn exec(args: &EnvArgs) -> Result<()> {
     let cwd = std::env::current_dir().unwrap_or_default();
     let config = Config::load(&cwd).unwrap_or_default();
 
-    let project_root = crate::core::config::find_project_root(&cwd);
+    let project_root = gd_core::config::find_project_root(&cwd);
     let godot_path = crate::build::find_godot(&config).ok();
     let godot_version = godot_path.as_ref().and_then(|p| query_godot_version(p));
     let config_path = project_root
@@ -45,7 +45,7 @@ pub fn exec(args: &EnvArgs) -> Result<()> {
         arch: std::env::consts::ARCH.to_string(),
         project_root: project_root.map(|p| p.to_string_lossy().to_string()),
         config_path: config_path.map(|p| p.to_string_lossy().to_string()),
-        wsl: crate::core::fs::is_wsl(),
+        wsl: gd_core::fs::is_wsl(),
     };
 
     if args.json {

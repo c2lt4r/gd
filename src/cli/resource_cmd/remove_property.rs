@@ -4,7 +4,7 @@ use miette::{Result, miette};
 use owo_colors::OwoColorize;
 
 use super::{RemovePropertyArgs, read_and_parse_resource, write_or_dry_run};
-use crate::{ceprintln, cprintln};
+use gd_core::{ceprintln, cprintln};
 
 pub(crate) fn exec_remove_property(args: &RemovePropertyArgs) -> Result<()> {
     let path = PathBuf::from(&args.file);

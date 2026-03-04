@@ -1,11 +1,11 @@
 use miette::Result;
 use owo_colors::OwoColorize;
 
-use crate::core::mesh::MeshState;
-use crate::core::mesh::spatial_filter;
+use gd_mesh::MeshState;
+use gd_mesh::spatial_filter;
 
 use super::{InsetArgs, OutputFormat, inject_stats, project_root, run_eval};
-use crate::cprintln;
+use gd_core::cprintln;
 
 pub fn cmd_inset(args: &InsetArgs) -> Result<()> {
     let root = project_root()?;
@@ -22,9 +22,9 @@ pub fn cmd_inset(args: &InsetArgs) -> Result<()> {
         let selected: Vec<usize> = (0..part.mesh.faces.len())
             .filter(|&fi| spatial_filter::face_matches(&part.mesh, fi, sf))
             .collect();
-        crate::core::mesh::inset::inset_selected(&part.mesh, args.factor, Some(&selected))
+        gd_mesh::inset::inset_selected(&part.mesh, args.factor, Some(&selected))
     } else {
-        crate::core::mesh::inset::inset(&part.mesh, args.factor)
+        gd_mesh::inset::inset(&part.mesh, args.factor)
     };
     let vc = result.vertex_count();
     let fc = result.face_count();

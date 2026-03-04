@@ -7,9 +7,9 @@ use super::args::{
     AwaitArgs, CallArgs, DescribeArgs, DragArgs, FindArgs, GetPropArgs, HoverArgs, MoveToArgs,
     NavigateArgs, OutputFormat, SetNodeArgs,
 };
-use crate::core::live_eval::send_eval;
-use crate::core::project::GodotProject;
-use crate::cprintln;
+use crate::cli::live_eval::send_eval;
+use gd_core::cprintln;
+use gd_core::project::GodotProject;
 
 /// Default timeout for automation eval commands.
 const AUTO_TIMEOUT: Duration = Duration::from_secs(10);
@@ -1240,7 +1240,7 @@ mod tests {
     use super::*;
 
     fn assert_parses(script: &str) {
-        let tree = crate::core::parser::parse(script).unwrap();
+        let tree = gd_core::parser::parse(script).unwrap();
         assert!(
             !tree.root_node().has_error(),
             "Script has parse errors:\n{script}"

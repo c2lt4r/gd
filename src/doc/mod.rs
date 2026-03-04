@@ -6,8 +6,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use tree_sitter::{Node, Tree};
 
-use crate::core::fs::collect_gdscript_files;
-use crate::core::parser::parse_file;
+use gd_core::fs::collect_gdscript_files;
+use gd_core::parser::parse_file;
 
 /// Documentation for a signal.
 #[derive(Debug, Clone, Serialize)]
@@ -473,7 +473,7 @@ pub fn run_doc_check(paths: &[String]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::parser::parse;
+    use gd_core::parser::parse;
 
     #[test]
     fn test_extract_basic_class_doc() {

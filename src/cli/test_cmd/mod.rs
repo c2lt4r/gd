@@ -14,10 +14,10 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use crate::core::config::Config;
-use crate::core::gd_ast;
-use crate::core::project::GodotProject;
-use crate::{ceprintln, cprintln};
+use gd_core::config::Config;
+use gd_core::gd_ast;
+use gd_core::project::GodotProject;
+use gd_core::{ceprintln, cprintln};
 
 // Re-export run_with_timeout for use by gut.rs and gdunit.rs
 pub use script::run_with_timeout;
@@ -190,7 +190,7 @@ macro_rules! hprintln {
         if $json { eprintln!(); } else { println!(); }
     };
     ($json:expr, $($arg:tt)*) => {
-        if $json { $crate::ceprintln!($($arg)*); } else { $crate::cprintln!($($arg)*); }
+        if $json { gd_core::ceprintln!($($arg)*); } else { gd_core::cprintln!($($arg)*); }
     };
 }
 
@@ -812,7 +812,7 @@ fn list_tests(
         }
         total_tests += file_test_count;
 
-        let rel = crate::core::fs::relative_slash(path, project_root);
+        let rel = gd_core::fs::relative_slash(path, project_root);
         if show_top_level {
             entries.push(TestListEntry {
                 file: rel,

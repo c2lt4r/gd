@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use miette::{Result, miette};
 
 use super::{GetPropertyArgs, read_and_parse_resource};
-use crate::cprintln;
+use gd_core::cprintln;
 
 pub(crate) fn exec_get_property(args: &GetPropertyArgs) -> Result<()> {
     let path = PathBuf::from(&args.file);

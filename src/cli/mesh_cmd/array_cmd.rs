@@ -1,10 +1,10 @@
 use miette::Result;
 use owo_colors::OwoColorize;
 
-use crate::core::mesh::MeshState;
+use gd_mesh::MeshState;
 
 use super::{ArrayArgs, OutputFormat, inject_stats, parse_3d, project_root, run_eval};
-use crate::cprintln;
+use gd_core::cprintln;
 
 pub fn cmd_array(args: &ArrayArgs) -> Result<()> {
     let root = project_root()?;
@@ -13,7 +13,7 @@ pub fn cmd_array(args: &ArrayArgs) -> Result<()> {
     let (x, y, z) = parse_3d(&args.offset)?;
 
     let part = state.active_part_mut()?;
-    let result = crate::core::mesh::array::array(&part.mesh, args.count as usize, [x, y, z]);
+    let result = gd_mesh::array::array(&part.mesh, args.count as usize, [x, y, z]);
     let vc = result.vertex_count();
     let fc = result.face_count();
     part.mesh = result;

@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use miette::{Result, miette};
 use owo_colors::OwoColorize;
 
-use crate::cprintln;
+use gd_core::cprintln;
 
 use super::{
     DetachScriptArgs, clean_double_blanks, decrement_load_steps, extract_ext_resource_id,

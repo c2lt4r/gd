@@ -139,7 +139,7 @@ fn exec_select(args: &SelectArgs) -> Result<()> {
 
 /// Send a command through the daemon, returning the result.
 fn daemon_cmd(method: &str, params: serde_json::Value) -> Option<serde_json::Value> {
-    crate::lsp::daemon_client::query_daemon(method, params, None)
+    gd_lsp::daemon_client::query_daemon(method, params, None)
 }
 
 /// Send a command through the daemon with a custom timeout.
@@ -148,7 +148,7 @@ fn daemon_cmd_timeout(
     params: serde_json::Value,
     timeout_secs: u64,
 ) -> Option<serde_json::Value> {
-    crate::lsp::daemon_client::query_daemon(
+    gd_lsp::daemon_client::query_daemon(
         method,
         params,
         Some(std::time::Duration::from_secs(timeout_secs + 5)),
@@ -297,8 +297,8 @@ fn debug_break_for_eval() -> EvalBreakContext {
 /// and return a `(res://path, body_line)` pair suitable for a breakpoint.
 fn find_process_breakpoint_target() -> Option<(String, u32)> {
     let cwd = std::env::current_dir().ok()?;
-    let root = crate::core::config::find_project_root(&cwd)?;
-    let files = crate::core::fs::collect_gdscript_files(&root).ok()?;
+    let root = gd_core::config::find_project_root(&cwd)?;
+    let files = gd_core::fs::collect_gdscript_files(&root).ok()?;
 
     for file in &files {
         let Ok(content) = std::fs::read_to_string(file) else {

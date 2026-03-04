@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use miette::{Result, miette};
 use owo_colors::OwoColorize;
 
-use crate::core::scene;
-use crate::cprintln;
+use gd_core::cprintln;
+use gd_core::scene;
 
 use super::{
     DuplicateNodeArgs, clean_double_blanks, compute_node_path, find_node, parent_attr_for_node,

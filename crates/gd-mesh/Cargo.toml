@@ -1,0 +1,22 @@
+[package]
+name = "gd-mesh"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Half-edge mesh operations for gd toolchain (experimental)"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+miette.workspace = true
+indexmap.workspace = true
+bincode.workspace = true
+earcutr.workspace = true
+
+[dev-dependencies]
+gd-core.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

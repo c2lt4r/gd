@@ -1,11 +1,11 @@
 use miette::{Result, miette};
 use owo_colors::OwoColorize;
 
-use crate::core::mesh::MeshState;
+use gd_mesh::MeshState;
 
 use super::gdscript;
 use super::{DuplicatePartArgs, OutputFormat, inject_stats, project_root, run_eval};
-use crate::cprintln;
+use gd_core::cprintln;
 
 pub fn cmd_duplicate_part(args: &DuplicatePartArgs) -> Result<()> {
     if args.group.is_some() {
@@ -32,7 +32,7 @@ pub fn cmd_duplicate_part(args: &DuplicatePartArgs) -> Result<()> {
     // Apply mirror if requested
     let mirror_axis = args.symmetric.as_ref().or(args.mirror.as_ref());
     if let Some(axis) = mirror_axis {
-        crate::core::mesh::mirror::mirror(&mut new_part.mesh, axis.as_index());
+        gd_mesh::mirror::mirror(&mut new_part.mesh, axis.as_index());
         new_part.transform.position[axis.as_index()] =
             -new_part.transform.position[axis.as_index()];
     }
@@ -118,7 +118,7 @@ fn cmd_duplicate_group(args: &DuplicatePartArgs) -> Result<()> {
 
         let mut new_part = src_part;
         if let Some(axis) = mirror_axis {
-            crate::core::mesh::mirror::mirror(&mut new_part.mesh, axis.as_index());
+            gd_mesh::mirror::mirror(&mut new_part.mesh, axis.as_index());
             new_part.transform.position[axis.as_index()] =
                 -new_part.transform.position[axis.as_index()];
         }

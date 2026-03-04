@@ -1,11 +1,11 @@
 use miette::Result;
 use owo_colors::OwoColorize;
 
-use crate::core::mesh::MeshState;
+use gd_mesh::MeshState;
 
 use super::gdscript;
 use super::{OutputFormat, RemovePartArgs, inject_stats, project_root, run_eval};
-use crate::cprintln;
+use gd_core::cprintln;
 
 pub fn cmd_remove_part(args: &RemovePartArgs) -> Result<()> {
     if let Some(ref group_name) = args.group {

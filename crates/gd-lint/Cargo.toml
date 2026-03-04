@@ -1,0 +1,30 @@
+[package]
+name = "gd-lint"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "89 GDScript lint rules for gd toolchain"
+
+[dependencies]
+gd-core.workspace = true
+gd-class-db.workspace = true
+
+tree-sitter.workspace = true
+
+serde.workspace = true
+serde_json.workspace = true
+
+miette.workspace = true
+
+rayon.workspace = true
+owo-colors.workspace = true
+similar.workspace = true
+
+path-slash.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

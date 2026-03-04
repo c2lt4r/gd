@@ -1,11 +1,11 @@
 use miette::Result;
 use owo_colors::OwoColorize;
 
-use crate::core::mesh::MeshState;
+use gd_mesh::MeshState;
 
 use super::gdscript;
 use super::{CreateArgs, OutputFormat, build_primitive_mesh, inject_stats, project_root, run_eval};
-use crate::cprintln;
+use gd_core::cprintln;
 
 pub fn cmd_create(args: &CreateArgs) -> Result<()> {
     let root = project_root()?;

@@ -1,13 +1,13 @@
 use miette::Result;
 use owo_colors::OwoColorize;
 
-use crate::core::mesh::{MeshPart, MeshState};
+use gd_mesh::{MeshPart, MeshState};
 
 use super::gdscript;
 use super::{
     AddPartArgs, OutputFormat, build_primitive_mesh, inject_stats, project_root, run_eval,
 };
-use crate::cprintln;
+use gd_core::cprintln;
 
 pub fn cmd_add_part(args: &AddPartArgs) -> Result<()> {
     let root = project_root()?;

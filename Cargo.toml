@@ -1,23 +1,21 @@
-[package]
-name = "gd"
-version = "0.3.18"
+[workspace]
+members = ["crates/*"]
+resolver = "2"
+
+[workspace.package]
+version = "0.3.19"
 edition = "2024"
-description = "A comprehensive Godot toolchain - format, lint, build, run, and manage Godot projects"
 license = "MIT"
 repository = "https://github.com/c2lt4r/gd"
-readme = "README.md"
-keywords = ["godot", "gdscript", "gamedev", "linter", "formatter"]
-categories = ["command-line-utilities", "development-tools", "game-development"]
 
-[[bin]]
-name = "gd"
-path = "src/main.rs"
-
-[dependencies]
-# CLI
-clap = { version = "4", features = ["derive", "env"] }
-clap_complete = "4"
-clap_mangen = "0.2"
+[workspace.dependencies]
+# Internal crates
+gd-class-db = { path = "crates/gd-class-db" }
+gd-core = { path = "crates/gd-core" }
+gd-lint = { path = "crates/gd-lint" }
+gd-fmt = { path = "crates/gd-fmt" }
+gd-lsp = { path = "crates/gd-lsp" }
+gd-mesh = { path = "crates/gd-mesh" }
 
 # Parsing
 tree-sitter = "0.24"
@@ -36,6 +34,7 @@ thiserror = "2"
 # File system
 walkdir = "2"
 ignore = "0.4"
+path-slash = "0.2.1"
 
 # Parallelism
 rayon = "1"
@@ -45,7 +44,7 @@ owo-colors = "4"
 indicatif = "0.17"
 
 # Misc
-similar = "2"          # Diffing for fmt --check
+similar = "2"
 strsim = "0.11"
 
 # Half-edge mesh engine
@@ -69,23 +68,21 @@ notify-debouncer-mini = "0.5"
 tower-lsp = "0.20"
 tokio = { version = "1", features = ["io-std", "rt-multi-thread", "macros"] }
 dashmap = "6"
-path-slash = "0.2.1"
 
-[target.'cfg(unix)'.dependencies]
+# CLI
+clap = { version = "4", features = ["derive", "env"] }
+clap_complete = "4"
+clap_mangen = "0.2"
+
+# Platform
 libc = "0.2"
-
-[target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_IO", "Win32_System_Threading", "Win32_Storage_FileSystem"] }
 
-[dev-dependencies]
-criterion = { version = "0.5", features = ["html_reports"] }
+# Testing
 tempfile = "3"
+criterion = { version = "0.5", features = ["html_reports"] }
 
-[[bench]]
-name = "benchmarks"
-harness = false
-
-[lints.clippy]
+[workspace.lints.clippy]
 pedantic = { level = "deny", priority = -1 }
 
 # Casts — Godot binary protocol uses specific widths (u32, i32, i64, f64);
@@ -111,6 +108,92 @@ struct_excessive_bools  = "allow"
 
 # Vec macro — the all_rules() vec with 89+ Box<dyn LintRule> triggers this in test builds
 large_stack_arrays      = "allow"
+
+# ── Binary crate ────────────────────────────────────────────────────────────
+
+[package]
+name = "gd"
+version.workspace = true
+edition.workspace = true
+description = "A comprehensive Godot toolchain - format, lint, build, run, and manage Godot projects"
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+keywords = ["godot", "gdscript", "gamedev", "linter", "formatter"]
+categories = ["command-line-utilities", "development-tools", "game-development"]
+
+[[bin]]
+name = "gd"
+path = "src/main.rs"
+
+[dependencies]
+gd-class-db.workspace = true
+gd-core.workspace = true
+gd-lint.workspace = true
+gd-fmt.workspace = true
+gd-lsp.workspace = true
+gd-mesh.workspace = true
+
+clap.workspace = true
+clap_complete.workspace = true
+clap_mangen.workspace = true
+
+tree-sitter.workspace = true
+tree-sitter-gdscript.workspace = true
+tree-sitter-godot-resource.workspace = true
+
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+
+miette.workspace = true
+thiserror.workspace = true
+
+walkdir.workspace = true
+ignore.workspace = true
+path-slash.workspace = true
+
+rayon.workspace = true
+owo-colors.workspace = true
+indicatif.workspace = true
+
+similar.workspace = true
+strsim.workspace = true
+
+earcutr.workspace = true
+bincode.workspace = true
+indexmap.workspace = true
+
+ureq.workspace = true
+zip.workspace = true
+urlencoding.workspace = true
+flate2.workspace = true
+tar.workspace = true
+sha2.workspace = true
+
+notify.workspace = true
+notify-debouncer-mini.workspace = true
+
+tower-lsp.workspace = true
+tokio.workspace = true
+dashmap.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+tempfile.workspace = true
+
+[[bench]]
+name = "benchmarks"
+harness = false
+
+[lints]
+workspace = true
 
 [profile.release]
 opt-level = 3

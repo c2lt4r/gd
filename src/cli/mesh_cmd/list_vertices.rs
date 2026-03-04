@@ -3,7 +3,7 @@ use owo_colors::OwoColorize;
 
 use super::gdscript;
 use super::{ListVerticesArgs, OutputFormat, parse_3d, run_eval};
-use crate::cprintln;
+use gd_core::cprintln;
 
 pub fn cmd_list_vertices(args: &ListVerticesArgs) -> Result<()> {
     let region = if let Some(ref r) = args.region {

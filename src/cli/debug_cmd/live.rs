@@ -7,7 +7,7 @@ use super::args::{
     LiveRestoreArgs, LiveSetRootArgs, OutputFormat,
 };
 use super::{daemon_cmd, ensure_binary_debug};
-use crate::cprintln;
+use gd_core::cprintln;
 
 // ── One-shot: live editing ──────────────────────────────────────────
 

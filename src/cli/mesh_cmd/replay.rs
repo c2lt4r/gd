@@ -3,8 +3,8 @@ use std::path::Path;
 use miette::{Result, miette};
 use owo_colors::OwoColorize;
 
-use crate::core::mesh::MeshState;
-use crate::cprintln;
+use gd_core::cprintln;
+use gd_mesh::MeshState;
 
 use super::{OutputFormat, ReplayArgs, project_root};
 

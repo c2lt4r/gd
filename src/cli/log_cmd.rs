@@ -4,8 +4,8 @@ use clap::Args;
 use miette::{Result, miette};
 use owo_colors::OwoColorize;
 
-use crate::debug::godot_debug_server::LogEntry;
-use crate::{ceprintln, cprintln};
+use gd_core::{ceprintln, cprintln};
+use gd_lsp::debug::godot_debug_server::LogEntry;
 
 #[derive(Args)]
 pub struct LogArgs {
@@ -31,7 +31,7 @@ pub struct LogArgs {
 
 pub fn exec(args: &LogArgs) -> Result<()> {
     if args.clear {
-        let resp = crate::lsp::daemon_client::query_daemon(
+        let resp = gd_lsp::daemon_client::query_daemon(
             "log_clear",
             serde_json::json!({}),
             Some(Duration::from_secs(2)),
@@ -108,7 +108,7 @@ fn query_log(after_seq: u64, count: usize, type_filter: Option<&str>) -> Result<
         params["type_filter"] = serde_json::json!(f);
     }
     let resp =
-        crate::lsp::daemon_client::query_daemon("log_query", params, Some(Duration::from_secs(2)))
+        gd_lsp::daemon_client::query_daemon("log_query", params, Some(Duration::from_secs(2)))
             .ok_or_else(|| miette!("No daemon running. Start a game with: gd run"))?;
 
     let entries: Vec<LogEntry> = resp

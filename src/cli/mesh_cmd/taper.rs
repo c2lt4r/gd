@@ -1,10 +1,10 @@
 use miette::Result;
 use owo_colors::OwoColorize;
 
-use crate::core::mesh::MeshState;
+use gd_mesh::MeshState;
 
 use super::{OutputFormat, TaperArgs, inject_stats, project_root, run_eval};
-use crate::cprintln;
+use gd_core::cprintln;
 
 pub fn cmd_taper(args: &TaperArgs) -> Result<()> {
     let root = project_root()?;
@@ -19,7 +19,7 @@ pub fn cmd_taper(args: &TaperArgs) -> Result<()> {
     };
 
     let part = state.resolve_part_mut(args.part.as_deref())?;
-    let count = crate::core::mesh::taper::taper(
+    let count = gd_mesh::taper::taper(
         &mut part.mesh,
         axis_idx,
         args.from_scale,

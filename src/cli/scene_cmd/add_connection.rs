@@ -3,10 +3,10 @@ use std::path::PathBuf;
 use miette::{Result, miette};
 use owo_colors::OwoColorize;
 
-use crate::core::scene::SceneData;
+use gd_core::scene::SceneData;
 
 use super::{AddConnectionArgs, read_and_parse_scene, write_or_dry_run};
-use crate::cprintln;
+use gd_core::cprintln;
 
 pub(crate) fn exec_add_connection(args: &AddConnectionArgs) -> Result<()> {
     let path = PathBuf::from(&args.scene);

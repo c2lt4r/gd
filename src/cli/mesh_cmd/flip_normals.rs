@@ -1,14 +1,14 @@
 use miette::Result;
 use owo_colors::OwoColorize;
 
-use crate::core::mesh::MeshState;
-use crate::core::mesh::normals;
-use crate::core::mesh::spatial_filter;
+use gd_mesh::MeshState;
+use gd_mesh::normals;
+use gd_mesh::spatial_filter;
 
 use super::{
     FlipNormalsArgs, OutputFormat, inject_stats, match_part_pattern, project_root, run_eval,
 };
-use crate::{ceprintln, cprintln};
+use gd_core::{ceprintln, cprintln};
 
 pub fn cmd_flip_normals(args: &FlipNormalsArgs) -> Result<()> {
     if args.all {

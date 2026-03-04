@@ -1,10 +1,10 @@
 use miette::Result;
 use owo_colors::OwoColorize;
 
-use crate::core::mesh::{MeshState, Transform3D};
+use gd_mesh::{MeshState, Transform3D};
 
 use super::{OutputFormat, ScaleArgs, inject_stats, parse_scale, project_root, run_eval};
-use crate::cprintln;
+use gd_core::cprintln;
 
 pub fn cmd_scale(args: &ScaleArgs) -> Result<()> {
     if let Some(ref group_name) = args.group {

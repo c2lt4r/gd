@@ -1,5 +1,5 @@
-use crate::cprintln;
 use clap::Args;
+use gd_core::cprintln;
 use miette::{Result, miette};
 use owo_colors::OwoColorize;
 use std::env;
@@ -14,7 +14,7 @@ pub struct CleanArgs {
 
 pub fn exec(args: &CleanArgs) -> Result<()> {
     let cwd = env::current_dir().unwrap_or_default();
-    let project = crate::core::project::GodotProject::discover(&cwd)?;
+    let project = gd_core::project::GodotProject::discover(&cwd)?;
 
     let dirs_to_clean: Vec<&str> = if args.keep_cache {
         vec!["build"]

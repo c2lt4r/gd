@@ -1,7 +1,7 @@
 use super::*;
 
 fn parse_and_find(source: &str) -> Vec<CodeConnection> {
-    let tree = crate::core::parser::parse(source).unwrap();
+    let tree = gd_core::parser::parse(source).unwrap();
     find_connect_calls(tree.root_node(), source)
 }
 
