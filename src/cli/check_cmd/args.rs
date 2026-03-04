@@ -95,7 +95,12 @@ fn check_arg_types_in_node(
                                 None
                             }
                         });
-                    if let Some(class_name) = class {
+                    if let Some(class_name) = class
+                        // Skip rpc/rpc_id — GDScript syntactic sugar:
+                        // func_name.rpc(args) calls the function remotely
+                        // with the function's own signature, not Object.rpc(StringName).
+                        && !matches!(method_name, "rpc" | "rpc_id")
+                    {
                         check_call_arg_types_classdb(
                             method_name,
                             class_name,
@@ -308,10 +313,24 @@ fn parse_utility_param_count(sig: &str) -> (u8, u8) {
     let Some(paren_start) = sig.find('(') else {
         return (0, 0);
     };
-    let Some(paren_end) = sig.find(')') else {
-        return (0, 0);
-    };
-    let params = &sig[paren_start + 1..paren_end];
+    let params = &sig[paren_start + 1..];
+    // Find matching close paren (not just first `)`) to handle nested parens in defaults
+    let mut depth = 0i32;
+    let mut end = params.len();
+    for (i, ch) in params.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                if depth == 0 {
+                    end = i;
+                    break;
+                }
+                depth -= 1;
+            }
+            _ => {}
+        }
+    }
+    let params = &params[..end];
     if params.trim().is_empty() {
         return (0, 0);
     }
@@ -319,9 +338,31 @@ fn parse_utility_param_count(sig: &str) -> (u8, u8) {
     if params.contains("...") {
         return (0, 255);
     }
-    let total = params.split(',').count() as u8;
-    // Count params with default values
-    let with_defaults = params.split(',').filter(|p| p.contains('=')).count() as u8;
+    // Split on commas at depth 0 (skip commas inside parenthesized default values)
+    let mut total: u8 = 0;
+    let mut with_defaults: u8 = 0;
+    let mut paren_depth = 0i32;
+    let mut has_equals = false;
+    for ch in params.chars() {
+        match ch {
+            '(' => paren_depth += 1,
+            ')' => paren_depth -= 1,
+            '=' if paren_depth == 0 => has_equals = true,
+            ',' if paren_depth == 0 => {
+                total += 1;
+                if has_equals {
+                    with_defaults += 1;
+                }
+                has_equals = false;
+            }
+            _ => {}
+        }
+    }
+    // Count the last parameter
+    total += 1;
+    if has_equals {
+        with_defaults += 1;
+    }
     let required = total - with_defaults;
     (required, total)
 }
@@ -330,13 +371,11 @@ fn parse_utility_param_count(sig: &str) -> (u8, u8) {
 pub(super) fn constructor_param_counts(type_name: &str) -> Option<&'static [u8]> {
     match type_name {
         "Color" | "Plane" => Some(&[0, 1, 2, 3, 4]),
-        "Vector2" | "Vector2i" => Some(&[0, 1, 2]),
+        "Vector2" | "Vector2i" | "Transform3D" | "AABB" => Some(&[0, 1, 2]),
         "Vector3" | "Vector3i" => Some(&[0, 1, 3]),
         "Vector4" | "Vector4i" | "Projection" => Some(&[0, 1, 4]),
-        "Transform3D" | "AABB" => Some(&[0, 2]),
-        "Basis" => Some(&[0, 3]),
+        "Basis" | "Transform2D" => Some(&[0, 2, 3]),
         "Rect2" | "Rect2i" | "Quaternion" => Some(&[0, 2, 4]),
-        "Transform2D" => Some(&[0, 2, 3]),
         _ => None,
     }
 }

@@ -566,7 +566,7 @@ fn is_identifier_context_ok(
             return true;
         }
         // Also check signals and enum members from base classes
-        if project_has_signal(ext, name, project) || project_has_enum_member(ext, name, project) {
+        if project.signal_exists(ext, name) || project.enum_member_exists(ext, name) {
             return true;
         }
     }
@@ -670,44 +670,6 @@ fn collect_file_const_preloads(file: &GdFile) -> Vec<(String, String)> {
         }
     }
     result
-}
-
-/// Check if a signal exists on a user class or its extends chain.
-fn project_has_signal(class: &str, signal_name: &str, project: &ProjectIndex) -> bool {
-    let mut current = class;
-    for _ in 0..64 {
-        if let Some(fs) = project.lookup_class(current) {
-            if fs.signals.iter().any(|s| s == signal_name) {
-                return true;
-            }
-            match fs.extends.as_deref() {
-                Some(parent) => current = parent,
-                None => return false,
-            }
-        } else {
-            return false;
-        }
-    }
-    false
-}
-
-/// Check if an enum member exists on a user class or its extends chain.
-fn project_has_enum_member(class: &str, member_name: &str, project: &ProjectIndex) -> bool {
-    let mut current = class;
-    for _ in 0..64 {
-        if let Some(fs) = project.lookup_class(current) {
-            if fs.enum_members.iter().any(|m| m == member_name) {
-                return true;
-            }
-            match fs.extends.as_deref() {
-                Some(parent) => current = parent,
-                None => return false,
-            }
-        } else {
-            return false;
-        }
-    }
-    false
 }
 
 /// Walk the project extends chain from `ext` (class name or `res://` path) until we find

@@ -7,6 +7,7 @@ use crate::core::type_inference;
 use crate::core::workspace_index::ProjectIndex;
 
 use super::StructuralError;
+use super::types::infer_local_var_type;
 
 /// Run structural checks that go beyond tree-sitter error nodes.
 pub(super) fn validate_structure(
@@ -42,6 +43,11 @@ fn check_top_level_statements(root: &Node, errors: &mut Vec<StructuralError>) {
             if child.kind() == "expression_statement"
                 && child.named_child(0).is_some_and(|c| c.kind() == "string")
             {
+                continue;
+            }
+            // Skip indented statements — likely inside a function body that tree-sitter
+            // misparsed due to comments at column 0 breaking indentation tracking.
+            if child.start_position().column > 0 {
                 continue;
             }
             let pos = child.start_position();
@@ -516,24 +522,25 @@ fn is_variant_producing_expr(
     project: &ProjectIndex,
 ) -> bool {
     match node.kind() {
-        // dict["key"], arr[idx] — but typed arrays/strings/packed arrays have known element types
+        // dict["key"], arr[idx] — only flag when we can confirm the receiver is
+        // Dictionary or untyped Array. Packed arrays, typed arrays, and strings
+        // have known element types. If we can't determine the receiver type at all,
+        // don't flag (user likely knows the type from context).
         "subscript" => {
-            if let Some(receiver) = node.named_child(0)
-                && let Some(ty) = type_inference::infer_expression_type_with_project(
+            if let Some(receiver) = node.named_child(0) {
+                let ty = type_inference::infer_expression_type_with_project(
                     &receiver, source, file, project,
                 )
-            {
-                match &ty {
-                    type_inference::InferredType::Builtin(b)
-                        if b.starts_with("Packed") || *b == "String" =>
-                    {
-                        return false;
-                    }
-                    type_inference::InferredType::TypedArray(_) => return false,
-                    _ => {}
-                }
+                .or_else(|| infer_local_var_type(&receiver, source, file, project));
+                matches!(
+                    &ty,
+                    Some(type_inference::InferredType::Builtin(
+                        "Dictionary" | "Array"
+                    ))
+                )
+            } else {
+                true
             }
-            true
         }
         // method calls: attribute > attribute_call (tree-sitter pattern)
         // e.g. dict.get("key"), dict.values(), dict.keys()
@@ -1796,6 +1803,44 @@ fn check_range_in_node(node: Node, source: &str, errors: &mut Vec<StructuralErro
     }
 }
 
+/// Check if an expression is string-like: literal string, string format (`"..." % val`),
+/// or string concatenation.
+fn is_string_like_expr(node: &Node, source: &str) -> bool {
+    match node.kind() {
+        "string" | "string_name" => true,
+        // "format %s" % value — string formatting
+        "binary_operator" => {
+            let op = node
+                .child_by_field_name("op")
+                .and_then(|o| o.utf8_text(source.as_bytes()).ok())
+                .unwrap_or("");
+            if op == "%" {
+                // Left side should be a string
+                return node
+                    .named_child(0)
+                    .is_some_and(|c| is_string_like_expr(&c, source));
+            }
+            // "a" + "b" — concatenation
+            if op == "+" {
+                return node
+                    .named_child(0)
+                    .is_some_and(|c| is_string_like_expr(&c, source));
+            }
+            false
+        }
+        // str(), String() calls
+        "call" => {
+            let func = node
+                .child_by_field_name("function")
+                .or_else(|| node.named_child(0))
+                .and_then(|f| f.utf8_text(source.as_bytes()).ok())
+                .unwrap_or("");
+            matches!(func, "str" | "String")
+        }
+        _ => false,
+    }
+}
+
 /// H9: `assert()` second argument (message) must be a string literal.
 fn check_assert_message(root: &Node, source: &str, errors: &mut Vec<StructuralError>) {
     check_assert_in_node(*root, source, errors);
@@ -1811,7 +1856,7 @@ fn check_assert_in_node(node: Node, source: &str, errors: &mut Vec<StructuralErr
         && let Some(args) = node.child_by_field_name("arguments")
         && args.named_child_count() >= 2
         && let Some(msg_arg) = args.named_child(1)
-        && msg_arg.kind() != "string"
+        && !is_string_like_expr(&msg_arg, source)
     {
         let pos = msg_arg.start_position();
         errors.push(StructuralError {
@@ -2051,6 +2096,11 @@ fn statement_always_returns(node: &Node, source: &[u8]) -> bool {
                         if arm.kind() == "pattern_section" {
                             let mut pc = arm.walk();
                             for p in arm.children(&mut pc) {
+                                // Wildcard `_` may be a direct child or inside a `pattern` wrapper
+                                if p.kind() == "identifier" && p.utf8_text(source).ok() == Some("_")
+                                {
+                                    has_catchall = true;
+                                }
                                 if p.kind() == "pattern" {
                                     let mut inner = p.walk();
                                     for pat_child in p.children(&mut inner) {
@@ -2158,7 +2208,7 @@ fn is_const_expression(node: &Node, source: &[u8]) -> bool {
         "array" => {
             let mut cursor = node.walk();
             node.named_children(&mut cursor)
-                .all(|c| is_const_expression(&c, source))
+                .all(|c| c.kind() == "comment" || is_const_expression(&c, source))
         }
         "dictionary" => {
             let mut cursor = node.walk();
@@ -2168,6 +2218,8 @@ fn is_const_expression(node: &Node, source: &[u8]) -> bool {
                         .is_some_and(|k| is_const_expression(&k, source))
                         && c.named_child(1)
                             .is_some_and(|v| is_const_expression(&v, source))
+                } else if c.kind() == "comment" {
+                    true
                 } else {
                     is_const_expression(&c, source)
                 }
@@ -2317,7 +2369,52 @@ fn is_builtin_constructor(name: &str) -> bool {
 
 /// @GDScript utility functions that produce constant values when given constant args.
 fn is_gdscript_utility_const(name: &str) -> bool {
-    matches!(name, "Color8")
+    matches!(
+        name,
+        "Color8"
+            | "deg_to_rad"
+            | "rad_to_deg"
+            | "sin"
+            | "cos"
+            | "tan"
+            | "asin"
+            | "acos"
+            | "atan"
+            | "atan2"
+            | "sqrt"
+            | "pow"
+            | "abs"
+            | "absf"
+            | "absi"
+            | "ceil"
+            | "ceilf"
+            | "ceili"
+            | "floor"
+            | "floorf"
+            | "floori"
+            | "round"
+            | "roundf"
+            | "roundi"
+            | "clamp"
+            | "clampf"
+            | "clampi"
+            | "min"
+            | "max"
+            | "minf"
+            | "maxf"
+            | "mini"
+            | "maxi"
+            | "log"
+            | "exp"
+            | "lerp"
+            | "lerpf"
+            | "sign"
+            | "signf"
+            | "signi"
+            | "fmod"
+            | "fposmod"
+            | "posmod"
+    )
 }
 
 /// H1: Getter/setter signature mismatch.

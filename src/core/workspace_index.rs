@@ -169,10 +169,14 @@ impl ProjectIndex {
             .extension()
             .is_some_and(|e| e.eq_ignore_ascii_case("gd"))
         {
-            return self
-                .files
-                .iter()
-                .find(|f| f.path.to_string_lossy().replace('\\', "/").ends_with(name));
+            // Strip leading ../ segments for matching — the filename (or last path
+            // components) is what matters for matching against indexed file paths.
+            let clean = name.trim_start_matches("../").trim_start_matches("./");
+            let suffix = format!("/{clean}");
+            return self.files.iter().find(|f| {
+                let p = f.path.to_string_lossy().replace('\\', "/");
+                p.ends_with(&suffix) || p.ends_with(clean)
+            });
         }
         None
     }
@@ -309,6 +313,44 @@ impl ProjectIndex {
         for _ in 0..64 {
             if let Some(fs) = self.resolve_extends(current) {
                 if fs.variables.iter().any(|v| v.name == var_name) {
+                    return true;
+                }
+                match fs.extends.as_deref() {
+                    Some(parent) => current = parent,
+                    None => return false,
+                }
+            } else {
+                return false;
+            }
+        }
+        false
+    }
+
+    /// Check if a signal exists on a user-defined class, walking the extends chain.
+    pub fn signal_exists(&self, class: &str, signal_name: &str) -> bool {
+        let mut current = class;
+        for _ in 0..64 {
+            if let Some(fs) = self.resolve_extends(current) {
+                if fs.signals.iter().any(|s| s == signal_name) {
+                    return true;
+                }
+                match fs.extends.as_deref() {
+                    Some(parent) => current = parent,
+                    None => return false,
+                }
+            } else {
+                return false;
+            }
+        }
+        false
+    }
+
+    /// Check if an enum member exists on a user-defined class, walking the extends chain.
+    pub fn enum_member_exists(&self, class: &str, member_name: &str) -> bool {
+        let mut current = class;
+        for _ in 0..64 {
+            if let Some(fs) = self.resolve_extends(current) {
+                if fs.enum_members.iter().any(|m| m == member_name) {
                     return true;
                 }
                 match fs.extends.as_deref() {

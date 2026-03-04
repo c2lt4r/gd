@@ -221,20 +221,29 @@ fn infer_attribute_with_project(
     };
 
     if !has_call {
-        // Property access — resolve via builtin members, project index, then ClassDB
-        let prop = node.named_child(1)?;
-        let prop_name = prop.utf8_text(source.as_bytes()).ok()?;
-
-        if let Some(t) = builtin_member_type(class_name, prop_name) {
-            return Some(t);
+        // Property chain — walk all named children after the receiver (e.g. a.b.c → [b, c])
+        // tree-sitter-gdscript flattens property chains: attribute(call, "size", "x")
+        let mut current_type: Option<InferredType> = Some(classify_type_name(class_name));
+        let named_count = node.named_child_count();
+        for i in 1..named_count {
+            let prop = node.named_child(i)?;
+            let prop_name = prop.utf8_text(source.as_bytes()).ok()?;
+            let cn = match current_type.as_ref()? {
+                InferredType::Builtin(b) => *b,
+                InferredType::Class(c) => c.as_str(),
+                _ => return None,
+            };
+            if let Some(t) = builtin_member_type(cn, prop_name) {
+                current_type = Some(t);
+            } else if let Some(t) = project.variable_type(cn, prop_name) {
+                current_type = Some(classify_type_str(&t));
+            } else if let Some(t) = class_db::property_type(cn, prop_name) {
+                current_type = Some(parse_class_db_type(t));
+            } else {
+                return None;
+            }
         }
-        if let Some(t) = project.variable_type(class_name, prop_name) {
-            return Some(classify_type_str(&t));
-        }
-        if let Some(t) = class_db::property_type(class_name, prop_name) {
-            return Some(parse_class_db_type(t));
-        }
-        return None;
+        return current_type;
     }
 
     let method = method_name?;
@@ -336,8 +345,26 @@ fn infer_binary(node: &Node, source: &str, file: &GdFile) -> Option<InferredType
         return infer_arithmetic(node, source, file, op_text);
     }
 
-    // Division always returns float in GDScript
+    // Division: scalar/scalar → float, but Vector/scalar → Vector
     if op_text == "/" {
+        let left = node
+            .child_by_field_name("left")
+            .or_else(|| node.named_child(0));
+        let right = node
+            .child_by_field_name("right")
+            .or_else(|| node.named_child(1));
+        if let Some(l) = left {
+            let lt = infer_expression_type(&l, source, file);
+            if lt.as_ref().is_some_and(is_vector_like_type) {
+                return lt;
+            }
+        }
+        if let Some(r) = right {
+            let rt = infer_expression_type(&r, source, file);
+            if rt.as_ref().is_some_and(is_vector_like_type) {
+                return rt;
+            }
+        }
         return Some(InferredType::Builtin("float"));
     }
 
@@ -346,10 +373,17 @@ fn infer_binary(node: &Node, source: &str, file: &GdFile) -> Option<InferredType
         let left = node
             .child_by_field_name("left")
             .or_else(|| node.named_child(0));
-        if let Some(l) = left
+        let right = node
+            .child_by_field_name("right")
+            .or_else(|| node.named_child(1));
+        if let Some(ref l) = left
             && (l.kind() == "string"
-                || infer_expression_type(&l, source, file) == Some(InferredType::Builtin("String")))
+                || infer_expression_type(l, source, file) == Some(InferredType::Builtin("String")))
         {
+            return Some(InferredType::Builtin("String"));
+        }
+        // `ident % [args]` — right side is an array ⇒ string formatting, not modulo
+        if right.is_some_and(|r| r.kind() == "array") {
             return Some(InferredType::Builtin("String"));
         }
         return Some(InferredType::Builtin("int"));
@@ -394,6 +428,14 @@ fn infer_arithmetic(
         )
     {
         return Some(InferredType::Builtin("String"));
+    }
+
+    // Vector/Color types dominate: Vector2 * float → Vector2, not float
+    if lt.as_ref().is_some_and(is_vector_like_type) {
+        return lt;
+    }
+    if rt.as_ref().is_some_and(is_vector_like_type) {
+        return rt;
     }
 
     match (&lt, &rt) {
@@ -569,17 +611,26 @@ fn infer_attribute(node: &Node, source: &str, file: &GdFile) -> Option<InferredT
     };
 
     if !has_call {
-        // Property access — resolve via builtin members, then ClassDB
-        let prop = node.named_child(1)?;
-        let prop_name = prop.utf8_text(source.as_bytes()).ok()?;
-
-        if let Some(t) = builtin_member_type(class_name, prop_name) {
-            return Some(t);
+        // Property chain — walk all named children after the receiver
+        let mut current_type: Option<InferredType> = Some(classify_type_name(class_name));
+        let named_count = node.named_child_count();
+        for i in 1..named_count {
+            let prop = node.named_child(i)?;
+            let prop_name = prop.utf8_text(source.as_bytes()).ok()?;
+            let cn = match current_type.as_ref()? {
+                InferredType::Builtin(b) => *b,
+                InferredType::Class(c) => c.as_str(),
+                _ => return None,
+            };
+            if let Some(t) = builtin_member_type(cn, prop_name) {
+                current_type = Some(t);
+            } else if let Some(t) = class_db::property_type(cn, prop_name) {
+                current_type = Some(parse_class_db_type(t));
+            } else {
+                return None;
+            }
         }
-        if let Some(t) = class_db::property_type(class_name, prop_name) {
-            return Some(parse_class_db_type(t));
-        }
-        return None;
+        return current_type;
     }
 
     let method = method_name?;
@@ -621,6 +672,26 @@ pub fn parse_class_db_type(raw: &str) -> InferredType {
     }
     // Otherwise it's a class
     InferredType::Class(raw.to_string())
+}
+
+/// Returns true for vector/matrix/color types that dominate arithmetic results.
+fn is_vector_like_type(ty: &InferredType) -> bool {
+    matches!(
+        ty,
+        InferredType::Builtin(
+            "Vector2"
+                | "Vector2i"
+                | "Vector3"
+                | "Vector3i"
+                | "Vector4"
+                | "Vector4i"
+                | "Color"
+                | "Basis"
+                | "Transform2D"
+                | "Transform3D"
+                | "Quaternion"
+        )
+    )
 }
 
 /// Classify a type name from source code into an `InferredType`.

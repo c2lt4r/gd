@@ -264,8 +264,8 @@ fn check_operators_in_node(
             type_inference::infer_expression_type_with_project(&left, source, file, project)
         && let Some(right_ty) =
             type_inference::infer_expression_type_with_project(&right, source, file, project)
-        && let Some(lt) = inferred_type_name(&left_ty)
-        && let Some(rt) = inferred_type_name(&right_ty)
+        && let Some(lt) = enum_normalized_type_name(&left_ty, file, project)
+        && let Some(rt) = enum_normalized_type_name(&right_ty, file, project)
         && !operator_valid(op, lt, rt)
     {
         errors.push(StructuralError {
@@ -298,8 +298,8 @@ fn check_operators_in_node(
                     .or_else(|| infer_local_var_type(&lhs, source, file, project))
             && let Some(right_ty) =
                 type_inference::infer_expression_type_with_project(&rhs, source, file, project)
-            && let Some(lt) = inferred_type_name(&left_ty)
-            && let Some(rt) = inferred_type_name(&right_ty)
+            && let Some(lt) = enum_normalized_type_name(&left_ty, file, project)
+            && let Some(rt) = enum_normalized_type_name(&right_ty, file, project)
             && !operator_valid(op, lt, rt)
         {
             errors.push(StructuralError {
@@ -525,6 +525,27 @@ fn is_builtin_container_type(ty: &str) -> bool {
             | "PackedColorArray"
             | "PackedVector4Array"
     ) || ty.starts_with("Array[")
+}
+
+/// Like `inferred_type_name`, but returns `"int"` for enum types.
+/// GDScript enums are implicitly int-compatible, so arithmetic/comparison is valid.
+fn enum_normalized_type_name<'a>(
+    ty: &'a type_inference::InferredType,
+    file: &GdFile<'_>,
+    project: &ProjectIndex,
+) -> Option<&'a str> {
+    match ty {
+        type_inference::InferredType::Enum(_) => Some("int"),
+        type_inference::InferredType::Class(name) => {
+            // Check if this "class" is actually a file-level or project enum
+            if file.enums().any(|e| e.name == name.as_str()) || project.has_enum_type(name) {
+                Some("int")
+            } else {
+                Some(name.as_str())
+            }
+        }
+        _ => inferred_type_name(ty),
+    }
 }
 
 /// Extract a human-readable type name from an `InferredType`.

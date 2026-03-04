@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.3.18] - 2026-03-04
+
+### Fixed
+- **`gd check` — demo-project FP reduction** (167→35 FPs, 79% reduction across godot-demo-projects corpus):
+  - Path-based `extends` resolution: `signal_exists()` and `enum_member_exists()` now walk extends chains using `resolve_extends()` (handles `extends "res://..."` paths, not just class_name) — fixes 8 "finished" signal FPs
+  - `@onready` non-Node check uses `extends_str()` instead of `extends_class()` — fixes 5 FPs on path-based extends
+  - Vector arithmetic type inference: `Vector2 * float → Vector2` (not `float`), division preserves vector types — fixes 12 FPs
+  - Enum arithmetic: enum-typed variables treated as `int` for operator checks — fixes 1 FP
+  - Method chain property resolution: `basis.y.cross()` resolves `Basis.y → Vector3` before checking `cross()` — fixes 5 FPs
+  - Match wildcard `_:` pattern detected directly under `pattern_section` (tree-sitter puts it without `pattern` wrapper) — fixes 4 return-path FPs
+  - Class-to-class assignment allowed for all ClassDB types (GDScript defers to runtime) — fixes 7 FPs
+  - Top-level statement check skips indented nodes (tree-sitter misparsing from comments at column 0) — fixes 3 FPs
+  - Const expression check: comments inside arrays/dictionaries no longer break const analysis — fixes 2 FPs
+  - Math utility functions (`sin`, `cos`, `tan`, `deg_to_rad`, etc.) recognized as valid const expressions — fixes 2 FPs
+  - Variant inference: subscript only flagged when receiver is confirmed `Dictionary`/`Array`, not unknown types — fixes 5 FPs
+  - `rpc()`/`rpc_id()` argument checks skipped (GDScript syntactic sugar, not ClassDB signature) — fixes 2 FPs
+  - Param count parser handles nested parentheses in default values (e.g., `Vector3(0, 1, 0)`) — fixes 1 FP
+  - Assert message accepts string format expressions (`"text %s" % val`) — fixes 1 FP
+  - String format `%` with array RHS infers `String` not `int` — fixes 2 FPs
+
 ## [0.3.17] - 2026-03-03
 
 ### Fixed

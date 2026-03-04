@@ -134,10 +134,18 @@ fn user_class_not_validated() {
 
 #[test]
 fn variant_infer_from_subscript() {
-    let source = "var dict := {}\nfunc f():\n\tvar x := dict[\"key\"]\n";
+    // Subscript on explicitly-typed Dictionary flags as Variant
+    let source = "var dict: Dictionary\nfunc f():\n\tvar x := dict[\"key\"]\n";
     let errs = structural_errors(source);
     assert_eq!(errs.len(), 1);
     assert!(errs[0].message.contains("Variant"));
+}
+
+#[test]
+fn no_variant_for_unresolved_subscript() {
+    // When we can't determine the receiver type, don't flag — user likely knows
+    let source = "var dict := {}\nfunc f():\n\tvar x := dict[\"key\"]\n";
+    assert!(structural_errors(source).is_empty());
 }
 
 #[test]

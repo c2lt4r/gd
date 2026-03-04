@@ -35,7 +35,8 @@ fn check_builtin_method_in_node(
     project: &ProjectIndex,
     errors: &mut Vec<StructuralError>,
 ) {
-    // Pattern: attribute { identifier(receiver), attribute_call { identifier(method), arguments } }
+    // Pattern: attribute { identifier(receiver), [identifier(prop)...], attribute_call { identifier(method), arguments } }
+    // tree-sitter-gdscript flattens property chains: `a.b.c.method()` → attribute(a, b, c, attribute_call(method, args))
     if node.kind() == "attribute"
         && let Some(receiver) = node.named_child(0)
         && receiver.kind() == "identifier"
@@ -46,9 +47,31 @@ fn check_builtin_method_in_node(
         && method_ident.kind() == "identifier"
         && let Ok(method_name) = method_ident.utf8_text(source.as_bytes())
     {
-        let ty =
+        // Resolve receiver type, then walk intermediate property accesses
+        let mut ty =
             type_inference::infer_expression_type_with_project(&receiver, source, file, project)
                 .or_else(|| infer_local_var_type(&receiver, source, file, project));
+        // Walk intermediate identifiers (property accesses) before the attribute_call
+        let named_count = node.named_child_count();
+        for i in 1..named_count {
+            let Some(child) = node.named_child(i) else {
+                break;
+            };
+            if child.kind() == "attribute_call" {
+                break;
+            }
+            if child.kind() == "identifier"
+                && let Ok(prop_name) = child.utf8_text(source.as_bytes())
+            {
+                ty = ty.and_then(|t| {
+                    let type_name = resolve_builtin_type_name(&t)?;
+                    type_inference::builtin_member_type(type_name, prop_name).or_else(|| {
+                        crate::class_db::property_type(type_name, prop_name)
+                            .map(type_inference::parse_class_db_type)
+                    })
+                });
+            }
+        }
         if let Some(ref ty) = ty
             && let Some(type_name) = resolve_builtin_type_name(ty)
             && type_inference::is_builtin_type(type_name)

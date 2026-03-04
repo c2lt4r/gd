@@ -21,7 +21,7 @@ fn check_onready_non_node(
     }
 
     // Check if extends chain reaches Node — resolve through project types
-    let extends = file.extends_class().unwrap_or("RefCounted");
+    let extends = file.extends_str().unwrap_or("RefCounted");
     let classdb_type = resolve_to_classdb_type(extends, project);
     if classdb_type == "Node" || crate::class_db::inherits(&classdb_type, "Node") {
         return;
@@ -1287,10 +1287,11 @@ pub(super) fn types_assignable(declared: &str, actual: &str) -> bool {
     if is_dict_family(declared) && is_dict_family(actual) {
         return true;
     }
-    // Class inheritance: allow both upcast and downcast (Godot defers to runtime)
+    // Class-to-class assignment: allow if both are ClassDB types.
+    // GDScript defers type checking to runtime for object references, and our static
+    // type inference may be imprecise (e.g. $Button infers Node, not Button).
     if crate::class_db::class_exists(declared) && crate::class_db::class_exists(actual) {
-        return crate::class_db::inherits(actual, declared)
-            || crate::class_db::inherits(declared, actual);
+        return true;
     }
     // If one type is a ClassDB class and the other is a user class (not a primitive),
     // allow it — we can't verify user class hierarchies without project context.
