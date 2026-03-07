@@ -68,8 +68,167 @@ pub fn call_builtin(name: &str, args: &[GdValue], env: &mut Environment) -> Inte
             env.capture_output(format!("Error: {msg}"));
             Ok(GdValue::Null)
         }
+        // Assertion builtins for native test runner
+        "assert_true" => {
+            if args.is_empty() {
+                return Err(InterpError::argument_error(
+                    "assert_true() requires at least 1 argument",
+                    0,
+                    0,
+                ));
+            }
+            if !args[0].is_truthy() {
+                let msg = args
+                    .get(1)
+                    .map_or("assert_true failed".to_string(), ToString::to_string);
+                return Err(InterpError::assertion_failed(msg, 0, 0));
+            }
+            Ok(GdValue::Null)
+        }
+        "assert_false" => {
+            if args.is_empty() {
+                return Err(InterpError::argument_error(
+                    "assert_false() requires at least 1 argument",
+                    0,
+                    0,
+                ));
+            }
+            if args[0].is_truthy() {
+                let msg = args
+                    .get(1)
+                    .map_or("assert_false failed".to_string(), ToString::to_string);
+                return Err(InterpError::assertion_failed(msg, 0, 0));
+            }
+            Ok(GdValue::Null)
+        }
+        "assert_eq" => {
+            if args.len() < 2 {
+                return Err(InterpError::argument_error(
+                    "assert_eq() requires at least 2 arguments",
+                    0,
+                    0,
+                ));
+            }
+            if args[0] != args[1] {
+                let msg = args.get(2).map_or_else(
+                    || {
+                        format!(
+                            "assert_eq failed\n  left:  {}\n  right: {}",
+                            args[0], args[1]
+                        )
+                    },
+                    ToString::to_string,
+                );
+                return Err(InterpError::assertion_failed(msg, 0, 0));
+            }
+            Ok(GdValue::Null)
+        }
+        "assert_ne" => {
+            if args.len() < 2 {
+                return Err(InterpError::argument_error(
+                    "assert_ne() requires at least 2 arguments",
+                    0,
+                    0,
+                ));
+            }
+            if args[0] == args[1] {
+                let msg = args.get(2).map_or_else(
+                    || format!("assert_ne failed: both sides equal {}", args[0]),
+                    ToString::to_string,
+                );
+                return Err(InterpError::assertion_failed(msg, 0, 0));
+            }
+            Ok(GdValue::Null)
+        }
+        "assert_gt" => {
+            assert_cmp("assert_gt", args, |a, b| a > b, ">")?;
+            Ok(GdValue::Null)
+        }
+        "assert_lt" => {
+            assert_cmp("assert_lt", args, |a, b| a < b, "<")?;
+            Ok(GdValue::Null)
+        }
+        "assert_null" => {
+            if args.is_empty() {
+                return Err(InterpError::argument_error(
+                    "assert_null() requires at least 1 argument",
+                    0,
+                    0,
+                ));
+            }
+            if args[0] != GdValue::Null {
+                return Err(InterpError::assertion_failed(
+                    format!("assert_null failed: got {}", args[0]),
+                    0,
+                    0,
+                ));
+            }
+            Ok(GdValue::Null)
+        }
+        "assert_not_null" => {
+            if args.is_empty() {
+                return Err(InterpError::argument_error(
+                    "assert_not_null() requires at least 1 argument",
+                    0,
+                    0,
+                ));
+            }
+            if args[0] == GdValue::Null {
+                return Err(InterpError::assertion_failed(
+                    "assert_not_null failed: got null",
+                    0,
+                    0,
+                ));
+            }
+            Ok(GdValue::Null)
+        }
         _ => math::call(name, args),
     }
+}
+
+fn assert_cmp(
+    name: &str,
+    args: &[GdValue],
+    check: fn(f64, f64) -> bool,
+    op: &str,
+) -> InterpResult<()> {
+    if args.len() < 2 {
+        return Err(InterpError::argument_error(
+            format!("{name}() requires at least 2 arguments"),
+            0,
+            0,
+        ));
+    }
+    let a = match &args[0] {
+        GdValue::Int(n) => *n as f64,
+        GdValue::Float(f) => *f,
+        _ => {
+            return Err(InterpError::type_error(
+                format!("{name}() requires numeric arguments"),
+                0,
+                0,
+            ));
+        }
+    };
+    let b = match &args[1] {
+        GdValue::Int(n) => *n as f64,
+        GdValue::Float(f) => *f,
+        _ => {
+            return Err(InterpError::type_error(
+                format!("{name}() requires numeric arguments"),
+                0,
+                0,
+            ));
+        }
+    };
+    if !check(a, b) {
+        return Err(InterpError::assertion_failed(
+            format!("{name} failed: {} {op} {} is false", args[0], args[1]),
+            0,
+            0,
+        ));
+    }
+    Ok(())
 }
 
 /// Check if a method is mutating for the given receiver type.

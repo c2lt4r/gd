@@ -2,6 +2,7 @@
 
 pub mod gdunit;
 pub mod gut;
+mod native;
 mod script;
 #[cfg(test)]
 mod tests;
@@ -26,7 +27,7 @@ pub use script::run_with_timeout;
 
 /// Shared context passed to all runners.
 pub struct RunContext<'a> {
-    pub godot: &'a Path,
+    pub godot: Option<&'a Path>,
     pub project: &'a GodotProject,
     pub args: &'a RunArgs,
     pub test_files: &'a [PathBuf],
@@ -97,6 +98,7 @@ fn is_zero(n: &usize) -> bool {
 
 fn runner_label(runner: Runner) -> &'static str {
     match runner {
+        Runner::Native => "native",
         Runner::Gut => "gut",
         Runner::GdUnit4 => "gdunit4",
         Runner::Script => "script",
@@ -113,7 +115,7 @@ pub struct TestArgs {
 
 #[derive(Subcommand)]
 pub enum TestCommand {
-    /// Run GDScript tests (GUT, gdUnit4, or raw scripts)
+    /// Run GDScript tests (native, GUT, gdUnit4, or raw scripts)
     Run(RunArgs),
 }
 
@@ -155,7 +157,7 @@ pub struct RunArgs {
     /// Filter Godot engine noise from output
     #[arg(long)]
     pub clean: bool,
-    /// Test runner: gut, gdunit4, or script (default: auto-detect)
+    /// Test runner: native, gut, gdunit4, or script (default: auto-detect)
     #[arg(long, value_parser = parse_runner)]
     pub runner: Option<Runner>,
     /// Extra args to pass to Godot
@@ -165,6 +167,7 @@ pub struct RunArgs {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Runner {
+    Native,
     Gut,
     GdUnit4,
     Script,
@@ -172,11 +175,12 @@ pub enum Runner {
 
 fn parse_runner(s: &str) -> std::result::Result<Runner, String> {
     match s.to_lowercase().as_str() {
+        "native" => Ok(Runner::Native),
         "gut" => Ok(Runner::Gut),
         "gdunit4" | "gdunit" => Ok(Runner::GdUnit4),
         "script" => Ok(Runner::Script),
         _ => Err(format!(
-            "unknown runner '{s}' (expected: gut, gdunit4, script)"
+            "unknown runner '{s}' (expected: native, gut, gdunit4, script)"
         )),
     }
 }
@@ -513,27 +517,32 @@ fn exec_run(args: &RunArgs) -> Result<()> {
         }
     };
 
-    let godot = match crate::build::find_godot(&config) {
-        Ok(g) => g,
-        Err(e) => {
-            if json_mode {
-                emit_infra_error_json(&format!("{e}"));
-            }
-            eprintln!("Error: {e}");
-            std::process::exit(2);
-        }
-    };
-
     let runner = match args.runner {
         Some(r) => r,
         None => {
-            // Auto-detect: GUT > gdUnit4 > script
+            // Auto-detect: GUT > gdUnit4 > native
             if project.root.join("addons/gut").is_dir() {
                 Runner::Gut
             } else if project.root.join("addons/gdUnit4").is_dir() {
                 Runner::GdUnit4
             } else {
-                Runner::Script
+                Runner::Native
+            }
+        }
+    };
+
+    // Native runner doesn't need Godot
+    let godot = if runner == Runner::Native {
+        None
+    } else {
+        match crate::build::find_godot(&config) {
+            Ok(g) => Some(g),
+            Err(e) => {
+                if json_mode {
+                    emit_infra_error_json(&format!("{e}"));
+                }
+                eprintln!("Error: {e}");
+                std::process::exit(2);
             }
         }
     };
@@ -617,13 +626,14 @@ fn exec_run(args: &RunArgs) -> Result<()> {
     let start = Instant::now();
 
     let ctx = RunContext {
-        godot: &godot,
+        godot: godot.as_deref(),
         project: &project,
         args,
         test_files: &test_files,
         json_mode,
     };
     let runner_impl: Box<dyn TestRunner> = match runner {
+        Runner::Native => Box::new(native::NativeRunner),
         Runner::Gut => Box::new(gut::GutRunner),
         Runner::GdUnit4 => Box::new(gdunit::GdUnit4Runner),
         Runner::Script => Box::new(script::ScriptRunner),

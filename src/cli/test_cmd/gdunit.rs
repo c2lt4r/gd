@@ -23,7 +23,7 @@ impl TestRunner for GdUnit4Runner {
 
     fn run(&self, ctx: &RunContext) -> Result<(Vec<TestResult>, TestSummary)> {
         run_gdunit4_tests(
-            ctx.godot,
+            ctx.godot.expect("gdUnit4 runner requires Godot"),
             ctx.project,
             ctx.args,
             ctx.test_files,

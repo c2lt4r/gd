@@ -24,7 +24,7 @@ impl TestRunner for GutRunner {
 
     fn run(&self, ctx: &RunContext) -> Result<(Vec<TestResult>, TestSummary)> {
         run_gut_tests(
-            ctx.godot,
+            ctx.godot.expect("GUT runner requires Godot"),
             ctx.project,
             ctx.args,
             ctx.test_files,

@@ -130,6 +130,7 @@ path = "src/main.rs"
 [dependencies]
 gd-class-db.workspace = true
 gd-core.workspace = true
+gd-interp.workspace = true
 gd-lint.workspace = true
 gd-fmt.workspace = true
 gd-lsp.workspace = true

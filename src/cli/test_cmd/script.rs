@@ -23,7 +23,7 @@ impl TestRunner for ScriptRunner {
 
     fn run(&self, ctx: &RunContext) -> Result<(Vec<TestResult>, TestSummary)> {
         run_script_tests(
-            ctx.godot,
+            ctx.godot.expect("script runner requires Godot"),
             ctx.project,
             ctx.args,
             ctx.test_files,

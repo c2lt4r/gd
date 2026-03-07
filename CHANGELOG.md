@@ -14,6 +14,12 @@
   - 25+ String methods, Vector2/3 methods+properties, Color methods+properties
   - Static class constants: `Color.RED`, `Vector2.ZERO`, `Vector3.UP`, etc.
   - 214 tests covering expressions, statements, builtins, function calls, mutation, and end-to-end evaluation
+- **Native test runner** — `gd test run` now executes `test_*` functions without Godot (Phase 3):
+  - Default runner when no GUT/gdUnit4 addon detected (replaces Script runner as fallback)
+  - Millisecond execution vs 2-3s Godot startup — no Godot binary required
+  - Assertion builtins: `assert_eq`, `assert_ne`, `assert_true`, `assert_false`, `assert_gt`, `assert_lt`, `assert_null`, `assert_not_null`
+  - Full integration: `--name` filtering, `--format json`, `--quiet`, per-test timing, cargo-style output
+  - Explicit selection with `--runner native`; other runners (`gut`, `gdunit4`, `script`) still available
 
 ## [0.3.20] - 2026-03-07
 
