@@ -25,6 +25,8 @@ pub struct Interpreter<'a> {
     classes: HashMap<String, ClassDef<'a>>,
     /// The class name of the file-level script (if any).
     file_class: Option<String>,
+    /// Source text for power assertions (optional).
+    pub source: Option<&'a str>,
 }
 
 impl<'a> Interpreter<'a> {
@@ -35,6 +37,7 @@ impl<'a> Interpreter<'a> {
             funcs: HashMap::new(),
             classes: HashMap::new(),
             file_class: None,
+            source: None,
         }
     }
 
@@ -131,6 +134,14 @@ impl<'a> Interpreter<'a> {
             },
         );
 
+        Ok(interp)
+    }
+
+    /// Build an interpreter from a parsed GDScript file, with source text
+    /// for power assertion diagnostics.
+    pub fn from_file_with_source(file: &'a GdFile<'a>, source: &'a str) -> InterpResult<Self> {
+        let mut interp = Self::from_file(file)?;
+        interp.source = Some(source);
         Ok(interp)
     }
 

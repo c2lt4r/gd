@@ -480,13 +480,13 @@ pub fn exec(args: &TestArgs) -> Result<()> {
 
 #[allow(clippy::too_many_lines)]
 fn exec_run(args: &RunArgs) -> Result<()> {
+    let sarif_mode = args.format == "sarif";
     let json_mode = match args.format.as_str() {
         "text" => false,
-        "json" => true,
+        "json" | "sarif" => true,
         _ => {
-            // Exit code 2 for infrastructure errors
             eprintln!(
-                "Error: invalid format '{}' (expected 'human' or 'json')",
+                "Error: invalid format '{}' (expected 'text', 'json', or 'sarif')",
                 args.format
             );
             std::process::exit(2);
@@ -655,7 +655,12 @@ fn exec_run(args: &RunArgs) -> Result<()> {
         Ok((results, summary)) => {
             let has_failures = summary.failed > 0 || summary.errors > 0;
 
-            if json_mode {
+            if sarif_mode {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&to_sarif(&results)).unwrap()
+                );
+            } else if json_mode {
                 let report = TestReport {
                     mode,
                     results,
@@ -863,6 +868,60 @@ fn list_tests(
     }
 
     Ok(())
+}
+
+/// Convert test results to SARIF (Static Analysis Results Interchange Format) v2.1.0.
+fn to_sarif(results: &[TestResult]) -> serde_json::Value {
+    let sarif_results: Vec<serde_json::Value> = results
+        .iter()
+        .filter(|r| r.status == TestStatus::Fail || r.status == TestStatus::Error)
+        .flat_map(|r| {
+            r.errors.iter().map(move |e| {
+                let mut location = serde_json::json!({
+                    "artifactLocation": {
+                        "uri": e.file,
+                        "uriBaseId": "%SRCROOT%"
+                    }
+                });
+                if let Some(line) = e.line {
+                    location["region"] = serde_json::json!({
+                        "startLine": line
+                    });
+                }
+                let level = if r.status == TestStatus::Fail {
+                    "error"
+                } else {
+                    "warning"
+                };
+                serde_json::json!({
+                    "ruleId": "test-failure",
+                    "level": level,
+                    "message": { "text": e.message },
+                    "locations": [{ "physicalLocation": location }]
+                })
+            })
+        })
+        .collect();
+
+    serde_json::json!({
+        "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main/sarif-2.1/schema/sarif-schema-2.1.0.json",
+        "version": "2.1.0",
+        "runs": [{
+            "tool": {
+                "driver": {
+                    "name": "gd test",
+                    "version": env!("CARGO_PKG_VERSION"),
+                    "informationUri": "https://github.com/c2lt4r/gd",
+                    "rules": [{
+                        "id": "test-failure",
+                        "shortDescription": { "text": "Test failure" },
+                        "helpUri": "https://github.com/c2lt4r/gd"
+                    }]
+                }
+            },
+            "results": sarif_results
+        }]
+    })
 }
 
 /// Emit a minimal JSON error report to stdout for infrastructure failures, then let caller exit.

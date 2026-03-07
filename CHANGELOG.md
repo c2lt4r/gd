@@ -22,6 +22,9 @@
   - Full integration: `--name` filtering, `--format json`, `--quiet`, per-test timing, cargo-style output
   - Explicit selection with `--runner native`; other runners (`gut`, `gdunit4`, `script`) still available
   - Lifecycle hooks: `before_each()`, `after_each()`, `before_all()`, `after_all()` — run setup/teardown around each test or per-file
+  - **Power assertions** (Groovy/Spock-style): assertion failures decompose AST subexpressions showing intermediate values with column-aligned pointer lines — e.g. `assert_eq(a + b, 10)` shows `a` → 3, `b` → 4, `a + b` → 7
+  - **Parallel file execution**: test files run concurrently via rayon with synchronized terminal output
+  - **SARIF output**: `--format sarif` emits SARIF v2.1.0 for CI integration (GitHub Code Scanning, etc.)
 - **`gd eval --native`** — evaluate GDScript expressions and scripts without Godot:
   - Single expressions: `gd eval --native "2 + 3 * 4"` → `14`
   - Full scripts with `func main()` / `_init()` / `_ready()` entry points

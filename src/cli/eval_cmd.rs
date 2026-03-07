@@ -800,7 +800,8 @@ fn exec_native(input: &str, json_mode: bool) -> Result<()> {
     if is_script {
         let tree = gd_core::parser::parse(&source).map_err(|e| miette!("Parse error: {e}"))?;
         let file = gd_core::gd_ast::convert(&tree, &source);
-        let mut interp = Interpreter::from_file(&file).map_err(|e| miette!("{e}"))?;
+        let mut interp =
+            Interpreter::from_file_with_source(&file, &source).map_err(|e| miette!("{e}"))?;
 
         // Look for _init, main, or _ready to run
         let entry = ["_init", "main", "_ready"]

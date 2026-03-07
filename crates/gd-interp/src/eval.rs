@@ -5,6 +5,7 @@ use gd_core::gd_ast::{GdExpr, GdFunc};
 use crate::builtins;
 use crate::error::{InterpError, InterpResult};
 use crate::interpreter::Interpreter;
+use crate::power_assert;
 use crate::value::{GdObject, GdValue};
 
 /// Strip surrounding quotes and process escape sequences in a GDScript string literal.
@@ -289,6 +290,13 @@ fn eval_call(
     line: usize,
     col: usize,
 ) -> InterpResult<GdValue> {
+    // Intercept assertion calls BEFORE evaluating args (for power assertions)
+    if let GdExpr::Ident { name, .. } = callee
+        && power_assert::is_assertion(name)
+    {
+        return power_assert::exec_power_assert(name, args, interp, line, col);
+    }
+
     // Evaluate arguments first
     let evaled: InterpResult<Vec<GdValue>> = args.iter().map(|a| eval_expr(a, interp)).collect();
     let evaled = evaled?;
