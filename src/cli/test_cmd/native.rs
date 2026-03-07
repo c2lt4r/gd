@@ -90,6 +90,12 @@ fn run_native_tests(ctx: &RunContext) -> Result<(Vec<TestResult>, TestSummary)> 
 
         let file = gd_ast::convert(&tree, &source);
 
+        // Detect lifecycle hooks
+        let has_before_each = file.funcs().any(|f| f.name == "before_each");
+        let has_after_each = file.funcs().any(|f| f.name == "after_each");
+        let has_before_all = file.funcs().any(|f| f.name == "before_all");
+        let has_after_all = file.funcs().any(|f| f.name == "after_all");
+
         // Collect test_* functions
         let test_funcs: Vec<&str> = file
             .funcs()
@@ -104,6 +110,16 @@ fn run_native_tests(ctx: &RunContext) -> Result<(Vec<TestResult>, TestSummary)> 
 
         if test_funcs.is_empty() {
             continue;
+        }
+
+        // Run before_all once per file
+        if has_before_all {
+            let Ok(mut interp) = Interpreter::from_file(&file) else {
+                continue;
+            };
+            if let Some(func) = interp.lookup_func("before_all") {
+                let _ = exec::exec_func(func, &[], &mut interp);
+            }
         }
 
         for func_name in &test_funcs {
@@ -133,12 +149,40 @@ fn run_native_tests(ctx: &RunContext) -> Result<(Vec<TestResult>, TestSummary)> 
                 }
             };
 
+            // Run before_each
+            if has_before_each
+                && let Some(hook) = interp.lookup_func("before_each")
+                && let Err(e) = exec::exec_func(hook, &[], &mut interp)
+            {
+                let duration_ms = test_start.elapsed().as_millis() as u64;
+                hprintln!(json_mode, "{} {label} (before_each error: {e})", "✗".red());
+                results.push(TestResult {
+                    file: Some(label),
+                    status: TestStatus::Error,
+                    duration_ms,
+                    errors: vec![TestError {
+                        file: rel.clone(),
+                        line: if e.line > 0 { Some(e.line) } else { None },
+                        message: format!("before_each: {}", e.message),
+                    }],
+                    stderr: None,
+                    stdout: None,
+                });
+                failed += 1;
+                continue;
+            }
+
             let Some(func) = interp.lookup_func(func_name) else {
                 continue;
             };
 
             let result = exec::exec_func(func, &[], &mut interp);
             let duration_ms = test_start.elapsed().as_millis() as u64;
+
+            // Run after_each regardless of test result
+            if has_after_each && let Some(hook) = interp.lookup_func("after_each") {
+                let _ = exec::exec_func(hook, &[], &mut interp);
+            }
 
             match result {
                 Ok(_) => {
@@ -205,6 +249,16 @@ fn run_native_tests(ctx: &RunContext) -> Result<(Vec<TestResult>, TestSummary)> 
                     });
                     failed += 1;
                 }
+            }
+        }
+
+        // Run after_all once per file
+        if has_after_all {
+            let Ok(mut interp) = Interpreter::from_file(&file) else {
+                continue;
+            };
+            if let Some(func) = interp.lookup_func("after_all") {
+                let _ = exec::exec_func(func, &[], &mut interp);
             }
         }
     }

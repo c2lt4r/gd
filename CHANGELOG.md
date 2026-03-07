@@ -21,6 +21,13 @@
   - Assertion builtins: `assert_eq`, `assert_ne`, `assert_true`, `assert_false`, `assert_gt`, `assert_lt`, `assert_null`, `assert_not_null`
   - Full integration: `--name` filtering, `--format json`, `--quiet`, per-test timing, cargo-style output
   - Explicit selection with `--runner native`; other runners (`gut`, `gdunit4`, `script`) still available
+  - Lifecycle hooks: `before_each()`, `after_each()`, `before_all()`, `after_all()` — run setup/teardown around each test or per-file
+- **`gd eval --native`** — evaluate GDScript expressions and scripts without Godot:
+  - Single expressions: `gd eval --native "2 + 3 * 4"` → `14`
+  - Full scripts with `func main()` / `_init()` / `_ready()` entry points
+  - File input: `gd eval --native script.gd`
+  - Stdin: `echo "print(42)" | gd eval --native -`
+  - JSON output: `--format json` for machine-readable results
 
 ## [0.3.20] - 2026-03-07
 

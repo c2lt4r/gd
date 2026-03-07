@@ -37,6 +37,9 @@ pub struct EvalArgs {
     /// Skip sandbox checks (allow dangerous APIs like OS.execute)
     #[arg(long, alias = "no-sandbox")]
     pub r#unsafe: bool,
+    /// Use native interpreter (no Godot required)
+    #[arg(long)]
+    pub native: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -764,6 +767,92 @@ fn try_live_eval(
     }
 }
 
+/// Evaluate GDScript using the native interpreter (no Godot).
+fn exec_native(input: &str, json_mode: bool) -> Result<()> {
+    use gd_interp::eval::eval_expr;
+    use gd_interp::exec;
+    use gd_interp::interpreter::Interpreter;
+
+    // Detect if input is a file path
+    let source = if input == "-" {
+        let mut buf = String::new();
+        std::io::stdin()
+            .read_to_string(&mut buf)
+            .map_err(|e| miette!("Failed to read stdin: {e}"))?;
+        buf
+    } else {
+        let path = Path::new(input);
+        if path.extension().is_some_and(|e| e == "gd") && path.is_file() {
+            std::fs::read_to_string(path)
+                .map_err(|e| miette!("Failed to read {}: {e}", path.display()))?
+        } else {
+            input.to_string()
+        }
+    };
+
+    // Try as a full script first (has function defs or extends)
+    let trimmed = source.trim();
+    let is_script = trimmed.starts_with("extends ")
+        || trimmed.starts_with("class_name ")
+        || trimmed.contains("\nfunc ")
+        || trimmed.starts_with("func ");
+
+    if is_script {
+        let tree = gd_core::parser::parse(&source).map_err(|e| miette!("Parse error: {e}"))?;
+        let file = gd_core::gd_ast::convert(&tree, &source);
+        let mut interp = Interpreter::from_file(&file).map_err(|e| miette!("{e}"))?;
+
+        // Look for _init, main, or _ready to run
+        let entry = ["_init", "main", "_ready"]
+            .iter()
+            .find_map(|name| interp.lookup_func(name));
+
+        if let Some(func) = entry {
+            exec::exec_func(func, &[], &mut interp).map_err(|e| miette!("{e}"))?;
+        }
+
+        let output = interp.env.take_output();
+        if json_mode {
+            let out = serde_json::json!({
+                "stdout": output.join("\n"),
+                "exit_code": 0,
+            });
+            cprintln!("{}", serde_json::to_string_pretty(&out).unwrap());
+        } else {
+            for line in &output {
+                cprintln!("{line}");
+            }
+        }
+        return Ok(());
+    }
+
+    // Single expression — wrap in a var, evaluate
+    let wrapped = format!("var _x = {source}\n");
+    let tree = gd_core::parser::parse(&wrapped).map_err(|e| miette!("Parse error: {e}"))?;
+    let file = gd_core::gd_ast::convert(&tree, &wrapped);
+
+    let mut interp = Interpreter::new();
+    for decl in &file.declarations {
+        if let gd_core::gd_ast::GdDecl::Var(v) = decl
+            && let Some(ref expr) = v.value
+        {
+            let val = eval_expr(expr, &mut interp).map_err(|e| miette!("{e}"))?;
+            if json_mode {
+                let out = serde_json::json!({
+                    "stdout": val.to_string(),
+                    "exit_code": 0,
+                });
+                cprintln!("{}", serde_json::to_string_pretty(&out).unwrap());
+            } else {
+                cprintln!("{val}");
+            }
+            return Ok(());
+        }
+    }
+
+    Err(miette!("Could not evaluate expression: {source}"))
+}
+
 #[allow(clippy::too_many_lines)]
 pub fn exec(args: &EvalArgs) -> Result<()> {
     let json_mode = match args.format.as_str() {
@@ -775,6 +864,10 @@ pub fn exec(args: &EvalArgs) -> Result<()> {
             ));
         }
     };
+
+    if args.native {
+        return exec_native(&args.input, json_mode);
+    }
 
     let cwd = std::env::current_dir().unwrap_or_default();
     let config = Config::load(&cwd)?;
