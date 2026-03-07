@@ -15,6 +15,7 @@ gd-core = { path = "crates/gd-core" }
 gd-lint = { path = "crates/gd-lint" }
 gd-fmt = { path = "crates/gd-fmt" }
 gd-lsp = { path = "crates/gd-lsp" }
+gd-interp = { path = "crates/gd-interp" }
 gd-mesh = { path = "crates/gd-mesh" }
 
 # Parsing

@@ -872,6 +872,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "gd-interp"
+version = "0.3.20"
+dependencies = [
+ "gd-class-db",
+ "gd-core",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "gd-lint"
 version = "0.3.20"
 dependencies = [

@@ -1,0 +1,655 @@
+use gd_core::gd_ast::{GdExpr, GdFunc, GdStmt};
+
+use crate::env::Environment;
+use crate::error::{InterpError, InterpResult};
+use crate::eval::eval_expr;
+use crate::value::GdValue;
+
+/// Control flow signal from statement execution.
+#[derive(Debug)]
+pub enum ControlFlow {
+    /// Normal execution continues.
+    None,
+    /// A `return` statement was hit.
+    Return(GdValue),
+    /// A `break` statement was hit.
+    Break,
+    /// A `continue` statement was hit.
+    Continue,
+}
+
+/// Execute a sequence of statements, propagating control flow.
+pub fn exec_body(stmts: &[GdStmt<'_>], env: &mut Environment) -> InterpResult<ControlFlow> {
+    for stmt in stmts {
+        let flow = exec_stmt(stmt, env)?;
+        match flow {
+            ControlFlow::None => {}
+            other => return Ok(other),
+        }
+    }
+    Ok(ControlFlow::None)
+}
+
+/// Execute a single statement.
+#[allow(clippy::too_many_lines)]
+pub fn exec_stmt(stmt: &GdStmt<'_>, env: &mut Environment) -> InterpResult<ControlFlow> {
+    match stmt {
+        GdStmt::Expr { expr, .. } => {
+            eval_expr(expr, env)?;
+            Ok(ControlFlow::None)
+        }
+
+        GdStmt::Var(v) => {
+            let val = match &v.value {
+                Some(expr) => eval_expr(expr, env)?,
+                None => GdValue::Null,
+            };
+            env.define(v.name, val);
+            Ok(ControlFlow::None)
+        }
+
+        GdStmt::Assign { target, value, .. } => {
+            let val = eval_expr(value, env)?;
+            exec_assign(target, val, env)?;
+            Ok(ControlFlow::None)
+        }
+
+        GdStmt::AugAssign {
+            target, op, value, ..
+        } => {
+            let current = eval_expr(target, env)?;
+            let rhs = eval_expr(value, env)?;
+            let new_val = apply_aug_op(&current, op, &rhs, target)?;
+            exec_assign(target, new_val, env)?;
+            Ok(ControlFlow::None)
+        }
+
+        GdStmt::Return { value, .. } => {
+            let val = match value {
+                Some(expr) => eval_expr(expr, env)?,
+                None => GdValue::Null,
+            };
+            Ok(ControlFlow::Return(val))
+        }
+
+        GdStmt::If(if_stmt) => {
+            let cond = eval_expr(&if_stmt.condition, env)?;
+            if cond.is_truthy() {
+                return exec_body(&if_stmt.body, env);
+            }
+
+            for (elif_cond, elif_body) in &if_stmt.elif_branches {
+                let cond = eval_expr(elif_cond, env)?;
+                if cond.is_truthy() {
+                    return exec_body(elif_body, env);
+                }
+            }
+
+            if let Some(else_body) = &if_stmt.else_body {
+                return exec_body(else_body, env);
+            }
+
+            Ok(ControlFlow::None)
+        }
+
+        GdStmt::For {
+            var, iter, body, ..
+        } => exec_for(var, iter, body, env),
+
+        GdStmt::While {
+            condition, body, ..
+        } => exec_while(condition, body, env),
+
+        GdStmt::Match { value, arms, .. } => {
+            let val = eval_expr(value, env)?;
+            for arm in arms {
+                if arm_matches(&val, &arm.patterns, env)? {
+                    if let Some(guard) = &arm.guard {
+                        let guard_val = eval_expr(guard, env)?;
+                        if !guard_val.is_truthy() {
+                            continue;
+                        }
+                    }
+                    return exec_body(&arm.body, env);
+                }
+            }
+            Ok(ControlFlow::None)
+        }
+
+        GdStmt::Pass { .. } | GdStmt::Breakpoint { .. } | GdStmt::Invalid { .. } => {
+            Ok(ControlFlow::None)
+        }
+
+        GdStmt::Break { .. } => Ok(ControlFlow::Break),
+        GdStmt::Continue { .. } => Ok(ControlFlow::Continue),
+    }
+}
+
+/// Execute a function: push frame, bind params, run body, pop frame.
+pub fn exec_func(
+    func: &GdFunc<'_>,
+    args: &[GdValue],
+    env: &mut Environment,
+) -> InterpResult<GdValue> {
+    env.push_frame();
+
+    // Bind parameters
+    for (i, param) in func.params.iter().enumerate() {
+        let val = if i < args.len() {
+            args[i].clone()
+        } else if let Some(default) = &param.default {
+            eval_expr(default, env)?
+        } else {
+            GdValue::Null
+        };
+        env.define(param.name, val);
+    }
+
+    let flow = exec_body(&func.body, env);
+    env.pop_frame();
+
+    match flow? {
+        ControlFlow::Return(val) => Ok(val),
+        _ => Ok(GdValue::Null),
+    }
+}
+
+fn exec_assign(target: &GdExpr<'_>, val: GdValue, env: &mut Environment) -> InterpResult<()> {
+    match target {
+        GdExpr::Ident { name, .. } => {
+            if !env.set(name, val.clone()) {
+                env.define(name, val);
+            }
+            Ok(())
+        }
+        GdExpr::Subscript {
+            receiver, index, ..
+        } => {
+            let idx = eval_expr(index, env)?;
+            // Get the receiver name for reassignment
+            if let GdExpr::Ident { name, .. } = receiver.as_ref() {
+                let mut recv = env.get(name).cloned().ok_or_else(|| {
+                    InterpError::name_error(
+                        format!("undefined: {name}"),
+                        target.line(),
+                        target.column(),
+                    )
+                })?;
+                match &mut recv {
+                    GdValue::Array(arr) => {
+                        let GdValue::Int(i) = idx else {
+                            return Err(InterpError::type_error(
+                                "array index must be int",
+                                target.line(),
+                                target.column(),
+                            ));
+                        };
+                        let index = if i < 0 {
+                            (arr.len() as i64 + i) as usize
+                        } else {
+                            i as usize
+                        };
+                        if index >= arr.len() {
+                            return Err(InterpError::index_out_of_bounds(
+                                i,
+                                arr.len(),
+                                target.line(),
+                                target.column(),
+                            ));
+                        }
+                        arr[index] = val;
+                    }
+                    GdValue::Dictionary(pairs) => {
+                        for (k, v) in pairs.iter_mut() {
+                            if *k == idx {
+                                *v = val;
+                                env.set(name, recv);
+                                return Ok(());
+                            }
+                        }
+                        pairs.push((idx, val));
+                    }
+                    _ => {
+                        return Err(InterpError::type_error(
+                            "subscript assignment requires array or dict",
+                            target.line(),
+                            target.column(),
+                        ));
+                    }
+                }
+                env.set(name, recv);
+                Ok(())
+            } else {
+                Err(InterpError::not_implemented(
+                    "complex subscript assignment",
+                    target.line(),
+                    target.column(),
+                ))
+            }
+        }
+        _ => Err(InterpError::not_implemented(
+            "complex assignment target",
+            target.line(),
+            target.column(),
+        )),
+    }
+}
+
+fn apply_aug_op(
+    current: &GdValue,
+    op: &str,
+    rhs: &GdValue,
+    target: &GdExpr<'_>,
+) -> InterpResult<GdValue> {
+    let line = target.line();
+    let col = target.column();
+    match op {
+        "+=" => eval_add_values(current, rhs, line, col),
+        "-=" => eval_arith_values(current, rhs, line, col, |a, b| a - b, |a, b| a - b),
+        "*=" => eval_arith_values(current, rhs, line, col, |a, b| a * b, |a, b| a * b),
+        "/=" => eval_div_values(current, rhs, line, col),
+        "%=" => eval_mod_values(current, rhs, line, col),
+        "**=" => eval_pow_values(current, rhs, line, col),
+        "&=" => match (current, rhs) {
+            (GdValue::Int(a), GdValue::Int(b)) => Ok(GdValue::Int(a & b)),
+            _ => Err(InterpError::type_error(
+                "'&=' requires int operands",
+                line,
+                col,
+            )),
+        },
+        "|=" => match (current, rhs) {
+            (GdValue::Int(a), GdValue::Int(b)) => Ok(GdValue::Int(a | b)),
+            _ => Err(InterpError::type_error(
+                "'|=' requires int operands",
+                line,
+                col,
+            )),
+        },
+        "^=" => match (current, rhs) {
+            (GdValue::Int(a), GdValue::Int(b)) => Ok(GdValue::Int(a ^ b)),
+            _ => Err(InterpError::type_error(
+                "'^=' requires int operands",
+                line,
+                col,
+            )),
+        },
+        "<<=" => match (current, rhs) {
+            (GdValue::Int(a), GdValue::Int(b)) => Ok(GdValue::Int(a << b)),
+            _ => Err(InterpError::type_error(
+                "'<<=' requires int operands",
+                line,
+                col,
+            )),
+        },
+        ">>=" => match (current, rhs) {
+            (GdValue::Int(a), GdValue::Int(b)) => Ok(GdValue::Int(a >> b)),
+            _ => Err(InterpError::type_error(
+                "'>>=' requires int operands",
+                line,
+                col,
+            )),
+        },
+        _ => Err(InterpError::not_implemented(
+            &format!("augmented assignment '{op}'"),
+            line,
+            col,
+        )),
+    }
+}
+
+fn eval_add_values(l: &GdValue, r: &GdValue, line: usize, col: usize) -> InterpResult<GdValue> {
+    match (l, r) {
+        (GdValue::Int(a), GdValue::Int(b)) => Ok(GdValue::Int(a.wrapping_add(*b))),
+        (GdValue::Float(a), GdValue::Float(b)) => Ok(GdValue::Float(a + b)),
+        (GdValue::Int(a), GdValue::Float(b)) => Ok(GdValue::Float(*a as f64 + b)),
+        (GdValue::Float(a), GdValue::Int(b)) => Ok(GdValue::Float(a + *b as f64)),
+        (GdValue::GdString(a), GdValue::GdString(b)) => Ok(GdValue::GdString(format!("{a}{b}"))),
+        _ => Err(InterpError::type_error(
+            format!(
+                "'+' not supported between {} and {}",
+                l.type_name(),
+                r.type_name()
+            ),
+            line,
+            col,
+        )),
+    }
+}
+
+fn eval_arith_values(
+    l: &GdValue,
+    r: &GdValue,
+    line: usize,
+    col: usize,
+    int_op: fn(i64, i64) -> i64,
+    float_op: fn(f64, f64) -> f64,
+) -> InterpResult<GdValue> {
+    match (l, r) {
+        (GdValue::Int(a), GdValue::Int(b)) => Ok(GdValue::Int(int_op(*a, *b))),
+        (GdValue::Float(a), GdValue::Float(b)) => Ok(GdValue::Float(float_op(*a, *b))),
+        (GdValue::Int(a), GdValue::Float(b)) => Ok(GdValue::Float(float_op(*a as f64, *b))),
+        (GdValue::Float(a), GdValue::Int(b)) => Ok(GdValue::Float(float_op(*a, *b as f64))),
+        _ => Err(InterpError::type_error(
+            format!(
+                "arithmetic not supported between {} and {}",
+                l.type_name(),
+                r.type_name()
+            ),
+            line,
+            col,
+        )),
+    }
+}
+
+fn eval_div_values(l: &GdValue, r: &GdValue, line: usize, col: usize) -> InterpResult<GdValue> {
+    match (l, r) {
+        (GdValue::Int(_), GdValue::Int(0)) => Err(InterpError::division_by_zero(line, col)),
+        (GdValue::Int(a), GdValue::Int(b)) => Ok(GdValue::Int(a / b)),
+        (GdValue::Float(a), GdValue::Float(b)) => Ok(GdValue::Float(a / b)),
+        (GdValue::Int(a), GdValue::Float(b)) => Ok(GdValue::Float(*a as f64 / b)),
+        (GdValue::Float(a), GdValue::Int(b)) => Ok(GdValue::Float(a / *b as f64)),
+        _ => Err(InterpError::type_error(
+            format!(
+                "'/' not supported between {} and {}",
+                l.type_name(),
+                r.type_name()
+            ),
+            line,
+            col,
+        )),
+    }
+}
+
+fn eval_mod_values(l: &GdValue, r: &GdValue, line: usize, col: usize) -> InterpResult<GdValue> {
+    match (l, r) {
+        (GdValue::Int(_), GdValue::Int(0)) => Err(InterpError::division_by_zero(line, col)),
+        (GdValue::Int(a), GdValue::Int(b)) => Ok(GdValue::Int(a % b)),
+        (GdValue::Float(a), GdValue::Float(b)) => Ok(GdValue::Float(a % b)),
+        (GdValue::Int(a), GdValue::Float(b)) => Ok(GdValue::Float(*a as f64 % b)),
+        (GdValue::Float(a), GdValue::Int(b)) => Ok(GdValue::Float(a % *b as f64)),
+        _ => Err(InterpError::type_error(
+            format!(
+                "'%' not supported between {} and {}",
+                l.type_name(),
+                r.type_name()
+            ),
+            line,
+            col,
+        )),
+    }
+}
+
+fn eval_pow_values(l: &GdValue, r: &GdValue, line: usize, col: usize) -> InterpResult<GdValue> {
+    match (l, r) {
+        (GdValue::Int(base), GdValue::Int(exp)) => {
+            if *exp >= 0 {
+                Ok(GdValue::Int(base.wrapping_pow(*exp as u32)))
+            } else {
+                Ok(GdValue::Float((*base as f64).powf(*exp as f64)))
+            }
+        }
+        (GdValue::Float(a), GdValue::Float(b)) => Ok(GdValue::Float(a.powf(*b))),
+        (GdValue::Int(a), GdValue::Float(b)) => Ok(GdValue::Float((*a as f64).powf(*b))),
+        (GdValue::Float(a), GdValue::Int(b)) => Ok(GdValue::Float(a.powf(*b as f64))),
+        _ => Err(InterpError::type_error(
+            format!(
+                "'**' not supported between {} and {}",
+                l.type_name(),
+                r.type_name()
+            ),
+            line,
+            col,
+        )),
+    }
+}
+
+fn exec_for(
+    var: &str,
+    iter: &GdExpr<'_>,
+    body: &[GdStmt<'_>],
+    env: &mut Environment,
+) -> InterpResult<ControlFlow> {
+    let iter_val = eval_expr(iter, env)?;
+
+    let items: Vec<GdValue> = match iter_val {
+        GdValue::Array(arr) => arr,
+        GdValue::Int(n) => {
+            // range sugar: `for i in 10` means `for i in range(10)`
+            (0..n).map(GdValue::Int).collect()
+        }
+        _ => {
+            return Err(InterpError::type_error(
+                format!("cannot iterate over {}", iter_val.type_name()),
+                iter.line(),
+                iter.column(),
+            ));
+        }
+    };
+
+    for item in items {
+        env.define(var, item);
+        match exec_body(body, env)? {
+            ControlFlow::Break => break,
+            ControlFlow::Continue | ControlFlow::None => {}
+            ControlFlow::Return(v) => return Ok(ControlFlow::Return(v)),
+        }
+    }
+
+    Ok(ControlFlow::None)
+}
+
+fn exec_while(
+    condition: &GdExpr<'_>,
+    body: &[GdStmt<'_>],
+    env: &mut Environment,
+) -> InterpResult<ControlFlow> {
+    let max_iterations = 1_000_000;
+    let mut count = 0;
+
+    loop {
+        let cond = eval_expr(condition, env)?;
+        if !cond.is_truthy() {
+            break;
+        }
+
+        match exec_body(body, env)? {
+            ControlFlow::Break => break,
+            ControlFlow::Continue | ControlFlow::None => {}
+            ControlFlow::Return(v) => return Ok(ControlFlow::Return(v)),
+        }
+
+        count += 1;
+        if count >= max_iterations {
+            return Err(InterpError::value_error(
+                "while loop exceeded 1,000,000 iterations (possible infinite loop)",
+                condition.line(),
+                condition.column(),
+            ));
+        }
+    }
+
+    Ok(ControlFlow::None)
+}
+
+fn arm_matches(
+    val: &GdValue,
+    patterns: &[GdExpr<'_>],
+    env: &mut Environment,
+) -> InterpResult<bool> {
+    for pattern in patterns {
+        match pattern {
+            // Wildcard `_`
+            GdExpr::Ident { name: "_", .. } => return Ok(true),
+            // Binding pattern — any other identifier binds the value
+            GdExpr::Ident { name, .. } => {
+                env.define(name, val.clone());
+                return Ok(true);
+            }
+            // Literal comparison
+            _ => {
+                let pattern_val = eval_expr(pattern, env)?;
+                if *val == pattern_val {
+                    return Ok(true);
+                }
+            }
+        }
+    }
+    Ok(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Helper: parse a complete GDScript snippet, find and execute a function.
+    fn run_script(source: &str) -> (InterpResult<GdValue>, Vec<String>) {
+        let tree = gd_core::parser::parse(source).expect("parse failed");
+        let file = gd_core::gd_ast::convert(&tree, source);
+        let mut env = Environment::new();
+
+        // Define all functions first
+        // Execute top-level statements and find test_main
+        let mut test_func = None;
+        for decl in &file.declarations {
+            match decl {
+                gd_core::gd_ast::GdDecl::Func(f) => {
+                    if f.name == "test_main" {
+                        test_func = Some(f);
+                    }
+                }
+                gd_core::gd_ast::GdDecl::Var(v) => {
+                    let val = match &v.value {
+                        Some(expr) => {
+                            crate::eval::eval_expr(expr, &mut env).unwrap_or(GdValue::Null)
+                        }
+                        None => GdValue::Null,
+                    };
+                    env.define(v.name, val);
+                }
+                _ => {}
+            }
+        }
+
+        let result = if let Some(func) = test_func {
+            exec_func(func, &[], &mut env)
+        } else {
+            // Execute top-level statements
+            let mut last = GdValue::Null;
+            for decl in &file.declarations {
+                if let gd_core::gd_ast::GdDecl::Stmt(s) = decl {
+                    match exec_stmt(s, &mut env) {
+                        Ok(ControlFlow::Return(v)) => {
+                            last = v;
+                            break;
+                        }
+                        Ok(_) => {}
+                        Err(e) => return (Err(e), env.take_output()),
+                    }
+                }
+            }
+            Ok(last)
+        };
+
+        let output = env.take_output();
+        (result, output)
+    }
+
+    #[test]
+    fn test_var_and_assign() {
+        let (result, _) = run_script("func test_main():\n\tvar x = 10\n\tx = 20\n\treturn x\n");
+        assert_eq!(result.unwrap(), GdValue::Int(20));
+    }
+
+    #[test]
+    fn test_if_else() {
+        let (result, _) = run_script(
+            "func test_main():\n\tvar x = 5\n\tif x > 3:\n\t\treturn \"big\"\n\telse:\n\t\treturn \"small\"\n",
+        );
+        assert_eq!(result.unwrap(), GdValue::GdString("big".into()));
+    }
+
+    #[test]
+    fn test_for_loop() {
+        let (result, _) = run_script(
+            "func test_main():\n\tvar sum = 0\n\tfor i in [1, 2, 3, 4, 5]:\n\t\tsum += i\n\treturn sum\n",
+        );
+        assert_eq!(result.unwrap(), GdValue::Int(15));
+    }
+
+    #[test]
+    fn test_while_loop() {
+        let (result, _) = run_script(
+            "func test_main():\n\tvar i = 0\n\tvar sum = 0\n\twhile i < 5:\n\t\tsum += i\n\t\ti += 1\n\treturn sum\n",
+        );
+        assert_eq!(result.unwrap(), GdValue::Int(10));
+    }
+
+    #[test]
+    fn test_for_with_break() {
+        let (result, _) = run_script(
+            "func test_main():\n\tvar sum = 0\n\tfor i in [1, 2, 3, 4, 5]:\n\t\tif i == 4:\n\t\t\tbreak\n\t\tsum += i\n\treturn sum\n",
+        );
+        assert_eq!(result.unwrap(), GdValue::Int(6));
+    }
+
+    #[test]
+    fn test_match() {
+        let (result, _) = run_script(
+            "func test_main():\n\tvar x = 2\n\tmatch x:\n\t\t1:\n\t\t\treturn \"one\"\n\t\t2:\n\t\t\treturn \"two\"\n\t\t_:\n\t\t\treturn \"other\"\n",
+        );
+        assert_eq!(result.unwrap(), GdValue::GdString("two".into()));
+    }
+
+    #[test]
+    fn test_aug_assign() {
+        let (result, _) = run_script(
+            "func test_main():\n\tvar x = 10\n\tx += 5\n\tx -= 3\n\tx *= 2\n\treturn x\n",
+        );
+        assert_eq!(result.unwrap(), GdValue::Int(24));
+    }
+
+    #[test]
+    fn test_print_capture() {
+        let (_, output) = run_script("func test_main():\n\tprint(\"hello\")\n\tprint(\"world\")\n");
+        assert_eq!(output, vec!["hello", "world"]);
+    }
+
+    #[test]
+    fn test_return_null() {
+        let (result, _) = run_script("func test_main():\n\tpass\n");
+        assert_eq!(result.unwrap(), GdValue::Null);
+    }
+
+    #[test]
+    fn test_elif() {
+        let (result, _) = run_script(
+            "func test_main():\n\tvar x = 5\n\tif x > 10:\n\t\treturn \"big\"\n\telif x > 3:\n\t\treturn \"medium\"\n\telse:\n\t\treturn \"small\"\n",
+        );
+        assert_eq!(result.unwrap(), GdValue::GdString("medium".into()));
+    }
+
+    #[test]
+    fn test_for_range_sugar() {
+        let (result, _) = run_script(
+            "func test_main():\n\tvar sum = 0\n\tfor i in 5:\n\t\tsum += i\n\treturn sum\n",
+        );
+        assert_eq!(result.unwrap(), GdValue::Int(10)); // 0+1+2+3+4
+    }
+
+    #[test]
+    fn test_nested_if() {
+        let (result, _) = run_script(
+            "func test_main():\n\tvar x = 5\n\tvar y = 3\n\tif x > 3:\n\t\tif y > 2:\n\t\t\treturn \"both\"\n\treturn \"nope\"\n",
+        );
+        assert_eq!(result.unwrap(), GdValue::GdString("both".into()));
+    }
+
+    #[test]
+    fn test_subscript_assign() {
+        let (result, _) = run_script(
+            "func test_main():\n\tvar arr = [1, 2, 3]\n\tarr[1] = 99\n\treturn arr[1]\n",
+        );
+        assert_eq!(result.unwrap(), GdValue::Int(99));
+    }
+}
