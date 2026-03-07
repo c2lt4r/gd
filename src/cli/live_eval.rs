@@ -1,7 +1,6 @@
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::Path;
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use miette::{Result, miette};
@@ -26,18 +25,10 @@ pub struct EvalResponse {
 pub use gd_core::debug_types::CapturedOutput;
 
 /// Send a GDScript to the live eval server and return the result string.
-/// Uses TCP by default, falls back to file-based IPC when `GD_EVAL_FILE_IPC` is set.
 /// Captures output non-blockingly (instant drain, ~2ms). For void calls that need
 /// to wait for Godot's output flush, use `send_eval_with_output` instead.
 pub fn send_eval(script: &str, project_root: &Path, timeout: Duration) -> Result<EvalResponse> {
-    if is_file_ipc_mode() {
-        send_eval_file(script, project_root, timeout).map(|result| EvalResponse {
-            result,
-            output: vec![],
-        })
-    } else {
-        send_eval_tcp(script, project_root, timeout, false)
-    }
+    send_eval_tcp(script, project_root, timeout, false)
 }
 
 /// Like `send_eval` but also captures print output via the debug protocol.
@@ -48,19 +39,7 @@ pub fn send_eval_with_output(
     project_root: &Path,
     timeout: Duration,
 ) -> Result<EvalResponse> {
-    if is_file_ipc_mode() {
-        send_eval_file(script, project_root, timeout).map(|result| EvalResponse {
-            result,
-            output: vec![],
-        })
-    } else {
-        send_eval_tcp(script, project_root, timeout, true)
-    }
-}
-
-/// Check if file-based IPC mode is requested via environment variable.
-fn is_file_ipc_mode() -> bool {
-    std::env::var("GD_EVAL_FILE_IPC").is_ok()
+    send_eval_tcp(script, project_root, timeout, true)
 }
 
 // ── TCP transport ──────────────────────────────────────────────────────
@@ -252,8 +231,8 @@ fn parse_ready_file_tcp(project_root: &Path) -> Result<SocketAddr> {
     let trimmed = content.trim();
     let Some((pid_str, port_str)) = trimmed.split_once(':') else {
         return Err(miette!(
-            "Eval server is running in file-IPC mode.\n\
-             Set GD_EVAL_FILE_IPC=1 or restart the game without --file-ipc"
+            "Invalid eval ready file format (expected pid:port).\n\
+             Try restarting the game: gd run"
         ));
     };
     let pid: u32 = pid_str.parse().unwrap_or(0);
@@ -264,117 +243,6 @@ fn parse_ready_file_tcp(project_root: &Path) -> Result<SocketAddr> {
         .parse()
         .map_err(|_| miette!("Invalid port in eval ready file"))?;
     Ok(SocketAddr::from(([127, 0, 0, 1], port)))
-}
-
-// ── File-based transport (legacy) ──────────────────────────────────────
-
-/// Monotonic counter to ensure unique eval IDs even within the same millisecond.
-static EVAL_COUNTER: AtomicU32 = AtomicU32::new(0);
-
-/// Generate a unique eval ID: timestamp_millis + monotonic counter + pid.
-fn generate_eval_id() -> String {
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis();
-    let seq = EVAL_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let pid = std::process::id();
-    format!("{ts}-{pid}-{seq}")
-}
-
-/// Send eval via file-based IPC (legacy mode for `--file-ipc` / `GD_EVAL_FILE_IPC`).
-fn send_eval_file(script: &str, project_root: &Path, timeout: Duration) -> Result<String> {
-    let script = crate::cli::eval_cmd::pre_check(script)?;
-
-    let godot_dir = project_root.join(".godot");
-    let ready_path = godot_dir.join("gd-eval-ready");
-
-    let eval_ready = gd_lsp::daemon_client::query_daemon(
-        "eval_status",
-        serde_json::json!({"timeout": timeout.as_secs()}),
-        Some(timeout + Duration::from_secs(5)),
-    )
-    .and_then(|r| r.get("ready").and_then(serde_json::Value::as_bool))
-    .unwrap_or(false);
-
-    if !eval_ready && !is_ready_file_valid(&ready_path) {
-        return Err(miette!("No eval server running. Start a game with: gd run"));
-    }
-
-    purge_stale_eval_files(&godot_dir);
-
-    let eval_id = generate_eval_id();
-    let tagged_script = format!("# eval-id: {eval_id}\n{script}");
-
-    let request_path = godot_dir.join(format!("gd-eval-request-{eval_id}.gd"));
-    if let Err(e) = std::fs::write(&request_path, &tagged_script) {
-        if e.kind() == std::io::ErrorKind::NotFound {
-            std::thread::sleep(Duration::from_millis(50));
-            std::fs::write(&request_path, &tagged_script)
-                .map_err(|e2| miette!("Failed to write eval request (retry): {e2}"))?;
-        } else {
-            return Err(miette!("Failed to write eval request: {e}"));
-        }
-    }
-
-    let result_path = godot_dir.join(format!("gd-eval-result-{eval_id}.json"));
-    let poll_interval = Duration::from_millis(50);
-    let start = std::time::Instant::now();
-
-    loop {
-        if result_path.is_file() {
-            let data = std::fs::read_to_string(&result_path)
-                .map_err(|e| miette!("Failed to read eval result: {e}"))?;
-            let _ = std::fs::remove_file(&result_path);
-
-            let eval_result: LiveEvalResult = serde_json::from_str(&data)
-                .map_err(|e| miette!("Failed to parse eval result: {e}"))?;
-
-            if !eval_result.error.is_empty() {
-                return Err(miette!("{}", eval_result.error));
-            }
-            return Ok(eval_result.result.unwrap_or_default());
-        }
-
-        if !godot_dir.join("gd-eval-ready").is_file() {
-            let _ = std::fs::remove_file(&request_path);
-            return Err(miette!("Eval server exited before returning a result"));
-        }
-
-        if start.elapsed() >= timeout {
-            let consumed = !request_path.is_file();
-            let _ = std::fs::remove_file(&request_path);
-
-            if consumed {
-                if let Some(error_msg) = try_recover_debug_break() {
-                    return Err(miette!(
-                        "Eval script error (game auto-resumed):\n{error_msg}"
-                    ));
-                }
-                return Err(miette!(
-                    "Timed out waiting for eval result ({}s)\n\
-                     The eval server picked up the request but never returned a result.\n\
-                     The game may need to be restarted: gd run",
-                    timeout.as_secs()
-                ));
-            }
-
-            if let Some(error_msg) = try_recover_debug_break() {
-                return Err(miette!(
-                    "Game was paused on a debug error (auto-resumed):\n{error_msg}\n\
-                     Retry your command."
-                ));
-            }
-            return Err(miette!(
-                "Timed out waiting for eval result ({}s)\n\
-                 The eval server did not pick up the request file.\n\
-                 Try restarting the game: gd run",
-                timeout.as_secs()
-            ));
-        }
-
-        std::thread::sleep(poll_interval);
-    }
 }
 
 // ── Shared helpers ─────────────────────────────────────────────────────
@@ -447,87 +315,9 @@ fn try_recover_debug_break() -> Option<String> {
     Some(msg.trim_end().to_string())
 }
 
-/// Check if the `gd-eval-ready` file is valid (PID inside is still alive).
-/// Handles both formats: `{pid}` (file-ipc) and `{pid}:{port}` (TCP).
-fn is_ready_file_valid(ready_path: &Path) -> bool {
-    let Ok(content) = std::fs::read_to_string(ready_path) else {
-        return false;
-    };
-    let trimmed = content.trim();
-    let pid_str = trimmed.split_once(':').map_or(trimmed, |(pid, _)| pid);
-    let pid: u32 = pid_str.parse().unwrap_or(0);
-    if pid == 0 {
-        return false;
-    }
-    gd_lsp::daemon::is_process_alive(pid)
-}
-
-/// Remove stale request/result files from `.godot/` that are older than 30 seconds.
-fn purge_stale_eval_files(godot_dir: &Path) {
-    let cutoff = std::time::Duration::from_secs(30);
-    if let Ok(entries) = std::fs::read_dir(godot_dir) {
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
-            if name.starts_with("gd-eval-request-") || name.starts_with("gd-eval-result-") {
-                let dominated = entry
-                    .metadata()
-                    .ok()
-                    .and_then(|m| m.modified().ok())
-                    .and_then(|t| t.elapsed().ok())
-                    .is_some_and(|age| age > cutoff);
-                if dominated {
-                    let _ = std::fs::remove_file(entry.path());
-                }
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn ready_file_valid_pid_only() {
-        let tmp = tempfile::tempdir().unwrap();
-        let ready = tmp.path().join("gd-eval-ready");
-        let pid = std::process::id();
-        std::fs::write(&ready, pid.to_string()).unwrap();
-        assert!(is_ready_file_valid(&ready));
-    }
-
-    #[test]
-    fn ready_file_valid_pid_port() {
-        let tmp = tempfile::tempdir().unwrap();
-        let ready = tmp.path().join("gd-eval-ready");
-        let pid = std::process::id();
-        std::fs::write(&ready, format!("{pid}:54321")).unwrap();
-        assert!(is_ready_file_valid(&ready));
-    }
-
-    #[test]
-    fn ready_file_invalid_empty() {
-        let tmp = tempfile::tempdir().unwrap();
-        let ready = tmp.path().join("gd-eval-ready");
-        std::fs::write(&ready, "").unwrap();
-        assert!(!is_ready_file_valid(&ready));
-    }
-
-    #[test]
-    fn ready_file_invalid_zero_pid() {
-        let tmp = tempfile::tempdir().unwrap();
-        let ready = tmp.path().join("gd-eval-ready");
-        std::fs::write(&ready, "0").unwrap();
-        assert!(!is_ready_file_valid(&ready));
-    }
-
-    #[test]
-    fn ready_file_missing() {
-        let tmp = tempfile::tempdir().unwrap();
-        let ready = tmp.path().join("gd-eval-ready");
-        assert!(!is_ready_file_valid(&ready));
-    }
 
     #[test]
     fn parse_ready_file_tcp_valid() {
@@ -548,7 +338,7 @@ mod tests {
         std::fs::create_dir_all(&godot_dir).unwrap();
         std::fs::write(godot_dir.join("gd-eval-ready"), "12345").unwrap();
         let err = parse_ready_file_tcp(tmp.path()).unwrap_err();
-        assert!(err.to_string().contains("file-IPC mode"));
+        assert!(err.to_string().contains("Invalid eval ready file format"));
     }
 
     #[test]
@@ -556,13 +346,6 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let err = parse_ready_file_tcp(tmp.path()).unwrap_err();
         assert!(err.to_string().contains("No eval server running"));
-    }
-
-    #[test]
-    fn file_ipc_mode_off_by_default() {
-        // Ensure GD_EVAL_FILE_IPC is not accidentally set in test env
-        unsafe { std::env::remove_var("GD_EVAL_FILE_IPC") };
-        assert!(!is_file_ipc_mode());
     }
 
     #[test]

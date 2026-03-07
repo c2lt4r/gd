@@ -32,6 +32,9 @@
   - Stdin: `echo "print(42)" | gd eval --native -`
   - JSON output: `--format json` for machine-readable results
 
+### Removed
+- **File-based IPC for eval server** — removed `--file-ipc` flag from `gd run` and `GD_EVAL_FILE_IPC` env var. TCP transport is now the only eval server mode (more stable, supports concurrent connections, output capture).
+
 ## [0.3.20] - 2026-03-07
 
 ### Changed

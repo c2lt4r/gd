@@ -132,23 +132,13 @@ fn search_path() -> Option<PathBuf> {
     None
 }
 
-/// Generate the GDScript eval server.
-/// `scene_path` is the `res://...` path to the main scene to load.
-/// When `tcp` is true, uses TCP for IPC (default). When false, uses file-based IPC.
-pub fn generate_eval_server(scene_path: &str, tcp: bool) -> String {
-    if tcp {
-        generate_eval_server_tcp(scene_path)
-    } else {
-        generate_eval_server_file(scene_path)
-    }
-}
-
-/// TCP-based eval server: listens on a random port, accepts multiple concurrent connections.
+/// Generate the GDScript eval server (TCP-based).
+/// Listens on a random port, accepts multiple concurrent connections.
 /// Wire protocol: 4-byte LE length prefix + payload (same as debug server).
 /// Node-based scripts are queued and executed on the next poll tick (one frame delay
 /// for `_ready()` to fire). RefCounted scripts execute immediately in the accept loop.
 #[allow(clippy::too_many_lines)]
-fn generate_eval_server_tcp(scene_path: &str) -> String {
+pub fn generate_eval_server(scene_path: &str) -> String {
     format!(
         r#"extends SceneTree
 
@@ -312,153 +302,6 @@ func _finalize():
     )
 }
 
-/// File-based eval server (legacy): polls `.godot/` for request files.
-#[allow(clippy::too_many_lines)]
-fn generate_eval_server_file(scene_path: &str) -> String {
-    format!(
-        r##"extends SceneTree
-
-var _root: String
-var _runner: Node = null
-var _eval_id: String = ""
-var _pending_eval_id: String = ""
-
-func _initialize():
-	_root = ProjectSettings.globalize_path("res://")
-	# Clean up stale eval files from a previous session
-	var godot_dir = _root.path_join(".godot")
-	var dir = DirAccess.open(godot_dir)
-	if dir:
-		dir.list_dir_begin()
-		var fname = dir.get_next()
-		while fname != "":
-			if fname.begins_with("gd-eval-request-") or fname.begins_with("gd-eval-result-"):
-				DirAccess.remove_absolute(godot_dir.path_join(fname))
-			fname = dir.get_next()
-		dir.list_dir_end()
-	var f = FileAccess.open(_root.path_join(".godot/gd-eval-ready"), FileAccess.WRITE)
-	if f:
-		f.store_string(str(OS.get_process_id()))
-		f.flush()
-	change_scene_to_file("{scene_path}")
-	var timer = Timer.new()
-	timer.name = "GdEvalTimer"
-	timer.wait_time = 0.05
-	timer.autostart = true
-	timer.process_mode = Node.PROCESS_MODE_ALWAYS
-	timer.timeout.connect(_poll)
-	get_root().call_deferred("add_child", timer)
-
-func _poll():
-	if not _pending_eval_id.is_empty() and _runner == null:
-		_eval_id = _pending_eval_id
-		_pending_eval_id = ""
-		_write_result(JSON.stringify({{"result": null, "error": "Script execution failed (runtime error)"}}))
-		return
-
-	if _runner != null:
-		var runner = _runner
-		_runner = null
-		_pending_eval_id = _eval_id
-		var result = runner.call("run") if is_instance_valid(runner) else null
-		if result is Signal:
-			result = await result
-		_pending_eval_id = ""
-		if is_instance_valid(runner):
-			runner.queue_free()
-		var result_str = str(result) if result != null else ""
-		_write_result(JSON.stringify({{"result": result_str, "error": ""}}))
-		return
-
-	var godot_dir = _root.path_join(".godot")
-	var dir = DirAccess.open(godot_dir)
-	if dir == null:
-		return
-	var req_file := ""
-	dir.list_dir_begin()
-	var fname = dir.get_next()
-	while fname != "":
-		if fname.begins_with("gd-eval-request-") and fname.ends_with(".gd"):
-			req_file = fname
-			break
-		fname = dir.get_next()
-	dir.list_dir_end()
-	if req_file.is_empty():
-		return
-
-	var req = godot_dir.path_join(req_file)
-	var file = FileAccess.open(req, FileAccess.READ)
-	if file == null:
-		return
-	var source = file.get_as_text()
-	file = null
-
-	var err_del = DirAccess.remove_absolute(req)
-	if err_del != OK:
-		return
-
-	_eval_id = ""
-	var first_line = source.get_slice("\n", 0)
-	if first_line.begins_with("# eval-id: "):
-		_eval_id = first_line.substr(11).strip_edges()
-
-	var script = GDScript.new()
-	script.source_code = source
-	var err = script.reload()
-	if err != OK:
-		var patched = _strip_void_return(source)
-		if patched != source:
-			script = GDScript.new()
-			script.source_code = patched
-			err = script.reload()
-	if err != OK:
-		_write_result('{{"result":null,"error":"Script compilation failed"}}')
-		return
-
-	var runner = script.new()
-	if not runner.has_method("run"):
-		if runner is Node:
-			runner.queue_free()
-		_write_result('{{"result":null,"error":"Script has no run() method"}}')
-		return
-
-	if runner is Node:
-		runner.name = "GdEvalRunner"
-		runner.process_mode = Node.PROCESS_MODE_ALWAYS
-		get_root().add_child(runner)
-		_runner = runner
-	else:
-		var result = runner.call("run")
-		var result_str = str(result) if result != null else ""
-		_write_result(JSON.stringify({{"result": result_str, "error": ""}}))
-
-func _strip_void_return(src: String) -> String:
-	var lines = src.split("\n")
-	for i in lines.size():
-		var stripped = lines[i].strip_edges()
-		if stripped.begins_with("return ") and i > 0:
-			var prev = lines[i - 1].strip_edges()
-			if prev == "func run():":
-				var idx = lines[i].find("return ")
-				lines[i] = lines[i].substr(0, idx) + lines[i].substr(idx + 7)
-				return "\n".join(lines)
-	return src
-
-func _write_result(json_str: String):
-	var name = "gd-eval-result.json"
-	if not _eval_id.is_empty():
-		name = "gd-eval-result-" + _eval_id + ".json"
-	var f = FileAccess.open(_root.path_join(".godot/" + name), FileAccess.WRITE)
-	if f:
-		f.store_string(json_str)
-		f.flush()
-
-func _finalize():
-	DirAccess.remove_absolute(_root.path_join(".godot/gd-eval-ready"))
-"##
-    )
-}
-
 /// Run the Godot project.
 #[allow(clippy::too_many_lines, clippy::fn_params_excessive_bools)]
 pub fn run_project(
@@ -466,7 +309,6 @@ pub fn run_project(
     debug: bool,
     verbose: bool,
     eval: bool,
-    file_ipc: bool,
     extra: &[String],
 ) -> Result<()> {
     let cwd = env::current_dir().unwrap_or_default();
@@ -531,7 +373,7 @@ pub fn run_project(
             })?
         };
 
-        let server_script = generate_eval_server(&scene_path, !file_ipc);
+        let server_script = generate_eval_server(&scene_path);
         let server_path = project.root.join(".godot").join("gd-eval-server.gd");
         std::fs::create_dir_all(project.root.join(".godot"))
             .map_err(|e| miette!("Failed to create .godot directory: {e}"))?;
@@ -804,15 +646,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn eval_server_tcp_contains_scene_load() {
-        let script = generate_eval_server("res://main.tscn", true);
+    fn eval_server_contains_scene_load() {
+        let script = generate_eval_server("res://main.tscn");
         assert!(script.contains(r#"change_scene_to_file("res://main.tscn")"#));
         assert!(script.contains("extends SceneTree"));
     }
 
     #[test]
-    fn eval_server_tcp_contains_tcp_logic() {
-        let script = generate_eval_server("res://main.tscn", true);
+    fn eval_server_contains_tcp_logic() {
+        let script = generate_eval_server("res://main.tscn");
         assert!(script.contains("TCPServer"));
         assert!(script.contains("get_local_port"));
         assert!(script.contains("take_connection"));
@@ -820,43 +662,21 @@ mod tests {
     }
 
     #[test]
-    fn eval_server_tcp_writes_pid_port() {
-        let script = generate_eval_server("res://main.tscn", true);
+    fn eval_server_writes_pid_port() {
+        let script = generate_eval_server("res://main.tscn");
         assert!(script.contains(r#""%d:%d" % [OS.get_process_id(), port]"#));
     }
 
     #[test]
-    fn eval_server_tcp_contains_cleanup() {
-        let script = generate_eval_server("res://main.tscn", true);
+    fn eval_server_contains_cleanup() {
+        let script = generate_eval_server("res://main.tscn");
         assert!(script.contains("_finalize"));
         assert!(script.contains("_tcp.stop()"));
     }
 
     #[test]
-    fn eval_server_file_contains_scene_load() {
-        let script = generate_eval_server("res://main.tscn", false);
-        assert!(script.contains(r#"change_scene_to_file("res://main.tscn")"#));
-        assert!(script.contains("extends SceneTree"));
-    }
-
-    #[test]
-    fn eval_server_file_contains_poll_logic() {
-        let script = generate_eval_server("res://main.tscn", false);
-        assert!(script.contains("gd-eval-request-"));
-        assert!(script.contains("gd-eval-result.json"));
-        assert!(script.contains("gd-eval-ready"));
-    }
-
-    #[test]
-    fn eval_server_file_contains_cleanup() {
-        let script = generate_eval_server("res://main.tscn", false);
-        assert!(script.contains("_finalize"));
-        assert!(script.contains("gd-eval-ready"));
-    }
-
-    #[test]
-    fn eval_server_tcp_concurrent_queue() {
-        let script = generate_eval_server("res://main.tscn", true);
+    fn eval_server_concurrent_queue() {
+        let script = generate_eval_server("res://main.tscn");
         // Uses queue instead of single runner slot
         assert!(script.contains("var _queue: Array"));
         assert!(script.contains("_queue.pop_front()"));

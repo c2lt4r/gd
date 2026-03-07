@@ -37,7 +37,6 @@ gd check --format json                 # Machine-readable diagnostics
 gd run                                 # Run project (eval server enabled by default, non-blocking)
 gd run --scene <path>                  # Run specific scene
 gd run --bare                          # Run without eval server (disables `gd eval` and `gd debug` input commands)
-gd run --file-ipc                      # Use file-based IPC instead of TCP for eval server
 gd stop                                # Stop the running game
 gd log                                 # View game output log (ring buffer, via debug protocol)
 gd log --tail <N>                      # Last N lines (default: 50)
