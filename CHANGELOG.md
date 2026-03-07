@@ -13,7 +13,8 @@
   - 30+ builtin utility functions (print, abs, range, sin/cos, lerp, typeof, len, str/int/float casts, etc.)
   - 25+ String methods, Vector2/3 methods+properties, Color methods+properties
   - Static class constants: `Color.RED`, `Vector2.ZERO`, `Vector3.UP`, etc.
-  - 214 tests covering expressions, statements, builtins, function calls, mutation, and end-to-end evaluation
+  - **Class system** (Phase 4): `GdObject` with properties, inner class registration, `ClassName.new()` constructor with `_init()`, `self.property` access/assignment, instance method dispatch with self-writeback, static method calls, `extends` inheritance (property + method resolution), `is` type checks for objects
+  - 225 tests covering expressions, statements, builtins, function calls, mutation, classes, and end-to-end evaluation
 - **Native test runner** — `gd test run` now executes `test_*` functions without Godot (Phase 3):
   - Default runner when no GUT/gdUnit4 addon detected (replaces Script runner as fallback)
   - Millisecond execution vs 2-3s Godot startup — no Godot binary required

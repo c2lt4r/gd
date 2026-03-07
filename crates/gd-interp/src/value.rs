@@ -1,4 +1,12 @@
+use std::collections::HashMap;
 use std::fmt;
+
+/// A runtime GDScript object instance.
+#[derive(Debug, Clone)]
+pub struct GdObject {
+    pub class_name: String,
+    pub properties: HashMap<String, GdValue>,
+}
 
 #[derive(Debug, Clone)]
 pub enum GdValue {
@@ -19,6 +27,7 @@ pub enum GdValue {
     Rect2(f64, f64, f64, f64),
     NodePath(String),
     Callable { name: String },
+    Object(Box<GdObject>),
 }
 
 impl PartialEq for GdValue {
@@ -32,6 +41,8 @@ impl PartialEq for GdValue {
             | (Self::StringName(a), Self::StringName(b))
             | (Self::NodePath(a), Self::NodePath(b))
             | (Self::Callable { name: a }, Self::Callable { name: b }) => a == b,
+            // Object identity comparison (same allocation = same object)
+            (Self::Object(a), Self::Object(b)) => std::ptr::eq(a.as_ref(), b.as_ref()),
             (Self::Array(a), Self::Array(b)) => a == b,
             (Self::Dictionary(a), Self::Dictionary(b)) => a == b,
             (Self::Vector2(x1, y1), Self::Vector2(x2, y2)) => {
@@ -103,6 +114,7 @@ impl fmt::Display for GdValue {
             Self::Rect2(x, y, w, h) => write!(f, "[P: ({x}, {y}), S: ({w}, {h})]"),
             Self::NodePath(p) => write!(f, "NodePath({p})"),
             Self::Callable { name } => write!(f, "Callable({name})"),
+            Self::Object(obj) => write!(f, "<{}>", obj.class_name),
         }
     }
 }
@@ -142,6 +154,16 @@ impl GdValue {
             Self::Rect2(..) => "Rect2",
             Self::NodePath(_) => "NodePath",
             Self::Callable { .. } => "Callable",
+            Self::Object(_) => "Object",
+        }
+    }
+
+    /// Returns the class name for objects, or the built-in type name otherwise.
+    #[must_use]
+    pub fn class_name(&self) -> &str {
+        match self {
+            Self::Object(obj) => &obj.class_name,
+            _ => self.type_name(),
         }
     }
 
@@ -162,6 +184,7 @@ impl GdValue {
             Self::Color(..) => 20,
             Self::StringName(_) => 21,
             Self::NodePath(_) => 22,
+            Self::Object(_) => 24,
             Self::Callable { .. } => 25,
             Self::Dictionary(_) => 27,
             Self::Array(_) => 28,

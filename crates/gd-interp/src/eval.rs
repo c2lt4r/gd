@@ -1,11 +1,11 @@
 use std::fmt::Write;
 
-use gd_core::gd_ast::GdExpr;
+use gd_core::gd_ast::{GdExpr, GdFunc};
 
 use crate::builtins;
 use crate::error::{InterpError, InterpResult};
 use crate::interpreter::Interpreter;
-use crate::value::GdValue;
+use crate::value::{GdObject, GdValue};
 
 /// Strip surrounding quotes and process escape sequences in a GDScript string literal.
 #[must_use]
@@ -126,6 +126,27 @@ pub fn eval_expr(expr: &GdExpr<'_>, interp: &mut Interpreter<'_>) -> InterpResul
             args,
             ..
         } => {
+            // Handle ClassName.new() and ClassName.static_method()
+            if let GdExpr::Ident { name, .. } = receiver.as_ref()
+                && interp.has_class(name)
+            {
+                let evaled: InterpResult<Vec<GdValue>> =
+                    args.iter().map(|a| eval_expr(a, interp)).collect();
+                let evaled = evaled?;
+                if *method == "new" {
+                    return eval_constructor(name, &evaled, interp);
+                }
+                // Static method call
+                if let Some(func) = interp.lookup_method(name, method) {
+                    return crate::exec::exec_func(func, &evaled, interp);
+                }
+                return Err(InterpError::name_error(
+                    format!("'{name}' has no method '{method}'"),
+                    line,
+                    col,
+                ));
+            }
+
             let evaled: InterpResult<Vec<GdValue>> =
                 args.iter().map(|a| eval_expr(a, interp)).collect();
             let evaled = evaled?;
@@ -140,6 +161,21 @@ pub fn eval_expr(expr: &GdExpr<'_>, interp: &mut Interpreter<'_>) -> InterpResul
             }
 
             let recv = eval_expr(receiver, interp)?;
+
+            // Dispatch to user-defined class methods on objects
+            if let GdValue::Object(ref obj) = recv {
+                let class_name = obj.class_name.clone();
+                if let Some(func) = interp.lookup_method(&class_name, method) {
+                    let (ret, updated_self) =
+                        exec_method_returning_self(func, &recv, &evaled, interp)?;
+                    // Write back modified self to caller's variable
+                    if let GdExpr::Ident { name, .. } = receiver.as_ref() {
+                        interp.env.set(name, updated_self);
+                    }
+                    return Ok(ret);
+                }
+            }
+
             builtins::call_method(&recv, method, &evaled)
         }
 
@@ -156,6 +192,17 @@ pub fn eval_expr(expr: &GdExpr<'_>, interp: &mut Interpreter<'_>) -> InterpResul
                 return Ok(val);
             }
             let recv = eval_expr(receiver, interp)?;
+            // Handle object property access
+            if let GdValue::Object(ref obj) = recv {
+                if let Some(val) = obj.properties.get(*property) {
+                    return Ok(val.clone());
+                }
+                return Err(InterpError::name_error(
+                    format!("'{}' has no property '{property}'", obj.class_name),
+                    line,
+                    col,
+                ));
+            }
             builtins::get_property(&recv, property)
         }
 
@@ -190,7 +237,9 @@ pub fn eval_expr(expr: &GdExpr<'_>, interp: &mut Interpreter<'_>) -> InterpResul
             expr, type_name, ..
         } => {
             let val = eval_expr(expr, interp)?;
-            Ok(GdValue::Bool(val.type_name() == *type_name))
+            // Check both built-in type name and object class name
+            let matches = val.type_name() == *type_name || val.class_name() == *type_name;
+            Ok(GdValue::Bool(matches))
         }
 
         GdExpr::Ternary {
@@ -305,11 +354,15 @@ fn eval_call(
                     )),
                 };
             }
-            // Try user-defined function first, then builtin
+            // Try user-defined function, then class constructor, then builtin
             _ => {
                 let maybe_func = interp.lookup_func(name);
                 if let Some(func) = maybe_func {
                     return crate::exec::exec_func(func, &evaled, interp);
+                }
+                // Check if it's a class name (ClassName() is shorthand for ClassName.new())
+                if interp.has_class(name) {
+                    return eval_constructor(name, &evaled, interp);
                 }
                 return builtins::call_builtin(name, &evaled, &mut interp.env);
             }
@@ -321,6 +374,117 @@ fn eval_call(
         line,
         col,
     ))
+}
+
+/// Instantiate a user-defined class: create object, init vars, run `_init()`.
+fn eval_constructor(
+    class_name: &str,
+    args: &[GdValue],
+    interp: &mut Interpreter<'_>,
+) -> InterpResult<GdValue> {
+    // Collect default properties from the class (and its parent chain)
+    let mut properties = std::collections::HashMap::new();
+    collect_class_properties(class_name, interp, &mut properties)?;
+
+    let obj = GdValue::Object(Box::new(GdObject {
+        class_name: class_name.to_owned(),
+        properties,
+    }));
+
+    // Call _init() if it exists — exec_method_returning_self gives us the modified object
+    if let Some(init_func) = interp.lookup_method(class_name, "_init") {
+        let (_, updated_self) = exec_method_returning_self(init_func, &obj, args, interp)?;
+        return Ok(updated_self);
+    }
+
+    Ok(obj)
+}
+
+/// Collect default property values from a class and its parent chain.
+fn collect_class_properties(
+    class_name: &str,
+    interp: &mut Interpreter<'_>,
+    properties: &mut std::collections::HashMap<String, GdValue>,
+) -> InterpResult<()> {
+    // First collect parent name (release borrow before recursing)
+    let parent = interp
+        .lookup_class(class_name)
+        .and_then(|c| c.extends.clone());
+    if let Some(ref parent_name) = parent
+        && interp.has_class(parent_name)
+    {
+        collect_class_properties(parent_name, interp, properties)?;
+    }
+
+    // Collect var names and their initializer expressions (as references).
+    // We need to release the borrow on `interp` before calling eval_expr,
+    // so we collect the var references first.
+    let Some(class) = interp.lookup_class(class_name) else {
+        return Ok(());
+    };
+    let vars = class.vars.clone();
+
+    for var in vars {
+        let val = match &var.value {
+            Some(expr) => eval_expr(expr, interp)?,
+            None => GdValue::Null,
+        };
+        properties.insert(var.name.to_owned(), val);
+    }
+
+    Ok(())
+}
+
+/// Execute a method on an object, returning (return_value, modified_self).
+fn exec_method_returning_self(
+    func: &GdFunc<'_>,
+    receiver: &GdValue,
+    args: &[GdValue],
+    interp: &mut Interpreter<'_>,
+) -> InterpResult<(GdValue, GdValue)> {
+    interp.env.push_frame();
+    interp.env.define("self", receiver.clone());
+
+    // Bind parameters
+    for (i, param) in func.params.iter().enumerate() {
+        let val: GdValue = if i < args.len() {
+            args[i].clone()
+        } else if let Some(default) = &param.default {
+            eval_expr(default, interp)?
+        } else {
+            GdValue::Null
+        };
+        interp.env.define(param.name, val);
+    }
+
+    let flow = crate::exec::exec_body(&func.body, interp);
+
+    // Capture modified self before popping frame
+    let updated_self = interp
+        .env
+        .get("self")
+        .cloned()
+        .unwrap_or_else(|| receiver.clone());
+    interp.env.pop_frame();
+
+    let ret = match flow? {
+        crate::exec::ControlFlow::Return(val) => val,
+        _ => GdValue::Null,
+    };
+
+    Ok((ret, updated_self))
+}
+
+/// Execute a method on an object: push frame, bind `self` + params, run body.
+/// Writes modified `self` back to the caller's variable if applicable.
+pub fn exec_method(
+    func: &GdFunc<'_>,
+    receiver: &GdValue,
+    args: &[GdValue],
+    interp: &mut Interpreter<'_>,
+) -> InterpResult<GdValue> {
+    let (ret, _updated_self) = exec_method_returning_self(func, receiver, args, interp)?;
+    Ok(ret)
 }
 
 fn eval_color_constructor(args: &[GdValue], line: usize, col: usize) -> InterpResult<GdValue> {

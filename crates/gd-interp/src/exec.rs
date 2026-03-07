@@ -166,6 +166,25 @@ fn exec_assign(
             }
             Ok(())
         }
+        // self.property = val (or obj.property = val)
+        GdExpr::PropertyAccess {
+            receiver, property, ..
+        } => {
+            if let GdExpr::Ident { name, .. } = receiver.as_ref()
+                && let Some(GdValue::Object(_)) = interp.env.get(name)
+            {
+                let recv = interp.env.get_mut(name).expect("just checked");
+                if let GdValue::Object(obj) = recv {
+                    obj.properties.insert((*property).to_owned(), val);
+                    return Ok(());
+                }
+            }
+            Err(InterpError::not_implemented(
+                "property assignment on non-object",
+                target.line(),
+                target.column(),
+            ))
+        }
         GdExpr::Subscript {
             receiver, index, ..
         } => {
@@ -732,5 +751,209 @@ mod tests {
             "func double(x):\n\treturn x * 2\n\nfunc add_one(x):\n\treturn x + 1\n\nfunc test_main():\n\treturn add_one(double(5))\n",
         );
         assert_eq!(result.unwrap(), GdValue::Int(11));
+    }
+
+    // ── Phase 4: Class system tests ──────────────────────────────────
+
+    #[test]
+    fn test_inner_class_new() {
+        let (result, _) = run_script(
+            "\
+class Counter:
+\tvar count = 0
+
+func test_main():
+\tvar c = Counter.new()
+\treturn c.count
+",
+        );
+        assert_eq!(result.unwrap(), GdValue::Int(0));
+    }
+
+    #[test]
+    fn test_inner_class_init() {
+        let (result, _) = run_script(
+            "\
+class Counter:
+\tvar count = 0
+\tfunc _init(start):
+\t\tself.count = start
+
+func test_main():
+\tvar c = Counter.new(10)
+\treturn c.count
+",
+        );
+        assert_eq!(result.unwrap(), GdValue::Int(10));
+    }
+
+    #[test]
+    fn test_inner_class_method() {
+        let (result, _) = run_script(
+            "\
+class Counter:
+\tvar count = 0
+\tfunc increment():
+\t\tself.count += 1
+\tfunc get_count():
+\t\treturn self.count
+
+func test_main():
+\tvar c = Counter.new()
+\tc.increment()
+\tc.increment()
+\treturn c.get_count()
+",
+        );
+        assert_eq!(result.unwrap(), GdValue::Int(2));
+    }
+
+    #[test]
+    fn test_inner_class_method_with_args() {
+        let (result, _) = run_script(
+            "\
+class Adder:
+\tvar total = 0
+\tfunc add(n):
+\t\tself.total += n
+\t\treturn self.total
+
+func test_main():
+\tvar a = Adder.new()
+\ta.add(5)
+\ta.add(3)
+\treturn a.total
+",
+        );
+        assert_eq!(result.unwrap(), GdValue::Int(8));
+    }
+
+    #[test]
+    fn test_inner_class_multiple_instances() {
+        let (result, _) = run_script(
+            "\
+class Box:
+\tvar value = 0
+\tfunc _init(v):
+\t\tself.value = v
+
+func test_main():
+\tvar a = Box.new(10)
+\tvar b = Box.new(20)
+\treturn a.value + b.value
+",
+        );
+        assert_eq!(result.unwrap(), GdValue::Int(30));
+    }
+
+    #[test]
+    fn test_inner_class_is_check() {
+        let (result, _) = run_script(
+            "\
+class MyNode:
+\tpass
+
+func test_main():
+\tvar n = MyNode.new()
+\treturn n is MyNode
+",
+        );
+        assert_eq!(result.unwrap(), GdValue::Bool(true));
+    }
+
+    #[test]
+    fn test_inner_class_inheritance() {
+        let (result, _) = run_script(
+            "\
+class Base:
+\tvar x = 10
+\tfunc get_x():
+\t\treturn self.x
+
+class Child extends Base:
+\tvar y = 20
+\tfunc get_sum():
+\t\treturn self.x + self.y
+
+func test_main():
+\tvar c = Child.new()
+\treturn c.get_sum()
+",
+        );
+        assert_eq!(result.unwrap(), GdValue::Int(30));
+    }
+
+    #[test]
+    fn test_inner_class_inherited_method() {
+        let (result, _) = run_script(
+            "\
+class Base:
+\tvar x = 5
+\tfunc get_x():
+\t\treturn self.x
+
+class Child extends Base:
+\tvar y = 10
+
+func test_main():
+\tvar c = Child.new()
+\treturn c.get_x()
+",
+        );
+        assert_eq!(result.unwrap(), GdValue::Int(5));
+    }
+
+    #[test]
+    fn test_class_constructor_shorthand() {
+        // ClassName() as shorthand for ClassName.new()
+        let (result, _) = run_script(
+            "\
+class Point:
+\tvar x = 0
+\tvar y = 0
+\tfunc _init(px, py):
+\t\tself.x = px
+\t\tself.y = py
+
+func test_main():
+\tvar p = Point.new(3, 4)
+\treturn p.x * p.x + p.y * p.y
+",
+        );
+        assert_eq!(result.unwrap(), GdValue::Int(25));
+    }
+
+    #[test]
+    fn test_class_static_method() {
+        let (result, _) = run_script(
+            "\
+class MathUtil:
+\tstatic func add(a, b):
+\t\treturn a + b
+
+func test_main():
+\treturn MathUtil.add(3, 4)
+",
+        );
+        assert_eq!(result.unwrap(), GdValue::Int(7));
+    }
+
+    #[test]
+    fn test_class_method_returns_value() {
+        let (result, _) = run_script(
+            "\
+class Calc:
+\tvar value = 0
+\tfunc _init(v):
+\t\tself.value = v
+\tfunc doubled():
+\t\treturn self.value * 2
+
+func test_main():
+\tvar c = Calc.new(21)
+\treturn c.doubled()
+",
+        );
+        assert_eq!(result.unwrap(), GdValue::Int(42));
     }
 }
