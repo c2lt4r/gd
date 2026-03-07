@@ -5,14 +5,8 @@ __pycache__/
 *~
 .DS_Store
 .env
-docs/issues/
-docs/mesh/
-docs/style-rules-roadmap.md
-docs/multi-language-support.md
-docs/research/eval-improvements.md
-docs/research/godot-debug-protocol.md
-docs/research/godot-source/
-docs/research/input-automation-api.md
+docs/
+fuzz/
 tools/extract_tests.py
 tools/probe_*.py
 tools/test.sh

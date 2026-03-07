@@ -784,7 +784,7 @@ dependencies = [
 
 [[package]]
 name = "gd"
-version = "0.3.19"
+version = "0.3.20"
 dependencies = [
  "bincode",
  "clap",
@@ -833,14 +833,14 @@ dependencies = [
 
 [[package]]
 name = "gd-class-db"
-version = "0.3.19"
+version = "0.3.20"
 dependencies = [
  "strsim",
 ]
 
 [[package]]
 name = "gd-core"
-version = "0.3.19"
+version = "0.3.20"
 dependencies = [
  "gd-class-db",
  "libc",
@@ -860,7 +860,7 @@ dependencies = [
 
 [[package]]
 name = "gd-fmt"
-version = "0.3.19"
+version = "0.3.20"
 dependencies = [
  "gd-core",
  "miette",
@@ -873,7 +873,7 @@ dependencies = [
 
 [[package]]
 name = "gd-lint"
-version = "0.3.19"
+version = "0.3.20"
 dependencies = [
  "gd-class-db",
  "gd-core",
@@ -890,7 +890,7 @@ dependencies = [
 
 [[package]]
 name = "gd-lsp"
-version = "0.3.19"
+version = "0.3.20"
 dependencies = [
  "dashmap 6.1.0",
  "gd-class-db",
@@ -913,7 +913,7 @@ dependencies = [
 
 [[package]]
 name = "gd-mesh"
-version = "0.3.19"
+version = "0.3.20"
 dependencies = [
  "bincode",
  "earcutr",
@@ -2374,10 +2374,9 @@ dependencies = [
 [[package]]
 name = "tree-sitter-gdscript"
 version = "6.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b7a37fe8c0a10c0c39ecd5b2f7db53933f691488f5572409a4d3c0dfeb3f6108"
 dependencies = [
  "cc",
+ "tree-sitter",
  "tree-sitter-language",
 ]
 

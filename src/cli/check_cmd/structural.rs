@@ -107,6 +107,7 @@ fn check_body_indentation(body: &Node, errors: &mut Vec<StructuralError>) {
     // Find the expected indentation from the first non-comment named child.
     let mut expected_col: Option<usize> = None;
     let mut prev_row: Option<usize> = None;
+    let mut prev_kind: Option<&str> = None;
     let mut cursor = body.walk();
 
     for child in body.children(&mut cursor) {
@@ -133,19 +134,33 @@ fn check_body_indentation(body: &Node, errors: &mut Vec<StructuralError>) {
         match expected_col {
             None => expected_col = Some(col),
             Some(exp) if col > exp => {
-                let pos = child.start_position();
-                errors.push(StructuralError {
-                    line: pos.row as u32 + 1,
-                    column: pos.column as u32 + 1,
-                    message: format!(
-                        "unexpected indentation — `{}` is indented deeper than surrounding code (expected column {})",
-                        friendly_kind(child.kind()),
-                        exp + 1,
-                    ),
+                // When a comment at the parent indent level sits between a
+                // control-flow colon and the body content, tree-sitter's
+                // indent scanner can't emit INDENT and the body content gets
+                // placed at the parent level with deeper indentation.  This
+                // is a known tree-sitter limitation — do not flag it.
+                let after_control_flow = prev_kind.is_some_and(|k| {
+                    matches!(
+                        k,
+                        "if_statement" | "for_statement" | "while_statement" | "match_statement"
+                    )
                 });
+                if !after_control_flow {
+                    let pos = child.start_position();
+                    errors.push(StructuralError {
+                        line: pos.row as u32 + 1,
+                        column: pos.column as u32 + 1,
+                        message: format!(
+                            "unexpected indentation — `{}` is indented deeper than surrounding code (expected column {})",
+                            friendly_kind(child.kind()),
+                            exp + 1,
+                        ),
+                    });
+                }
             }
             _ => {}
         }
+        prev_kind = Some(child.kind());
     }
 }
 

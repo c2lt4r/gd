@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.3.20] - 2026-03-07
+
+### Changed
+- **Vendored tree-sitter-gdscript** — local copy with 9 targeted patches for 100% clean parsing on Godot 4.6.1 test corpus (107→0 parse errors):
+  - Scanner indent serialization: 16-bit little-endian (fixes overflow at 32+ indent levels)
+  - Unicode identifiers: explicit CJK/Hangul ranges (workaround for tree-sitter codegen gap)
+  - Number literals: trailing underscore in hex/octal/binary (`0xFF_`)
+  - Get node paths: `$"path"`, `%"unique"`, complex nested paths
+  - Signal annotations: `@warning_ignore` before `signal` declarations
+  - Match pass body: `pass` as sole match arm body
+  - Match trailing comma: comma after open-ended patterns
+  - Dictionary string keys: `{"key" = val}` lua-table syntax
+  - Abstract semicolon: already upstream in 6.1.0 (no patch needed)
+- **`gd check` indentation tolerance** — suppresses false positive when comment at parent indent sits between control-flow colon and body
+- Gitignore: `docs/` and `fuzz/` excluded from tracking
+
 ## [0.3.19] - 2026-03-04
 
 ### Changed
