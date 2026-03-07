@@ -1,8 +1,8 @@
 use gd_core::gd_ast::{GdExpr, GdFunc, GdStmt};
 
-use crate::env::Environment;
 use crate::error::{InterpError, InterpResult};
 use crate::eval::eval_expr;
+use crate::interpreter::Interpreter;
 use crate::value::GdValue;
 
 /// Control flow signal from statement execution.
@@ -19,9 +19,9 @@ pub enum ControlFlow {
 }
 
 /// Execute a sequence of statements, propagating control flow.
-pub fn exec_body(stmts: &[GdStmt<'_>], env: &mut Environment) -> InterpResult<ControlFlow> {
+pub fn exec_body(stmts: &[GdStmt<'_>], interp: &mut Interpreter<'_>) -> InterpResult<ControlFlow> {
     for stmt in stmts {
-        let flow = exec_stmt(stmt, env)?;
+        let flow = exec_stmt(stmt, interp)?;
         match flow {
             ControlFlow::None => {}
             other => return Ok(other),
@@ -32,61 +32,61 @@ pub fn exec_body(stmts: &[GdStmt<'_>], env: &mut Environment) -> InterpResult<Co
 
 /// Execute a single statement.
 #[allow(clippy::too_many_lines)]
-pub fn exec_stmt(stmt: &GdStmt<'_>, env: &mut Environment) -> InterpResult<ControlFlow> {
+pub fn exec_stmt(stmt: &GdStmt<'_>, interp: &mut Interpreter<'_>) -> InterpResult<ControlFlow> {
     match stmt {
         GdStmt::Expr { expr, .. } => {
-            eval_expr(expr, env)?;
+            eval_expr(expr, interp)?;
             Ok(ControlFlow::None)
         }
 
         GdStmt::Var(v) => {
             let val = match &v.value {
-                Some(expr) => eval_expr(expr, env)?,
+                Some(expr) => eval_expr(expr, interp)?,
                 None => GdValue::Null,
             };
-            env.define(v.name, val);
+            interp.env.define(v.name, val);
             Ok(ControlFlow::None)
         }
 
         GdStmt::Assign { target, value, .. } => {
-            let val = eval_expr(value, env)?;
-            exec_assign(target, val, env)?;
+            let val = eval_expr(value, interp)?;
+            exec_assign(target, val, interp)?;
             Ok(ControlFlow::None)
         }
 
         GdStmt::AugAssign {
             target, op, value, ..
         } => {
-            let current = eval_expr(target, env)?;
-            let rhs = eval_expr(value, env)?;
+            let current = eval_expr(target, interp)?;
+            let rhs = eval_expr(value, interp)?;
             let new_val = apply_aug_op(&current, op, &rhs, target)?;
-            exec_assign(target, new_val, env)?;
+            exec_assign(target, new_val, interp)?;
             Ok(ControlFlow::None)
         }
 
         GdStmt::Return { value, .. } => {
             let val = match value {
-                Some(expr) => eval_expr(expr, env)?,
+                Some(expr) => eval_expr(expr, interp)?,
                 None => GdValue::Null,
             };
             Ok(ControlFlow::Return(val))
         }
 
         GdStmt::If(if_stmt) => {
-            let cond = eval_expr(&if_stmt.condition, env)?;
+            let cond = eval_expr(&if_stmt.condition, interp)?;
             if cond.is_truthy() {
-                return exec_body(&if_stmt.body, env);
+                return exec_body(&if_stmt.body, interp);
             }
 
             for (elif_cond, elif_body) in &if_stmt.elif_branches {
-                let cond = eval_expr(elif_cond, env)?;
+                let cond = eval_expr(elif_cond, interp)?;
                 if cond.is_truthy() {
-                    return exec_body(elif_body, env);
+                    return exec_body(elif_body, interp);
                 }
             }
 
             if let Some(else_body) = &if_stmt.else_body {
-                return exec_body(else_body, env);
+                return exec_body(else_body, interp);
             }
 
             Ok(ControlFlow::None)
@@ -94,23 +94,23 @@ pub fn exec_stmt(stmt: &GdStmt<'_>, env: &mut Environment) -> InterpResult<Contr
 
         GdStmt::For {
             var, iter, body, ..
-        } => exec_for(var, iter, body, env),
+        } => exec_for(var, iter, body, interp),
 
         GdStmt::While {
             condition, body, ..
-        } => exec_while(condition, body, env),
+        } => exec_while(condition, body, interp),
 
         GdStmt::Match { value, arms, .. } => {
-            let val = eval_expr(value, env)?;
+            let val = eval_expr(value, interp)?;
             for arm in arms {
-                if arm_matches(&val, &arm.patterns, env)? {
+                if arm_matches(&val, &arm.patterns, interp)? {
                     if let Some(guard) = &arm.guard {
-                        let guard_val = eval_expr(guard, env)?;
+                        let guard_val = eval_expr(guard, interp)?;
                         if !guard_val.is_truthy() {
                             continue;
                         }
                     }
-                    return exec_body(&arm.body, env);
+                    return exec_body(&arm.body, interp);
                 }
             }
             Ok(ControlFlow::None)
@@ -129,24 +129,24 @@ pub fn exec_stmt(stmt: &GdStmt<'_>, env: &mut Environment) -> InterpResult<Contr
 pub fn exec_func(
     func: &GdFunc<'_>,
     args: &[GdValue],
-    env: &mut Environment,
+    interp: &mut Interpreter<'_>,
 ) -> InterpResult<GdValue> {
-    env.push_frame();
+    interp.env.push_frame();
 
     // Bind parameters
     for (i, param) in func.params.iter().enumerate() {
         let val = if i < args.len() {
             args[i].clone()
         } else if let Some(default) = &param.default {
-            eval_expr(default, env)?
+            eval_expr(default, interp)?
         } else {
             GdValue::Null
         };
-        env.define(param.name, val);
+        interp.env.define(param.name, val);
     }
 
-    let flow = exec_body(&func.body, env);
-    env.pop_frame();
+    let flow = exec_body(&func.body, interp);
+    interp.env.pop_frame();
 
     match flow? {
         ControlFlow::Return(val) => Ok(val),
@@ -154,21 +154,25 @@ pub fn exec_func(
     }
 }
 
-fn exec_assign(target: &GdExpr<'_>, val: GdValue, env: &mut Environment) -> InterpResult<()> {
+fn exec_assign(
+    target: &GdExpr<'_>,
+    val: GdValue,
+    interp: &mut Interpreter<'_>,
+) -> InterpResult<()> {
     match target {
         GdExpr::Ident { name, .. } => {
-            if !env.set(name, val.clone()) {
-                env.define(name, val);
+            if !interp.env.set(name, val.clone()) {
+                interp.env.define(name, val);
             }
             Ok(())
         }
         GdExpr::Subscript {
             receiver, index, ..
         } => {
-            let idx = eval_expr(index, env)?;
+            let idx = eval_expr(index, interp)?;
             // Get the receiver name for reassignment
             if let GdExpr::Ident { name, .. } = receiver.as_ref() {
-                let mut recv = env.get(name).cloned().ok_or_else(|| {
+                let mut recv = interp.env.get(name).cloned().ok_or_else(|| {
                     InterpError::name_error(
                         format!("undefined: {name}"),
                         target.line(),
@@ -203,7 +207,7 @@ fn exec_assign(target: &GdExpr<'_>, val: GdValue, env: &mut Environment) -> Inte
                         for (k, v) in pairs.iter_mut() {
                             if *k == idx {
                                 *v = val;
-                                env.set(name, recv);
+                                interp.env.set(name, recv);
                                 return Ok(());
                             }
                         }
@@ -217,7 +221,7 @@ fn exec_assign(target: &GdExpr<'_>, val: GdValue, env: &mut Environment) -> Inte
                         ));
                     }
                 }
-                env.set(name, recv);
+                interp.env.set(name, recv);
                 Ok(())
             } else {
                 Err(InterpError::not_implemented(
@@ -408,9 +412,9 @@ fn exec_for(
     var: &str,
     iter: &GdExpr<'_>,
     body: &[GdStmt<'_>],
-    env: &mut Environment,
+    interp: &mut Interpreter<'_>,
 ) -> InterpResult<ControlFlow> {
-    let iter_val = eval_expr(iter, env)?;
+    let iter_val = eval_expr(iter, interp)?;
 
     let items: Vec<GdValue> = match iter_val {
         GdValue::Array(arr) => arr,
@@ -428,8 +432,8 @@ fn exec_for(
     };
 
     for item in items {
-        env.define(var, item);
-        match exec_body(body, env)? {
+        interp.env.define(var, item);
+        match exec_body(body, interp)? {
             ControlFlow::Break => break,
             ControlFlow::Continue | ControlFlow::None => {}
             ControlFlow::Return(v) => return Ok(ControlFlow::Return(v)),
@@ -442,18 +446,18 @@ fn exec_for(
 fn exec_while(
     condition: &GdExpr<'_>,
     body: &[GdStmt<'_>],
-    env: &mut Environment,
+    interp: &mut Interpreter<'_>,
 ) -> InterpResult<ControlFlow> {
     let max_iterations = 1_000_000;
     let mut count = 0;
 
     loop {
-        let cond = eval_expr(condition, env)?;
+        let cond = eval_expr(condition, interp)?;
         if !cond.is_truthy() {
             break;
         }
 
-        match exec_body(body, env)? {
+        match exec_body(body, interp)? {
             ControlFlow::Break => break,
             ControlFlow::Continue | ControlFlow::None => {}
             ControlFlow::Return(v) => return Ok(ControlFlow::Return(v)),
@@ -475,7 +479,7 @@ fn exec_while(
 fn arm_matches(
     val: &GdValue,
     patterns: &[GdExpr<'_>],
-    env: &mut Environment,
+    interp: &mut Interpreter<'_>,
 ) -> InterpResult<bool> {
     for pattern in patterns {
         match pattern {
@@ -483,12 +487,12 @@ fn arm_matches(
             GdExpr::Ident { name: "_", .. } => return Ok(true),
             // Binding pattern — any other identifier binds the value
             GdExpr::Ident { name, .. } => {
-                env.define(name, val.clone());
+                interp.env.define(name, val.clone());
                 return Ok(true);
             }
             // Literal comparison
             _ => {
-                let pattern_val = eval_expr(pattern, env)?;
+                let pattern_val = eval_expr(pattern, interp)?;
                 if *val == pattern_val {
                     return Ok(true);
                 }
@@ -506,52 +510,29 @@ mod tests {
     fn run_script(source: &str) -> (InterpResult<GdValue>, Vec<String>) {
         let tree = gd_core::parser::parse(source).expect("parse failed");
         let file = gd_core::gd_ast::convert(&tree, source);
-        let mut env = Environment::new();
+        let mut interp = Interpreter::from_file(&file).unwrap();
 
-        // Define all functions first
-        // Execute top-level statements and find test_main
-        let mut test_func = None;
-        for decl in &file.declarations {
-            match decl {
-                gd_core::gd_ast::GdDecl::Func(f) => {
-                    if f.name == "test_main" {
-                        test_func = Some(f);
-                    }
-                }
-                gd_core::gd_ast::GdDecl::Var(v) => {
-                    let val = match &v.value {
-                        Some(expr) => {
-                            crate::eval::eval_expr(expr, &mut env).unwrap_or(GdValue::Null)
-                        }
-                        None => GdValue::Null,
-                    };
-                    env.define(v.name, val);
-                }
-                _ => {}
-            }
-        }
-
-        let result = if let Some(func) = test_func {
-            exec_func(func, &[], &mut env)
+        let result = if let Some(func) = interp.lookup_func("test_main") {
+            exec_func(func, &[], &mut interp)
         } else {
             // Execute top-level statements
             let mut last = GdValue::Null;
             for decl in &file.declarations {
                 if let gd_core::gd_ast::GdDecl::Stmt(s) = decl {
-                    match exec_stmt(s, &mut env) {
+                    match exec_stmt(s, &mut interp) {
                         Ok(ControlFlow::Return(v)) => {
                             last = v;
                             break;
                         }
                         Ok(_) => {}
-                        Err(e) => return (Err(e), env.take_output()),
+                        Err(e) => return (Err(e), interp.env.take_output()),
                     }
                 }
             }
             Ok(last)
         };
 
-        let output = env.take_output();
+        let output = interp.env.take_output();
         (result, output)
     }
 
@@ -651,5 +632,105 @@ mod tests {
             "func test_main():\n\tvar arr = [1, 2, 3]\n\tarr[1] = 99\n\treturn arr[1]\n",
         );
         assert_eq!(result.unwrap(), GdValue::Int(99));
+    }
+
+    #[test]
+    fn test_user_function_call() {
+        let (result, _) = run_script(
+            "func add(a, b):\n\treturn a + b\n\nfunc test_main():\n\treturn add(3, 4)\n",
+        );
+        assert_eq!(result.unwrap(), GdValue::Int(7));
+    }
+
+    #[test]
+    fn test_recursive_function() {
+        let (result, _) = run_script(
+            "func factorial(n):\n\tif n <= 1:\n\t\treturn 1\n\treturn n * factorial(n - 1)\n\nfunc test_main():\n\treturn factorial(5)\n",
+        );
+        assert_eq!(result.unwrap(), GdValue::Int(120));
+    }
+
+    #[test]
+    fn test_function_default_params() {
+        let (result, _) = run_script(
+            "func greet(name = \"world\"):\n\treturn \"hello \" + name\n\nfunc test_main():\n\treturn greet()\n",
+        );
+        assert_eq!(result.unwrap(), GdValue::GdString("hello world".into()));
+    }
+
+    #[test]
+    fn test_array_append() {
+        let (result, _) = run_script(
+            "func test_main():\n\tvar arr = [1, 2]\n\tarr.append(3)\n\treturn arr.size()\n",
+        );
+        assert_eq!(result.unwrap(), GdValue::Int(3));
+    }
+
+    #[test]
+    fn test_array_pop() {
+        let (result, _) = run_script(
+            "func test_main():\n\tvar arr = [10, 20, 30]\n\tvar last = arr.pop_back()\n\treturn last\n",
+        );
+        assert_eq!(result.unwrap(), GdValue::Int(30));
+    }
+
+    #[test]
+    fn test_array_sort() {
+        let (result, _) =
+            run_script("func test_main():\n\tvar arr = [3, 1, 2]\n\tarr.sort()\n\treturn arr[0]\n");
+        assert_eq!(result.unwrap(), GdValue::Int(1));
+    }
+
+    #[test]
+    fn test_array_erase() {
+        let (result, _) = run_script(
+            "func test_main():\n\tvar arr = [1, 2, 3]\n\tarr.erase(2)\n\treturn arr.size()\n",
+        );
+        assert_eq!(result.unwrap(), GdValue::Int(2));
+    }
+
+    #[test]
+    fn test_dict_erase() {
+        let (result, _) = run_script(
+            "func test_main():\n\tvar d = {\"a\": 1, \"b\": 2}\n\td.erase(\"a\")\n\treturn d.size()\n",
+        );
+        assert_eq!(result.unwrap(), GdValue::Int(1));
+    }
+
+    #[test]
+    fn test_dict_clear() {
+        let (result, _) = run_script(
+            "func test_main():\n\tvar d = {\"a\": 1}\n\td.clear()\n\treturn d.is_empty()\n",
+        );
+        assert_eq!(result.unwrap(), GdValue::Bool(true));
+    }
+
+    #[test]
+    fn test_enum_values() {
+        let (result, _) = run_script(
+            "enum State { IDLE, RUNNING, JUMPING }\n\nfunc test_main():\n\treturn JUMPING\n",
+        );
+        assert_eq!(result.unwrap(), GdValue::Int(2));
+    }
+
+    #[test]
+    fn test_named_enum_dict() {
+        let (result, _) =
+            run_script("enum Dir { LEFT, RIGHT, UP }\n\nfunc test_main():\n\treturn Dir.size()\n");
+        assert_eq!(result.unwrap(), GdValue::Int(3));
+    }
+
+    #[test]
+    fn test_top_level_var() {
+        let (result, _) = run_script("var SPEED = 100\n\nfunc test_main():\n\treturn SPEED * 2\n");
+        assert_eq!(result.unwrap(), GdValue::Int(200));
+    }
+
+    #[test]
+    fn test_multiple_function_calls() {
+        let (result, _) = run_script(
+            "func double(x):\n\treturn x * 2\n\nfunc add_one(x):\n\treturn x + 1\n\nfunc test_main():\n\treturn add_one(double(5))\n",
+        );
+        assert_eq!(result.unwrap(), GdValue::Int(11));
     }
 }

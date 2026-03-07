@@ -559,8 +559,8 @@ mod tests {
     #[test]
     fn abs_float() {
         assert_eq!(
-            call("abs", &[GdValue::Float(-3.14)]).unwrap(),
-            GdValue::Float(3.14)
+            call("abs", &[GdValue::Float(-3.125)]).unwrap(),
+            GdValue::Float(3.125)
         );
     }
 
@@ -681,7 +681,7 @@ mod tests {
     #[test]
     fn is_zero_approx() {
         assert_eq!(
-            call("is_zero_approx", &[GdValue::Float(0.0000001)]).unwrap(),
+            call("is_zero_approx", &[GdValue::Float(0.000_000_1)]).unwrap(),
             GdValue::Bool(true)
         );
         assert_eq!(
@@ -695,7 +695,7 @@ mod tests {
         assert_eq!(
             call(
                 "is_equal_approx",
-                &[GdValue::Float(1.0), GdValue::Float(1.0000001)]
+                &[GdValue::Float(1.0), GdValue::Float(1.000_000_1)]
             )
             .unwrap(),
             GdValue::Bool(true)

@@ -72,6 +72,29 @@ pub fn call_builtin(name: &str, args: &[GdValue], env: &mut Environment) -> Inte
     }
 }
 
+/// Check if a method is mutating for the given receiver type.
+#[must_use]
+pub fn is_mutating_method(receiver: &GdValue, method: &str) -> bool {
+    match receiver {
+        GdValue::Array(_) => array::is_mutating(method),
+        GdValue::Dictionary(_) => dictionary::is_mutating(method),
+        _ => false,
+    }
+}
+
+/// Call a mutating method on a value, modifying it in place.
+pub fn call_method_mut(
+    receiver: &mut GdValue,
+    method: &str,
+    args: &[GdValue],
+) -> InterpResult<GdValue> {
+    match receiver {
+        GdValue::Array(_) => array::call_method_mut(receiver, method, args),
+        GdValue::Dictionary(_) => dictionary::call_method_mut(receiver, method, args),
+        _ => call_method(receiver, method, args),
+    }
+}
+
 pub fn call_method(receiver: &GdValue, method: &str, args: &[GdValue]) -> InterpResult<GdValue> {
     match receiver {
         GdValue::GdString(_) | GdValue::StringName(_) => {

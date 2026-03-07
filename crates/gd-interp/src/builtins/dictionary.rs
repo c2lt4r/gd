@@ -104,6 +104,72 @@ pub fn call_method(receiver: &GdValue, method: &str, args: &[GdValue]) -> Interp
     }
 }
 
+/// Returns true if this method mutates the dictionary.
+pub fn is_mutating(method: &str) -> bool {
+    matches!(method, "erase" | "merge" | "clear")
+}
+
+/// Call a mutating method on a dictionary, modifying it in place.
+pub fn call_method_mut(
+    receiver: &mut GdValue,
+    method: &str,
+    args: &[GdValue],
+) -> InterpResult<GdValue> {
+    let GdValue::Dictionary(entries) = receiver else {
+        unreachable!("dictionary::call_method_mut called with non-dictionary");
+    };
+
+    match method {
+        "erase" => {
+            expect_argc(method, args, 1)?;
+            let key = &args[0];
+            let before = entries.len();
+            entries.retain(|(k, _)| k != key);
+            Ok(GdValue::Bool(entries.len() < before))
+        }
+        "merge" => {
+            if args.is_empty() || args.len() > 2 {
+                return Err(InterpError::argument_error(
+                    format!("Dictionary.merge() takes 1-2 arguments, got {}", args.len()),
+                    0,
+                    0,
+                ));
+            }
+            let GdValue::Dictionary(other) = &args[0] else {
+                return Err(InterpError::type_error(
+                    "merge() requires a Dictionary argument",
+                    0,
+                    0,
+                ));
+            };
+            let overwrite = if args.len() == 2 {
+                args[1].is_truthy()
+            } else {
+                false
+            };
+            for (k, v) in other {
+                if let Some(existing) = entries.iter_mut().find(|(ek, _)| ek == k) {
+                    if overwrite {
+                        existing.1 = v.clone();
+                    }
+                } else {
+                    entries.push((k.clone(), v.clone()));
+                }
+            }
+            Ok(GdValue::Null)
+        }
+        "clear" => {
+            expect_argc(method, args, 0)?;
+            entries.clear();
+            Ok(GdValue::Null)
+        }
+        _ => {
+            // Delegate to immutable call_method for read-only methods
+            call_method(receiver, method, args)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

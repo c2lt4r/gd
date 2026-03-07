@@ -214,13 +214,18 @@ mod tests {
     #[test]
     fn interp_result_ok() {
         let result: InterpResult<i32> = Ok(42);
-        assert_eq!(result.unwrap(), 42);
+        let Ok(val) = result else {
+            panic!("expected Ok");
+        };
+        assert_eq!(val, 42);
     }
 
     #[test]
     fn interp_result_err() {
         let result: InterpResult<i32> = Err(InterpError::name_error("undefined x", 1, 0));
-        let err = result.unwrap_err();
+        let Err(err) = result else {
+            panic!("expected Err");
+        };
         assert_eq!(err.kind, ErrorKind::NameError);
         assert_eq!(err.message, "undefined x");
         assert_eq!(err.line, 1);

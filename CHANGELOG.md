@@ -3,15 +3,17 @@
 ## [0.3.21] - 2026-03-07
 
 ### Added
-- **`gd-interp` crate** — new GDScript expression evaluator and statement executor (Phase 1):
+- **`gd-interp` crate** — GDScript interpreter built on the typed AST (Phase 1 + 2):
   - `GdValue` runtime type (17 variants: null through Callable) with GDScript-matching Display, truthiness, and type IDs
-  - Expression evaluator walks typed `GdExpr` AST: literals, arithmetic, comparisons, boolean logic, bitwise ops, string formatting, ternary, casts, `is` checks, constructors (Vector2/3/4, Color, Rect2, NodePath), subscript, property access
+  - Expression evaluator walks `GdExpr` AST: literals, arithmetic, comparisons, boolean logic, bitwise ops, string formatting, ternary, casts, `is` checks, constructors (Vector2/3/4, Color, Rect2, NodePath), subscript, property access
   - Statement executor: var/assign/aug-assign, if/elif/else, for (arrays + range sugar), while (with 1M iteration guard), match (literal + wildcard + binding patterns), break/continue/return
-  - Function execution with scope stack, parameter binding, and defaults
+  - `Interpreter` struct with function registry: user-defined function calls, recursion, default parameters, top-level var/const evaluation, enum value registration (named enums as dictionaries)
+  - Mutating array methods: append, push_back/front, pop_back/front, insert, remove_at, erase, sort, reverse, clear, resize, shuffle — with in-place mutation writeback
+  - Mutating dictionary methods: erase, merge (with overwrite flag), clear
   - 30+ builtin utility functions (print, abs, range, sin/cos, lerp, typeof, len, str/int/float casts, etc.)
-  - 25+ String methods, 13 Array methods, 9 Dictionary methods, Vector2/3 methods+properties, Color methods+properties
+  - 25+ String methods, Vector2/3 methods+properties, Color methods+properties
   - Static class constants: `Color.RED`, `Vector2.ZERO`, `Vector3.UP`, etc.
-  - 192 tests covering expressions, statements, builtins, and end-to-end evaluation
+  - 214 tests covering expressions, statements, builtins, function calls, mutation, and end-to-end evaluation
 
 ## [0.3.20] - 2026-03-07
 

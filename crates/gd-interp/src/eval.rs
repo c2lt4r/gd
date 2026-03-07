@@ -3,8 +3,8 @@ use std::fmt::Write;
 use gd_core::gd_ast::GdExpr;
 
 use crate::builtins;
-use crate::env::Environment;
 use crate::error::{InterpError, InterpResult};
+use crate::interpreter::Interpreter;
 use crate::value::GdValue;
 
 /// Strip surrounding quotes and process escape sequences in a GDScript string literal.
@@ -63,7 +63,7 @@ fn parse_int(s: &str) -> Option<i64> {
 
 /// Evaluate a GDScript expression AST node.
 #[allow(clippy::too_many_lines)]
-pub fn eval_expr(expr: &GdExpr<'_>, env: &mut Environment) -> InterpResult<GdValue> {
+pub fn eval_expr(expr: &GdExpr<'_>, interp: &mut Interpreter<'_>) -> InterpResult<GdValue> {
     let line = expr.line();
     let col = expr.column();
 
@@ -100,25 +100,25 @@ pub fn eval_expr(expr: &GdExpr<'_>, env: &mut Environment) -> InterpResult<GdVal
         GdExpr::Null { .. } => Ok(GdValue::Null),
 
         // ── Identifiers ────────────────────────────────────────────────
-        GdExpr::Ident { name, .. } => eval_ident(name, line, col, env),
+        GdExpr::Ident { name, .. } => eval_ident(name, line, col, interp),
 
         // ── Collections ────────────────────────────────────────────────
         GdExpr::Array { elements, .. } => {
             let vals: InterpResult<Vec<GdValue>> =
-                elements.iter().map(|e| eval_expr(e, env)).collect();
+                elements.iter().map(|e| eval_expr(e, interp)).collect();
             Ok(GdValue::Array(vals?))
         }
 
         GdExpr::Dict { pairs, .. } => {
             let mut entries = Vec::with_capacity(pairs.len());
             for (k, v) in pairs {
-                entries.push((eval_expr(k, env)?, eval_expr(v, env)?));
+                entries.push((eval_expr(k, interp)?, eval_expr(v, interp)?));
             }
             Ok(GdValue::Dictionary(entries))
         }
 
         // ── Calls ──────────────────────────────────────────────────────
-        GdExpr::Call { callee, args, .. } => eval_call(callee, args, env, line, col),
+        GdExpr::Call { callee, args, .. } => eval_call(callee, args, interp, line, col),
 
         GdExpr::MethodCall {
             receiver,
@@ -126,10 +126,21 @@ pub fn eval_expr(expr: &GdExpr<'_>, env: &mut Environment) -> InterpResult<GdVal
             args,
             ..
         } => {
-            let recv = eval_expr(receiver, env)?;
             let evaled: InterpResult<Vec<GdValue>> =
-                args.iter().map(|a| eval_expr(a, env)).collect();
-            builtins::call_method(&recv, method, &evaled?)
+                args.iter().map(|a| eval_expr(a, interp)).collect();
+            let evaled = evaled?;
+
+            // For mutating methods on identifiers, modify in place
+            if let GdExpr::Ident { name, .. } = receiver.as_ref()
+                && let Some(val) = interp.env.get(name)
+                && builtins::is_mutating_method(val, method)
+            {
+                let recv = interp.env.get_mut(name).expect("just checked");
+                return builtins::call_method_mut(recv, method, &evaled);
+            }
+
+            let recv = eval_expr(receiver, interp)?;
+            builtins::call_method(&recv, method, &evaled)
         }
 
         GdExpr::SuperCall { .. } => Err(InterpError::not_implemented("super calls", line, col)),
@@ -144,15 +155,15 @@ pub fn eval_expr(expr: &GdExpr<'_>, env: &mut Environment) -> InterpResult<GdVal
             {
                 return Ok(val);
             }
-            let recv = eval_expr(receiver, env)?;
+            let recv = eval_expr(receiver, interp)?;
             builtins::get_property(&recv, property)
         }
 
         GdExpr::Subscript {
             receiver, index, ..
         } => {
-            let recv = eval_expr(receiver, env)?;
-            let idx = eval_expr(index, env)?;
+            let recv = eval_expr(receiver, interp)?;
+            let idx = eval_expr(index, interp)?;
             eval_subscript(&recv, &idx, line, col)
         }
 
@@ -161,24 +172,24 @@ pub fn eval_expr(expr: &GdExpr<'_>, env: &mut Environment) -> InterpResult<GdVal
         // ── Operators ──────────────────────────────────────────────────
         GdExpr::BinOp {
             left, op, right, ..
-        } => eval_binop(left, op, right, env, line, col),
+        } => eval_binop(left, op, right, interp, line, col),
 
         GdExpr::UnaryOp { op, operand, .. } => {
-            let val = eval_expr(operand, env)?;
+            let val = eval_expr(operand, interp)?;
             eval_unaryop(op, &val, line, col)
         }
 
         GdExpr::Cast {
             expr, target_type, ..
         } => {
-            let val = eval_expr(expr, env)?;
+            let val = eval_expr(expr, interp)?;
             eval_cast(&val, target_type, line, col)
         }
 
         GdExpr::Is {
             expr, type_name, ..
         } => {
-            let val = eval_expr(expr, env)?;
+            let val = eval_expr(expr, interp)?;
             Ok(GdValue::Bool(val.type_name() == *type_name))
         }
 
@@ -188,11 +199,11 @@ pub fn eval_expr(expr: &GdExpr<'_>, env: &mut Environment) -> InterpResult<GdVal
             false_val,
             ..
         } => {
-            let cond = eval_expr(condition, env)?;
+            let cond = eval_expr(condition, interp)?;
             if cond.is_truthy() {
-                eval_expr(true_val, env)
+                eval_expr(true_val, interp)
             } else {
-                eval_expr(false_val, env)
+                eval_expr(false_val, interp)
             }
         }
 
@@ -204,13 +215,18 @@ pub fn eval_expr(expr: &GdExpr<'_>, env: &mut Environment) -> InterpResult<GdVal
     }
 }
 
-fn eval_ident(name: &str, line: usize, col: usize, env: &Environment) -> InterpResult<GdValue> {
+fn eval_ident(
+    name: &str,
+    line: usize,
+    col: usize,
+    interp: &Interpreter<'_>,
+) -> InterpResult<GdValue> {
     match name {
         "PI" => Ok(GdValue::Float(std::f64::consts::PI)),
         "TAU" => Ok(GdValue::Float(std::f64::consts::TAU)),
         "INF" => Ok(GdValue::Float(f64::INFINITY)),
         "NAN" => Ok(GdValue::Float(f64::NAN)),
-        _ => env.get(name).cloned().ok_or_else(|| {
+        _ => interp.env.get(name).cloned().ok_or_else(|| {
             InterpError::name_error(format!("undefined identifier: {name}"), line, col)
         }),
     }
@@ -220,12 +236,12 @@ fn eval_ident(name: &str, line: usize, col: usize, env: &Environment) -> InterpR
 fn eval_call(
     callee: &GdExpr<'_>,
     args: &[GdExpr<'_>],
-    env: &mut Environment,
+    interp: &mut Interpreter<'_>,
     line: usize,
     col: usize,
 ) -> InterpResult<GdValue> {
     // Evaluate arguments first
-    let evaled: InterpResult<Vec<GdValue>> = args.iter().map(|a| eval_expr(a, env)).collect();
+    let evaled: InterpResult<Vec<GdValue>> = args.iter().map(|a| eval_expr(a, interp)).collect();
     let evaled = evaled?;
 
     // Check if callee is a simple identifier (constructor or builtin)
@@ -289,8 +305,14 @@ fn eval_call(
                     )),
                 };
             }
-            // Try as builtin utility function
-            _ => return builtins::call_builtin(name, &evaled, env),
+            // Try user-defined function first, then builtin
+            _ => {
+                let maybe_func = interp.lookup_func(name);
+                if let Some(func) = maybe_func {
+                    return crate::exec::exec_func(func, &evaled, interp);
+                }
+                return builtins::call_builtin(name, &evaled, &mut interp.env);
+            }
         }
     }
 
@@ -380,28 +402,28 @@ fn eval_binop(
     left: &GdExpr<'_>,
     op: &str,
     right: &GdExpr<'_>,
-    env: &mut Environment,
+    interp: &mut Interpreter<'_>,
     line: usize,
     col: usize,
 ) -> InterpResult<GdValue> {
     // Short-circuit for `and` / `or`
     if op == "and" {
-        let l = eval_expr(left, env)?;
+        let l = eval_expr(left, interp)?;
         if !l.is_truthy() {
             return Ok(l);
         }
-        return eval_expr(right, env);
+        return eval_expr(right, interp);
     }
     if op == "or" {
-        let l = eval_expr(left, env)?;
+        let l = eval_expr(left, interp)?;
         if l.is_truthy() {
             return Ok(l);
         }
-        return eval_expr(right, env);
+        return eval_expr(right, interp);
     }
 
-    let l = eval_expr(left, env)?;
-    let r = eval_expr(right, env)?;
+    let l = eval_expr(left, interp)?;
+    let r = eval_expr(right, interp)?;
 
     match op {
         // ── Arithmetic ─────────────────────────────────────────────
@@ -934,11 +956,11 @@ mod tests {
 
         // Find the var declaration and extract its initializer
         for decl in &file.declarations {
-            if let gd_core::gd_ast::GdDecl::Var(v) = decl {
-                if let Some(ref expr) = v.value {
-                    let mut env = Environment::new();
-                    return eval_expr(expr, &mut env);
-                }
+            if let gd_core::gd_ast::GdDecl::Var(v) = decl
+                && let Some(ref expr) = v.value
+            {
+                let mut interp = Interpreter::new();
+                return eval_expr(expr, &mut interp);
             }
         }
         panic!("could not find expression in parsed source");
@@ -954,7 +976,7 @@ mod tests {
 
     #[test]
     fn test_float_literals() {
-        assert_eq!(eval("3.14").unwrap(), GdValue::Float(3.14));
+        assert_eq!(eval("3.125").unwrap(), GdValue::Float(3.125));
         assert_eq!(eval("1e5").unwrap(), GdValue::Float(1e5));
     }
 
@@ -1041,7 +1063,7 @@ mod tests {
     #[test]
     fn test_unary() {
         assert_eq!(eval("-5").unwrap(), GdValue::Int(-5));
-        assert_eq!(eval("-3.14").unwrap(), GdValue::Float(-3.14));
+        assert_eq!(eval("-3.125").unwrap(), GdValue::Float(-3.125));
     }
 
     #[test]

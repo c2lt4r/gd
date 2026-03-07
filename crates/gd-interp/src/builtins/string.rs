@@ -486,8 +486,8 @@ mod tests {
             GdValue::Int(42)
         );
         assert_eq!(
-            call_method(&s("3.14"), "to_float", &[]).unwrap(),
-            GdValue::Float(3.14)
+            call_method(&s("3.125"), "to_float", &[]).unwrap(),
+            GdValue::Float(3.125)
         );
         assert_eq!(
             call_method(&s("abc"), "to_int", &[]).unwrap(),

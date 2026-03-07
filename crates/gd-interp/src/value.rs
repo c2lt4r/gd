@@ -192,7 +192,7 @@ mod tests {
 
     #[test]
     fn display_float() {
-        assert_eq!(GdValue::Float(3.14).to_string(), "3.14");
+        assert_eq!(GdValue::Float(3.125).to_string(), "3.125");
         assert_eq!(GdValue::Float(1.0).to_string(), "1.0");
         assert_eq!(GdValue::Float(0.0).to_string(), "0.0");
     }

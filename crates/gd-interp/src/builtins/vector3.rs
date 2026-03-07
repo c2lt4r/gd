@@ -44,6 +44,7 @@ pub fn call_method(receiver: &GdValue, method: &str, args: &[GdValue]) -> Interp
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn call_vector3(x: f64, y: f64, z: f64, method: &str, args: &[GdValue]) -> InterpResult<GdValue> {
     match method {
         "length" => Ok(GdValue::Float((x * x + y * y + z * z).sqrt())),
