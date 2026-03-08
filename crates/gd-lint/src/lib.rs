@@ -65,9 +65,11 @@ pub fn run_lint(
     let cwd =
         std::env::current_dir().map_err(|e| miette!("Failed to get current directory: {e}"))?;
 
-    // Load config: search from the first explicit path if given, otherwise cwd
+    // Load config: search from the first explicit path if given, otherwise cwd.
+    // Always resolve to absolute so find_project_root can walk upward correctly.
     let config_search_dir = if let Some(first) = paths.first() {
         let p = PathBuf::from(first);
+        let p = if p.is_relative() { cwd.join(&p) } else { p };
         if p.is_file() {
             p.parent().unwrap_or(&cwd).to_path_buf()
         } else if p.is_dir() {
@@ -330,12 +332,17 @@ fn lint_file(
     let (source, tree) = parser::parse_file(path)?;
     let file = gd_ast::convert(&tree, &source);
 
+    let is_autoload = project.is_autoload_file(path);
+
     let mut all_diags = Vec::new();
     for rule in rules {
         if is_rule_excluded_by_override(path, ignore_base, rule.name(), &config.lint.overrides) {
             continue;
         }
         let diags = rule.check_with_project(&file, &source, &config.lint, project);
+        if is_autoload && rule.name() == "unused-preload" {
+            continue;
+        }
         all_diags.extend(diags);
     }
 

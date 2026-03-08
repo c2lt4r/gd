@@ -581,6 +581,20 @@ impl ProjectIndex {
                 .values()
                 .any(|fs| fs.class_name.as_deref() == Some(name))
     }
+
+    /// Check if a file path belongs to an autoload script.
+    pub fn is_autoload_file(&self, path: &Path) -> bool {
+        let check = if path.is_absolute() {
+            path.to_path_buf()
+        } else if let Ok(abs) = std::env::current_dir().map(|cwd| cwd.join(path)) {
+            abs
+        } else {
+            path.to_path_buf()
+        };
+        self.autoloads
+            .values()
+            .any(|fs| fs.path == check || fs.path.ends_with(path))
+    }
 }
 
 /// Parse a single `.gd` file into `FileSymbols`.

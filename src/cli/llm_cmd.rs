@@ -9,8 +9,8 @@ pub fn exec() -> Result<()> {
 }
 
 const LLM_TXT: &str = r#"# gd — Godot CLI toolchain
-# All commands support --help. Many support --format json for structured output.
-# AI hint: prefer --brief on inspect, --format json on most commands.
+# All commands support --help and --no-color. Positions are 1-based.
+# Default output is human-readable text; add --format json when you need structured data.
 
 ## Project
 gd new <name>                          # Create project (templates: default, 2d, 3d)
@@ -21,11 +21,9 @@ gd init                                # Init gd in existing Godot project
 gd fmt [files...]                      # Format GDScript (AST-based)
 gd fmt --check                         # Check formatting (CI mode, exit 1 if unformatted)
 gd fmt --diff                          # Show formatting diff
-gd lint [files...]                     # Lint GDScript (76 rules, 8 categories)
+gd lint [files...]                     # Lint GDScript (89 rules, 8 categories)
 gd lint --fix                          # Auto-fix fixable lint issues
-gd lint --format json|text|sarif       # Output format
 gd check                               # Parse + structural + semantic + .tscn/.tres validation
-gd check --format json                 # Machine-readable diagnostics
 # Inline suppression comments (add to end of line or on line before):
 #   # gd:ignore                        Suppress all warnings on this line
 #   # gd:ignore[rule-name]             Suppress a specific rule
@@ -36,30 +34,33 @@ gd check --format json                 # Machine-readable diagnostics
 ## Run & Build
 gd run                                 # Run project (eval server enabled by default, non-blocking)
 gd run --scene <path>                  # Run specific scene
-gd run --bare                          # Run without eval server (disables `gd eval` and `gd debug` input commands)
+gd run --bare                          # Run without eval server (disables gd eval and gd debug input commands)
 gd stop                                # Stop the running game
 gd log                                 # View game output log (ring buffer, via debug protocol)
 gd log --tail <N>                      # Last N lines (default: 50)
 gd log --follow                        # Real-time tail (like tail -f)
 gd log --errors                        # Show only errors and warnings
 gd log --grep <pattern>                # Filter lines matching pattern
-gd log --json                          # Output as JSON
 gd log --clear                         # Clear the log buffer
 gd build --preset <name>               # Export project
 gd build --preset <name> --release     # Export release build
 gd clean                               # Remove build artifacts
-gd test                                # Run tests (auto-detects GUT/gdUnit4/script)
-gd test --format json                  # Machine-readable test results
+gd test run [name]                     # Run tests (auto-detects native/GUT/gdUnit4/script)
+gd test run --runner native            # Run with native interpreter (no Godot needed)
+gd test run --filter <pattern>         # Filter test files by pattern
+gd test run --list                     # List matching tests without running
+gd test run --junit <file>             # Export results to JUnit XML
 
 ## Eval
 gd eval "<expr>"                       # Evaluate GDScript expression (prints result)
 gd eval "var x = 1; print(x * 2)"     # Multi-statement (semicolons)
 gd eval script.gd                      # Run existing .gd file via Godot -s
 gd eval -                              # Read script from stdin
+gd eval --native "<expr>"             # Use native interpreter (no Godot required)
 gd eval --check "<expr>"               # Parse-validate before running
 gd eval --timeout 10 "<expr>"          # Kill after N seconds (default: 30)
 gd eval --verbose "<expr>"             # Show Godot stderr
-gd eval --format json "<expr>"         # Machine-readable output (stdout, stderr, exit_code, errors)
+gd eval --unsafe "<expr>"              # Skip sandbox checks (allow OS.execute etc.)
 
 ## Scene
 gd scene create <path> --root-type <T>                  # Create new .tscn
@@ -91,8 +92,7 @@ gd resource get-property <file> --key <k>               # Print property value t
 gd resource remove-property <file> --key <k>            # Delete a property
 gd resource set-script <file> <script>                  # Attach/change script
 gd resource remove-script <file>                        # Detach script + cleanup
-gd resource info <file>                                 # Resource structure (human-readable)
-gd resource info <file> --format json                   # JSON dump of resource structure
+gd resource info <file>                                 # Resource structure
 # All write subcommands support --dry-run
 
 ## Debug (requires running game via `gd run`)
@@ -105,7 +105,7 @@ gd debug scene inspect-objects --id <N> [--id <M>...]  # Inspect multiple object
 gd debug set-prop --id <N> --property <name> --value <val>       # Set property
 gd debug set-prop --id <N> --property <name> --value <val> --screenshot  # Set + auto-screenshot
 gd debug set-prop-field --id <N> --property <name> --field <f> --value <val>  # Set sub-field (e.g. position.x)
-gd debug set-prop-field --id <N> --property <name> --field <f> --value <val> --screenshot  # Set + auto-screenshot
+gd debug set-prop-field --id <N> --property <name> --field <f> --value <val> --screenshot
 gd debug save-node --id <N> --path <file>        # Save node to file on game's filesystem
 
 # Execution control
@@ -131,7 +131,6 @@ gd debug vars --frame <N>              # Variables for stack frame
 gd debug eval --expr <expr>            # Evaluate GDScript in game context (via eval server)
 gd debug eval --expr "for i in 5: print(i)"  # Loops and control flow work
 gd debug eval --expr <expr> --timeout 30     # Custom timeout (default: 10s)
-gd debug eval --expr <expr> --format json    # JSON result
 gd debug eval --expr <expr> --bare     # Use Godot's Expression class (no loops/if/var, but reads breakpoint locals)
 
 # Game loop control
@@ -146,12 +145,10 @@ gd debug stop                          # Stop the running game (alias for gd sto
 
 # Camera & visual (gd debug camera <cmd>)
 gd debug scene camera-view             # Structured spatial data: all nodes with positions/rotations
-gd debug scene camera-view --format json  # JSON: camera info + every spatial node's transform
 gd debug camera override [--off]       # Take/release remote camera control
 gd debug camera transform-2d --transform <json-array-6-floats>
 gd debug camera transform-3d --transform <json-array-12-floats> --perspective <bool> --fov <N> --near <N> --far <N>
 gd debug camera screenshot             # Output PNG file path
-gd debug camera screenshot --format json  # JSON with width, height, format, path fields
 gd debug camera screenshot --output <file>  # Copy PNG to specified path
 gd debug profiler --name scripts|visual|servers [--off]  # Toggle profiler
 
@@ -231,63 +228,113 @@ gd daemon restart                      # Restart daemon
 ## LSP (Language Server)
 gd lsp                                 # Start LSP server (for editors)
 
-# One-shot queries (human-readable default, add --format json for structured output)
-gd lsp hover <f> --line <L> --column <C>
-gd lsp definition <f> --line <L> --column <C>
-gd lsp references --name <sym>                    # Cross-project search by name
-gd lsp references --name <sym> --class <cls>      # Filter to class
-gd lsp references --name <sym> <f>                # Filter to file
-gd lsp completions <f> --line <L> --column <C>
-gd lsp rename --name <sym> --new-name <name>                  # Rename by name (project-wide)
-gd lsp rename <f> --line <L> --column <C> --new-name <name>   # Rename by position
-gd lsp diagnostics [files...]
-gd lsp symbols <f>                                # List symbols
-gd lsp symbols <f> --kind <kind>                  # Filter: function,variable,class,signal,enum
-gd lsp code-actions <f> --line <L> --column <C>
-gd lsp view <f> [--start <L> --end <L>]           # View file lines
-gd lsp scene-info <f>                             # Scene structure from .tscn
+## Query (code intelligence — one-shot queries, human-readable default)
+gd query hover <f> --line <L> --column <C>            # Hover info at position
+gd query hover --name <sym>                            # Hover info by symbol name
+gd query definition <f> --line <L> --column <C>       # Go to definition
+gd query definition --name <sym>                       # Definition by symbol name
+gd query references --name <sym>                       # Cross-project search by name
+gd query references --name <sym> --class <cls>         # Filter to class
+gd query references --name <sym> <f>                   # Filter to file
+gd query references <f> --line <L> --column <C>        # References by position
+gd query completions <f> --line <L> --column <C>       # Completions at position
+gd query completions <f> --line <L> --column <C> --kind <kind>  # Filter by kind
+gd query symbols <f>                                   # List symbols in file
+gd query symbols <f> --kind <kind>                     # Filter: function,variable,class,signal,enum
+gd query code-actions <f> --line <L> --column <C>      # Available code actions
+gd query view <f> [--range 5-20]                       # View file lines (with optional range)
+gd query scene-info <f>                                # Scene structure from .tscn
+gd query scene-info <f> --nodes-only                   # Compact: nodes only
+gd query scene-refs <f>                                # All scenes that reference a .gd file
+gd query signal-connections <f>                        # Signal connections targeting a script's handlers
+gd query find-implementations --name <method>          # All classes implementing a method
+gd query find-implementations --name <method> --base <class>  # Filter by base class
 
-# Refactoring (human-readable default, --format json for structured output, --dry-run to preview)
-gd lsp delete-symbol <f> --name <sym>              # Also: --line <L>, --force
-gd lsp delete-symbol <f> --names "a,b,c"          # Bulk delete multiple symbols in one pass
-gd lsp move-symbol --name <sym> --from <f> --to <f> [--update-callers]
-gd lsp extract-method <f> --start-line <L> --end-line <L> --name <name>
-gd lsp inline-method <f> --name <sym>
-gd lsp change-signature <f> --name <sym> --add-param "name: Type = default" --remove-param <name> --rename-param "old=new" --reorder "a,b,c"
-gd lsp introduce-variable <f> --line <L> --column <C> --end-column <C> --name <name> [--const] [--replace-all]
-gd lsp introduce-parameter <f> --line <L> --column <C> --end-column <C> --name <name>
-gd lsp invert-if <f> --line <L>                    # Invert if/else: negate condition, swap branches
-gd lsp convert-node-path <f> --line <L> --column <C>  # Convert $Path ↔ get_node("Path")
-gd lsp convert-onready <f> --name <sym> --to-ready   # @onready var → _ready() assignment
-gd lsp convert-onready <f> --name <sym> --to-onready # _ready() assignment → @onready var
-gd lsp convert-signal <f.tscn> --signal <sig> --from <node> --method <m> --to-code   # Scene connection → .connect() in _ready()
-gd lsp convert-signal <f.tscn> --signal <sig> --from <node> --method <m> --to-scene  # .connect() → scene connection
-gd lsp extract-guards <f> --name <name>            # Flatten nested ifs to early return/continue guards
-gd lsp split-declaration <f> --line <L>            # Split var x = expr into declaration + assignment
-gd lsp join-declaration <f> --line <L>             # Join bare var declaration with following assignment
-gd lsp bulk-rename <f> --renames "old1:new1,old2:new2"
-gd lsp bulk-rename <f> --renames "old:new" --scope file  # Restrict renames to target file only
-gd lsp inline-delegate <f> --name <sym>
-gd lsp extract-class <f> --symbols "a,b" --to <new_file>
-gd lsp replace-body <f> --name <sym>               # Reads new body from stdin
-gd lsp replace-symbol <f> --name <sym>             # Reads replacement from stdin
-gd lsp insert <f> --after <sym>                    # Insert after symbol (reads from stdin)
-gd lsp insert <f> --before <sym>                   # Insert before symbol (reads from stdin)
-gd lsp edit-range <f> --range 5-20                 # Replace lines 5-20 (reads from stdin)
-gd lsp edit-range <f> --start-line <L> --end-line <L>  # Alternative range syntax
-gd lsp create-file <f>                             # Create with boilerplate
-gd lsp safe-delete-file <f>                        # Check for cross-file refs first
-gd lsp find-implementations --name <method>        # Find all classes implementing a method
+## Refactor (all support --dry-run to preview, human-readable default)
+# Rename
+gd refactor rename <f> --line <L> --column <C> --new-name <name>   # Rename by position
+gd refactor rename --name <sym> --new-name <name>                   # Rename by name (project-wide)
+gd refactor bulk-rename <f> --renames "old1:new1,old2:new2"         # Rename multiple symbols atomically
+gd refactor bulk-rename <f> --renames "old:new" --scope file        # Restrict to target file only
+
+# Delete
+gd refactor delete-symbol <f> --name <sym>             # Delete symbol (refuses if references exist)
+gd refactor delete-symbol <f> --name <sym> --force     # Delete even with references
+gd refactor delete-symbol <f> --names "a,b,c"          # Bulk delete multiple symbols
+gd refactor safe-delete-file <f>                       # Check cross-file refs before deleting
+gd refactor safe-delete-file <f> --force               # Actually delete the file
+
+# Move
+gd refactor move-symbol --name <sym> --from <f> --to <f>           # Move symbol between files
+gd refactor move-symbol --name <sym> --from <f> --to <f> --update-callers  # Update preload/load paths
+gd refactor move-file --from <f> --to <f>              # Move/rename file + update all references
+
+# Extract
+gd refactor extract-method <f> --start-line <L> --end-line <L> --name <name>
+gd refactor extract-constant <f> --line <L> --column <C> --end-column <C> --name <NAME>
+gd refactor extract-constant <f> --line <L> --column <C> --end-column <C> --name <NAME> --replace-all
+gd refactor extract-constant <f> --line <L> --column <C> --end-column <C> --name <NAME> --class <cls>  # Into inner class
+gd refactor extract-class <f> --symbols "a,b" --to <new_file>
+gd refactor extract-superclass <f> --symbols "a,b" --to <new_file> [--class-name <name>]
+gd refactor extract-guards <f> --name <name>           # Flatten nested ifs to early return/continue guards
+
+# Inline
+gd refactor inline-method <f> --line <L> --column <C>  # Inline single call site
+gd refactor inline-method <f> --name <sym> --all       # Inline all call sites + delete function
+gd refactor inline-variable <f> --line <L> --column <C>  # Replace usages with initializer, delete decl
+gd refactor inline-variable <f> --name <sym>           # By name
+gd refactor inline-delegate <f> --name <sym>           # Inline pass-through delegate
+
+# Introduce
+gd refactor introduce-variable <f> --line <L> --column <C> --end-column <C> --name <name>
+gd refactor introduce-variable <f> --line <L> --column <C> --end-column <C> --name <name> --const --replace-all
+gd refactor introduce-parameter <f> --line <L> --column <C> --end-column <C> --name <name> [--type <hint>]
+
+# Signature & structure
+gd refactor change-signature <f> --name <sym> --add-param "name: Type = default" --remove-param <name> --rename-param "old=new" --reorder "a,b,c"
+gd refactor encapsulate-field <f> --name <sym>         # Add set/get accessors (inline property syntax)
+gd refactor encapsulate-field <f> --name <sym> --backing-field  # Use _name + getter/setter functions
+gd refactor push-down-member <f> --name <sym>          # Push member to child classes (auto-discovers)
+gd refactor push-down-member <f> --name <sym> --to "child1.gd,child2.gd"
+gd refactor pull-up-member <f> --name <sym>            # Pull member up to parent class
+gd refactor split-declaration <f> --line <L>           # Split var x = expr into declaration + assignment
+gd refactor join-declaration <f> --line <L>            # Join bare var + following assignment
+
+# Convert
+gd refactor invert-if <f> --line <L>                   # Negate condition, swap branches
+gd refactor convert-node-path <f> --line <L> --column <C>  # $Path <-> get_node("Path")
+gd refactor convert-onready <f> --name <sym> --to-ready    # @onready var -> _ready() assignment
+gd refactor convert-onready <f> --name <sym> --to-onready  # _ready() assignment -> @onready var
+gd refactor convert-signal <f.tscn> --signal <sig> --from <node> --method <m> --to-code
+gd refactor convert-signal <f.tscn> --signal <sig> --from <node> --method <m> --to-scene
+
+# Undo
+gd refactor undo                                       # Undo most recent refactoring
+gd refactor undo --id <N>                              # Undo specific entry
+gd refactor undo --list                                # List undo-able operations
+
+## Edit (code editing primitives — read content from stdin or --input-file)
+gd edit create-file <f>                                # Create with boilerplate
+gd edit create-file <f> --extends <T> --class-name <n> # Custom extends/class_name
+gd edit create-file <f> --input-file <src>             # Create from file content
+gd edit replace-body <f> --name <sym>                  # Replace function body (stdin)
+gd edit replace-body <f> --name <sym> --input-file <src>
+gd edit replace-symbol <f> --name <sym>                # Replace entire symbol (stdin)
+gd edit insert <f> --after <sym>                       # Insert after symbol (stdin)
+gd edit insert <f> --before <sym>                      # Insert before symbol (stdin)
+gd edit edit-range <f> --range 5-20                    # Replace lines 5-20 (stdin)
+gd edit edit-range <f> --start-line <L> --end-line <L> # Alternative range syntax
+# All edit commands support --dry-run, --no-format, --class <inner>
 
 ## Project Analysis
+gd overview                            # Project architecture overview
+gd overview <path>                     # Scope to specific path
 gd tree                                # Class hierarchy
 gd tree --scene                        # Scene node trees from .tscn files
 gd doc                                 # Generate markdown docs from ## comments
-gd doc --format json                   # JSON doc output
 gd doc --check                         # CI: exit 1 if public methods undocumented
 gd doc --stdout                        # Print to stdout
 gd stats                               # Project statistics (files, LOC, functions)
-gd stats --format json                 # Machine-readable stats
 gd stats --by-dir                      # Per-directory breakdown
 gd stats --top <N>                     # Top-N longest functions
 gd stats --diff <branch>              # Compare stats vs git branch
@@ -306,7 +353,6 @@ gd addons install --locked             # Install from lock file
 
 ## Other
 gd env                                 # Show environment info (gd version, Godot version, paths)
-gd env --json                          # Machine-readable environment info
 gd watch                               # Watch files, run fmt/lint on change
 gd ci --platform github|gitlab         # Generate CI config
 gd completions --shell bash|zsh|fish   # Shell completions
@@ -321,12 +367,13 @@ gd upgrade [--check]                   # Self-update
 # [build] output_dir
 
 ## Patterns
-# --format json           Available on most commands for machine-readable output
-# --brief                 AI-preferred: stripped inspect output (just name=value pairs)
+# --no-color              Disable colored output (also respects NO_COLOR env)
+# --format json           Available on most commands when you need structured data
+# --brief                 Stripped inspect output (just name=value pairs, no Godot internals)
 # --rich                  Enrich inspect with ClassDB docs (type descriptions, docs URLs)
 # --off                   Toggle pattern: mute-audio --off, suspend --off, skip-breakpoints --off
-# --dry-run               Preview refactoring changes without applying
-# --screenshot             Auto-capture screenshot after set-prop/set-prop-field (outputs PNG path)
+# --dry-run               Preview refactoring/edit changes without applying
+# --screenshot            Auto-capture screenshot after set-prop/set-prop-field (outputs PNG path)
 # --check                 CI mode: exit 1 on issues (fmt --check, doc --check)
 # res:// paths            Godot resource paths used in debug breakpoints and live editing
 # Object IDs              From scene-tree output, used in inspect/set-prop/set-prop-field

@@ -270,11 +270,9 @@ fn check_variant_node(
             .child_by_field_name("type")
             .is_some_and(|t| t.kind() == "inferred_type");
         if is_inferred && let Some(value) = node.child_by_field_name("value") {
-            let should_flag = if is_variant_producing_expr(&value, source, file, project) {
-                true
-            } else {
-                is_unresolvable_property_access(&value, source)
-            };
+            let should_flag = is_variant_producing_expr(&value, source, file, project)
+                || is_unresolvable_property_access(&value, source)
+                || is_unresolvable_method_call(&value, source);
             if should_flag {
                 let var_name = node
                     .child_by_field_name("name")
@@ -359,6 +357,56 @@ fn is_unresolvable_property_access(value: &Node, source: &str) -> bool {
     }
 
     true
+}
+
+/// Check if a value expression is a method call on a variable typed as a Godot
+/// class where the method doesn't exist — e.g. `_display.build_score()` where
+/// `_display: VBoxContainer` and `build_score` is not a VBoxContainer method.
+/// Godot resolves such calls at runtime as Variant, so `:=` can't infer the type.
+fn is_unresolvable_method_call(value: &Node, source: &str) -> bool {
+    if value.kind() != "attribute" {
+        return false;
+    }
+
+    let mut has_call = false;
+    let mut method_name = None;
+    let mut cursor = value.walk();
+    for child in value.children(&mut cursor) {
+        if child.kind() == "attribute_call" {
+            has_call = true;
+            if let Some(name_node) = child.named_child(0) {
+                method_name = name_node.utf8_text(source.as_bytes()).ok();
+            }
+        }
+    }
+    if !has_call {
+        return false;
+    }
+    let Some(method) = method_name else {
+        return false;
+    };
+
+    let Some(obj) = value.named_child(0) else {
+        return false;
+    };
+    if obj.kind() != "identifier" {
+        return false;
+    }
+    let Ok(obj_name) = obj.utf8_text(source.as_bytes()) else {
+        return false;
+    };
+    if obj_name == "self" {
+        return false;
+    }
+
+    let Some(receiver_type) = find_receiver_type(value, obj_name, source) else {
+        return false;
+    };
+    if !gd_class_db::class_exists(&receiver_type) {
+        return false;
+    }
+
+    !gd_class_db::method_exists(&receiver_type, method)
 }
 
 /// Walk up the AST from `node` to find the enclosing function, then look up
@@ -589,11 +637,16 @@ fn is_variant_producing_expr(
                         && obj.kind() == "identifier"
                         && let Ok(obj_name) = obj.utf8_text(source.as_bytes())
                         && obj_name != "self"
-                        && let Some(receiver_type) = find_receiver_type(node, obj_name, source)
-                        && gd_class_db::method_return_type(&receiver_type, method_name)
-                            == Some("Variant")
                     {
-                        return true;
+                        let receiver_type =
+                            find_receiver_type(node, obj_name, source).or_else(|| {
+                                gd_class_db::is_singleton(obj_name).then(|| obj_name.to_string())
+                            });
+                        if let Some(rt) = receiver_type
+                            && gd_class_db::method_return_type(&rt, method_name) == Some("Variant")
+                        {
+                            return true;
+                        }
                     }
 
                     return false;

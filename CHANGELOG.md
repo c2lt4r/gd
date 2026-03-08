@@ -39,6 +39,13 @@
   - Type inference, naming warnings (`UPPER_SNAKE_CASE`), collision detection, undo support
   - Inserts after existing constants, before functions
 
+### Fixed
+- **`gd check` — detect `:=` type inference failures through base-class typed variables** — when a variable is typed as a Godot base class (e.g. `VBoxContainer`) and a method call on it doesn't exist in ClassDB, `:=` can't infer the return type. Now correctly flagged as an error.
+- **`gd check` — detect `:=` Variant inference from singleton method calls** — `ProjectSettings.get_setting()` and similar singleton methods returning `Variant` are now caught (previously only local variable receivers were checked).
+- **`gd lint` — suppress `unused-preload` for autoload scripts** — preloaded variables in autoload files are accessed cross-file via the singleton and should not be flagged as unused.
+- **`gd lint` — fix false `compiler-error` on single-file lint for `class_name` types** — when linting a single file with a relative path, `find_project_root` failed to walk upward, preventing cross-file type resolution.
+- **`gd llm` — updated command reference** — corrected command namespaces, flags, and conventions to match current CLI.
+
 ### Removed
 - **File-based IPC for eval server** — removed `--file-ipc` flag from `gd run` and `GD_EVAL_FILE_IPC` env var. TCP transport is now the only eval server mode (more stable, supports concurrent connections, output capture).
 
