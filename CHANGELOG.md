@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.3.22] - 2026-03-08
+
+### Added
+- **`gd lsp refactor extract-constant`** — extract an expression to a file-scope or class-scope `const`:
+  - Lifts literals/expressions to top-level `const` declarations (unlike `introduce-variable --const` which stays local)
+  - `--replace-all` replaces all matching occurrences across the entire file (crosses function boundaries)
+  - `--class` targets inner classes
+  - Type inference, naming warnings (`UPPER_SNAKE_CASE`), collision detection, undo support
+  - Inserts after existing constants, before functions
+
+### Fixed
+- **Rename/references now update string literals in Godot reflection API calls** — `call("foo")`, `has_method("foo")`, `emit_signal("bar")`, `connect("bar", ...)`, and other reflection methods now have their string arguments included in rename and find-references results. Previously these were silently skipped, leaving stale string references that cause runtime errors.
+
 ## [0.3.21] - 2026-03-07
 
 ### Added
@@ -31,13 +44,6 @@
   - File input: `gd eval --native script.gd`
   - Stdin: `echo "print(42)" | gd eval --native -`
   - JSON output: `--format json` for machine-readable results
-
-- **`gd lsp refactor extract-constant`** — extract an expression to a file-scope or class-scope `const`:
-  - Lifts literals/expressions to top-level `const` declarations (unlike `introduce-variable --const` which stays local)
-  - `--replace-all` replaces all matching occurrences across the entire file (crosses function boundaries)
-  - `--class` targets inner classes
-  - Type inference, naming warnings (`UPPER_SNAKE_CASE`), collision detection, undo support
-  - Inserts after existing constants, before functions
 
 ### Fixed
 - **`gd check` — detect `:=` type inference failures through base-class typed variables** — when a variable is typed as a Godot base class (e.g. `VBoxContainer`) and a method call on it doesn't exist in ClassDB, `:=` can't infer the return type. Now correctly flagged as an error.

@@ -225,6 +225,7 @@ pub fn find_references(
         filter.as_ref(),
         &mut locations,
     );
+    collect_reflection_string_refs(root, source, target_name, uri, &mut locations);
 
     if locations.is_empty() {
         None
@@ -403,6 +404,112 @@ fn collect_maybe_filtered(
     }
 }
 
+// ── Reflection string references ─────────────────────────────────────────
+
+/// Godot reflection methods whose first string argument is a symbol name.
+const REFLECTION_METHODS: &[&str] = &[
+    // Methods
+    "call",
+    "callv",
+    "call_deferred",
+    "has_method",
+    // Signals
+    "emit_signal",
+    "has_signal",
+    "connect",
+    "disconnect",
+    "is_connected",
+];
+
+/// Extract the inner text content from a `string` or `string_name` node,
+/// stripping quotes. Returns `None` for nodes with escape sequences (which
+/// could produce a different runtime value).
+fn extract_string_inner<'a>(node: tree_sitter::Node<'a>, source: &'a [u8]) -> Option<&'a str> {
+    let text = node.utf8_text(source).ok()?;
+    match node.kind() {
+        "string" => text.strip_prefix('"')?.strip_suffix('"'),
+        "string_name" => text.strip_prefix("&\"")?.strip_suffix('"'),
+        _ => None,
+    }
+}
+
+/// Check whether `string_node` is the first argument of a call to a known
+/// reflection method (e.g. `call("foo")`, `has_method("foo")`).
+fn is_reflection_call_arg(string_node: tree_sitter::Node, source: &[u8]) -> bool {
+    let args = match string_node.parent() {
+        Some(p) if p.kind() == "arguments" => p,
+        _ => return false,
+    };
+    // The string must be the first real argument (skip the opening paren).
+    // Named children of `arguments` are the argument expressions.
+    let mut cursor = args.walk();
+    let first_arg = args.named_children(&mut cursor).next();
+    if first_arg.map(|n| n.id()) != Some(string_node.id()) {
+        return false;
+    }
+
+    let call_node = match args.parent() {
+        Some(p) if p.kind() == "call" => p,
+        _ => return false,
+    };
+
+    // The callee is the first child of the call node. It can be a bare
+    // identifier (`call(...)`) or an attribute access (`self.call(...)`).
+    let Some(callee) = call_node.child(0) else {
+        return false;
+    };
+    let method_name = match callee.kind() {
+        "identifier" => callee.utf8_text(source).ok(),
+        "attribute" => {
+            // `expr.method` — the last named child is the attribute name
+            let mut c = callee.walk();
+            callee
+                .named_children(&mut c)
+                .last()
+                .and_then(|n| n.utf8_text(source).ok())
+        }
+        _ => None,
+    };
+    method_name.is_some_and(|name| REFLECTION_METHODS.contains(&name))
+}
+
+/// Return the LSP range covering only the inner content of a string literal
+/// (excluding the quote characters). For `"foo"` this is the range of `foo`.
+fn string_inner_range(node: &tree_sitter::Node) -> Range {
+    let start = node.start_position();
+    let end = node.end_position();
+    let quote_offset: u32 = if node.kind() == "string_name" { 2 } else { 1 };
+    Range::new(
+        Position::new(start.row as u32, start.column as u32 + quote_offset),
+        Position::new(end.row as u32, end.column as u32 - 1), // trailing "
+    )
+}
+
+/// Walk the AST and collect string literal references to `target_name` in
+/// known reflection API calls (e.g. `call("target_name")`).
+fn collect_reflection_string_refs(
+    node: tree_sitter::Node,
+    source: &str,
+    target_name: &str,
+    uri: &Url,
+    locations: &mut Vec<Location>,
+) {
+    let bytes = source.as_bytes();
+    if (node.kind() == "string" || node.kind() == "string_name")
+        && extract_string_inner(node, bytes) == Some(target_name)
+        && is_reflection_call_arg(node, bytes)
+    {
+        locations.push(Location {
+            uri: uri.clone(),
+            range: string_inner_range(&node),
+        });
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_reflection_string_refs(child, source, target_name, uri, locations);
+    }
+}
+
 /// Find all references to the symbol at position across all workspace files.
 pub fn find_references_cross_file(
     source: &str,
@@ -465,6 +572,7 @@ pub fn find_references_cross_file(
         origin_filter.as_ref(),
         &mut locations,
     );
+    collect_reflection_string_refs(root, source, target_name, uri, &mut locations);
 
     // Cross-file: only parse files that contain the identifier text
     let current_path = uri.to_file_path().ok();
@@ -488,6 +596,13 @@ pub fn find_references_cross_file(
                 &file_uri,
                 true,
                 cross_filter.as_ref(),
+                &mut locations,
+            );
+            collect_reflection_string_refs(
+                tree.root_node(),
+                &content,
+                target_name,
+                &file_uri,
                 &mut locations,
             );
         }
@@ -965,6 +1080,7 @@ pub fn find_references_by_name(
             } else {
                 collect_references(root, &content, name, &uri, true, &mut locations);
             }
+            collect_reflection_string_refs(root, &content, name, &uri, &mut locations);
         }
     }
 
@@ -1559,5 +1675,134 @@ func test():
         assert!(result.is_some());
         let locs = result.unwrap();
         assert_eq!(locs.len(), 2, "should find decl + qualified usage");
+    }
+
+    // ── Reflection string reference tests ────────────────────────────────
+
+    #[test]
+    fn reflection_call_string_refs() {
+        let source = "\
+func foo():
+\tpass
+
+func check():
+\tif has_method(\"foo\"):
+\t\tcall(\"foo\")
+";
+        let uri = test_uri();
+        // Position on `foo` declaration at line 0, col 5
+        let result = find_references(source, &uri, Position::new(0, 5), true);
+        assert!(result.is_some());
+        let locs = result.unwrap();
+        // Declaration + has_method("foo") + call("foo") = 3
+        assert_eq!(
+            locs.len(),
+            3,
+            "should find decl + 2 reflection string refs, got {:?}",
+            locs.iter()
+                .map(|l| (l.range.start.line, l.range.start.character))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn reflection_string_range_excludes_quotes() {
+        let source = "\
+func foo():
+\tpass
+
+func check():
+\tcall(\"foo\")
+";
+        let uri = test_uri();
+        let result = find_references(source, &uri, Position::new(0, 5), true);
+        let locs = result.unwrap();
+        // Find the string reference (on line 4)
+        let string_ref = locs.iter().find(|l| l.range.start.line == 4).unwrap();
+        // `\tcall("foo")` — col 6 is `"`, col 7 is `f`, col 10 is closing `"`
+        assert_eq!(
+            string_ref.range.start.character, 7,
+            "start after opening quote"
+        );
+        assert_eq!(
+            string_ref.range.end.character, 10,
+            "end before closing quote"
+        );
+    }
+
+    #[test]
+    fn reflection_call_deferred_and_emit_signal() {
+        let source = "\
+func foo():
+\tpass
+
+signal bar
+
+func check():
+\tcall_deferred(\"foo\")
+\temit_signal(\"bar\")
+";
+        let uri = test_uri();
+        // References to foo: decl + call_deferred("foo")
+        let result = find_references(source, &uri, Position::new(0, 5), true);
+        let locs = result.unwrap();
+        assert_eq!(locs.len(), 2, "decl + call_deferred string ref");
+
+        // References to bar: decl + emit_signal("bar")
+        let result = find_references(source, &uri, Position::new(3, 7), true);
+        let locs = result.unwrap();
+        assert_eq!(locs.len(), 2, "decl + emit_signal string ref");
+    }
+
+    #[test]
+    fn reflection_connect_first_arg_only() {
+        // connect("signal_name", target, "method") — only first arg is a signal ref
+        let source = "\
+signal foo
+
+func check():
+\tconnect(\"foo\", self, \"bar\")
+";
+        let uri = test_uri();
+        let result = find_references(source, &uri, Position::new(0, 7), true);
+        let locs = result.unwrap();
+        // Declaration + connect("foo") = 2
+        assert_eq!(locs.len(), 2, "signal decl + connect first arg");
+    }
+
+    #[test]
+    fn reflection_ignores_unrelated_strings() {
+        // Strings not in reflection calls should not be matched
+        let source = "\
+func foo():
+\tpass
+
+func check():
+\tvar s = \"foo\"
+\tprint(\"foo\")
+";
+        let uri = test_uri();
+        let result = find_references(source, &uri, Position::new(0, 5), true);
+        let locs = result.unwrap();
+        // Only the declaration — no string matches
+        assert_eq!(locs.len(), 1, "should not match non-reflection strings");
+    }
+
+    #[test]
+    fn reflection_string_name_syntax() {
+        let source = "\
+func foo():
+\tpass
+
+func check():
+\tvar sn = StringName(&\"foo\")
+\tif has_method(&\"foo\"):
+\t\tpass
+";
+        let uri = test_uri();
+        let result = find_references(source, &uri, Position::new(0, 5), true);
+        let locs = result.unwrap();
+        // Declaration + has_method(&"foo") = 2  (StringName() is not a reflection call)
+        assert_eq!(locs.len(), 2, "decl + has_method with string_name");
     }
 }
