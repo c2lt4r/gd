@@ -205,6 +205,36 @@ pub enum RefactorCommand {
         #[arg(long)]
         format: Option<String>,
     },
+    /// Extract an expression to a file-scope or class-scope constant
+    ExtractConstant {
+        /// Path to the GDScript file
+        #[arg()]
+        file: String,
+        /// Line number of the expression (1-based)
+        #[arg(long)]
+        line: usize,
+        /// Start column of the expression (1-based)
+        #[arg(long)]
+        column: usize,
+        /// End column of the expression (1-based)
+        #[arg(long)]
+        end_column: usize,
+        /// Name for the constant (should be UPPER_SNAKE_CASE)
+        #[arg(long)]
+        name: String,
+        /// Inner class to insert the constant into
+        #[arg(long)]
+        class: Option<String>,
+        /// Replace all matching occurrences across the entire file
+        #[arg(long)]
+        replace_all: bool,
+        /// Preview without writing changes
+        #[arg(long)]
+        dry_run: bool,
+        /// Output format: json or human (default: human)
+        #[arg(long)]
+        format: Option<String>,
+    },
     /// Turn an expression into a function parameter with a default value
     IntroduceParameter {
         /// Path to the GDScript file
@@ -773,6 +803,28 @@ fn print_introduce_variable_human(r: &gd_lsp::refactor::IntroduceVariableOutput)
         "Introduced {} {}{} = {} in {}{}",
         keyword.bold(),
         r.variable.green().bold(),
+        type_suffix.dimmed(),
+        r.expression.dimmed(),
+        r.file.cyan(),
+        dry_run_suffix(r.applied),
+    );
+    if r.replacements > 1 {
+        cprintln!("  replaced {} occurrences", r.replacements);
+    }
+    for w in &r.warnings {
+        cprintln!("  {}: {w}", "warning".yellow());
+    }
+}
+
+fn print_extract_constant_human(r: &gd_lsp::refactor::ExtractConstantOutput) {
+    use owo_colors::OwoColorize;
+    let type_suffix = r
+        .inferred_type
+        .as_deref()
+        .map_or(String::new(), |t| format!(": {t}"));
+    cprintln!(
+        "Extracted const {}{} = {} in {}{}",
+        r.constant.green().bold(),
         type_suffix.dimmed(),
         r.expression.dimmed(),
         r.file.cyan(),
@@ -1497,6 +1549,36 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
                 cprintln!("{json}");
             } else {
                 print_introduce_variable_human(&result);
+            }
+            Ok(())
+        }
+        RefactorCommand::ExtractConstant {
+            file,
+            line,
+            column,
+            end_column,
+            name,
+            class,
+            replace_all,
+            dry_run,
+            format,
+        } => {
+            let result = gd_lsp::query::query_extract_constant(
+                &file,
+                line,
+                column,
+                end_column,
+                &name,
+                replace_all,
+                dry_run,
+                class.as_deref(),
+            )?;
+            if is_json(format.as_ref()) {
+                let json =
+                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+                cprintln!("{json}");
+            } else {
+                print_extract_constant_human(&result);
             }
             Ok(())
         }

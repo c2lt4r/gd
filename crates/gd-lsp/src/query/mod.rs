@@ -18,11 +18,12 @@ pub use navigation::{
 pub use refactor::{
     query_bulk_delete_symbol, query_bulk_rename, query_change_signature, query_convert_node_path,
     query_convert_onready, query_convert_signal, query_delete_symbol, query_encapsulate_field,
-    query_extract_class, query_extract_guards, query_extract_method, query_extract_superclass,
-    query_inline_delegate, query_inline_method, query_inline_method_by_name, query_inline_variable,
-    query_introduce_parameter, query_introduce_variable, query_invert_if, query_join_declaration,
-    query_move_file, query_move_symbol, query_pull_up_member, query_push_down_member,
-    query_split_declaration, query_undo, query_undo_list,
+    query_extract_class, query_extract_constant, query_extract_guards, query_extract_method,
+    query_extract_superclass, query_inline_delegate, query_inline_method,
+    query_inline_method_by_name, query_inline_variable, query_introduce_parameter,
+    query_introduce_variable, query_invert_if, query_join_declaration, query_move_file,
+    query_move_symbol, query_pull_up_member, query_push_down_member, query_split_declaration,
+    query_undo, query_undo_list,
 };
 
 use std::path::{Path, PathBuf};

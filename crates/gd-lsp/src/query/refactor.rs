@@ -127,6 +127,32 @@ pub fn query_introduce_variable(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
+pub fn query_extract_constant(
+    file: &str,
+    line: usize,
+    column: usize,
+    end_column: usize,
+    name: &str,
+    replace_all: bool,
+    dry_run: bool,
+    class: Option<&str>,
+) -> Result<crate::refactor::ExtractConstantOutput> {
+    let path = resolve_file(file)?;
+    let project_root = find_root(&path)?;
+    crate::refactor::extract_constant(
+        &path,
+        line,
+        column,
+        end_column,
+        name,
+        replace_all,
+        dry_run,
+        &project_root,
+        class,
+    )
+}
+
 pub fn query_introduce_parameter(
     file: &str,
     line: usize,

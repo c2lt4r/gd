@@ -32,6 +32,13 @@
   - Stdin: `echo "print(42)" | gd eval --native -`
   - JSON output: `--format json` for machine-readable results
 
+- **`gd lsp refactor extract-constant`** — extract an expression to a file-scope or class-scope `const`:
+  - Lifts literals/expressions to top-level `const` declarations (unlike `introduce-variable --const` which stays local)
+  - `--replace-all` replaces all matching occurrences across the entire file (crosses function boundaries)
+  - `--class` targets inner classes
+  - Type inference, naming warnings (`UPPER_SNAKE_CASE`), collision detection, undo support
+  - Inserts after existing constants, before functions
+
 ### Removed
 - **File-based IPC for eval server** — removed `--file-ipc` flag from `gd run` and `GD_EVAL_FILE_IPC` env var. TCP transport is now the only eval server mode (more stable, supports concurrent connections, output capture).
 
