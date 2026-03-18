@@ -318,29 +318,50 @@ fn print_scene_info_human(r: &gd_lsp::query::SceneInfoOutput) {
     use owo_colors::OwoColorize;
     cprintln!("{}", r.file.bold());
 
-    if let Some(ref nodes) = r.nodes {
-        for (i, n) in nodes.iter().enumerate() {
-            let depth = match n.parent.as_deref() {
-                None => 0,
-                Some(".") => 1,
-                Some(p) => p.chars().filter(|&c| c == '/').count() + 2,
-            };
+    if let Some(ref nodes) = r.nodes
+        && !nodes.is_empty()
+    {
+        // Build a nested tree from the flat node list
+        struct TreeNode<'a> {
+            node: &'a gd_lsp::query::SceneNodeOutput,
+            children: Vec<TreeNode<'a>>,
+        }
 
-            let indent = if depth == 0 {
-                String::new()
-            } else {
-                let is_last = nodes.get(i + 1).is_none_or(|next| {
-                    let nd = match next.parent.as_deref() {
-                        None => 0,
-                        Some(".") => 1,
-                        Some(p) => p.chars().filter(|&c| c == '/').count() + 2,
+        fn build_children<'a>(
+            parent_path: &str,
+            nodes: &'a [gd_lsp::query::SceneNodeOutput],
+        ) -> Vec<TreeNode<'a>> {
+            let mut children = Vec::new();
+            for node in nodes {
+                let node_parent = node.parent.as_deref().unwrap_or("");
+                let is_child = (node_parent == "." && parent_path.is_empty())
+                    || (node_parent == parent_path && !parent_path.is_empty());
+                if is_child {
+                    let child_path = if parent_path.is_empty() {
+                        node.name.clone()
+                    } else {
+                        format!("{parent_path}/{}", node.name)
                     };
-                    nd <= depth
-                });
-                let connector = if is_last { "└── " } else { "├── " };
-                format!("{}{}", "│   ".repeat(depth.saturating_sub(1)), connector)
+                    children.push(TreeNode {
+                        node,
+                        children: build_children(&child_path, nodes),
+                    });
+                }
+            }
+            children
+        }
+
+        fn render_node(tn: &TreeNode<'_>, prefix: &str, is_last: bool, is_root: bool) {
+            use owo_colors::OwoColorize;
+            let connector = if is_root {
+                ""
+            } else if is_last {
+                "└── "
+            } else {
+                "├── "
             };
 
+            let n = tn.node;
             let type_part = n
                 .r#type
                 .as_deref()
@@ -356,10 +377,28 @@ fn print_scene_info_human(r: &gd_lsp::query::SceneInfoOutput) {
             };
 
             cprintln!(
-                "{indent}{}{type_part}{script_part}{groups_part}",
+                "{prefix}{connector}{}{type_part}{script_part}{groups_part}",
                 n.name.bold()
             );
+
+            let child_prefix = if is_root {
+                String::new()
+            } else if is_last {
+                format!("{prefix}    ")
+            } else {
+                format!("{prefix}│   ")
+            };
+
+            for (i, child) in tn.children.iter().enumerate() {
+                render_node(child, &child_prefix, i == tn.children.len() - 1, false);
+            }
         }
+
+        let root = TreeNode {
+            node: &nodes[0],
+            children: build_children("", &nodes[1..]),
+        };
+        render_node(&root, "", false, true);
     }
 
     if let Some(ref connections) = r.connections

@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.23] - 2026-03-18
+
+### Fixed
+- **`gd query scene-info` tree rendering** — nested scene trees now display correct parent-child hierarchy. Previously, nodes at different depths were rendered at wrong indentation levels, making children appear as siblings of their parents. Rewrote flat-list renderer to build a proper recursive tree before display.
+
 ## [0.3.22] - 2026-03-08
 
 ### Added

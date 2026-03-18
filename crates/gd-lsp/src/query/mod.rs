@@ -7,8 +7,8 @@ pub use analysis::{
     query_code_actions, query_find_implementations, query_safe_delete_file, query_symbols,
 };
 pub use edit::{
-    CreateFileOutput, SceneInfoOutput, query_create_file, query_edit_range, query_insert,
-    query_replace_body, query_replace_symbol, query_scene_info, query_view,
+    CreateFileOutput, SceneInfoOutput, SceneNodeOutput, query_create_file, query_edit_range,
+    query_insert, query_replace_body, query_replace_symbol, query_scene_info, query_view,
 };
 pub use navigation::{
     SceneRefOutput, SignalConnectionOutput, query_completions, query_definition, query_hover,
