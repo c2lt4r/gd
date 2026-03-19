@@ -1,6 +1,6 @@
-/// Kill the game process. On WSL, the Linux PID is an init shim — use Windows
-/// tools to find and kill the actual Windows process. On native Linux, use
-/// SIGTERM then SIGKILL. On Windows, use `TerminateProcess`.
+/// Kill the game process. On WSL, the Linux PID is an init shim — use
+/// PowerShell to find the actual Windows process by command line args.
+/// On native Linux, use SIGTERM then SIGKILL. On Windows, use `TerminateProcess`.
 pub fn kill_game_process(pid: u32) {
     #[cfg(unix)]
     {
@@ -10,7 +10,7 @@ pub fn kill_game_process(pid: u32) {
             unsafe {
                 libc::kill(pid as i32, libc::SIGTERM);
             }
-            // Also find and kill the Windows process via tasklist.exe + taskkill.exe
+            // Find and kill the Windows process via PowerShell command-line filtering
             if let Some(win_pid) = find_windows_game_pid() {
                 let _ = std::process::Command::new(TASKKILL)
                     .args(["/F", "/PID", &win_pid.to_string()])
@@ -48,24 +48,65 @@ pub fn kill_game_process(pid: u32) {
 
 #[cfg(unix)]
 const TASKKILL: &str = "/mnt/c/Windows/System32/taskkill.exe";
+#[cfg(unix)]
+const POWERSHELL: &str = "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe";
 
-/// Use `tasklist.exe` to find the Windows PID of a running godot process.
-/// Falls back from the slower PowerShell approach — `tasklist.exe` is always available.
+/// Find the Windows PID of the game launched by `gd run`.
+///
+/// Filters godot.exe processes by command line — only our spawned game has
+/// `--remote-debug` in its args, never the Godot editor.
+/// Tries PowerShell (Win11+) then falls back to wmic (older Windows).
 #[cfg(unix)]
 fn find_windows_game_pid() -> Option<u32> {
-    let output = std::process::Command::new("/mnt/c/Windows/System32/tasklist.exe")
-        .args(["/FI", "IMAGENAME eq godot.exe", "/FO", "CSV", "/NH"])
+    find_game_pid_powershell().or_else(find_game_pid_wmic)
+}
+
+#[cfg(unix)]
+const WMIC: &str = "/mnt/c/Windows/System32/wbem/WMIC.exe";
+
+#[cfg(unix)]
+fn find_game_pid_powershell() -> Option<u32> {
+    let output = std::process::Command::new(POWERSHELL)
+        .args([
+            "-NoProfile",
+            "-Command",
+            "Get-CimInstance Win32_Process -Filter \"Name='godot.exe' and CommandLine like '%--remote-debug%'\" | Select-Object -ExpandProperty ProcessId",
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
         .output()
         .ok()?;
-    // Output format: "godot.exe","12345","Console","1","123,456 K"
     let stdout = String::from_utf8_lossy(&output.stdout);
     for line in stdout.lines() {
-        let fields: Vec<&str> = line.split(',').collect();
-        if fields.len() >= 2 {
-            let pid_str = fields[1].trim_matches('"');
-            if let Ok(pid) = pid_str.parse::<u32>() {
-                return Some(pid);
-            }
+        if let Ok(pid) = line.trim().parse::<u32>() {
+            return Some(pid);
+        }
+    }
+    None
+}
+
+#[cfg(unix)]
+fn find_game_pid_wmic() -> Option<u32> {
+    let output = std::process::Command::new(WMIC)
+        .args([
+            "process",
+            "where",
+            "name='godot.exe' and commandline like '%--remote-debug%'",
+            "get",
+            "processid",
+            "/VALUE",
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for line in stdout.lines() {
+        let line = line.trim();
+        if let Some(pid_str) = line.strip_prefix("ProcessId=")
+            && let Ok(pid) = pid_str.trim().parse::<u32>()
+        {
+            return Some(pid);
         }
     }
     None

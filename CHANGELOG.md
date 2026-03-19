@@ -4,6 +4,7 @@
 
 ### Fixed
 - **`gd query scene-info` tree rendering** — nested scene trees now display correct parent-child hierarchy. Previously, nodes at different depths were rendered at wrong indentation levels, making children appear as siblings of their parents. Rewrote flat-list renderer to build a proper recursive tree before display.
+- **`gd stop` on WSL killing wrong process** — previously used `tasklist.exe` name-only filter which returned the first `godot.exe` match (often the editor). Now uses PowerShell `Get-CimInstance` to filter by `--remote-debug` command-line arg, which only the game process has. Falls back to wmic on older Windows.
 
 ## [0.3.22] - 2026-03-08
 
