@@ -7,15 +7,9 @@ __pycache__/
 .env
 docs/
 fuzz/
-tools/extract_tests.py
-tools/probe_*.py
-tools/test.sh
-tools/test_lsp_3d_racer.py
-tools/build-local-windows.ps1
-tools/test_oneshot_3d_racer.py
-tools/check_parity.py
+tools/
 .planning/
 .docs/
-.gd-mesh-bugs.md
 extension_api.json
+data/*.json
 tests/corpus/godot-4.6.1/

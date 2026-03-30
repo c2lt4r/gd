@@ -3,7 +3,7 @@ members = ["crates/*"]
 resolver = "2"
 
 [workspace.package]
-version = "0.3.23"
+version = "0.3.24"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/c2lt4r/gd"
@@ -16,7 +16,6 @@ gd-lint = { path = "crates/gd-lint" }
 gd-fmt = { path = "crates/gd-fmt" }
 gd-lsp = { path = "crates/gd-lsp" }
 gd-interp = { path = "crates/gd-interp" }
-gd-mesh = { path = "crates/gd-mesh" }
 
 # Parsing
 tree-sitter = "0.24"
@@ -48,10 +47,6 @@ indicatif = "0.17"
 similar = "2"
 strsim = "0.11"
 
-# Half-edge mesh engine
-earcutr = "0.4"
-bincode = "1"
-indexmap = { version = "2", features = ["serde"] }
 
 # HTTP & Archive support
 ureq = { version = "3", features = ["json"] }
@@ -134,7 +129,6 @@ gd-interp.workspace = true
 gd-lint.workspace = true
 gd-fmt.workspace = true
 gd-lsp.workspace = true
-gd-mesh.workspace = true
 
 clap.workspace = true
 clap_complete.workspace = true
@@ -162,9 +156,6 @@ indicatif.workspace = true
 similar.workspace = true
 strsim.workspace = true
 
-earcutr.workspace = true
-bincode.workspace = true
-indexmap.workspace = true
 
 ureq.workspace = true
 zip.workspace = true

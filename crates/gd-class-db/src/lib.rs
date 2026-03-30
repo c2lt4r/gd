@@ -450,6 +450,95 @@ pub fn suggest_constant(class: &str, typo: &str, max_distance: usize) -> Vec<&'s
     suggestions.into_iter().map(|(n, _)| n).collect()
 }
 
+// ── New lookup functions from godot_cli data ──
+
+/// Check if a name is a Godot variant type (Vector2, int, Array, etc.).
+pub fn is_variant_type(name: &str) -> bool {
+    builtin_generated::VARIANT_TYPES
+        .binary_search(&name)
+        .is_ok()
+}
+
+/// Look up the type of a builtin type's member property (e.g. "Vector2", "x" → "float").
+pub fn builtin_member_type(type_name: &str, member: &str) -> Option<&'static str> {
+    let key = format!("{type_name}.{member}");
+    builtin_generated::BUILTIN_MEMBER_TYPES
+        .binary_search_by_key(&key.as_str(), |&(k, _)| k)
+        .ok()
+        .map(|i| builtin_generated::BUILTIN_MEMBER_TYPES[i].1)
+}
+
+/// Look up the return type of a builtin type's method (e.g. "Vector2", "normalized" → "Vector2").
+pub fn builtin_method_return_type(type_name: &str, method: &str) -> Option<&'static str> {
+    let key = format!("{type_name}.{method}");
+    builtin_generated::BUILTIN_METHOD_RETURNS
+        .binary_search_by_key(&key.as_str(), |&(k, _)| k)
+        .ok()
+        .map(|i| builtin_generated::BUILTIN_METHOD_RETURNS[i].1)
+}
+
+/// Look up the type of a builtin type's constant (e.g. "Vector2", "ZERO" → "Vector2").
+pub fn builtin_constant_type(type_name: &str, constant: &str) -> Option<&'static str> {
+    let key = format!("{type_name}.{constant}");
+    builtin_generated::BUILTIN_CONSTANTS
+        .binary_search_by_key(&key.as_str(), |&(k, _)| k)
+        .ok()
+        .map(|i| builtin_generated::BUILTIN_CONSTANTS[i].1)
+}
+
+/// Check if a builtin type has a constructor with the given arity.
+pub fn builtin_constructor_exists(type_name: &str, arity: u8) -> bool {
+    builtin_generated::BUILTIN_CONSTRUCTORS
+        .iter()
+        .any(|c| c.type_name == type_name && c.param_count == arity)
+}
+
+/// Look up the return type of a utility or GDScript function (e.g. "sin" → "float").
+pub fn function_return_type(name: &str) -> Option<&'static str> {
+    builtin_generated::FUNCTION_RETURNS
+        .binary_search_by_key(&name, |&(k, _)| k)
+        .ok()
+        .map(|i| builtin_generated::FUNCTION_RETURNS[i].1)
+}
+
+/// Look up the result type of a binary operator between two variant types.
+/// Returns None if the operation is not valid.
+pub fn operator_result_type(left: &str, op: &str, right: &str) -> Option<&'static str> {
+    builtin_generated::VALID_OPERATORS
+        .binary_search_by(|probe| {
+            probe
+                .left_type
+                .cmp(left)
+                .then(probe.operator.cmp(op))
+                .then(probe.right_type.cmp(right))
+        })
+        .ok()
+        .map(|i| builtin_generated::VALID_OPERATORS[i].return_type)
+}
+
+/// Check if a variant type can be converted to another.
+pub fn can_convert_type(from: &str, to: &str) -> bool {
+    builtin_generated::CAN_CONVERT
+        .binary_search_by(|&(f, t)| f.cmp(from).then(t.cmp(to)))
+        .is_ok()
+}
+
+/// Look up an annotation definition by name (e.g. "@export_range").
+pub fn annotation_def(name: &str) -> Option<&'static builtin_generated::AnnotationDef> {
+    builtin_generated::ANNOTATIONS
+        .binary_search_by_key(&name, |a| a.name)
+        .ok()
+        .map(|i| &builtin_generated::ANNOTATIONS[i])
+}
+
+/// Look up a Godot warning definition by name.
+pub fn godot_warning(name: &str) -> Option<&'static builtin_generated::WarningDef> {
+    builtin_generated::GODOT_WARNINGS
+        .binary_search_by_key(&name, |w| w.name)
+        .ok()
+        .map(|i| &builtin_generated::GODOT_WARNINGS[i])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -650,5 +739,114 @@ mod tests {
     fn test_property_type_unknown() {
         assert_eq!(property_type("Node", "nonexistent_prop"), None);
         assert_eq!(property_type("FakeClass", "prop"), None);
+    }
+
+    // ── builtin_generated lookup tests ──
+
+    #[test]
+    fn test_is_variant_type() {
+        assert!(is_variant_type("Vector2"));
+        assert!(is_variant_type("int"));
+        assert!(is_variant_type("String"));
+        assert!(is_variant_type("Array"));
+        assert!(is_variant_type("PackedVector3Array"));
+        assert!(!is_variant_type("Node"));
+        assert!(!is_variant_type("Foo"));
+    }
+
+    #[test]
+    fn test_builtin_member_type() {
+        assert_eq!(builtin_member_type("Vector2", "x"), Some("float"));
+        assert_eq!(builtin_member_type("Vector2", "y"), Some("float"));
+        assert_eq!(builtin_member_type("Vector3", "z"), Some("float"));
+        assert_eq!(builtin_member_type("Color", "r"), Some("float"));
+        assert_eq!(builtin_member_type("Rect2", "position"), Some("Vector2"));
+        assert_eq!(builtin_member_type("Transform3D", "basis"), Some("Basis"));
+        assert_eq!(builtin_member_type("Vector2", "nonexistent"), None);
+    }
+
+    #[test]
+    fn test_builtin_method_return_type() {
+        assert_eq!(
+            builtin_method_return_type("Vector2", "normalized"),
+            Some("Vector2")
+        );
+        assert_eq!(
+            builtin_method_return_type("Vector2", "length"),
+            Some("float")
+        );
+        assert_eq!(builtin_method_return_type("String", "length"), Some("int"));
+        assert_eq!(builtin_method_return_type("Array", "size"), Some("int"));
+        assert_eq!(builtin_method_return_type("Vector2", "fake"), None);
+    }
+
+    #[test]
+    fn test_builtin_constant_type() {
+        assert_eq!(builtin_constant_type("Vector2", "ZERO"), Some("Vector2"));
+        assert_eq!(builtin_constant_type("Vector2", "ONE"), Some("Vector2"));
+        assert_eq!(builtin_constant_type("Color", "RED"), Some("Color"));
+        assert_eq!(builtin_constant_type("Vector2", "FAKE"), None);
+    }
+
+    #[test]
+    fn test_builtin_constructor_exists() {
+        assert!(builtin_constructor_exists("Vector2", 0)); // Vector2()
+        assert!(builtin_constructor_exists("Vector2", 2)); // Vector2(x, y)
+        assert!(!builtin_constructor_exists("Vector2", 5));
+    }
+
+    #[test]
+    fn test_function_return_type() {
+        assert_eq!(function_return_type("sin"), Some("float"));
+        assert_eq!(function_return_type("cos"), Some("float"));
+        assert_eq!(function_return_type("len"), Some("int"));
+        assert_eq!(function_return_type("str"), Some("String"));
+        assert_eq!(function_return_type("print"), Some("void"));
+        assert_eq!(function_return_type("nonexistent_fn"), None);
+    }
+
+    #[test]
+    fn test_operator_result_type() {
+        assert_eq!(
+            operator_result_type("Vector2", "+", "Vector2"),
+            Some("Vector2")
+        );
+        assert_eq!(operator_result_type("int", "+", "int"), Some("int"));
+        assert_eq!(
+            operator_result_type("float", "*", "Vector2"),
+            Some("Vector2")
+        );
+        assert_eq!(operator_result_type("int", "==", "int"), Some("bool"));
+        // Invalid combo
+        assert_eq!(operator_result_type("Vector2", "+", "String"), None);
+    }
+
+    #[test]
+    fn test_can_convert_type() {
+        assert!(can_convert_type("int", "float"));
+        assert!(can_convert_type("int", "String"));
+        assert!(!can_convert_type("Vector2", "int"));
+    }
+
+    #[test]
+    fn test_annotation_def() {
+        let ann = annotation_def("@export_range").unwrap();
+        assert!(ann.total_params >= 2);
+        assert!(ann.target.contains("VARIABLE"));
+
+        let tool = annotation_def("@tool").unwrap();
+        assert_eq!(tool.total_params, 0);
+        assert!(tool.target.contains("SCRIPT"));
+
+        assert!(annotation_def("@nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_godot_warning() {
+        let w = godot_warning("UNUSED_VARIABLE").unwrap();
+        assert_eq!(w.default_level, "WARN");
+        assert!(!w.deprecated);
+
+        assert!(godot_warning("NONEXISTENT_WARNING").is_none());
     }
 }

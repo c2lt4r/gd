@@ -726,116 +726,19 @@ pub fn classify_type_name(name: &str) -> InferredType {
 
 /// Return type for constructor calls (PascalCase names that construct values).
 fn constructor_return_type(name: &str) -> Option<InferredType> {
-    let typ = match name {
-        "Vector2" => "Vector2",
-        "Vector2i" => "Vector2i",
-        "Vector3" => "Vector3",
-        "Vector3i" => "Vector3i",
-        "Vector4" => "Vector4",
-        "Vector4i" => "Vector4i",
-        "Color" => "Color",
-        "Rect2" => "Rect2",
-        "Rect2i" => "Rect2i",
-        "Transform2D" => "Transform2D",
-        "Transform3D" => "Transform3D",
-        "Basis" => "Basis",
-        "Quaternion" => "Quaternion",
-        "AABB" => "AABB",
-        "Plane" => "Plane",
-        "StringName" => "StringName",
-        "NodePath" => "NodePath",
-        "RID" => "RID",
-        "Callable" => "Callable",
-        "Signal" => "Signal",
-        "PackedByteArray" => "PackedByteArray",
-        "PackedInt32Array" => "PackedInt32Array",
-        "PackedInt64Array" => "PackedInt64Array",
-        "PackedFloat32Array" => "PackedFloat32Array",
-        "PackedFloat64Array" => "PackedFloat64Array",
-        "PackedStringArray" => "PackedStringArray",
-        "PackedVector2Array" => "PackedVector2Array",
-        "PackedVector3Array" => "PackedVector3Array",
-        "PackedColorArray" => "PackedColorArray",
-        "PackedVector4Array" => "PackedVector4Array",
-        "Array" => "Array",
-        "Dictionary" => "Dictionary",
-        "Projection" => "Projection",
-        _ => return None,
-    };
-    Some(InferredType::Builtin(typ))
+    if gd_class_db::is_variant_type(name) {
+        Some(InferredType::Builtin(leak_str(name)))
+    } else {
+        None
+    }
 }
 
 /// Return types for GDScript builtin functions.
 pub fn builtin_function_return_type(name: &str) -> Option<InferredType> {
-    match name {
-        // Integer-returning
-        "int" | "floor" | "ceil" | "round" | "roundi" | "floori" | "ceili" | "absi" | "clampi"
-        | "wrapi" | "mini" | "maxi" | "posmod" | "snappedi" | "hash" | "len" | "randi"
-        | "typeof" => Some(InferredType::Builtin("int")),
-        // Float-returning
-        "float"
-        | "sqrt"
-        | "sin"
-        | "cos"
-        | "tan"
-        | "asin"
-        | "acos"
-        | "atan"
-        | "atan2"
-        | "abs"
-        | "lerp"
-        | "inverselerp"
-        | "inverse_lerp"
-        | "randf"
-        | "randf_range"
-        | "randi_range"
-        | "deg_to_rad"
-        | "rad_to_deg"
-        | "exp"
-        | "log"
-        | "pow"
-        | "fmod"
-        | "fposmod"
-        | "ease"
-        | "smoothstep"
-        | "move_toward"
-        | "lerp_angle"
-        | "pingpong"
-        | "sign"
-        | "signf"
-        | "snappedf"
-        | "wrapf"
-        | "minf"
-        | "maxf"
-        | "bezier_derivative"
-        | "bezier_interpolate"
-        | "cubic_interpolate"
-        | "cubic_interpolate_angle"
-        | "cubic_interpolate_in_time"
-        | "cubic_interpolate_angle_in_time"
-        | "lerpf"
-        | "db_to_linear"
-        | "linear_to_db"
-        | "is_inf"
-        | "is_nan"
-        | "stepify"
-        | "nearest_po2" => Some(InferredType::Builtin("float")),
-        // String-returning
-        "str" | "String" | "char" | "JSON.stringify" => Some(InferredType::Builtin("String")),
-        // Bool-returning
-        "bool" | "is_equal_approx" | "is_zero_approx" | "is_finite" | "is_instance_valid"
-        | "is_instance_of" | "is_same" => Some(InferredType::Builtin("bool")),
-        // Void-returning
-        "print" | "print_rich" | "prints" | "printt" | "printerr" | "print_verbose"
-        | "push_error" | "push_warning" | "assert" | "breakpoint" | "seed" | "randomize"
-        | "queue_free" | "free" => Some(InferredType::Void),
-        // Polymorphic builtins — accept Variant, return Variant
-        // (typed variants like maxi/maxf/mini/minf/clampi/clampf are above)
-        "max" | "min" | "clamp" | "snapped" | "wrap" => Some(InferredType::Variant),
-        // Collection-returning
-        "range" => Some(InferredType::Builtin("Array")),
-        _ => None,
-    }
+    gd_class_db::function_return_type(name).map(|ret| match ret {
+        "Nil" => InferredType::Variant,
+        other => classify_type_name(other),
+    })
 }
 
 /// Try to find a narrowed type for `var_name` at the given AST node position.
@@ -960,29 +863,7 @@ fn extract_negated_is_early_exit(if_stmt: &Node, var_name: &str, source: &[u8]) 
 /// ClassDB tracks engine Object-derived classes; value types like Vector2, Color,
 /// etc. have members that only exist in the GDScript binding layer.
 pub fn builtin_member_type(class: &str, member: &str) -> Option<InferredType> {
-    match (class, member) {
-        // Scalar float members
-        ("Vector2" | "Vector2i", "x" | "y")
-        | ("Vector3" | "Vector3i", "x" | "y" | "z")
-        | ("Vector4" | "Vector4i" | "Quaternion", "x" | "y" | "z" | "w")
-        | ("Color", "r" | "g" | "b" | "a" | "r8" | "g8" | "b8" | "a8" | "h" | "s" | "v")
-        | ("Plane", "d" | "x" | "y" | "z") => Some(InferredType::Builtin("float")),
-        // → Vector2
-        ("Rect2" | "Transform2D", "position" | "end" | "size" | "origin" | "x" | "y") => {
-            Some(InferredType::Builtin("Vector2"))
-        }
-        // → Vector2i
-        ("Rect2i", "position" | "end" | "size") => Some(InferredType::Builtin("Vector2i")),
-        // → Vector3
-        ("Transform3D" | "AABB", "origin" | "position" | "end" | "size")
-        | ("Basis", "x" | "y" | "z")
-        | ("Plane", "normal") => Some(InferredType::Builtin("Vector3")),
-        // → Basis
-        ("Transform3D", "basis") => Some(InferredType::Builtin("Basis")),
-        // → Vector4
-        ("Projection", "x" | "y" | "z" | "w") => Some(InferredType::Builtin("Vector4")),
-        _ => None,
-    }
+    gd_class_db::builtin_member_type(class, member).map(classify_type_name)
 }
 
 /// Resolve the type of a `preload()`/`load()` call based on the file extension.
@@ -1033,94 +914,23 @@ fn extract_string_arg(node: &Node, source: &str) -> Option<String> {
 
 /// Check if a type name is a GDScript builtin type.
 pub fn is_builtin_type(name: &str) -> bool {
-    matches!(
-        name,
-        "int"
-            | "float"
-            | "bool"
-            | "String"
-            | "StringName"
-            | "NodePath"
-            | "Vector2"
-            | "Vector2i"
-            | "Vector3"
-            | "Vector3i"
-            | "Vector4"
-            | "Vector4i"
-            | "Color"
-            | "Rect2"
-            | "Rect2i"
-            | "Transform2D"
-            | "Transform3D"
-            | "Basis"
-            | "Quaternion"
-            | "AABB"
-            | "Plane"
-            | "RID"
-            | "Callable"
-            | "Signal"
-            | "Array"
-            | "Dictionary"
-            | "PackedByteArray"
-            | "PackedInt32Array"
-            | "PackedInt64Array"
-            | "PackedFloat32Array"
-            | "PackedFloat64Array"
-            | "PackedStringArray"
-            | "PackedVector2Array"
-            | "PackedVector3Array"
-            | "PackedColorArray"
-            | "PackedVector4Array"
-            | "Projection"
-    )
+    gd_class_db::is_variant_type(name)
 }
 
 /// Leak a string to get a `&'static str`. Used for type names that come from
 /// source code and need to live as long as a `Builtin` variant.
 fn leak_str(s: &str) -> &'static str {
-    // For known builtins, return the static literal directly
+    // Known static strings
     match s {
-        "int" => "int",
-        "float" => "float",
-        "bool" => "bool",
-        "String" => "String",
-        "StringName" => "StringName",
-        "NodePath" => "NodePath",
-        "Vector2" => "Vector2",
-        "Vector2i" => "Vector2i",
-        "Vector3" => "Vector3",
-        "Vector3i" => "Vector3i",
-        "Vector4" => "Vector4",
-        "Vector4i" => "Vector4i",
-        "Color" => "Color",
-        "Rect2" => "Rect2",
-        "Rect2i" => "Rect2i",
-        "Transform2D" => "Transform2D",
-        "Transform3D" => "Transform3D",
-        "Basis" => "Basis",
-        "Quaternion" => "Quaternion",
-        "AABB" => "AABB",
-        "Plane" => "Plane",
-        "RID" => "RID",
-        "Callable" => "Callable",
-        "Signal" => "Signal",
-        "Array" => "Array",
-        "Dictionary" => "Dictionary",
-        "PackedByteArray" => "PackedByteArray",
-        "PackedInt32Array" => "PackedInt32Array",
-        "PackedInt64Array" => "PackedInt64Array",
-        "PackedFloat32Array" => "PackedFloat32Array",
-        "PackedFloat64Array" => "PackedFloat64Array",
-        "PackedStringArray" => "PackedStringArray",
-        "PackedVector2Array" => "PackedVector2Array",
-        "PackedVector3Array" => "PackedVector3Array",
-        "PackedColorArray" => "PackedColorArray",
-        "PackedVector4Array" => "PackedVector4Array",
-        "Projection" => "Projection",
-        "void" => "void",
-        "Variant" => "Variant",
-        _ => Box::leak(s.to_string().into_boxed_str()),
+        "void" => return "void",
+        "Variant" => return "Variant",
+        _ => {}
     }
+    // Look up in the generated variant types table for a &'static str
+    if let Ok(i) = gd_class_db::builtin_generated::VARIANT_TYPES.binary_search(&s) {
+        return gd_class_db::builtin_generated::VARIANT_TYPES[i];
+    }
+    Box::leak(s.to_string().into_boxed_str())
 }
 
 #[cfg(test)]

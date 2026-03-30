@@ -167,15 +167,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
-name = "bincode"
-version = "1.3.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b1f45e9417d87227c7a56d22e471c6206462cba514c7590c09aff4cf6d1ddcad"
-dependencies = [
- "serde",
-]
-
-[[package]]
 name = "bitflags"
 version = "1.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -462,7 +453,7 @@ dependencies = [
  "clap",
  "criterion-plot",
  "is-terminal",
- "itertools 0.10.5",
+ "itertools",
  "num-traits",
  "once_cell",
  "oorandom",
@@ -483,7 +474,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6b50826342786a51a89e2da3a28f1c32b06e387201bc2d19791f622c673706b1"
 dependencies = [
  "cast",
- "itertools 0.10.5",
+ "itertools",
 ]
 
 [[package]]
@@ -609,16 +600,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d4b8a88685455ed29a21542a33abd9cb6510b6b129abadabdcef0f4c55bc8f61"
 dependencies = [
  "litrs",
-]
-
-[[package]]
-name = "earcutr"
-version = "0.4.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "79127ed59a85d7687c409e9978547cffb7dc79675355ed22da6b66fd5f6ead01"
-dependencies = [
- "itertools 0.11.0",
- "num-traits",
 ]
 
 [[package]]
@@ -786,13 +767,11 @@ dependencies = [
 name = "gd"
 version = "0.3.23"
 dependencies = [
- "bincode",
  "clap",
  "clap_complete",
  "clap_mangen",
  "criterion",
  "dashmap 6.1.0",
- "earcutr",
  "flate2",
  "gd-class-db",
  "gd-core",
@@ -800,9 +779,7 @@ dependencies = [
  "gd-interp",
  "gd-lint",
  "gd-lsp",
- "gd-mesh",
  "ignore",
- "indexmap",
  "indicatif",
  "libc",
  "miette",
@@ -920,20 +897,6 @@ dependencies = [
  "tree-sitter",
  "walkdir",
  "windows-sys 0.59.0",
-]
-
-[[package]]
-name = "gd-mesh"
-version = "0.3.23"
-dependencies = [
- "bincode",
- "earcutr",
- "gd-core",
- "indexmap",
- "miette",
- "serde",
- "serde_json",
- "tempfile",
 ]
 
 [[package]]
@@ -1287,15 +1250,6 @@ name = "itertools"
 version = "0.10.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b0fd2260e829bddf4cb6ea802289de2f86d6a7a690192fbe91b3f46e0f2c8473"
-dependencies = [
- "either",
-]
-
-[[package]]
-name = "itertools"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b1c173a5686ce8bfa551b3563d0c2170bf24ca44da99c7ca4bfdab5418c3fe57"
 dependencies = [
  "either",
 ]

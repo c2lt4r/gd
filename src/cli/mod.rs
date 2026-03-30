@@ -19,7 +19,6 @@ pub mod llm_cmd;
 pub mod log_cmd;
 pub mod lsp_cmd;
 pub mod man_cmd;
-pub mod mesh_cmd;
 pub mod new_cmd;
 pub mod overview_cmd;
 pub mod query_cmd;
@@ -103,8 +102,6 @@ pub enum Command {
     Edit(edit_gd_cmd::EditGdArgs),
     /// Code intelligence queries (references, hover, definition, etc.)
     Query(query_cmd::QueryArgs),
-    /// AI-assisted 3D mesh building (experimental)
-    Mesh(mesh_cmd::MeshArgs),
     /// Evaluate a GDScript expression or run a script
     Eval(eval_cmd::EvalArgs),
     /// Show environment info (gd version, Godot version, paths)
@@ -148,7 +145,6 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Refactor(args) => refactor_cmd::exec(args),
         Command::Edit(args) => edit_gd_cmd::exec(args),
         Command::Query(args) => query_cmd::exec(args),
-        Command::Mesh(ref args) => mesh_cmd::exec(args),
         Command::Eval(ref args) => eval_cmd::exec(args),
         Command::Env(ref args) => env_cmd::exec(args),
         Command::Deps(ref args) => deps_cmd::exec(args),
