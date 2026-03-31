@@ -5,8 +5,12 @@ use std::path::Path;
 use miette::Result;
 use tree_sitter::Node;
 
-use super::{ExtractMethodOutput, ParameterOutput, line_starts, normalize_blank_lines};
+use super::{ExtractMethodOutput, ParameterOutput, normalize_blank_lines};
+use gd_core::ast_owned::{
+    OwnedDecl, OwnedExpr, OwnedFile, OwnedFunc, OwnedParam, OwnedStmt, OwnedTypeRef, OwnedVar,
+};
 use gd_core::gd_ast::GdFile;
+use gd_core::printer::print_file;
 use gd_core::type_inference::{InferredType, infer_expression_type};
 
 // ── extract-method ──────────────────────────────────────────────────────────
@@ -162,93 +166,137 @@ pub fn extract_method(
     // All captured vars are parameters
     let params: Vec<&CapturedVar> = captured.iter().collect();
 
-    // Generate the new function and call site based on return count
-    let (mut func_text, func_signature, call_site_line, returns_field, return_vars_field);
+    // ── Output metadata ──────────────────────────────────────────
     let original_indent = get_indent(&source, start_line_0);
+    let param_str = params
+        .iter()
+        .map(|p| {
+            if let Some(ref t) = p.type_hint {
+                format!("{}: {}", p.name, t)
+            } else {
+                p.name.clone()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let static_prefix = if is_static { "static " } else { "" };
 
+    let (func_signature, call_site_line, returns_field, return_vars_field, result_name);
     if return_vars.len() >= 2 {
-        // Multiple return values: use Dictionary
-        let (ft, fs) = generate_extracted_function_multi_return(
-            name,
-            &params,
-            &return_vars,
-            &statements,
-            &source,
-            is_static,
-        );
-        let result_name = pick_result_name(&source, body);
-        let cl = generate_call_site_multi_return(
+        func_signature = format!("{static_prefix}func {name}({param_str}) -> Dictionary:");
+        result_name = pick_result_name(&source, body);
+        call_site_line = generate_call_site_multi_return(
             name,
             &params,
             &return_vars,
             &original_indent,
             &result_name,
         );
-        func_text = ft;
-        func_signature = fs;
-        call_site_line = cl;
         returns_field = None;
         return_vars_field = return_vars.iter().map(|v| v.name.clone()).collect();
     } else {
-        let return_var = return_vars.into_iter().next();
-        let (ft, fs) = generate_extracted_function(
-            name,
-            &params,
-            return_var.as_ref(),
-            &statements,
-            &source,
-            is_static,
-        );
-        let cl = generate_call_site(name, &params, return_var.as_ref(), &original_indent);
-        func_text = ft;
-        func_signature = fs;
-        call_site_line = cl;
-        returns_field = return_var.map(|v| v.name);
+        result_name = String::new();
+        let return_var = return_vars.first();
+        let return_type_str = return_var
+            .and_then(|v| v.type_hint.as_ref())
+            .map(|t| format!(" -> {t}"))
+            .unwrap_or_default();
+        func_signature = format!("{static_prefix}func {name}({param_str}){return_type_str}:");
+        call_site_line = generate_call_site(name, &params, return_var, &original_indent);
+        returns_field = return_var.map(|v| v.name.clone());
         return_vars_field = Vec::new();
-    }
-
-    // If inside an inner class, indent the extracted function to match class members
-    if inner_class.is_some() {
-        func_text = indent_block(&func_text, "\t");
     }
 
     let relative_file = gd_core::fs::relative_slash(file, project_root);
 
-    let starts = line_starts(&source);
-    let mut new_source = source.clone();
+    // ── Typed AST mutation ───────────────────────────────────────
+    let mut owned_file = OwnedFile::from_borrowed(&gd_file);
+    owned_file.span = None;
 
-    // 1. Replace extracted range with call site (higher byte offset first)
-    let replace_start = starts[start_line_0];
-    let replace_end = if end_line_0 + 1 < starts.len() {
-        starts[end_line_0 + 1]
+    let func_name_str = func
+        .child_by_field_name("name")
+        .and_then(|n| n.utf8_text(source.as_bytes()).ok())
+        .unwrap_or("_init")
+        .to_string();
+    let first_stmt_byte = statements[0].start_byte();
+    let last_stmt_byte = statements.last().unwrap().end_byte();
+
+    // Build owned parameters for the new function
+    let owned_params: Vec<OwnedParam> = params
+        .iter()
+        .map(|p| OwnedParam {
+            span: None,
+            name: p.name.clone(),
+            type_ann: p.type_hint.as_ref().map(|t| OwnedTypeRef {
+                span: None,
+                name: t.clone(),
+                is_inferred: false,
+            }),
+            default: None,
+        })
+        .collect();
+
+    // Build return type
+    let return_type_owned = if return_vars.len() >= 2 {
+        Some(OwnedTypeRef {
+            span: None,
+            name: "Dictionary".to_string(),
+            is_inferred: false,
+        })
     } else {
-        source.len()
+        return_vars
+            .first()
+            .and_then(|v| v.type_hint.as_ref())
+            .map(|t| OwnedTypeRef {
+                span: None,
+                name: t.clone(),
+                is_inferred: false,
+            })
     };
-    new_source.replace_range(replace_start..replace_end, &call_site_line);
 
-    // 2. Insert new function
-    // Re-compute line_starts after the first edit
-    let new_starts = line_starts(&new_source);
-    if let Some(ref class_node) = inner_class {
-        // Inside an inner class: insert at the end of the class body (before closing)
-        // The class body end row is the last line of the class_definition.
-        let class_end_line = class_node.end_position().row;
-        // Insert before the class's last line (which is typically blank or the next
-        // declaration). We insert right before the end of the class body.
-        let insert_byte = new_starts[class_end_line];
-        let insert_text = format!("\n{func_text}\n");
-        new_source.insert_str(insert_byte, &insert_text);
-    } else {
-        let func_start_line = func.start_position().row;
-        // After our replacement, the enclosing function may have shifted.
-        // Use the original func start line to find the insertion point.
-        // The replacement was inside the function, so lines before the function
-        // are unchanged.
-        let insert_byte = new_starts[func_start_line];
-        let insert_text = format!("{func_text}\n\n\n");
-        new_source.insert_str(insert_byte, &insert_text);
-    }
+    // Build call expression
+    let call_args: Vec<OwnedExpr> = params
+        .iter()
+        .map(|p| OwnedExpr::Ident {
+            span: None,
+            name: p.name.clone(),
+        })
+        .collect();
+    let call_expr = OwnedExpr::Call {
+        span: None,
+        callee: Box::new(OwnedExpr::Ident {
+            span: None,
+            name: name.to_string(),
+        }),
+        args: call_args,
+    };
 
+    // Build call-site and return statements from owned types
+    let call_stmts = build_call_stmts(call_expr, &return_vars, &result_name);
+    let return_stmt_owned = build_return_stmt(&return_vars);
+
+    // Apply mutation to the owned AST
+    let inner_class_name = inner_class.as_ref().and_then(|cn| {
+        cn.child_by_field_name("name")
+            .and_then(|n| n.utf8_text(source.as_bytes()).ok())
+            .map(String::from)
+    });
+    apply_extract_mutation(
+        &mut owned_file,
+        inner_class_name.as_deref(),
+        &func_name_str,
+        first_stmt_byte,
+        last_stmt_byte,
+        name,
+        owned_params,
+        return_type_owned,
+        return_stmt_owned,
+        call_stmts,
+        is_static,
+    )?;
+
+    // Print and commit
+    let mut new_source = print_file(&owned_file, &source);
     normalize_blank_lines(&mut new_source);
 
     let mut ms = super::mutation::MutationSet::new();
@@ -693,96 +741,313 @@ fn find_enclosing_class<'a>(func: &Node<'a>) -> Option<Node<'a>> {
     }
 }
 
-/// Indent every non-empty line of `text` by the given `prefix`.
-fn indent_block(text: &str, prefix: &str) -> String {
-    text.lines()
-        .map(|line| {
-            if line.trim().is_empty() {
-                String::new()
-            } else {
-                format!("{prefix}{line}")
+// ── Typed AST helpers ──────────────────────────────────────────────────
+
+/// Recursively clear all statement-level spans so the printer uses
+/// structural output with correct indentation.
+fn clear_stmt_spans(stmt: &mut OwnedStmt) {
+    match stmt {
+        OwnedStmt::Var(v) => v.span = None,
+        OwnedStmt::If(i) => {
+            i.span = None;
+            for s in &mut i.body {
+                clear_stmt_spans(s);
             }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+            for (_, body) in &mut i.elif_branches {
+                for s in body {
+                    clear_stmt_spans(s);
+                }
+            }
+            if let Some(body) = &mut i.else_body {
+                for s in body {
+                    clear_stmt_spans(s);
+                }
+            }
+        }
+        OwnedStmt::For { span, body, .. } | OwnedStmt::While { span, body, .. } => {
+            *span = None;
+            for s in body {
+                clear_stmt_spans(s);
+            }
+        }
+        OwnedStmt::Match { span, arms, .. } => {
+            *span = None;
+            for arm in arms {
+                arm.span = None;
+                for s in &mut arm.body {
+                    clear_stmt_spans(s);
+                }
+            }
+        }
+        OwnedStmt::Expr { span, .. }
+        | OwnedStmt::Assign { span, .. }
+        | OwnedStmt::AugAssign { span, .. }
+        | OwnedStmt::Return { span, .. }
+        | OwnedStmt::Pass { span }
+        | OwnedStmt::Break { span }
+        | OwnedStmt::Continue { span }
+        | OwnedStmt::Breakpoint { span }
+        | OwnedStmt::Invalid { span } => *span = None,
+    }
 }
 
-/// Generate the extracted function text and its signature string.
-fn generate_extracted_function(
-    name: &str,
-    params: &[&CapturedVar],
-    return_var: Option<&CapturedVar>,
-    statements: &[Node],
-    source: &str,
-    is_static: bool,
-) -> (String, String) {
-    // Build parameter list
-    let param_str = params
-        .iter()
-        .map(|p| {
-            if let Some(ref t) = p.type_hint {
-                format!("{}: {}", p.name, t)
+/// Build call-site statements from owned AST types.
+fn build_call_stmts(
+    call_expr: OwnedExpr,
+    return_vars: &[CapturedVar],
+    result_name: &str,
+) -> Vec<OwnedStmt> {
+    if return_vars.len() >= 2 {
+        let mut stmts = vec![OwnedStmt::Var(OwnedVar {
+            span: None,
+            name: result_name.to_string(),
+            type_ann: None,
+            value: Some(call_expr),
+            is_const: false,
+            is_static: false,
+            annotations: vec![],
+            setter: None,
+            getter: None,
+            doc: None,
+        })];
+        for v in return_vars {
+            let subscript = OwnedExpr::Subscript {
+                span: None,
+                receiver: Box::new(OwnedExpr::Ident {
+                    span: None,
+                    name: result_name.to_string(),
+                }),
+                index: Box::new(OwnedExpr::StringLiteral {
+                    span: None,
+                    value: format!("\"{}\"", v.name),
+                }),
+            };
+            if v.needs_var_declaration {
+                stmts.push(OwnedStmt::Var(OwnedVar {
+                    span: None,
+                    name: v.name.clone(),
+                    type_ann: None,
+                    value: Some(subscript),
+                    is_const: false,
+                    is_static: false,
+                    annotations: vec![],
+                    setter: None,
+                    getter: None,
+                    doc: None,
+                }));
             } else {
-                p.name.clone()
+                stmts.push(OwnedStmt::Assign {
+                    span: None,
+                    target: OwnedExpr::Ident {
+                        span: None,
+                        name: v.name.clone(),
+                    },
+                    value: subscript,
+                });
             }
+        }
+        stmts
+    } else if let Some(ret) = return_vars.first() {
+        if ret.needs_var_declaration {
+            vec![OwnedStmt::Var(OwnedVar {
+                span: None,
+                name: ret.name.clone(),
+                type_ann: None,
+                value: Some(call_expr),
+                is_const: false,
+                is_static: false,
+                annotations: vec![],
+                setter: None,
+                getter: None,
+                doc: None,
+            })]
+        } else {
+            vec![OwnedStmt::Assign {
+                span: None,
+                target: OwnedExpr::Ident {
+                    span: None,
+                    name: ret.name.clone(),
+                },
+                value: call_expr,
+            }]
+        }
+    } else {
+        vec![OwnedStmt::Expr {
+            span: None,
+            expr: call_expr,
+        }]
+    }
+}
+
+/// Build the return statement for the extracted function body.
+fn build_return_stmt(return_vars: &[CapturedVar]) -> Option<OwnedStmt> {
+    if return_vars.len() >= 2 {
+        let dict_pairs: Vec<(OwnedExpr, OwnedExpr)> = return_vars
+            .iter()
+            .map(|v| {
+                (
+                    OwnedExpr::StringLiteral {
+                        span: None,
+                        value: format!("\"{}\"", v.name),
+                    },
+                    OwnedExpr::Ident {
+                        span: None,
+                        name: v.name.clone(),
+                    },
+                )
+            })
+            .collect();
+        Some(OwnedStmt::Return {
+            span: None,
+            value: Some(OwnedExpr::Dict {
+                span: None,
+                pairs: dict_pairs,
+            }),
         })
-        .collect::<Vec<_>>()
-        .join(", ");
+    } else {
+        return_vars.first().map(|ret| OwnedStmt::Return {
+            span: None,
+            value: Some(OwnedExpr::Ident {
+                span: None,
+                name: ret.name.clone(),
+            }),
+        })
+    }
+}
 
-    // Build return type
-    let return_type = return_var
-        .and_then(|v| v.type_hint.as_ref())
-        .map(|t| format!(" -> {t}"))
-        .unwrap_or_default();
+/// Apply the extract-method mutation to an owned AST.
+#[allow(clippy::too_many_arguments)]
+fn apply_extract_mutation(
+    file: &mut OwnedFile,
+    inner_class_name: Option<&str>,
+    func_name: &str,
+    first_stmt_byte: usize,
+    last_stmt_byte: usize,
+    new_func_name: &str,
+    owned_params: Vec<OwnedParam>,
+    return_type: Option<OwnedTypeRef>,
+    return_stmt: Option<OwnedStmt>,
+    call_stmts: Vec<OwnedStmt>,
+    is_static: bool,
+) -> Result<()> {
+    file.span = None;
+    if let Some(class_name) = inner_class_name {
+        let class_idx = file
+            .declarations
+            .iter()
+            .position(|d| matches!(d, OwnedDecl::Class(c) if c.name == class_name))
+            .ok_or_else(|| miette::miette!("inner class '{class_name}' not found"))?;
+        if let OwnedDecl::Class(c) = &mut file.declarations[class_idx] {
+            c.span = None;
+            mutate_declarations(
+                &mut c.declarations,
+                func_name,
+                first_stmt_byte,
+                last_stmt_byte,
+                new_func_name,
+                owned_params,
+                return_type,
+                return_stmt,
+                call_stmts,
+                is_static,
+            )?;
+        }
+    } else {
+        mutate_declarations(
+            &mut file.declarations,
+            func_name,
+            first_stmt_byte,
+            last_stmt_byte,
+            new_func_name,
+            owned_params,
+            return_type,
+            return_stmt,
+            call_stmts,
+            is_static,
+        )?;
+    }
+    Ok(())
+}
 
-    let static_prefix = if is_static { "static " } else { "" };
-    let signature = format!("{static_prefix}func {name}({param_str}){return_type}:");
+/// Mutate a declaration list: drain selected statements from the enclosing
+/// function, insert call-site statements, and add the new extracted function.
+#[allow(clippy::too_many_arguments)]
+fn mutate_declarations(
+    decls: &mut Vec<OwnedDecl>,
+    func_name: &str,
+    first_stmt_byte: usize,
+    last_stmt_byte: usize,
+    new_func_name: &str,
+    owned_params: Vec<OwnedParam>,
+    return_type: Option<OwnedTypeRef>,
+    return_stmt: Option<OwnedStmt>,
+    call_stmts: Vec<OwnedStmt>,
+    is_static: bool,
+) -> Result<()> {
+    let func_idx = decls
+        .iter()
+        .position(|d| matches!(d, OwnedDecl::Func(f) if f.name == func_name))
+        .ok_or_else(|| miette::miette!("function '{func_name}' not found in owned AST"))?;
 
-    // Extract body text from the statements (include first line's indentation
-    // so re_indent sees consistent indentation across all lines)
-    let first_line_start = source[..statements[0].start_byte()]
-        .rfind('\n')
-        .map_or(0, |pos| pos + 1);
-    let last_byte = statements.last().unwrap().end_byte();
-    let body_text = &source[first_line_start..last_byte];
+    // Phase 1: find indices and drain selected statements
+    let (first_idx, mut extracted_body) = {
+        let OwnedDecl::Func(enclosing) = &mut decls[func_idx] else {
+            unreachable!()
+        };
+        enclosing.span = None;
 
-    // Re-indent to 1 level
-    let re_indented = re_indent(body_text);
+        let first_idx = enclosing
+            .body
+            .iter()
+            .position(|s| s.span().is_some_and(|sp| sp.start == first_stmt_byte))
+            .ok_or_else(|| miette::miette!("first selected statement not found in owned AST"))?;
+        let last_idx = enclosing
+            .body
+            .iter()
+            .rposition(|s| s.span().is_some_and(|sp| sp.end == last_stmt_byte))
+            .ok_or_else(|| miette::miette!("last selected statement not found in owned AST"))?;
 
-    // Add return statement if needed
-    let mut func_body = re_indented;
-    if let Some(ret) = return_var {
-        let _ = write!(func_body, "\n\treturn {}", ret.name);
+        let stmts: Vec<OwnedStmt> = enclosing.body.drain(first_idx..=last_idx).collect();
+        // Clear spans in remaining body statements for correct re-indentation
+        for stmt in &mut enclosing.body {
+            clear_stmt_spans(stmt);
+        }
+        (first_idx, stmts)
+    };
+
+    // Phase 2: clear spans in extracted statements and build new function
+    for stmt in &mut extracted_body {
+        clear_stmt_spans(stmt);
+    }
+    if let Some(ret) = return_stmt {
+        extracted_body.push(ret);
     }
 
-    let func_text = format!("{signature}\n{func_body}");
-    (func_text, signature)
-}
+    let new_func = OwnedFunc {
+        span: None,
+        name: new_func_name.to_string(),
+        params: owned_params,
+        return_type,
+        body: extracted_body,
+        is_static,
+        is_constructor: false,
+        annotations: vec![],
+        doc: None,
+    };
 
-/// Re-indent text: find minimum indentation, strip it, add 1 tab.
-fn re_indent(text: &str) -> String {
-    let lines: Vec<&str> = text.lines().collect();
+    // Phase 3: insert call-site statements at the drain position
+    {
+        let OwnedDecl::Func(enclosing) = &mut decls[func_idx] else {
+            unreachable!()
+        };
+        for (i, stmt) in call_stmts.into_iter().enumerate() {
+            enclosing.body.insert(first_idx + i, stmt);
+        }
+    }
 
-    let min_indent = lines
-        .iter()
-        .filter(|l| !l.trim().is_empty())
-        .map(|l| l.len() - l.trim_start().len())
-        .min()
-        .unwrap_or(0);
-
-    lines
-        .iter()
-        .map(|line| {
-            if line.trim().is_empty() {
-                String::new()
-            } else if line.len() >= min_indent {
-                format!("\t{}", &line[min_indent..])
-            } else {
-                format!("\t{line}")
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+    // Phase 4: insert new function before the enclosing function
+    decls.insert(func_idx, OwnedDecl::Func(new_func));
+    Ok(())
 }
 
 /// Generate the call site text (with indentation, trailing newline).
@@ -814,48 +1079,6 @@ pub(super) fn get_indent(source: &str, line: usize) -> String {
     let line_text = source.lines().nth(line).unwrap_or("");
     let indent_len = line_text.len() - line_text.trim_start().len();
     line_text[..indent_len].to_string()
-}
-
-/// Generate an extracted function that returns a Dictionary for multiple return values.
-fn generate_extracted_function_multi_return(
-    name: &str,
-    params: &[&CapturedVar],
-    return_vars: &[CapturedVar],
-    statements: &[Node],
-    source: &str,
-    is_static: bool,
-) -> (String, String) {
-    let param_str = params
-        .iter()
-        .map(|p| {
-            if let Some(ref t) = p.type_hint {
-                format!("{}: {}", p.name, t)
-            } else {
-                p.name.clone()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(", ");
-
-    let static_prefix = if is_static { "static " } else { "" };
-    let signature = format!("{static_prefix}func {name}({param_str}) -> Dictionary:");
-
-    let first_line_start = source[..statements[0].start_byte()]
-        .rfind('\n')
-        .map_or(0, |pos| pos + 1);
-    let last_byte = statements.last().unwrap().end_byte();
-    let body_text = &source[first_line_start..last_byte];
-    let re_indented = re_indent(body_text);
-
-    let dict_entries = return_vars
-        .iter()
-        .map(|v| format!("\"{}\": {}", v.name, v.name))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let return_line = format!("\n\treturn {{{dict_entries}}}");
-
-    let func_text = format!("{signature}\n{re_indented}{return_line}");
-    (func_text, signature)
 }
 
 /// Generate a call site for a multi-return extraction (Dictionary destructuring).
@@ -1149,8 +1372,6 @@ mod tests {
         assert!(result.warnings.is_empty(), "no await = no warning");
     }
 
-    // ── re_indent ────────────────────────────────────────────────────────
-
     // ── local var return detection (issue #23) ─────────────────────────
 
     #[test]
@@ -1299,22 +1520,6 @@ mod tests {
             content.contains("var speed = get_speed()"),
             "call site should have var declaration, got:\n{content}"
         );
-    }
-
-    // ── re_indent ────────────────────────────────────────────────────────
-
-    #[test]
-    fn re_indent_strips_common_prefix() {
-        let text = "\t\tvar x = 1\n\t\tprint(x)";
-        let result = re_indent(text);
-        assert_eq!(result, "\tvar x = 1\n\tprint(x)");
-    }
-
-    #[test]
-    fn re_indent_single_line() {
-        let text = "\tprint(42)";
-        let result = re_indent(text);
-        assert_eq!(result, "\tprint(42)");
     }
 
     // ── break/continue rejection ──────────────────────────────────────

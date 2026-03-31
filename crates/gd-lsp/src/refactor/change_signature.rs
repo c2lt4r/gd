@@ -8,63 +8,15 @@ use std::fmt::Write;
 
 use super::{find_declaration_by_name, find_declaration_in_class};
 
-// ── Helpers (formerly in inline_method) ─────────────────────────────────────
+use gd_core::ast_owned::{OwnedDecl, OwnedExpr, OwnedFile};
+use gd_core::printer;
+use gd_core::rewriter;
 
-fn find_call_at(
-    root: tree_sitter::Node<'_>,
-    point: tree_sitter::Point,
-) -> Option<tree_sitter::Node<'_>> {
-    let leaf = root.descendant_for_point_range(point, point)?;
-    let mut node = leaf;
-    loop {
-        if node.kind() == "call" {
-            return Some(node);
-        }
-        if node.kind() == "attribute" && has_attribute_call_child(node) {
-            return Some(node);
-        }
-        node = node.parent()?;
-    }
-}
+// ── Helpers ────────────────────────────────────────────────────────────────────
 
-fn has_attribute_call_child(node: tree_sitter::Node) -> bool {
-    let mut cursor = node.walk();
-    node.children(&mut cursor)
-        .any(|c| c.kind() == "attribute_call")
-}
-
-fn extract_call_arguments(call: tree_sitter::Node, source: &str) -> Vec<String> {
-    let arg_source = if call.kind() == "attribute" {
-        let mut cursor = call.walk();
-        call.children(&mut cursor)
-            .find(|c| c.kind() == "attribute_call")
-    } else {
-        Some(call)
-    };
-
-    let mut args = Vec::new();
-    if let Some(source_node) = arg_source
-        && let Some(arg_node) = source_node.child_by_field_name("arguments")
-    {
-        let mut cursor = arg_node.walk();
-        for child in arg_node.children(&mut cursor) {
-            if child.is_named()
-                && child.kind() != "("
-                && child.kind() != ")"
-                && child.kind() != ","
-                && let Ok(text) = child.utf8_text(source.as_bytes())
-            {
-                args.push(text.to_string());
-            }
-        }
-    }
-    args
-}
-
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct ParamInfo {
     name: String,
-    #[allow(dead_code)]
     type_hint: Option<String>,
     default: Option<String>,
 }
@@ -139,6 +91,108 @@ fn extract_function_params(func: tree_sitter::Node, source: &str) -> Vec<ParamIn
     params
 }
 use gd_core::gd_ast;
+
+// ── Rewriter helpers ───────────────────────────────────────────────────────────
+
+/// Parse a default value string into an `OwnedExpr`.
+///
+/// Handles common literals directly; anything else is emitted verbatim via the
+/// `Ident` printer path (which simply pushes the name string).
+fn parse_default_expr(text: &str) -> OwnedExpr {
+    let trimmed = text.trim();
+    match trimmed {
+        "null" => OwnedExpr::Null { span: None },
+        "true" => OwnedExpr::Bool {
+            span: None,
+            value: true,
+        },
+        "false" => OwnedExpr::Bool {
+            span: None,
+            value: false,
+        },
+        _ => OwnedExpr::Ident {
+            span: None,
+            name: trimmed.to_string(),
+        },
+    }
+}
+
+/// Rename identifiers in a function's body using the rewriter for
+/// transformation, but applying results via targeted byte-splice so that
+/// comments and other non-AST content between statements are preserved.
+fn rename_body_via_rewriter(
+    source: &str,
+    func_name: &str,
+    class_name: Option<&str>,
+    rename_map: &HashMap<String, String>,
+) -> Result<String> {
+    let tree = gd_core::parser::parse(source)?;
+    let file_ast = gd_ast::convert(&tree, source);
+    let owned = OwnedFile::from_borrowed(&file_ast);
+
+    let func = find_owned_func(&owned.declarations, func_name, class_name);
+    let Some(func) = func else {
+        return Ok(source.to_string());
+    };
+
+    let rename_rule = |expr: OwnedExpr| -> OwnedExpr {
+        if let OwnedExpr::Ident { ref name, .. } = expr
+            && let Some(new_name) = rename_map.get(name.as_str())
+        {
+            return OwnedExpr::Ident {
+                span: None,
+                name: new_name.clone(),
+            };
+        }
+        expr
+    };
+
+    // Collect byte-level replacements for statements that changed
+    let mut edits: Vec<(usize, usize, String)> = Vec::new();
+    for stmt in &func.body {
+        let orig_span = stmt.span();
+        let rewritten = rewriter::rewrite_stmt(stmt.clone(), &rename_rule);
+        if rewritten.span().is_none()
+            && let Some(sp) = orig_span
+        {
+            let printed = printer::print_stmt(&rewritten, source);
+            edits.push((sp.start, sp.end, printed));
+        }
+    }
+
+    let mut result = source.to_string();
+    edits.sort_by(|a, b| b.0.cmp(&a.0));
+    for (start, end, replacement) in edits {
+        result.replace_range(start..end, &replacement);
+    }
+    Ok(result)
+}
+
+/// Look up an `OwnedFunc` by name (optionally inside an inner class).
+fn find_owned_func<'a>(
+    decls: &'a [OwnedDecl],
+    func_name: &str,
+    class_name: Option<&str>,
+) -> Option<&'a gd_core::ast_owned::OwnedFunc> {
+    if let Some(cls) = class_name {
+        for decl in decls {
+            if let OwnedDecl::Class(c) = decl
+                && c.name == cls
+            {
+                return find_owned_func(&c.declarations, func_name, None);
+            }
+        }
+        return None;
+    }
+    for decl in decls {
+        if let OwnedDecl::Func(func) = decl
+            && func.name == func_name
+        {
+            return Some(func);
+        }
+    }
+    None
+}
 
 // ── change-signature ────────────────────────────────────────────────────────
 
@@ -292,8 +346,6 @@ pub fn change_signature(
         .join(", ");
     let new_signature = format!("func {name}({new_param_str})");
 
-    // Find the parameters node to replace
-    let params_node = func_def.child_by_field_name("parameters");
     let original_params = extract_function_params(func_def, &source);
 
     let relative_file = gd_core::fs::relative_slash(file, project_root);
@@ -332,37 +384,29 @@ pub fn change_signature(
     let mut call_sites_updated = 0u32;
     let mut overrides_updated = 0u32;
 
-    // 1. Update function definition (signature + body renames)
+    // 1. Update function definition (signature + body renames) via typed AST rewriter
     let mut new_source = source.clone();
-    if let Some(pn) = params_node {
-        // Replace content between parens
-        let params_start = pn.start_byte();
-        let params_end = pn.end_byte();
+    // Splice new params into the source (preserves comments / non-AST content)
+    if let Some(pn) = func_def.child_by_field_name("parameters") {
         let new_params_text = format!("({new_param_str})");
-        new_source.replace_range(params_start..params_end, &new_params_text);
+        new_source.replace_range(pn.start_byte()..pn.end_byte(), &new_params_text);
     }
-
-    // Rename param usages in function body (AST-aware)
+    // Rename param usages in function body via rewriter + targeted byte-splice
     if !rename_map.is_empty() {
-        // Re-parse after signature change to get correct byte offsets
-        let new_tree = gd_core::parser::parse(&new_source)?;
-        let new_file = gd_ast::convert(&new_tree, &new_source);
-        if let Some(new_func) = find_declaration_by_name(&new_file, name)
-            && let Some(body) = new_func.child_by_field_name("body")
-        {
-            let body_start = body.start_byte();
-            let body_end = body.end_byte();
-            let body_text = new_source[body_start..body_end].to_string();
-            let renamed = rename_identifiers_ast(&body_text, &rename_map);
-            new_source.replace_range(body_start..body_end, &renamed);
-        }
+        new_source = rename_body_via_rewriter(&new_source, name, class, &rename_map)?;
     }
-
     ms.insert(file.to_path_buf(), new_source);
 
     // 2. Update override methods in subclasses
     for ovr_path in &override_files {
-        match apply_signature_to_override(ovr_path, name, &new_param_str, &rename_map, &mut ms) {
+        match apply_signature_to_override(
+            ovr_path,
+            name,
+            &new_param_str,
+            &existing_params,
+            &rename_map,
+            &mut ms,
+        ) {
             Ok(()) => overrides_updated += 1,
             Err(e) => {
                 let rel = gd_core::fs::relative_slash(ovr_path, project_root);
@@ -371,18 +415,16 @@ pub fn change_signature(
         }
     }
 
-    // 3. Update call sites
-    // Group call sites by file
-    let mut sites_by_file: HashMap<PathBuf, Vec<(u32, u32)>> = HashMap::new();
-    for (path, line, col) in &call_sites {
-        sites_by_file
-            .entry(path.clone())
-            .or_default()
-            .push((*line, *col));
+    // 3. Update call sites via typed AST rewriter
+    // Deduplicate call-site files
+    let mut call_files: Vec<PathBuf> = Vec::new();
+    for (path, _line, _col) in &call_sites {
+        if !call_files.contains(path) {
+            call_files.push(path.clone());
+        }
     }
 
-    for (call_file, positions) in &sites_by_file {
-        // Use already-mutated content if available (e.g. same file as definition)
+    for call_file in &call_files {
         let cs = if let Some(mutated) = ms.get(call_file) {
             mutated.clone()
         } else {
@@ -390,42 +432,71 @@ pub fn change_signature(
                 .map_err(|e| miette::miette!("cannot read {}: {e}", call_file.display()))?
         };
         let cs_tree = gd_core::parser::parse(&cs)?;
-        let cs_root = cs_tree.root_node();
+        let cs_file_ast = gd_ast::convert(&cs_tree, &cs);
+        let cs_owned = OwnedFile::from_borrowed(&cs_file_ast);
 
-        let mut edits: Vec<(usize, usize, String)> = Vec::new();
-        for &(ref_line, ref_col) in positions {
-            let pt = tree_sitter::Point::new(ref_line as usize, ref_col as usize);
-            if let Some(call) = find_call_at(cs_root, pt)
-                && let Some(args_node) = call.child_by_field_name("arguments")
-            {
-                let old_args = extract_call_arguments(call, &cs);
-                let (new_args, placeholder_params) = rewrite_call_arguments(
-                    &old_args,
-                    &original_params,
-                    &existing_params,
-                    remove_params,
-                    add_params,
-                    &rename_map,
-                    reorder,
-                );
-                for p in &placeholder_params {
-                    warnings.push(format!(
-                        "inserted `null` placeholder for parameter '{p}' (no default value)"
-                    ));
+        let local_count = std::cell::Cell::new(0u32);
+        let local_phs = std::cell::RefCell::new(Vec::<String>::new());
+        let call_rule = |expr: OwnedExpr| -> OwnedExpr {
+            match expr {
+                OwnedExpr::Call { span, callee, args } => {
+                    if matches!(&*callee, OwnedExpr::Ident { name: n, .. } if n == name) {
+                        let (new_args, phs) = rewrite_call_args_owned(
+                            &args,
+                            &original_params,
+                            &existing_params,
+                            remove_params,
+                            &rename_map,
+                            reorder,
+                        );
+                        local_phs.borrow_mut().extend(phs);
+                        local_count.set(local_count.get() + 1);
+                        OwnedExpr::Call {
+                            span: None,
+                            callee,
+                            args: new_args,
+                        }
+                    } else {
+                        OwnedExpr::Call { span, callee, args }
+                    }
                 }
-                let new_args_text = format!("({})", new_args.join(", "));
-                edits.push((args_node.start_byte(), args_node.end_byte(), new_args_text));
-                call_sites_updated += 1;
+                OwnedExpr::MethodCall {
+                    span,
+                    receiver,
+                    method,
+                    args,
+                } if method == name => {
+                    let (new_args, phs) = rewrite_call_args_owned(
+                        &args,
+                        &original_params,
+                        &existing_params,
+                        remove_params,
+                        &rename_map,
+                        reorder,
+                    );
+                    local_phs.borrow_mut().extend(phs);
+                    local_count.set(local_count.get() + 1);
+                    OwnedExpr::MethodCall {
+                        span: None,
+                        receiver,
+                        method,
+                        args: new_args,
+                    }
+                }
+                other => other,
             }
-        }
+        };
 
-        if !edits.is_empty() {
-            edits.sort_by(|a, b| b.0.cmp(&a.0));
-            let mut cs_new = cs.clone();
-            for (start, end, replacement) in edits {
-                cs_new.replace_range(start..end, &replacement);
-            }
+        let rewritten = rewriter::rewrite_file(cs_owned, &call_rule);
+        if local_count.get() > 0 {
+            let cs_new = printer::print_file(&rewritten, &cs);
             ms.insert(call_file.clone(), cs_new);
+            call_sites_updated += local_count.get();
+        }
+        for p in local_phs.into_inner() {
+            warnings.push(format!(
+                "inserted `null` placeholder for parameter '{p}' (no default value)"
+            ));
         }
     }
 
@@ -489,54 +560,6 @@ fn parse_param_spec(spec: &str) -> Result<ParamInfo> {
     })
 }
 
-/// Rename identifiers in text using tree-sitter AST to avoid renaming
-/// occurrences inside strings or comments.
-fn rename_identifiers_ast(text: &str, rename_map: &HashMap<String, String>) -> String {
-    let Ok(tree) = gd_core::parser::parse(text) else {
-        return text.to_string();
-    };
-
-    // Collect all identifier nodes that match any old name in the rename map,
-    // skipping those inside string or comment nodes.
-    let mut replacements: Vec<(usize, usize, &str)> = Vec::new();
-    collect_identifier_replacements(tree.root_node(), text, rename_map, &mut replacements);
-
-    // Apply replacements in reverse order to preserve byte offsets
-    replacements.sort_by(|a, b| b.0.cmp(&a.0));
-    let mut result = text.to_string();
-    for (start, end, new_name) in replacements {
-        result.replace_range(start..end, new_name);
-    }
-    result
-}
-
-/// Recursively collect identifier nodes that should be renamed, skipping
-/// nodes inside `string`, `string_content`, or `comment` parents.
-fn collect_identifier_replacements<'a>(
-    node: tree_sitter::Node,
-    source: &str,
-    rename_map: &'a HashMap<String, String>,
-    out: &mut Vec<(usize, usize, &'a str)>,
-) {
-    // Skip entire subtrees that are strings or comments
-    if matches!(node.kind(), "string" | "comment") {
-        return;
-    }
-
-    if node.kind() == "identifier"
-        && let Ok(text) = node.utf8_text(source.as_bytes())
-        && let Some(new_name) = rename_map.get(text)
-    {
-        out.push((node.start_byte(), node.end_byte(), new_name.as_str()));
-        return;
-    }
-
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        collect_identifier_replacements(child, source, rename_map, out);
-    }
-}
-
 // ── Override chain helpers ──────────────────────────────────────────────────
 
 /// Find all files that contain an override of `func_name` for classes that
@@ -596,6 +619,7 @@ fn apply_signature_to_override(
     file: &Path,
     func_name: &str,
     new_param_str: &str,
+    _new_params: &[ParamInfo],
     rename_map: &HashMap<String, String>,
     ms: &mut super::mutation::MutationSet,
 ) -> Result<()> {
@@ -614,27 +638,16 @@ fn apply_signature_to_override(
         return Err(miette::miette!("'{func_name}' is not a function"));
     }
 
+    // Splice new params into source (preserves comments / non-AST content)
     let mut new_source = source.clone();
-
-    // Update signature
     if let Some(pn) = func_def.child_by_field_name("parameters") {
         let new_params_text = format!("({new_param_str})");
         new_source.replace_range(pn.start_byte()..pn.end_byte(), &new_params_text);
     }
 
-    // Rename param usages in body (AST-aware)
+    // Rename param usages in body via rewriter + targeted byte-splice
     if !rename_map.is_empty() {
-        let new_tree = gd_core::parser::parse(&new_source)?;
-        let new_file = gd_ast::convert(&new_tree, &new_source);
-        if let Some(new_func) = find_declaration_by_name(&new_file, func_name)
-            && let Some(body) = new_func.child_by_field_name("body")
-        {
-            let body_start = body.start_byte();
-            let body_end = body.end_byte();
-            let body_text = new_source[body_start..body_end].to_string();
-            let renamed = rename_identifiers_ast(&body_text, rename_map);
-            new_source.replace_range(body_start..body_end, &renamed);
-        }
+        new_source = rename_body_via_rewriter(&new_source, func_name, None, rename_map)?;
     }
 
     ms.insert(file.to_path_buf(), new_source);
@@ -686,19 +699,18 @@ fn check_tscn_connections(func_name: &str, project_root: &Path, warnings: &mut V
     }
 }
 
-/// Rewrite call arguments based on parameter changes.
+/// Rewrite call arguments using owned AST expressions.
 /// Returns (new_args, placeholder_param_names).
-fn rewrite_call_arguments(
-    old_args: &[String],
+fn rewrite_call_args_owned(
+    old_args: &[OwnedExpr],
     old_params: &[ParamInfo],
     new_params: &[ParamInfo],
     remove_params: &[String],
-    _add_params: &[String],
     rename_map: &HashMap<String, String>,
     reorder: Option<&str>,
-) -> (Vec<String>, Vec<String>) {
-    // Build old param name -> arg value mapping
-    let mut arg_map: HashMap<String, String> = HashMap::new();
+) -> (Vec<OwnedExpr>, Vec<String>) {
+    // Build old param name -> arg expression mapping
+    let mut arg_map: HashMap<String, OwnedExpr> = HashMap::new();
     for (i, param) in old_params.iter().enumerate() {
         if let Some(arg) = old_args.get(i) {
             arg_map.insert(param.name.clone(), arg.clone());
@@ -713,8 +725,8 @@ fn rewrite_call_arguments(
     }
 
     // Remove entries for removed params
-    for name in remove_params {
-        arg_map.remove(name.as_str());
+    for rm in remove_params {
+        arg_map.remove(rm.as_str());
     }
 
     // Build new argument list in new param order
@@ -726,10 +738,9 @@ fn rewrite_call_arguments(
         if let Some(arg) = arg_map.get(&param.name) {
             new_args.push(arg.clone());
         } else if let Some(ref default) = param.default {
-            new_args.push(default.clone());
+            new_args.push(parse_default_expr(default));
         } else {
-            // Added param without default — use null as a valid GDScript placeholder
-            new_args.push("null".to_string());
+            new_args.push(OwnedExpr::Null { span: None });
             placeholders.push(param.name.clone());
         }
     }
@@ -739,12 +750,11 @@ fn rewrite_call_arguments(
         && remove_params.is_empty()
     {
         let mut reordered = Vec::new();
-        for name in &names {
-            if let Some(arg) = arg_map.get(*name) {
+        for rn in &names {
+            if let Some(arg) = arg_map.get(*rn) {
                 reordered.push(arg.clone());
             }
         }
-        // Add remaining args not in reorder list
         for param in new_params {
             if !names.contains(&param.name.as_str())
                 && let Some(arg) = arg_map.get(&param.name)
