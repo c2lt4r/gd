@@ -59,6 +59,12 @@ impl MutationSet {
         self.files.is_empty()
     }
 
+    /// Get the mutated content for a file, if present.
+    #[must_use]
+    pub fn get(&self, path: &Path) -> Option<&String> {
+        self.files.get(path)
+    }
+
     /// Iterate over the mutations.
     pub fn iter(&self) -> impl Iterator<Item = (&PathBuf, &String)> {
         self.files.iter()

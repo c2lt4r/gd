@@ -121,22 +121,19 @@ pub fn query_remove(
     name: Option<&str>,
     line: Option<usize>,
     force: bool,
-    dry_run: bool,
     class: Option<&str>,
 ) -> Result<crate::refactor::DeleteSymbolOutput> {
     let path = resolve_file(file)?;
     let project_root = find_root(&path)?;
-    crate::refactor::delete_symbol(&path, name, line, force, dry_run, &project_root, class)
+    crate::refactor::delete_symbol(&path, name, line, force, &project_root, class)
 }
 
 // ── Extract (move symbol to another file) ───────────────────────────────────
 
-#[allow(clippy::too_many_arguments)]
 pub fn query_extract(
     name: &str,
     from: &str,
     to: &str,
-    dry_run: bool,
     class: Option<&str>,
     target_class: Option<&str>,
     update_callers: bool,
@@ -148,7 +145,6 @@ pub fn query_extract(
         name,
         &from_path,
         &to_path,
-        dry_run,
         &project_root,
         class,
         target_class,

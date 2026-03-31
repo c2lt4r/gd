@@ -94,9 +94,6 @@ pub enum EditGdCommand {
         /// Remove even if references exist elsewhere
         #[arg(long)]
         force: bool,
-        /// Preview without writing changes
-        #[arg(long)]
-        dry_run: bool,
         /// Output format: json or human (default: human)
         #[arg(long)]
         format: Option<String>,
@@ -121,9 +118,6 @@ pub enum EditGdCommand {
         /// Update preload/load paths in files that reference the source
         #[arg(long)]
         update_callers: bool,
-        /// Preview without writing changes
-        #[arg(long)]
-        dry_run: bool,
         /// Output format: json or human (default: human)
         #[arg(long)]
         format: Option<String>,
@@ -455,7 +449,6 @@ pub fn exec(args: EditGdArgs) -> Result<()> {
             line,
             class,
             force,
-            dry_run,
             format,
         } => {
             if name.is_none() && line.is_none() {
@@ -469,7 +462,6 @@ pub fn exec(args: EditGdArgs) -> Result<()> {
                 name.as_deref(),
                 line,
                 force,
-                dry_run,
                 class.as_deref(),
             )?;
             if is_json(format.as_ref()) {
@@ -491,14 +483,12 @@ pub fn exec(args: EditGdArgs) -> Result<()> {
             class,
             target_class,
             update_callers,
-            dry_run,
             format,
         } => {
             let result = gd_lsp::query::query_extract(
                 &name,
                 &from,
                 &to,
-                dry_run,
                 class.as_deref(),
                 target_class.as_deref(),
                 update_callers,

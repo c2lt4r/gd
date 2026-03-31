@@ -13,7 +13,6 @@ use super::{MoveFileOutput, UpdatedReference};
 pub fn move_file(
     from: &Path,
     to: &Path,
-    dry_run: bool,
     project_root: &Path,
 ) -> Result<MoveFileOutput> {
     if !from.exists() {
@@ -31,6 +30,7 @@ pub fn move_file(
     let old_res = format!("res://{from_rel}");
     let new_res = format!("res://{to_rel}");
 
+    let mut ms = super::mutation::MutationSet::new();
     let mut updated_scripts = Vec::new();
     let mut updated_resources = Vec::new();
     let mut updated_autoload: Option<String> = None;
@@ -58,11 +58,8 @@ pub fn move_file(
                 new_path: new_res.clone(),
             });
         }
-        if !dry_run {
-            let new_content = apply_replacements(&content, &replacements, &old_res, &new_res);
-            std::fs::write(gd_path, &new_content)
-                .map_err(|e| miette::miette!("cannot write {}: {e}", gd_path.display()))?;
-        }
+        let new_content = apply_replacements(&content, &replacements, &old_res, &new_res);
+        ms.insert(gd_path.clone(), new_content);
     }
 
     // ── Scan .tscn/.tres files for ext_resource / load/preload paths ────
@@ -84,11 +81,8 @@ pub fn move_file(
                 new_path: new_res.clone(),
             });
         }
-        if !dry_run {
-            let new_content = content.replace(&old_res, &new_res);
-            std::fs::write(res_path, &new_content)
-                .map_err(|e| miette::miette!("cannot write {}: {e}", res_path.display()))?;
-        }
+        let new_content = content.replace(&old_res, &new_res);
+        ms.insert(res_path.clone(), new_content);
     }
 
     // ── Check project.godot autoloads ───────────────────────────────────
@@ -98,33 +92,31 @@ pub fn move_file(
         for (name, path) in &autoloads {
             if path == &old_res {
                 updated_autoload = Some(name.clone());
-                if !dry_run {
-                    let content = std::fs::read_to_string(&project_file)
-                        .map_err(|e| miette::miette!("cannot read project.godot: {e}"))?;
-                    let new_content = content.replace(&old_res, &new_res);
-                    std::fs::write(&project_file, &new_content)
-                        .map_err(|e| miette::miette!("cannot write project.godot: {e}"))?;
-                }
+                let content = std::fs::read_to_string(&project_file)
+                    .map_err(|e| miette::miette!("cannot read project.godot: {e}"))?;
+                let new_content = content.replace(&old_res, &new_res);
+                ms.insert(project_file.clone(), new_content);
                 break;
             }
         }
     }
 
+    // ── Commit all reference updates ────────────────────────────────────
+    super::mutation::commit(&ms, project_root)?;
+
     // ── Move the actual file ────────────────────────────────────────────
-    if !dry_run {
-        if let Some(parent) = to.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| miette::miette!("cannot create directories: {e}"))?;
-        }
-        // Try rename; fall back to copy+delete for cross-device moves.
-        if std::fs::rename(from, to).is_err() {
-            let content =
-                std::fs::read(from).map_err(|e| miette::miette!("cannot read source file: {e}"))?;
-            std::fs::write(to, &content)
-                .map_err(|e| miette::miette!("cannot write destination file: {e}"))?;
-            std::fs::remove_file(from)
-                .map_err(|e| miette::miette!("cannot remove source file: {e}"))?;
-        }
+    if let Some(parent) = to.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| miette::miette!("cannot create directories: {e}"))?;
+    }
+    // Try rename; fall back to copy+delete for cross-device moves.
+    if std::fs::rename(from, to).is_err() {
+        let content =
+            std::fs::read(from).map_err(|e| miette::miette!("cannot read source file: {e}"))?;
+        std::fs::write(to, &content)
+            .map_err(|e| miette::miette!("cannot write destination file: {e}"))?;
+        std::fs::remove_file(from)
+            .map_err(|e| miette::miette!("cannot remove source file: {e}"))?;
     }
 
     // ── Warn about potential references we can't statically detect ───────
@@ -143,7 +135,7 @@ pub fn move_file(
     Ok(MoveFileOutput {
         from: from_rel,
         to: to_rel,
-        applied: !dry_run,
+        applied: true,
         updated_scripts,
         updated_resources,
         updated_autoload,
@@ -345,7 +337,6 @@ mod tests {
         let result = move_file(
             &temp.path().join("scripts/player.gd"),
             &temp.path().join("entities/player.gd"),
-            false,
             temp.path(),
         )
         .unwrap();
@@ -379,7 +370,6 @@ mod tests {
         let result = move_file(
             &temp.path().join("scripts/enemy.gd"),
             &temp.path().join("entities/enemy.gd"),
-            false,
             temp.path(),
         )
         .unwrap();
@@ -409,7 +399,6 @@ mod tests {
         let result = move_file(
             &temp.path().join("scenes/hud.tscn"),
             &temp.path().join("ui/hud.tscn"),
-            false,
             temp.path(),
         )
         .unwrap();
@@ -438,7 +427,6 @@ mod tests {
         let result = move_file(
             &temp.path().join("scripts/global.gd"),
             &temp.path().join("autoload/global.gd"),
-            false,
             temp.path(),
         )
         .unwrap();
@@ -451,40 +439,11 @@ mod tests {
     }
 
     #[test]
-    fn move_dry_run_no_changes() {
-        let temp = setup_project(&[
-            ("scripts/player.gd", "extends CharacterBody2D\n"),
-            (
-                "scripts/main.gd",
-                "var Player = preload(\"res://scripts/player.gd\")\n",
-            ),
-        ]);
-        let result = move_file(
-            &temp.path().join("scripts/player.gd"),
-            &temp.path().join("entities/player.gd"),
-            true,
-            temp.path(),
-        )
-        .unwrap();
-        assert!(!result.applied);
-        assert!(!result.updated_scripts.is_empty());
-
-        // File should NOT be moved
-        assert!(temp.path().join("scripts/player.gd").exists());
-        assert!(!temp.path().join("entities/player.gd").exists());
-
-        // Reference should NOT be changed
-        let main_content = fs::read_to_string(temp.path().join("scripts/main.gd")).unwrap();
-        assert!(main_content.contains("res://scripts/player.gd"));
-    }
-
-    #[test]
     fn move_source_not_found() {
         let temp = setup_project(&[]);
         let result = move_file(
             &temp.path().join("nonexistent.gd"),
             &temp.path().join("dest.gd"),
-            false,
             temp.path(),
         );
         assert!(result.is_err());
@@ -499,7 +458,6 @@ mod tests {
         let result = move_file(
             &temp.path().join("source.gd"),
             &temp.path().join("dest.gd"),
-            false,
             temp.path(),
         );
         assert!(result.is_err());
@@ -522,7 +480,6 @@ mod tests {
         let result = move_file(
             &temp.path().join("scripts/player.gd"),
             &temp.path().join("entities/player.gd"),
-            false,
             temp.path(),
         )
         .unwrap();
@@ -555,7 +512,6 @@ mod tests {
         let result = move_file(
             &temp.path().join("scripts/base.gd"),
             &temp.path().join("core/base.gd"),
-            false,
             temp.path(),
         )
         .unwrap();

@@ -26,7 +26,6 @@ pub fn extract_method(
     start_line: usize, // 1-based inclusive
     end_line: usize,   // 1-based inclusive
     name: &str,
-    dry_run: bool,
     project_root: &Path,
 ) -> Result<ExtractMethodOutput> {
     let source =
@@ -215,46 +214,46 @@ pub fn extract_method(
 
     let relative_file = gd_core::fs::relative_slash(file, project_root);
 
-    if !dry_run {
-        let starts = line_starts(&source);
-        let mut new_source = source.clone();
+    let starts = line_starts(&source);
+    let mut new_source = source.clone();
 
-        // 1. Replace extracted range with call site (higher byte offset first)
-        let replace_start = starts[start_line_0];
-        let replace_end = if end_line_0 + 1 < starts.len() {
-            starts[end_line_0 + 1]
-        } else {
-            source.len()
-        };
-        new_source.replace_range(replace_start..replace_end, &call_site_line);
+    // 1. Replace extracted range with call site (higher byte offset first)
+    let replace_start = starts[start_line_0];
+    let replace_end = if end_line_0 + 1 < starts.len() {
+        starts[end_line_0 + 1]
+    } else {
+        source.len()
+    };
+    new_source.replace_range(replace_start..replace_end, &call_site_line);
 
-        // 2. Insert new function
-        // Re-compute line_starts after the first edit
-        let new_starts = line_starts(&new_source);
-        if let Some(ref class_node) = inner_class {
-            // Inside an inner class: insert at the end of the class body (before closing)
-            // The class body end row is the last line of the class_definition.
-            let class_end_line = class_node.end_position().row;
-            // Insert before the class's last line (which is typically blank or the next
-            // declaration). We insert right before the end of the class body.
-            let insert_byte = new_starts[class_end_line];
-            let insert_text = format!("\n{func_text}\n");
-            new_source.insert_str(insert_byte, &insert_text);
-        } else {
-            let func_start_line = func.start_position().row;
-            // After our replacement, the enclosing function may have shifted.
-            // Use the original func start line to find the insertion point.
-            // The replacement was inside the function, so lines before the function
-            // are unchanged.
-            let insert_byte = new_starts[func_start_line];
-            let insert_text = format!("{func_text}\n\n\n");
-            new_source.insert_str(insert_byte, &insert_text);
-        }
-
-        normalize_blank_lines(&mut new_source);
-        super::validate_no_new_errors(&source, &new_source)?;
-        std::fs::write(file, &new_source).map_err(|e| miette::miette!("cannot write file: {e}"))?;
+    // 2. Insert new function
+    // Re-compute line_starts after the first edit
+    let new_starts = line_starts(&new_source);
+    if let Some(ref class_node) = inner_class {
+        // Inside an inner class: insert at the end of the class body (before closing)
+        // The class body end row is the last line of the class_definition.
+        let class_end_line = class_node.end_position().row;
+        // Insert before the class's last line (which is typically blank or the next
+        // declaration). We insert right before the end of the class body.
+        let insert_byte = new_starts[class_end_line];
+        let insert_text = format!("\n{func_text}\n");
+        new_source.insert_str(insert_byte, &insert_text);
+    } else {
+        let func_start_line = func.start_position().row;
+        // After our replacement, the enclosing function may have shifted.
+        // Use the original func start line to find the insertion point.
+        // The replacement was inside the function, so lines before the function
+        // are unchanged.
+        let insert_byte = new_starts[func_start_line];
+        let insert_text = format!("{func_text}\n\n\n");
+        new_source.insert_str(insert_byte, &insert_text);
     }
+
+    normalize_blank_lines(&mut new_source);
+
+    let mut ms = super::mutation::MutationSet::new();
+    ms.insert(file.to_path_buf(), new_source);
+    super::mutation::commit(&ms, project_root)?;
 
     let param_outputs: Vec<ParameterOutput> = params
         .iter()
@@ -271,7 +270,7 @@ pub fn extract_method(
         return_vars: return_vars_field,
         call_site: call_site_line.trim_end_matches('\n').to_string(),
         file: relative_file,
-        applied: !dry_run,
+        applied: true,
         warnings,
     })
 }
@@ -936,7 +935,6 @@ mod tests {
             4,
             4,
             "do_print",
-            false,
             temp.path(),
         )
         .unwrap();
@@ -960,7 +958,6 @@ mod tests {
             4,
             5,
             "show_stats",
-            false,
             temp.path(),
         )
         .unwrap();
@@ -984,7 +981,6 @@ mod tests {
             3,
             3,
             "take_damage",
-            false,
             temp.path(),
         )
         .unwrap();
@@ -1013,7 +1009,6 @@ mod tests {
             4,
             5,
             "update",
-            false,
             temp.path(),
         )
         .unwrap();
@@ -1053,7 +1048,6 @@ mod tests {
             5,
             7,
             "update_all",
-            false,
             temp.path(),
         )
         .unwrap();
@@ -1072,7 +1066,6 @@ mod tests {
             5,
             6,
             "update",
-            false,
             temp.path(),
         )
         .unwrap();
@@ -1092,7 +1085,6 @@ mod tests {
             3,
             3,
             "helper",
-            false,
             temp.path(),
         );
         assert!(result.is_err());
@@ -1108,7 +1100,6 @@ mod tests {
             1,
             1,
             "helper",
-            false,
             temp.path(),
         );
         assert!(result.is_err());
@@ -1125,7 +1116,6 @@ mod tests {
             2,
             3,
             "helper",
-            false,
             temp.path(),
         )
         .unwrap();
@@ -1149,7 +1139,6 @@ mod tests {
             3,
             3,
             "show_health",
-            false,
             temp.path(),
         )
         .unwrap();
@@ -1157,29 +1146,6 @@ mod tests {
         assert_eq!(result.parameters.len(), 1);
         assert_eq!(result.parameters[0].name, "health");
         assert_eq!(result.parameters[0].type_hint.as_deref(), Some("int"));
-    }
-
-    #[test]
-    fn extract_dry_run() {
-        let temp = setup_project(&[(
-            "player.gd",
-            "func _ready():\n\tprint(\"hello\")\n\tprint(\"world\")\n",
-        )]);
-        let result = extract_method(
-            &temp.path().join("player.gd"),
-            2,
-            2,
-            "greet",
-            true, // dry run
-            temp.path(),
-        )
-        .unwrap();
-        assert!(!result.applied);
-        let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
-        assert!(
-            !content.contains("func greet"),
-            "dry run should not modify file"
-        );
     }
 
     // ── async detection ─────────────────────────────────────────────────
@@ -1195,7 +1161,6 @@ mod tests {
             2,
             2,
             "wait_a_bit",
-            true,
             temp.path(),
         )
         .unwrap();
@@ -1214,7 +1179,6 @@ mod tests {
             2,
             2,
             "greet",
-            true,
             temp.path(),
         )
         .unwrap();
@@ -1238,7 +1202,6 @@ mod tests {
             2,
             3,
             "calculate_velocity",
-            false,
             temp.path(),
         )
         .unwrap();
@@ -1272,7 +1235,6 @@ mod tests {
             2,
             3,
             "helper",
-            false,
             temp.path(),
         )
         .unwrap();
@@ -1301,7 +1263,6 @@ mod tests {
             2,
             3,
             "init_vars",
-            false,
             temp.path(),
         )
         .unwrap();
@@ -1335,7 +1296,6 @@ mod tests {
             3,
             4,
             "compute",
-            false,
             temp.path(),
         )
         .unwrap();
@@ -1373,7 +1333,6 @@ mod tests {
             2,
             2,
             "get_speed",
-            false,
             temp.path(),
         )
         .unwrap();
@@ -1421,7 +1380,6 @@ mod tests {
             2,
             3,
             "helper",
-            true,
             temp.path(),
         );
         assert!(result.is_err());
@@ -1442,7 +1400,6 @@ mod tests {
             2,
             3,
             "helper",
-            true,
             temp.path(),
         );
         assert!(result.is_err());
@@ -1462,7 +1419,6 @@ mod tests {
             2,
             5,
             "loop_work",
-            true,
             temp.path(),
         );
         assert!(
@@ -1484,7 +1440,6 @@ mod tests {
             3,
             7,
             "loop_work",
-            true,
             temp.path(),
         );
         assert!(
@@ -1508,7 +1463,6 @@ mod tests {
             4,
             4,
             "show",
-            true,
             temp.path(),
         )
         .unwrap();
@@ -1558,7 +1512,6 @@ mod tests {
             2,
             2,
             "get_velocity",
-            false,
             temp.path(),
         )
         .unwrap();
@@ -1583,7 +1536,6 @@ mod tests {
             2,
             2,
             "compute",
-            true,
             temp.path(),
         )
         .unwrap();
@@ -1613,7 +1565,6 @@ mod tests {
             3,
             3,
             "show_data",
-            true,
             temp.path(),
         )
         .unwrap();
@@ -1643,7 +1594,6 @@ mod tests {
             2,
             2,
             "add",
-            false,
             temp.path(),
         )
         .unwrap();
@@ -1671,7 +1621,6 @@ mod tests {
             3,
             3,
             "show_msg",
-            true,
             temp.path(),
         )
         .unwrap();
@@ -1695,7 +1644,6 @@ mod tests {
             3,
             3,
             "show_flag",
-            true,
             temp.path(),
         )
         .unwrap();
@@ -1720,7 +1668,6 @@ mod tests {
             4,
             4,
             "compute",
-            true,
             temp.path(),
         )
         .unwrap();
@@ -1766,7 +1713,6 @@ mod tests {
             4,
             5,
             "update",
-            false,
             temp.path(),
         )
         .unwrap();
@@ -1795,7 +1741,6 @@ mod tests {
             2,
             2,
             "show_count",
-            true,
             temp.path(),
         )
         .unwrap();
@@ -1822,7 +1767,6 @@ mod tests {
             3,
             3,
             "log_value",
-            false,
             temp.path(),
         )
         .unwrap();
@@ -1850,7 +1794,6 @@ mod tests {
             2,
             2,
             "greet",
-            false,
             temp.path(),
         )
         .unwrap();
@@ -1874,7 +1817,6 @@ mod tests {
             3,
             3,
             "bump",
-            false,
             temp.path(),
         )
         .unwrap();
@@ -1915,7 +1857,6 @@ class InnerClass:
             10,
             10,
             "do_print",
-            false,
             temp.path(),
         )
         .unwrap();
@@ -1957,7 +1898,6 @@ class Helper:
             7,
             7,
             "show_sum",
-            false,
             temp.path(),
         )
         .unwrap();
@@ -1989,7 +1929,6 @@ class Utils:
             6,
             6,
             "print_b",
-            false,
             temp.path(),
         )
         .unwrap();

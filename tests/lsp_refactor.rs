@@ -134,43 +134,6 @@ fn test_lsp_extract_method_with_return() {
     );
 }
 
-#[test]
-fn test_lsp_extract_method_dry_run() {
-    let temp = setup_gd_project(&[(
-        "player.gd",
-        "func _ready():\n\tprint(\"hello\")\n\tprint(\"world\")\n",
-    )]);
-
-    let output = gd_bin()
-        .args([
-            "refactor",
-            "extract-method",
-            "player.gd",
-            "--start-line",
-            "2",
-            "--end-line",
-            "2",
-            "--name",
-            "greet",
-            "--dry-run",
-            "--format",
-            "json",
-        ])
-        .current_dir(temp.path())
-        .output()
-        .expect("Failed to run gd refactor extract-method --dry-run");
-
-    assert!(output.status.success());
-    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(json["applied"], false);
-
-    let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
-    assert!(
-        !content.contains("func greet"),
-        "dry-run should not modify file"
-    );
-}
-
 // ──────────────────────────────────────────────
 // Feature 5: Async extraction detection
 // ──────────────────────────────────────────────
@@ -388,38 +351,6 @@ fn test_lsp_change_signature_remove_param() {
     assert!(
         content.contains("attack(\"enemy\")"),
         "damage arg should be removed from call site, got: {content}"
-    );
-}
-
-#[test]
-fn test_lsp_change_signature_dry_run() {
-    let temp = setup_gd_project(&[("player.gd", "func attack(target):\n\tprint(target)\n")]);
-
-    let output = gd_bin()
-        .args([
-            "refactor",
-            "change-signature",
-            "player.gd",
-            "--name",
-            "attack",
-            "--add-param",
-            "damage",
-            "--dry-run",
-            "--format",
-            "json",
-        ])
-        .current_dir(temp.path())
-        .output()
-        .expect("Failed to run gd refactor change-signature --dry-run");
-
-    assert!(output.status.success());
-    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(json["applied"], false);
-
-    let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
-    assert!(
-        !content.contains("damage"),
-        "dry-run should not modify file"
     );
 }
 
