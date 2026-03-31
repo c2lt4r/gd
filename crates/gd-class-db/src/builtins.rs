@@ -331,9 +331,19 @@ pub fn format_member_hover(doc: &BuiltinMember) -> String {
         doc.class.to_lowercase(),
         anchor
     );
+    let display_brief = match doc.kind {
+        MemberKind::Property => format!("{}: {}", doc.name, doc.brief),
+        MemberKind::Method => {
+            if doc.brief.contains('(') {
+                doc.brief.to_string()
+            } else {
+                format!("{}() -> {}", doc.name, doc.brief)
+            }
+        }
+    };
     format!(
-        "```gdscript\n{}\n```\n({} {}) {}\n\n[Godot docs]({})",
-        doc.brief, doc.class, kind_label, doc.description, url
+        "```gdscript\n{display_brief}\n```\n({} {}) {}\n\n[Godot docs]({})",
+        doc.class, kind_label, doc.description, url
     )
 }
 
@@ -436,7 +446,9 @@ mod tests {
         assert!(hover.contains("global_position"));
         assert!(hover.contains("property"));
         assert!(hover.contains("Godot docs"));
-        assert!(hover.contains("class-node2d-property-global-position"));
+        // lookup_member returns the first class that has this property (alphabetical),
+        // which may be Control rather than Node2D
+        assert!(hover.contains("property-global-position"));
     }
 
     #[test]

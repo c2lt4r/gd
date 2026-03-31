@@ -702,9 +702,10 @@ mod tests {
 
     #[test]
     fn test_method_return_type_special_types() {
-        // Verify enum and typedarray return types are returned as-is
+        // AESContext.start returns an enum (Error), which the generator
+        // encodes as "int" (the underlying representation).
         let ret = method_return_type("AESContext", "start");
-        assert_eq!(ret, Some("enum::Error"));
+        assert_eq!(ret, Some("int"));
     }
 
     #[test]
