@@ -1,9 +1,14 @@
 #![allow(clippy::must_use_candidate)]
 
+pub mod ast_owned;
 pub mod cfg;
+#[allow(dead_code)]
+pub mod rewriter;
 #[allow(dead_code)]
 pub mod color;
 pub mod config;
+#[allow(dead_code)]
+pub mod printer;
 pub mod debug_types;
 pub mod fs;
 #[allow(dead_code)]
