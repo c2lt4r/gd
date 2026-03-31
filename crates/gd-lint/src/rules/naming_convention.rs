@@ -52,7 +52,7 @@ impl LintRule for NamingConvention {
 fn check_decl(decl: &GdDecl<'_>, diags: &mut Vec<LintDiagnostic>) {
     match decl {
         GdDecl::Func(func) => {
-            if !is_godot_builtin(func.name) && !is_snake_case(func.name) {
+            if !gd_class_db::is_godot_virtual_method(func.name) && !is_snake_case(func.name) {
                 let fixed = to_snake_case(func.name);
                 let (line, col, end_col, fix) = name_fix(func.name_node, func.node, &fixed);
                 diags.push(LintDiagnostic {
@@ -181,28 +181,6 @@ fn name_fix(
             None,
         ),
     }
-}
-
-/// Godot built-in methods that are commonly overridden and use _prefix naming.
-const GODOT_BUILTINS: &[&str] = &[
-    "_ready",
-    "_process",
-    "_physics_process",
-    "_input",
-    "_unhandled_input",
-    "_enter_tree",
-    "_exit_tree",
-    "_draw",
-    "_notification",
-    "_to_string",
-    "_init",
-    "_get",
-    "_set",
-    "_get_property_list",
-];
-
-fn is_godot_builtin(name: &str) -> bool {
-    GODOT_BUILTINS.contains(&name)
 }
 
 /// Check if a name is valid UPPER_SNAKE_CASE.

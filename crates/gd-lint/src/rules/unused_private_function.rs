@@ -4,43 +4,6 @@ use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use gd_core::config::LintConfig;
 use gd_core::workspace_index::ProjectIndex;
 
-/// Godot virtual methods that are called by the engine, never directly by user code.
-const GODOT_VIRTUALS: &[&str] = &[
-    "_ready",
-    "_process",
-    "_physics_process",
-    "_enter_tree",
-    "_exit_tree",
-    "_input",
-    "_unhandled_input",
-    "_unhandled_key_input",
-    "_shortcut_input",
-    "_gui_input",
-    "_draw",
-    "_notification",
-    "_init",
-    "_static_init",
-    "_get_configuration_warnings",
-    "_to_string",
-    "_get_property_list",
-    "_property_can_revert",
-    "_property_get_revert",
-    "_set",
-    "_get",
-    "_validate_property",
-    "_run",
-    "_get_minimum_size",
-    "_get_drag_data",
-    "_can_drop_data",
-    "_drop_data",
-    "_make_custom_tooltip",
-    "_has_point",
-    "_structured_text_parser",
-    "_clips_input",
-    "_get_allowed_size_flags_horizontal",
-    "_get_allowed_size_flags_vertical",
-];
-
 pub struct UnusedPrivateFunction;
 
 impl LintRule for UnusedPrivateFunction {
@@ -78,7 +41,7 @@ impl LintRule for UnusedPrivateFunction {
 
         for func in file.funcs() {
             // Skip Godot virtual methods
-            if GODOT_VIRTUALS.contains(&func.name) {
+            if gd_class_db::is_godot_virtual_method(func.name) {
                 continue;
             }
 

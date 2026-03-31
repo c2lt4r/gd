@@ -35,28 +35,6 @@ impl LintRule for ClassDefinitionsOrder {
     }
 }
 
-/// Lifecycle/virtual methods that belong in category 8.
-const LIFECYCLE_METHODS: &[&str] = &[
-    "_ready",
-    "_init",
-    "_process",
-    "_physics_process",
-    "_enter_tree",
-    "_exit_tree",
-    "_input",
-    "_unhandled_input",
-    "_unhandled_key_input",
-    "_draw",
-    "_notification",
-    "_to_string",
-    "_get",
-    "_set",
-    "_get_property_list",
-    "_validate_property",
-    "_property_can_revert",
-    "_property_get_revert",
-];
-
 /// Member categories in canonical order (lower = earlier).
 const CAT_SIGNAL: u8 = 1;
 const CAT_ENUM: u8 = 2;
@@ -177,7 +155,7 @@ fn categorize_var(var: &GdVar) -> u8 {
 }
 
 fn categorize_func(func: &GdFunc) -> u8 {
-    if LIFECYCLE_METHODS.contains(&func.name) {
+    if gd_class_db::is_godot_virtual_method(func.name) {
         CAT_LIFECYCLE_METHOD
     } else if func.name.starts_with('_') {
         CAT_PRIVATE_METHOD

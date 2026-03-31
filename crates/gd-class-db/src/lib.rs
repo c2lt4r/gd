@@ -501,6 +501,11 @@ pub fn function_return_type(name: &str) -> Option<&'static str> {
         .map(|i| builtin_generated::FUNCTION_RETURNS[i].1)
 }
 
+/// Return all utility function names (print, lerp, sin, etc.) from ClassDB.
+pub fn utility_function_names() -> impl Iterator<Item = &'static str> {
+    generated::UTILITY_FUNCTIONS.iter().map(|f| f.name)
+}
+
 /// Look up the result type of a binary operator between two variant types.
 /// Returns None if the operation is not valid.
 pub fn operator_result_type(left: &str, op: &str, right: &str) -> Option<&'static str> {
@@ -529,6 +534,17 @@ pub fn annotation_def(name: &str) -> Option<&'static builtin_generated::Annotati
         .binary_search_by_key(&name, |a| a.name)
         .ok()
         .map(|i| &builtin_generated::ANNOTATIONS[i])
+}
+
+/// Check if a method name is a Godot virtual method (defined in ClassDB with `_` prefix).
+///
+/// Returns true if any engine class declares a method with this exact name.
+/// Backed by a sorted generated table of 1147 virtual method names.
+/// Used by lint rules to avoid flagging engine-called methods as unused or misnamed.
+pub fn is_godot_virtual_method(name: &str) -> bool {
+    builtin_generated::VIRTUAL_METHODS
+        .binary_search(&name)
+        .is_ok()
 }
 
 /// Look up a Godot warning definition by name.
@@ -848,5 +864,25 @@ mod tests {
         assert!(!w.deprecated);
 
         assert!(godot_warning("NONEXISTENT_WARNING").is_none());
+    }
+
+    #[test]
+    fn test_is_godot_virtual_method() {
+        assert!(is_godot_virtual_method("_ready"));
+        assert!(is_godot_virtual_method("_process"));
+        assert!(is_godot_virtual_method("_physics_process"));
+        assert!(is_godot_virtual_method("_enter_tree"));
+        assert!(is_godot_virtual_method("_exit_tree"));
+        assert!(is_godot_virtual_method("_input"));
+        assert!(is_godot_virtual_method("_init"));
+        assert!(is_godot_virtual_method("_notification"));
+        assert!(is_godot_virtual_method("_draw"));
+        assert!(is_godot_virtual_method("_gui_input"));
+        assert!(is_godot_virtual_method("_get_configuration_warnings"));
+        assert!(is_godot_virtual_method("_get_minimum_size"));
+        // Non-virtual
+        assert!(!is_godot_virtual_method("_my_private_method"));
+        assert!(!is_godot_virtual_method("add_child"));
+        assert!(!is_godot_virtual_method(""));
     }
 }

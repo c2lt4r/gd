@@ -169,7 +169,7 @@ pub fn enrich_inspect(result: &Value) -> Value {
 }
 
 /// Look up a member doc for a specific class, walking the inheritance chain.
-fn lookup_member_for_class(class: &str, name: &str) -> Option<&'static builtins::BuiltinMember> {
+fn lookup_member_for_class(class: &str, name: &str) -> Option<builtins::BuiltinMember> {
     let mut current = class;
     loop {
         if let Some(doc) = builtins::lookup_member_for(current, name) {

@@ -41,6 +41,15 @@ impl InferredType {
     pub fn is_numeric(&self) -> bool {
         matches!(self, InferredType::Builtin("int" | "float"))
     }
+
+    /// Returns the raw type name for ClassDB lookups, or `None` for compound/void/variant types.
+    fn class_db_name(&self) -> Option<&str> {
+        match self {
+            InferredType::Builtin(s) => Some(s),
+            InferredType::Class(s) => Some(s.as_str()),
+            _ => None,
+        }
+    }
 }
 
 /// Try to infer the type of an expression AST node.
@@ -295,6 +304,11 @@ fn infer_unary(node: &Node, source: &str, file: &GdFile) -> Option<InferredType>
 }
 
 /// Infer type of a binary operator expression.
+///
+/// Tries the generated operator table from ClassDB first (771 operator
+/// combinations covering all Godot builtin types). Falls back to heuristics
+/// for cases the table can't cover (unknown operand types, GDScript-specific
+/// operators like `and`/`or`/`is`/`in`, string formatting with `%`).
 fn infer_binary(node: &Node, source: &str, file: &GdFile) -> Option<InferredType> {
     let op = node.child_by_field_name("op").or_else(|| {
         // Some tree-sitter versions use positional children for the operator
@@ -326,48 +340,19 @@ fn infer_binary(node: &Node, source: &str, file: &GdFile) -> Option<InferredType
 
     let op_text = op?.utf8_text(source.as_bytes()).ok()?;
 
-    // Comparison operators and type tests → always bool
-    if matches!(
-        op_text,
-        "==" | "!=" | "<" | ">" | "<=" | ">=" | "in" | "not in" | "is" | "is not"
-    ) {
-        return Some(InferredType::Builtin("bool"));
-    }
-
-    // Boolean operators
+    // Boolean operators — GDScript-specific, not in ClassDB operator table
     if matches!(op_text, "and" | "or") {
         return Some(InferredType::Builtin("bool"));
     }
 
-    // String concatenation or arithmetic
-    if matches!(op_text, "+" | "-" | "*" | "**") {
-        return infer_arithmetic(node, source, file, op_text);
-    }
-
-    // Division: scalar/scalar → float, but Vector/scalar → Vector
-    if op_text == "/" {
-        let left = node
-            .child_by_field_name("left")
-            .or_else(|| node.named_child(0));
-        let right = node
-            .child_by_field_name("right")
-            .or_else(|| node.named_child(1));
-        if let Some(l) = left {
-            let lt = infer_expression_type(&l, source, file);
-            if lt.as_ref().is_some_and(is_vector_like_type) {
-                return lt;
-            }
-        }
-        if let Some(r) = right {
-            let rt = infer_expression_type(&r, source, file);
-            if rt.as_ref().is_some_and(is_vector_like_type) {
-                return rt;
-            }
-        }
-        return Some(InferredType::Builtin("float"));
+    // Type tests — GDScript-specific
+    if matches!(op_text, "is" | "is not") {
+        return Some(InferredType::Builtin("bool"));
     }
 
     // String format operator: "text %s" % value → String
+    // ClassDB only knows numeric modulo, but GDScript overloads % for string
+    // formatting when the left side is a string or the right side is an array.
     if op_text == "%" {
         let left = node
             .child_by_field_name("left")
@@ -381,11 +366,45 @@ fn infer_binary(node: &Node, source: &str, file: &GdFile) -> Option<InferredType
         {
             return Some(InferredType::Builtin("String"));
         }
-        // `ident % [args]` — right side is an array ⇒ string formatting, not modulo
         if right.is_some_and(|r| r.kind() == "array") {
             return Some(InferredType::Builtin("String"));
         }
-        return Some(InferredType::Builtin("int"));
+    }
+
+    // Try generated ClassDB operator table (covers all Godot builtin type combinations)
+    let left_node = node
+        .child_by_field_name("left")
+        .or_else(|| node.named_child(0));
+    let right_node = node
+        .child_by_field_name("right")
+        .or_else(|| node.named_child(1));
+    let lt = left_node.as_ref().and_then(|l| infer_expression_type(l, source, file));
+    let rt = right_node.as_ref().and_then(|r| infer_expression_type(r, source, file));
+
+    if let Some(left_name) = lt.as_ref().and_then(InferredType::class_db_name)
+        && let Some(right_name) = rt.as_ref().and_then(InferredType::class_db_name)
+        && let Some(result) = gd_class_db::operator_result_type(left_name, op_text, right_name)
+    {
+        return Some(parse_class_db_type(result));
+    }
+
+    // Fallback heuristics for cases where operand types aren't fully resolved
+    infer_binary_fallback(op_text, lt.as_ref(), rt.as_ref())
+}
+
+/// Fallback heuristics when the ClassDB operator table can't resolve the result
+/// (e.g. one operand type is unknown, or the operator is a GDScript keyword).
+fn infer_binary_fallback(
+    op_text: &str,
+    lt: Option<&InferredType>,
+    rt: Option<&InferredType>,
+) -> Option<InferredType> {
+    // Comparison operators → always bool
+    if matches!(
+        op_text,
+        "==" | "!=" | "<" | ">" | "<=" | ">=" | "in" | "not in"
+    ) {
+        return Some(InferredType::Builtin("bool"));
     }
 
     // Bit ops → int
@@ -393,59 +412,46 @@ fn infer_binary(node: &Node, source: &str, file: &GdFile) -> Option<InferredType
         return Some(InferredType::Builtin("int"));
     }
 
-    None
-}
-
-/// Infer type from arithmetic operators (+, -, *, **) with promotion rules.
-fn infer_arithmetic(
-    node: &Node,
-    source: &str,
-    file: &GdFile,
-    op_text: &str,
-) -> Option<InferredType> {
-    let left = node
-        .child_by_field_name("left")
-        .or_else(|| node.named_child(0));
-    let right = node
-        .child_by_field_name("right")
-        .or_else(|| node.named_child(1));
-
-    let (Some(l), Some(r)) = (left, right) else {
-        return None;
-    };
-    let lt = infer_expression_type(&l, source, file);
-    let rt = infer_expression_type(&r, source, file);
-
-    // String + String → String
-    if op_text == "+"
-        && matches!(
-            (&lt, &rt),
-            (
-                Some(InferredType::Builtin("String")),
+    // Arithmetic: vector types dominate, float promotes over int
+    if matches!(op_text, "+" | "-" | "*" | "**") {
+        if lt.is_some_and(is_vector_like_type) {
+            return lt.cloned();
+        }
+        if rt.is_some_and(is_vector_like_type) {
+            return rt.cloned();
+        }
+        return match (lt, rt) {
+            (Some(InferredType::Builtin("String")), Some(InferredType::Builtin("String")))
+                if op_text == "+" =>
+            {
                 Some(InferredType::Builtin("String"))
-            )
-        )
-    {
-        return Some(InferredType::Builtin("String"));
+            }
+            (Some(InferredType::Builtin("float")), _)
+            | (_, Some(InferredType::Builtin("float"))) => Some(InferredType::Builtin("float")),
+            (Some(InferredType::Builtin("int")), Some(InferredType::Builtin("int"))) => {
+                Some(InferredType::Builtin("int"))
+            }
+            _ => lt.cloned().or(rt.cloned()),
+        };
     }
 
-    // Vector/Color types dominate: Vector2 * float → Vector2, not float
-    if lt.as_ref().is_some_and(is_vector_like_type) {
-        return lt;
-    }
-    if rt.as_ref().is_some_and(is_vector_like_type) {
-        return rt;
+    // Division: Vector/scalar → Vector, otherwise float
+    if op_text == "/" {
+        if lt.is_some_and(is_vector_like_type) {
+            return lt.cloned();
+        }
+        if rt.is_some_and(is_vector_like_type) {
+            return rt.cloned();
+        }
+        return Some(InferredType::Builtin("float"));
     }
 
-    match (&lt, &rt) {
-        (Some(InferredType::Builtin("float")), _) | (_, Some(InferredType::Builtin("float"))) => {
-            Some(InferredType::Builtin("float"))
-        }
-        (Some(InferredType::Builtin("int")), Some(InferredType::Builtin("int"))) => {
-            Some(InferredType::Builtin("int"))
-        }
-        _ => lt.or(rt),
+    // Modulo fallback (string format handled before ClassDB lookup)
+    if op_text == "%" {
+        return Some(InferredType::Builtin("int"));
     }
+
+    None
 }
 
 /// Infer type from a cast expression (`x as Node`).

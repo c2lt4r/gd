@@ -8,122 +8,34 @@ use tower_lsp::lsp_types::{
 
 use super::workspace::WorkspaceIndex;
 
-/// GDScript keywords.
-const KEYWORDS: &[&str] = &[
-    "func",
-    "var",
-    "const",
-    "signal",
-    "class",
-    "extends",
-    "if",
-    "elif",
-    "else",
-    "for",
-    "while",
-    "match",
-    "return",
-    "break",
-    "continue",
-    "pass",
-    "await",
-    "yield",
-    "self",
-    "super",
-    "true",
-    "false",
-    "null",
-    "void",
-    "preload",
-    "load",
-    "export",
-    "onready",
-    "static",
-    "class_name",
-    "tool",
-    "enum",
-];
+// GDScript keywords sourced from ClassDB generated GDSCRIPT_KEYWORDS table.
+// Supplemented with literal keywords (true, false, null) and legacy aliases
+// (tool, onready, export, load) that aren't in the tokenizer's keyword list
+// but are valid in GDScript source.
+fn keywords() -> impl Iterator<Item = &'static str> {
+    gd_class_db::builtin_generated::GDSCRIPT_KEYWORDS
+        .iter()
+        .copied()
+        .chain(["true", "false", "null", "tool", "onready", "export", "load"].iter().copied())
+}
 
-/// GDScript built-in types.
-const BUILTIN_TYPES: &[&str] = &[
-    "int",
-    "float",
-    "bool",
-    "String",
-    "Vector2",
-    "Vector3",
-    "Vector4",
-    "Vector2i",
-    "Vector3i",
-    "Vector4i",
-    "Array",
-    "Dictionary",
-    "NodePath",
-    "StringName",
-    "Color",
-    "Rect2",
-    "Rect2i",
-    "Transform2D",
-    "Transform3D",
-    "Basis",
-    "AABB",
-    "Plane",
-    "Quaternion",
-    "Projection",
-    "RID",
-    "Callable",
-    "Signal",
-    "PackedByteArray",
-    "PackedInt32Array",
-    "PackedInt64Array",
-    "PackedFloat32Array",
-    "PackedFloat64Array",
-    "PackedStringArray",
-    "PackedColorArray",
-    "PackedVector2Array",
-    "PackedVector3Array",
-    "PackedVector4Array",
-];
+// Built-in types sourced from ClassDB generated VARIANT_TYPES table (37 types).
+// Filtered to exclude "Nil" and "Object" which aren't useful for type completions.
+fn builtin_types() -> impl Iterator<Item = &'static str> {
+    gd_class_db::builtin_generated::VARIANT_TYPES
+        .iter()
+        .copied()
+        .filter(|&t| t != "Nil" && t != "Object")
+}
 
-/// GDScript built-in functions.
-const BUILTIN_FUNCTIONS: &[&str] = &[
-    "print",
-    "prints",
-    "printt",
-    "printerr",
-    "push_error",
-    "push_warning",
-    "str",
-    "int",
-    "float",
-    "bool",
-    "len",
-    "range",
-    "typeof",
-    "is_instance_of",
-    "abs",
-    "sign",
-    "min",
-    "max",
-    "clamp",
-    "lerp",
-    "smoothstep",
-    "sqrt",
-    "pow",
-    "sin",
-    "cos",
-    "tan",
-    "floor",
-    "ceil",
-    "round",
-    "randi",
-    "randf",
-    "randomize",
-    "seed",
-    "hash",
-    "is_equal_approx",
-    "is_zero_approx",
-];
+fn is_builtin_type(name: &str) -> bool {
+    gd_class_db::is_variant_type(name) && name != "Nil" && name != "Object"
+}
+
+// Built-in functions sourced from ClassDB generated UTILITY_FUNCTIONS table (128 functions).
+fn builtin_functions() -> impl Iterator<Item = &'static str> {
+    gd_class_db::utility_function_names()
+}
 
 /// Godot lifecycle methods with snippet parameter templates.
 const LIFECYCLE_METHODS: &[(&str, &str)] = &[
@@ -265,7 +177,7 @@ pub(super) fn resolve_simple_receiver(
     }
 
     // 2b. Built-in types (Vector2, String, Array, etc.) — not in ClassDB but have members
-    if BUILTIN_TYPES.contains(&receiver) || !super::builtins::members_for_class(receiver).is_empty()
+    if is_builtin_type(receiver) || !super::builtins::members_for_class(receiver).is_empty()
     {
         return Some(receiver.to_string());
     }
@@ -660,7 +572,7 @@ fn infer_type_from_value(
 
             // ClassName.new() / ClassName.CONSTANT — first child is a known type
             if gd_class_db::class_exists(first_text)
-                || BUILTIN_TYPES.contains(&first_text)
+                || is_builtin_type(first_text)
                 || !super::builtins::members_for_class(first_text).is_empty()
             {
                 return Some(first_text.to_string());
@@ -697,7 +609,7 @@ fn infer_type_from_value(
             let name = callee.utf8_text(bytes).ok()?;
             // Constructor: class name used as function call
             if gd_class_db::class_exists(name)
-                || BUILTIN_TYPES.contains(&name)
+                || is_builtin_type(name)
                 || !super::builtins::members_for_class(name).is_empty()
             {
                 return Some(name.to_string());
@@ -745,7 +657,7 @@ fn infer_type_from_value(
         "identifier" => {
             let name = node.utf8_text(bytes).ok()?;
             // Class/type name used as value
-            if gd_class_db::class_exists(name) || BUILTIN_TYPES.contains(&name) {
+            if gd_class_db::class_exists(name) || is_builtin_type(name) {
                 return Some(name.to_string());
             }
             // Local variable resolved earlier in the same function
@@ -1184,7 +1096,7 @@ pub fn provide_completions(
     let mut items = Vec::new();
 
     // Keywords
-    for &kw in KEYWORDS {
+    for kw in keywords() {
         items.push(CompletionItem {
             label: kw.to_string(),
             kind: Some(CompletionItemKind::KEYWORD),
@@ -1193,7 +1105,7 @@ pub fn provide_completions(
     }
 
     // Built-in types
-    for &ty in BUILTIN_TYPES {
+    for ty in builtin_types() {
         let documentation = super::builtins::lookup_type(ty).map(|doc| {
             Documentation::MarkupContent(MarkupContent {
                 kind: MarkupKind::Markdown,
@@ -1209,7 +1121,7 @@ pub fn provide_completions(
     }
 
     // Built-in functions
-    for &func in BUILTIN_FUNCTIONS {
+    for func in builtin_functions() {
         let documentation = super::builtins::lookup_function(func).map(|doc| {
             Documentation::MarkupContent(MarkupContent {
                 kind: MarkupKind::Markdown,

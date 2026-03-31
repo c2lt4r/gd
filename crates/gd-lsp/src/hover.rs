@@ -186,7 +186,7 @@ fn resolve_hover_for_identifier(
         return Some(Hover {
             contents: HoverContents::Markup(MarkupContent {
                 kind: MarkupKind::Markdown,
-                value: super::builtins::format_member_hover(doc),
+                value: super::builtins::format_member_hover(&doc),
             }),
             range: Some(node_range(current)),
         });
@@ -198,7 +198,7 @@ fn resolve_hover_for_identifier(
         return Some(Hover {
             contents: HoverContents::Markup(MarkupContent {
                 kind: MarkupKind::Markdown,
-                value: super::builtins::format_member_hover(doc),
+                value: super::builtins::format_member_hover(&doc),
             }),
             range: Some(node_range(current)),
         });
@@ -554,7 +554,7 @@ fn try_member_hover(
         return Some(Hover {
             contents: HoverContents::Markup(MarkupContent {
                 kind: MarkupKind::Markdown,
-                value: super::builtins::format_member_hover(doc),
+                value: super::builtins::format_member_hover(&doc),
             }),
             range: Some(node_range(ident_node)),
         });
@@ -666,7 +666,7 @@ fn hover_member_on_type(
             return Some(Hover {
                 contents: HoverContents::Markup(MarkupContent {
                     kind: MarkupKind::Markdown,
-                    value: super::builtins::format_member_hover(doc),
+                    value: super::builtins::format_member_hover(&doc),
                 }),
                 range: Some(node_range(ident_node)),
             });
@@ -968,7 +968,7 @@ fn resolve_classdb_member_for_file(
 
 /// Try to resolve a builtin member using the file's extends class, walking the
 /// ClassDB inheritance chain. Returns the class-specific member doc if found.
-fn resolve_builtin_member_for_file<'a>(file: &GdFile, name: &str) -> Option<&'a BuiltinMember> {
+fn resolve_builtin_member_for_file(file: &GdFile, name: &str) -> Option<BuiltinMember> {
     let extends = extends_classdb_class(file)?;
     let mut current: &str = extends;
     loop {
