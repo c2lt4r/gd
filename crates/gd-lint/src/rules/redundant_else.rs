@@ -1,3 +1,4 @@
+use gd_core::cfg::FunctionCfg;
 use gd_core::gd_ast::{self, GdFile, GdStmt};
 
 use super::{Fix, LintCategory, LintDiagnostic, LintRule, Severity};
@@ -55,14 +56,12 @@ fn check_redundant_else(stmt: &GdStmt<'_>, source: &str, diags: &mut Vec<LintDia
     });
 }
 
-/// Check if the last statement in a body is a terminator.
+/// Check if the body always transfers control on every path.
+///
+/// Builds a sub-body CFG where `break`/`continue` without an enclosing
+/// loop are treated as body exits (not fallthrough).
 fn body_always_terminates(body: &[GdStmt<'_>]) -> bool {
-    body.last().is_some_and(|stmt| {
-        matches!(
-            stmt,
-            GdStmt::Return { .. } | GdStmt::Break { .. } | GdStmt::Continue { .. }
-        )
-    })
+    !FunctionCfg::build_body(body).can_fall_through()
 }
 
 fn generate_else_fix(else_node: &tree_sitter::Node<'_>, source: &str) -> Option<Fix> {
@@ -196,9 +195,11 @@ mod tests {
     }
 
     #[test]
-    fn no_warning_if_return_not_last() {
+    fn warns_when_return_precedes_dead_code() {
+        // The if-body always terminates (return), even though dead code
+        // follows it. The else is still redundant.
         let source = "func f(x: int) -> void:\n\tif x > 0:\n\t\treturn\n\t\tprint(\"unreachable\")\n\telse:\n\t\tprint(x)\n";
-        assert!(check(source).is_empty());
+        assert_eq!(check(source).len(), 1);
     }
 
     #[test]

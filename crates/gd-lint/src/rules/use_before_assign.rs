@@ -1,5 +1,7 @@
+use gd_core::cfg::dataflow::{self, DataflowAnalysis, Direction, Lattice};
+use gd_core::cfg::{BasicBlock, FunctionCfg, Terminator};
 use gd_core::gd_ast::{GdDecl, GdExpr, GdExtends, GdFile, GdStmt};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use super::{LintCategory, LintDiagnostic, LintRule, Severity};
 use gd_core::config::LintConfig;
@@ -27,15 +29,17 @@ impl LintRule for UseBeforeAssign {
 
         let func_info = collect_function_info(file, &members);
 
-        // For Node subclasses, members assigned in _ready() or _init() (directly
-        // or transitively through called methods) are guaranteed initialized
-        // before any other user method runs.
-        let extends_class = match file.extends {
-            Some(GdExtends::Class(cls)) => Some(cls),
-            _ => None,
-        };
-        let ready_assigned = extends_class
-            .filter(|cls| gd_class_db::inherits(cls, "Node") || *cls == "Node")
+        // For Node subclasses, members assigned in _ready() or _init()
+        // (directly or transitively) are guaranteed initialized before any
+        // other user method runs.
+        let ready_assigned = file
+            .extends
+            .and_then(|ext| match ext {
+                GdExtends::Class(cls) if gd_class_db::inherits(cls, "Node") || cls == "Node" => {
+                    Some(cls)
+                }
+                _ => None,
+            })
             .map(|_| {
                 let mut assigned = transitive_assigns("_ready", &func_info);
                 assigned.extend(transitive_assigns("_init", &func_info));
@@ -44,12 +48,25 @@ impl LintRule for UseBeforeAssign {
             .unwrap_or_default();
 
         let mut diags = Vec::new();
-        check_functions(file, &members, &func_info, &ready_assigned, &mut diags);
+        for decl in &file.declarations {
+            if let GdDecl::Func(func) = decl {
+                let initial = if func.name == "_ready" || func.name == "_init" {
+                    HashSet::new()
+                } else {
+                    ready_assigned.clone()
+                };
+                check_call_sites(func, &members, &func_info, &initial, &mut diags);
+            }
+        }
         diags
     }
 }
 
-/// Collect class-level member variable names that have no initializer or `= null`.
+// ═══════════════════════════════════════════════════════════════════════
+//  Member variable collection
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Collect class-level member variable names with no initializer or `= null`.
 fn collect_member_vars(file: &GdFile) -> HashSet<String> {
     let mut members = HashSet::new();
     for decl in &file.declarations {
@@ -68,9 +85,67 @@ fn collect_member_vars(file: &GdFile) -> HashSet<String> {
     members
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+//  Dataflow: definitely-assigned members
+// ═══════════════════════════════════════════════════════════════════════
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct AssignedMembers(HashSet<String>);
+
+impl Lattice for AssignedMembers {
+    fn bottom() -> Self {
+        Self(HashSet::new())
+    }
+
+    /// Must-analysis: a member is definitely assigned only if assigned on
+    /// ALL incoming paths (intersection).
+    fn join(&self, other: &Self) -> Self {
+        Self(self.0.intersection(&other.0).cloned().collect())
+    }
+}
+
+struct MemberAssignAnalysis<'a> {
+    members: &'a HashSet<String>,
+    initial: HashSet<String>,
+}
+
+impl DataflowAnalysis for MemberAssignAnalysis<'_> {
+    type State = AssignedMembers;
+
+    fn direction(&self) -> Direction {
+        Direction::Forward
+    }
+
+    fn initial_state(&self) -> AssignedMembers {
+        AssignedMembers(self.initial.clone())
+    }
+
+    fn transfer(
+        &self,
+        block: &BasicBlock<'_>,
+        _terminator: Option<&Terminator<'_>>,
+        state: &AssignedMembers,
+    ) -> AssignedMembers {
+        let mut out = state.clone();
+        for stmt in &block.stmts {
+            if let Some(member) = extract_member_assign(stmt, self.members) {
+                out.0.insert(member);
+            }
+        }
+        out
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  Per-function info collection (Level 1)
+// ═══════════════════════════════════════════════════════════════════════
+
 struct FuncInfo {
+    /// Members dereferenced before being definitely assigned in this function.
     reads_before_assign: HashSet<String>,
+    /// All members assigned anywhere in this function (flat — for transitive tracking).
     assigns: HashSet<String>,
+    /// All local function names called in this function.
     calls: HashSet<String>,
 }
 
@@ -78,28 +153,47 @@ fn collect_function_info(file: &GdFile, members: &HashSet<String>) -> HashMap<St
     let mut info = HashMap::new();
     for decl in &file.declarations {
         if let GdDecl::Func(func) = decl {
-            let mut assigned = HashSet::new();
+            let cfg = FunctionCfg::build(&func.body);
+            let result = dataflow::solve(
+                &cfg,
+                &MemberAssignAnalysis {
+                    members,
+                    initial: HashSet::new(),
+                },
+            );
+
             let mut reads = HashSet::new();
+            let mut assigns = HashSet::new();
             let mut null_checked = HashSet::new();
             let mut calls = HashSet::new();
-            scan_stmts_for_member_access(
-                &func.body,
-                members,
-                &mut assigned,
-                &mut reads,
-                &mut null_checked,
-            );
-            collect_calls_in_stmts(&func.body, &mut calls);
+
+            let reachable = cfg.reachable_blocks();
+            for block in &cfg.blocks {
+                if !reachable.contains(&block.id) {
+                    continue;
+                }
+                let mut state = result.entry(block.id).clone();
+                for stmt in &block.stmts {
+                    analyze_member_usage(stmt, members, &state.0, &mut reads, &mut null_checked);
+                    collect_calls(stmt, &mut calls);
+                    if let Some(member) = extract_member_assign(stmt, members) {
+                        state.0.insert(member.clone());
+                        assigns.insert(member);
+                    }
+                }
+            }
+
             // Members that are null-checked (bare identifier reads) within the
             // function are assumed to be properly guarded before dereference.
             for m in &null_checked {
                 reads.remove(m);
             }
+
             info.insert(
                 func.name.to_string(),
                 FuncInfo {
                     reads_before_assign: reads,
-                    assigns: assigned,
+                    assigns,
                     calls,
                 },
             );
@@ -108,127 +202,106 @@ fn collect_function_info(file: &GdFile, members: &HashSet<String>) -> HashMap<St
     info
 }
 
-/// Collect all function names called within statements (for transitive assignment tracking).
-fn collect_calls_in_stmts(stmts: &[GdStmt], calls: &mut HashSet<String>) {
-    for stmt in stmts {
-        collect_calls_in_expr_tree(stmt, calls);
-        // Recurse into control flow bodies
-        match stmt {
-            GdStmt::If(if_stmt) => {
-                collect_calls_in_stmts(&if_stmt.body, calls);
-                for (_, branch) in &if_stmt.elif_branches {
-                    collect_calls_in_stmts(branch, calls);
-                }
-                if let Some(else_body) = &if_stmt.else_body {
-                    collect_calls_in_stmts(else_body, calls);
-                }
+// ═══════════════════════════════════════════════════════════════════════
+//  Call-site checking (Level 2)
+// ═══════════════════════════════════════════════════════════════════════
+
+fn check_call_sites(
+    func: &gd_core::gd_ast::GdFunc<'_>,
+    members: &HashSet<String>,
+    func_info: &HashMap<String, FuncInfo>,
+    initial_assigned: &HashSet<String>,
+    diags: &mut Vec<LintDiagnostic>,
+) {
+    let cfg = FunctionCfg::build(&func.body);
+    let result = dataflow::solve(
+        &cfg,
+        &MemberAssignAnalysis {
+            members,
+            initial: initial_assigned.clone(),
+        },
+    );
+
+    let reachable = cfg.reachable_blocks();
+    for block in &cfg.blocks {
+        if !reachable.contains(&block.id) {
+            continue;
+        }
+        let mut state = result.entry(block.id).clone();
+        for stmt in &block.stmts {
+            check_calls_in_stmt(stmt, &state.0, func_info, func.name, diags);
+            if let Some(member) = extract_member_assign(stmt, members) {
+                state.0.insert(member);
             }
-            GdStmt::For { body, .. } | GdStmt::While { body, .. } => {
-                collect_calls_in_stmts(body, calls);
-            }
-            GdStmt::Match { arms, .. } => {
-                for arm in arms {
-                    collect_calls_in_stmts(&arm.body, calls);
-                }
-            }
-            _ => {}
         }
     }
 }
 
-/// Extract call names from all expressions in a statement.
-fn collect_calls_in_expr_tree(stmt: &GdStmt, calls: &mut HashSet<String>) {
-    match stmt {
-        GdStmt::Expr { expr, .. } => collect_calls_in_expr(expr, calls),
-        GdStmt::Var(var) => {
-            if let Some(value) = &var.value {
-                collect_calls_in_expr(value, calls);
+/// Check all calls in a statement against the current assigned state.
+fn check_calls_in_stmt(
+    stmt: &GdStmt<'_>,
+    assigned: &HashSet<String>,
+    func_info: &HashMap<String, FuncInfo>,
+    caller_name: &str,
+    diags: &mut Vec<LintDiagnostic>,
+) {
+    visit_exprs_in_stmt(stmt, &mut |expr| {
+        let (callee_name, call_node) = match expr {
+            GdExpr::Call { callee, node, .. } => {
+                if let GdExpr::Ident { name, .. } = callee.as_ref() {
+                    (Some(*name), Some(node))
+                } else {
+                    (None, None)
+                }
+            }
+            GdExpr::MethodCall {
+                receiver,
+                method,
+                node,
+                ..
+            } => {
+                if let GdExpr::Ident { name: "self", .. } = receiver.as_ref() {
+                    (Some(*method), Some(node))
+                } else {
+                    (None, None)
+                }
+            }
+            _ => (None, None),
+        };
+
+        if let Some(callee) = callee_name
+            && let Some(node) = call_node
+            && callee != caller_name
+            && let Some(info) = func_info.get(callee)
+        {
+            for member in &info.reads_before_assign {
+                if !assigned.contains(member) {
+                    diags.push(LintDiagnostic {
+                        rule: "use-before-assign",
+                        message: format!(
+                            "`{callee}()` accesses member `{member}` which may not be assigned yet at this call site"
+                        ),
+                        severity: Severity::Warning,
+                        line: node.start_position().row,
+                        column: node.start_position().column,
+                        end_column: None,
+                        fix: None,
+                        context_lines: None,
+                    });
+                }
             }
         }
-        GdStmt::Assign { value, .. } | GdStmt::AugAssign { value, .. } => {
-            collect_calls_in_expr(value, calls);
-        }
-        GdStmt::Return { value: Some(v), .. } => collect_calls_in_expr(v, calls),
-        _ => {}
-    }
+    });
 }
 
-fn collect_calls_in_expr(expr: &GdExpr, calls: &mut HashSet<String>) {
-    match expr {
-        // Plain call: func_name()
-        GdExpr::Call { callee, args, .. } => {
-            if let GdExpr::Ident { name, .. } = callee.as_ref() {
-                calls.insert((*name).to_string());
-            }
-            collect_calls_in_expr(callee, calls);
-            for a in args {
-                collect_calls_in_expr(a, calls);
-            }
-        }
-        // self.method()
-        GdExpr::MethodCall {
-            receiver,
-            method,
-            args,
-            ..
-        } => {
-            if let GdExpr::Ident { name: "self", .. } = receiver.as_ref() {
-                calls.insert((*method).to_string());
-            }
-            collect_calls_in_expr(receiver, calls);
-            for a in args {
-                collect_calls_in_expr(a, calls);
-            }
-        }
-        GdExpr::BinOp { left, right, .. } => {
-            collect_calls_in_expr(left, calls);
-            collect_calls_in_expr(right, calls);
-        }
-        GdExpr::UnaryOp { operand, .. } => collect_calls_in_expr(operand, calls),
-        GdExpr::PropertyAccess { receiver, .. } => collect_calls_in_expr(receiver, calls),
-        GdExpr::Subscript {
-            receiver, index, ..
-        } => {
-            collect_calls_in_expr(receiver, calls);
-            collect_calls_in_expr(index, calls);
-        }
-        GdExpr::Ternary {
-            condition,
-            true_val,
-            false_val,
-            ..
-        } => {
-            collect_calls_in_expr(condition, calls);
-            collect_calls_in_expr(true_val, calls);
-            collect_calls_in_expr(false_val, calls);
-        }
-        GdExpr::Array { elements, .. } => {
-            for e in elements {
-                collect_calls_in_expr(e, calls);
-            }
-        }
-        GdExpr::Dict { pairs, .. } => {
-            for (k, v) in pairs {
-                collect_calls_in_expr(k, calls);
-                collect_calls_in_expr(v, calls);
-            }
-        }
-        GdExpr::Cast { expr: inner, .. }
-        | GdExpr::Is { expr: inner, .. }
-        | GdExpr::Await { expr: inner, .. } => {
-            collect_calls_in_expr(inner, calls);
-        }
-        _ => {}
-    }
-}
+// ═══════════════════════════════════════════════════════════════════════
+//  Transitive assignment tracking
+// ═══════════════════════════════════════════════════════════════════════
 
-/// Compute the transitive set of member assignments reachable from a function
-/// by following its call graph (BFS). E.g. `_ready -> _build_ui -> _build_move_panel`
-/// will collect assigns from all three functions.
 fn transitive_assigns(start: &str, func_info: &HashMap<String, FuncInfo>) -> HashSet<String> {
     let mut result = HashSet::new();
     let mut visited = HashSet::new();
-    let mut queue = std::collections::VecDeque::new();
+    let mut queue = VecDeque::new();
 
     if func_info.contains_key(start) {
         queue.push_back(start.to_string());
@@ -250,491 +323,140 @@ fn transitive_assigns(start: &str, func_info: &HashMap<String, FuncInfo>) -> Has
     result
 }
 
-fn scan_stmts_for_member_access(
-    stmts: &[GdStmt],
-    members: &HashSet<String>,
-    assigned: &mut HashSet<String>,
-    reads_before_assign: &mut HashSet<String>,
-    null_checked: &mut HashSet<String>,
-) {
-    for stmt in stmts {
-        scan_statement(stmt, members, assigned, reads_before_assign, null_checked);
-    }
-}
+// ═══════════════════════════════════════════════════════════════════════
+//  Expression helpers
+// ═══════════════════════════════════════════════════════════════════════
 
-fn scan_statement(
-    stmt: &GdStmt,
-    members: &HashSet<String>,
-    assigned: &mut HashSet<String>,
-    reads_before_assign: &mut HashSet<String>,
-    null_checked: &mut HashSet<String>,
-) {
-    // Check for member assignment: member = ... or self.member = ...
-    if let GdStmt::Assign { target, value, .. } = stmt
-        && let Some(member) = extract_member_assign(target, members)
-    {
-        collect_member_reads_expr(value, members, assigned, reads_before_assign, null_checked);
-        assigned.insert(member);
-        return;
-    }
-
-    // Collect member reads from expressions in this statement
-    match stmt {
-        GdStmt::Expr { expr, .. } => {
-            collect_member_reads_expr(expr, members, assigned, reads_before_assign, null_checked);
-        }
-        GdStmt::Var(var) => {
-            if let Some(value) = &var.value {
-                collect_member_reads_expr(
-                    value,
-                    members,
-                    assigned,
-                    reads_before_assign,
-                    null_checked,
-                );
+/// Extract member name if this statement assigns to a tracked member.
+fn extract_member_assign(stmt: &GdStmt, members: &HashSet<String>) -> Option<String> {
+    if let GdStmt::Assign { target, .. } = stmt {
+        match target {
+            GdExpr::Ident { name, .. } if members.contains(*name) => {
+                return Some((*name).to_string());
             }
-        }
-        GdStmt::Assign { target, value, .. } | GdStmt::AugAssign { target, value, .. } => {
-            collect_member_reads_expr(target, members, assigned, reads_before_assign, null_checked);
-            collect_member_reads_expr(value, members, assigned, reads_before_assign, null_checked);
-        }
-        GdStmt::Return { value: Some(v), .. } => {
-            collect_member_reads_expr(v, members, assigned, reads_before_assign, null_checked);
-        }
-        _ => {}
-    }
-
-    // Recurse into control flow bodies
-    match stmt {
-        GdStmt::If(if_stmt) => {
-            collect_member_reads_expr(
-                &if_stmt.condition,
-                members,
-                assigned,
-                reads_before_assign,
-                null_checked,
-            );
-            scan_stmts_for_member_access(
-                &if_stmt.body,
-                members,
-                assigned,
-                reads_before_assign,
-                null_checked,
-            );
-            for (cond, branch) in &if_stmt.elif_branches {
-                collect_member_reads_expr(
-                    cond,
-                    members,
-                    assigned,
-                    reads_before_assign,
-                    null_checked,
-                );
-                scan_stmts_for_member_access(
-                    branch,
-                    members,
-                    assigned,
-                    reads_before_assign,
-                    null_checked,
-                );
-            }
-            if let Some(else_body) = &if_stmt.else_body {
-                scan_stmts_for_member_access(
-                    else_body,
-                    members,
-                    assigned,
-                    reads_before_assign,
-                    null_checked,
-                );
-            }
-        }
-        GdStmt::For { body, .. } | GdStmt::While { body, .. } => {
-            scan_stmts_for_member_access(
-                body,
-                members,
-                assigned,
-                reads_before_assign,
-                null_checked,
-            );
-        }
-        GdStmt::Match { arms, .. } => {
-            for arm in arms {
-                scan_stmts_for_member_access(
-                    &arm.body,
-                    members,
-                    assigned,
-                    reads_before_assign,
-                    null_checked,
-                );
-            }
-        }
-        _ => {}
-    }
-}
-
-/// Check if an assignment target is a member variable. Returns the member name.
-fn extract_member_assign(target: &GdExpr, members: &HashSet<String>) -> Option<String> {
-    match target {
-        // member = value
-        GdExpr::Ident { name, .. } if members.contains(*name) => Some((*name).to_string()),
-        // self.member = value
-        GdExpr::PropertyAccess {
-            receiver, property, ..
-        } if matches!(receiver.as_ref(), GdExpr::Ident { name: "self", .. })
-            && members.contains(*property) =>
-        {
-            Some((*property).to_string())
-        }
-        _ => None,
-    }
-}
-
-/// Recursively collect member reads from an expression tree.
-fn collect_member_reads_expr(
-    expr: &GdExpr,
-    members: &HashSet<String>,
-    assigned: &HashSet<String>,
-    reads_before_assign: &mut HashSet<String>,
-    null_checked: &mut HashSet<String>,
-) {
-    match expr {
-        // Bare identifier reads are safe (null checks, comparisons, args)
-        // but record them as evidence the function is null-aware about this member.
-        GdExpr::Ident { name, .. } if members.contains(*name) && !assigned.contains(*name) => {
-            null_checked.insert((*name).to_string());
-        }
-
-        // self.member — flag member reads via self
-        GdExpr::PropertyAccess {
-            receiver, property, ..
-        } if matches!(receiver.as_ref(), GdExpr::Ident { name: "self", .. })
-            && members.contains(*property)
-            && !assigned.contains(*property) =>
-        {
-            reads_before_assign.insert((*property).to_string());
-        }
-
-        // member.something / member.method() / member[index] — dereferencing a possibly-unassigned member
-        GdExpr::PropertyAccess { receiver, .. }
-        | GdExpr::MethodCall { receiver, .. }
-        | GdExpr::Subscript { receiver, .. } => {
-            if let GdExpr::Ident { name, .. } = receiver.as_ref()
-                && members.contains(*name)
-                && !assigned.contains(*name)
+            GdExpr::PropertyAccess {
+                receiver, property, ..
+            } if matches!(receiver.as_ref(), GdExpr::Ident { name: "self", .. })
+                && members.contains(*property) =>
             {
-                reads_before_assign.insert((*name).to_string());
-            } else {
-                recurse_member_reads(expr, members, assigned, reads_before_assign, null_checked);
-            }
-        }
-
-        // Recurse into sub-expressions
-        _ => {
-            recurse_member_reads(expr, members, assigned, reads_before_assign, null_checked);
-        }
-    }
-}
-
-fn recurse_member_reads(
-    expr: &GdExpr,
-    members: &HashSet<String>,
-    assigned: &HashSet<String>,
-    reads_before_assign: &mut HashSet<String>,
-    null_checked: &mut HashSet<String>,
-) {
-    match expr {
-        GdExpr::Call { callee, args, .. } => {
-            collect_member_reads_expr(callee, members, assigned, reads_before_assign, null_checked);
-            for a in args {
-                collect_member_reads_expr(a, members, assigned, reads_before_assign, null_checked);
-            }
-        }
-        GdExpr::MethodCall { receiver, args, .. } => {
-            collect_member_reads_expr(
-                receiver,
-                members,
-                assigned,
-                reads_before_assign,
-                null_checked,
-            );
-            for a in args {
-                collect_member_reads_expr(a, members, assigned, reads_before_assign, null_checked);
-            }
-        }
-        GdExpr::PropertyAccess { receiver, .. } => {
-            collect_member_reads_expr(
-                receiver,
-                members,
-                assigned,
-                reads_before_assign,
-                null_checked,
-            );
-        }
-        GdExpr::BinOp { left, right, .. } => {
-            collect_member_reads_expr(left, members, assigned, reads_before_assign, null_checked);
-            collect_member_reads_expr(right, members, assigned, reads_before_assign, null_checked);
-        }
-        GdExpr::UnaryOp { operand, .. } => {
-            collect_member_reads_expr(
-                operand,
-                members,
-                assigned,
-                reads_before_assign,
-                null_checked,
-            );
-        }
-        GdExpr::Subscript {
-            receiver, index, ..
-        } => {
-            collect_member_reads_expr(
-                receiver,
-                members,
-                assigned,
-                reads_before_assign,
-                null_checked,
-            );
-            collect_member_reads_expr(index, members, assigned, reads_before_assign, null_checked);
-        }
-        GdExpr::Ternary {
-            condition,
-            true_val,
-            false_val,
-            ..
-        } => {
-            collect_member_reads_expr(
-                condition,
-                members,
-                assigned,
-                reads_before_assign,
-                null_checked,
-            );
-            collect_member_reads_expr(
-                true_val,
-                members,
-                assigned,
-                reads_before_assign,
-                null_checked,
-            );
-            collect_member_reads_expr(
-                false_val,
-                members,
-                assigned,
-                reads_before_assign,
-                null_checked,
-            );
-        }
-        GdExpr::Array { elements, .. } => {
-            for e in elements {
-                collect_member_reads_expr(e, members, assigned, reads_before_assign, null_checked);
-            }
-        }
-        GdExpr::Dict { pairs, .. } => {
-            for (k, v) in pairs {
-                collect_member_reads_expr(k, members, assigned, reads_before_assign, null_checked);
-                collect_member_reads_expr(v, members, assigned, reads_before_assign, null_checked);
-            }
-        }
-        GdExpr::Cast { expr: inner, .. }
-        | GdExpr::Is { expr: inner, .. }
-        | GdExpr::Await { expr: inner, .. } => {
-            collect_member_reads_expr(inner, members, assigned, reads_before_assign, null_checked);
-        }
-        _ => {}
-    }
-}
-
-fn check_functions(
-    file: &GdFile,
-    members: &HashSet<String>,
-    func_info: &HashMap<String, FuncInfo>,
-    ready_assigned: &HashSet<String>,
-    diags: &mut Vec<LintDiagnostic>,
-) {
-    for decl in &file.declarations {
-        if let GdDecl::Func(func) = decl {
-            // For non-_ready/_init functions in Node subclasses, pre-populate
-            // with members that _ready() and _init() guarantee are assigned.
-            let mut assigned_so_far = if func.name == "_ready" || func.name == "_init" {
-                HashSet::new()
-            } else {
-                ready_assigned.clone()
-            };
-            check_stmts_for_calls(
-                &func.body,
-                members,
-                func_info,
-                func.name,
-                &mut assigned_so_far,
-                diags,
-            );
-        }
-    }
-}
-
-fn check_stmts_for_calls(
-    stmts: &[GdStmt],
-    members: &HashSet<String>,
-    func_info: &HashMap<String, FuncInfo>,
-    caller_name: &str,
-    assigned_so_far: &mut HashSet<String>,
-    diags: &mut Vec<LintDiagnostic>,
-) {
-    for stmt in stmts {
-        // Track member assignments
-        if let GdStmt::Assign { target, .. } = stmt
-            && let Some(member) = extract_member_assign(target, members)
-        {
-            assigned_so_far.insert(member);
-        }
-
-        // Check for calls
-        find_calls_in_stmt(stmt, func_info, caller_name, assigned_so_far, diags);
-
-        // Recurse into control flow bodies
-        match stmt {
-            GdStmt::If(if_stmt) => {
-                check_stmts_for_calls(
-                    &if_stmt.body,
-                    members,
-                    func_info,
-                    caller_name,
-                    assigned_so_far,
-                    diags,
-                );
-                for (_, branch) in &if_stmt.elif_branches {
-                    check_stmts_for_calls(
-                        branch,
-                        members,
-                        func_info,
-                        caller_name,
-                        assigned_so_far,
-                        diags,
-                    );
-                }
-                if let Some(else_body) = &if_stmt.else_body {
-                    check_stmts_for_calls(
-                        else_body,
-                        members,
-                        func_info,
-                        caller_name,
-                        assigned_so_far,
-                        diags,
-                    );
-                }
-            }
-            GdStmt::For { body, .. } | GdStmt::While { body, .. } => {
-                check_stmts_for_calls(
-                    body,
-                    members,
-                    func_info,
-                    caller_name,
-                    assigned_so_far,
-                    diags,
-                );
-            }
-            GdStmt::Match { arms, .. } => {
-                for arm in arms {
-                    check_stmts_for_calls(
-                        &arm.body,
-                        members,
-                        func_info,
-                        caller_name,
-                        assigned_so_far,
-                        diags,
-                    );
-                }
+                return Some((*property).to_string());
             }
             _ => {}
         }
     }
+    None
 }
 
-/// Check all expressions in a statement for calls to functions that read unassigned members.
-fn find_calls_in_stmt(
-    stmt: &GdStmt,
-    func_info: &HashMap<String, FuncInfo>,
-    caller_name: &str,
-    assigned_so_far: &HashSet<String>,
-    diags: &mut Vec<LintDiagnostic>,
+/// Analyse member accesses in a statement, distinguishing dereferences
+/// (member.x, member.method(), member[idx]) from bare identifier reads
+/// (if member:, print(member)).
+///
+/// Context-aware: an identifier that is the receiver of a property access /
+/// method call / subscript is a dereference, NOT a null-check.
+fn analyze_member_usage(
+    stmt: &GdStmt<'_>,
+    members: &HashSet<String>,
+    assigned: &HashSet<String>,
+    reads: &mut HashSet<String>,
+    null_checked: &mut HashSet<String>,
 ) {
+    // Extract top-level expressions from the statement. analyze_expr handles
+    // all recursion — do NOT also use visit_exprs_in_stmt, which would
+    // double-recurse and lose the deref-vs-bare-ident context.
     match stmt {
         GdStmt::Expr { expr, .. } => {
-            find_calls_in_expr(expr, func_info, caller_name, assigned_so_far, diags);
+            analyze_expr(expr, members, assigned, reads, null_checked);
         }
         GdStmt::Var(var) => {
             if let Some(value) = &var.value {
-                find_calls_in_expr(value, func_info, caller_name, assigned_so_far, diags);
+                analyze_expr(value, members, assigned, reads, null_checked);
             }
         }
-        GdStmt::Assign { value, .. } | GdStmt::AugAssign { value, .. } => {
-            find_calls_in_expr(value, func_info, caller_name, assigned_so_far, diags);
+        GdStmt::Assign { target, value, .. } | GdStmt::AugAssign { target, value, .. } => {
+            analyze_expr(target, members, assigned, reads, null_checked);
+            analyze_expr(value, members, assigned, reads, null_checked);
         }
         GdStmt::Return { value: Some(v), .. } => {
-            find_calls_in_expr(v, func_info, caller_name, assigned_so_far, diags);
-        }
-        GdStmt::If(if_stmt) => {
-            find_calls_in_expr(
-                &if_stmt.condition,
-                func_info,
-                caller_name,
-                assigned_so_far,
-                diags,
-            );
+            analyze_expr(v, members, assigned, reads, null_checked);
         }
         _ => {}
     }
 }
 
-fn find_calls_in_expr(
-    expr: &GdExpr,
-    func_info: &HashMap<String, FuncInfo>,
-    caller_name: &str,
-    assigned_so_far: &HashSet<String>,
-    diags: &mut Vec<LintDiagnostic>,
+fn analyze_expr(
+    expr: &GdExpr<'_>,
+    members: &HashSet<String>,
+    assigned: &HashSet<String>,
+    reads: &mut HashSet<String>,
+    null_checked: &mut HashSet<String>,
 ) {
     match expr {
-        // Plain call: func_name()
-        GdExpr::Call {
-            callee, args, node, ..
-        } => {
-            if let GdExpr::Ident { name, .. } = callee.as_ref() {
-                check_callee(name, node, func_info, caller_name, assigned_so_far, diags);
-            }
-            find_calls_in_expr(callee, func_info, caller_name, assigned_so_far, diags);
-            for a in args {
-                find_calls_in_expr(a, func_info, caller_name, assigned_so_far, diags);
-            }
-        }
-        // self.method()
-        GdExpr::MethodCall {
-            receiver,
-            method,
-            args,
-            node,
-            ..
+        // Dereference: member.property, self.member
+        GdExpr::PropertyAccess {
+            receiver, property, ..
         } => {
             if let GdExpr::Ident { name: "self", .. } = receiver.as_ref() {
-                check_callee(method, node, func_info, caller_name, assigned_so_far, diags);
+                // self.member — flag as dereference of member
+                if members.contains(*property) && !assigned.contains(*property) {
+                    reads.insert((*property).to_string());
+                }
+            } else if let GdExpr::Ident { name, .. } = receiver.as_ref() {
+                // member.property — flag as dereference of member
+                if members.contains(*name) && !assigned.contains(*name) {
+                    reads.insert((*name).to_string());
+                }
+            } else {
+                // Recurse into complex receiver (don't treat sub-idents as bare)
+                analyze_expr(receiver, members, assigned, reads, null_checked);
             }
-            find_calls_in_expr(receiver, func_info, caller_name, assigned_so_far, diags);
+        }
+
+        // Dereference: member.method()
+        GdExpr::MethodCall { receiver, args, .. } => {
+            if let GdExpr::Ident { name, .. } = receiver.as_ref() {
+                if members.contains(*name) && !assigned.contains(*name) {
+                    reads.insert((*name).to_string());
+                }
+            } else {
+                analyze_expr(receiver, members, assigned, reads, null_checked);
+            }
             for a in args {
-                find_calls_in_expr(a, func_info, caller_name, assigned_so_far, diags);
+                analyze_expr(a, members, assigned, reads, null_checked);
             }
         }
-        GdExpr::BinOp { left, right, .. } => {
-            find_calls_in_expr(left, func_info, caller_name, assigned_so_far, diags);
-            find_calls_in_expr(right, func_info, caller_name, assigned_so_far, diags);
-        }
-        GdExpr::UnaryOp { operand, .. } => {
-            find_calls_in_expr(operand, func_info, caller_name, assigned_so_far, diags);
-        }
-        GdExpr::PropertyAccess { receiver, .. } => {
-            find_calls_in_expr(receiver, func_info, caller_name, assigned_so_far, diags);
-        }
+
+        // Dereference: member[index]
         GdExpr::Subscript {
             receiver, index, ..
         } => {
-            find_calls_in_expr(receiver, func_info, caller_name, assigned_so_far, diags);
-            find_calls_in_expr(index, func_info, caller_name, assigned_so_far, diags);
+            if let GdExpr::Ident { name, .. } = receiver.as_ref() {
+                if members.contains(*name) && !assigned.contains(*name) {
+                    reads.insert((*name).to_string());
+                }
+            } else {
+                analyze_expr(receiver, members, assigned, reads, null_checked);
+            }
+            analyze_expr(index, members, assigned, reads, null_checked);
+        }
+
+        // Bare identifier: null-check / safe use (not a dereference)
+        GdExpr::Ident { name, .. } if members.contains(*name) && !assigned.contains(*name) => {
+            null_checked.insert((*name).to_string());
+        }
+
+        // Recurse into sub-expressions for all other types
+        GdExpr::Call { callee, args, .. } => {
+            analyze_expr(callee, members, assigned, reads, null_checked);
+            for a in args {
+                analyze_expr(a, members, assigned, reads, null_checked);
+            }
+        }
+        GdExpr::BinOp { left, right, .. } => {
+            analyze_expr(left, members, assigned, reads, null_checked);
+            analyze_expr(right, members, assigned, reads, null_checked);
+        }
+        GdExpr::UnaryOp { operand, .. } => {
+            analyze_expr(operand, members, assigned, reads, null_checked);
         }
         GdExpr::Ternary {
             condition,
@@ -742,60 +464,138 @@ fn find_calls_in_expr(
             false_val,
             ..
         } => {
-            find_calls_in_expr(condition, func_info, caller_name, assigned_so_far, diags);
-            find_calls_in_expr(true_val, func_info, caller_name, assigned_so_far, diags);
-            find_calls_in_expr(false_val, func_info, caller_name, assigned_so_far, diags);
+            analyze_expr(condition, members, assigned, reads, null_checked);
+            analyze_expr(true_val, members, assigned, reads, null_checked);
+            analyze_expr(false_val, members, assigned, reads, null_checked);
         }
         GdExpr::Array { elements, .. } => {
             for e in elements {
-                find_calls_in_expr(e, func_info, caller_name, assigned_so_far, diags);
+                analyze_expr(e, members, assigned, reads, null_checked);
             }
         }
         GdExpr::Dict { pairs, .. } => {
             for (k, v) in pairs {
-                find_calls_in_expr(k, func_info, caller_name, assigned_so_far, diags);
-                find_calls_in_expr(v, func_info, caller_name, assigned_so_far, diags);
+                analyze_expr(k, members, assigned, reads, null_checked);
+                analyze_expr(v, members, assigned, reads, null_checked);
             }
         }
         GdExpr::Cast { expr: inner, .. }
         | GdExpr::Is { expr: inner, .. }
         | GdExpr::Await { expr: inner, .. } => {
-            find_calls_in_expr(inner, func_info, caller_name, assigned_so_far, diags);
+            analyze_expr(inner, members, assigned, reads, null_checked);
+        }
+        GdExpr::SuperCall { args, .. } => {
+            for a in args {
+                analyze_expr(a, members, assigned, reads, null_checked);
+            }
         }
         _ => {}
     }
 }
 
-fn check_callee(
-    callee: &str,
-    call_node: &tree_sitter::Node,
-    func_info: &HashMap<String, FuncInfo>,
-    caller_name: &str,
-    assigned_so_far: &HashSet<String>,
-    diags: &mut Vec<LintDiagnostic>,
-) {
-    if callee == caller_name {
-        return;
-    }
-    if let Some(info) = func_info.get(callee) {
-        for member in &info.reads_before_assign {
-            if !assigned_so_far.contains(member) {
-                diags.push(LintDiagnostic {
-                    rule: "use-before-assign",
-                    message: format!(
-                        "`{callee}()` accesses member `{member}` which may not be assigned yet at this call site"
-                    ),
-                    severity: Severity::Warning,
-                    line: call_node.start_position().row,
-                    column: call_node.start_position().column,
-                    end_column: None,
-                    fix: None,
-                    context_lines: None,
-                });
+/// Collect all local function calls (plain or self.method).
+fn collect_calls(stmt: &GdStmt<'_>, calls: &mut HashSet<String>) {
+    visit_exprs_in_stmt(stmt, &mut |expr| match expr {
+        GdExpr::Call { callee, .. } => {
+            if let GdExpr::Ident { name, .. } = callee.as_ref() {
+                calls.insert((*name).to_string());
             }
         }
+        GdExpr::MethodCall {
+            receiver, method, ..
+        } => {
+            if let GdExpr::Ident { name: "self", .. } = receiver.as_ref() {
+                calls.insert((*method).to_string());
+            }
+        }
+        _ => {}
+    });
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  Generic expression visitor (per-statement)
+// ═══════════════════════════════════════════════════════════════════════
+
+fn visit_exprs_in_stmt<'a>(stmt: &'a GdStmt<'a>, f: &mut impl FnMut(&'a GdExpr<'a>)) {
+    match stmt {
+        GdStmt::Expr { expr, .. } => visit_expr(expr, f),
+        GdStmt::Var(var) => {
+            if let Some(value) = &var.value {
+                visit_expr(value, f);
+            }
+        }
+        GdStmt::Assign { target, value, .. } | GdStmt::AugAssign { target, value, .. } => {
+            visit_expr(target, f);
+            visit_expr(value, f);
+        }
+        GdStmt::Return { value: Some(v), .. } => visit_expr(v, f),
+        _ => {}
     }
 }
+
+fn visit_expr<'a>(expr: &'a GdExpr<'a>, f: &mut impl FnMut(&'a GdExpr<'a>)) {
+    f(expr);
+    match expr {
+        GdExpr::Call { callee, args, .. } => {
+            visit_expr(callee, f);
+            for a in args {
+                visit_expr(a, f);
+            }
+        }
+        GdExpr::MethodCall { receiver, args, .. } => {
+            visit_expr(receiver, f);
+            for a in args {
+                visit_expr(a, f);
+            }
+        }
+        GdExpr::PropertyAccess { receiver, .. } => visit_expr(receiver, f),
+        GdExpr::Subscript {
+            receiver, index, ..
+        } => {
+            visit_expr(receiver, f);
+            visit_expr(index, f);
+        }
+        GdExpr::BinOp { left, right, .. } => {
+            visit_expr(left, f);
+            visit_expr(right, f);
+        }
+        GdExpr::UnaryOp { operand, .. } => visit_expr(operand, f),
+        GdExpr::Ternary {
+            condition,
+            true_val,
+            false_val,
+            ..
+        } => {
+            visit_expr(condition, f);
+            visit_expr(true_val, f);
+            visit_expr(false_val, f);
+        }
+        GdExpr::Array { elements, .. } => {
+            for e in elements {
+                visit_expr(e, f);
+            }
+        }
+        GdExpr::Dict { pairs, .. } => {
+            for (k, v) in pairs {
+                visit_expr(k, f);
+                visit_expr(v, f);
+            }
+        }
+        GdExpr::Cast { expr: inner, .. }
+        | GdExpr::Is { expr: inner, .. }
+        | GdExpr::Await { expr: inner, .. } => visit_expr(inner, f),
+        GdExpr::SuperCall { args, .. } => {
+            for a in args {
+                visit_expr(a, f);
+            }
+        }
+        _ => {}
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  Tests
+// ═══════════════════════════════════════════════════════════════════════
 
 #[cfg(test)]
 mod tests {
@@ -890,7 +690,27 @@ func setup():
     }
 
     #[test]
-    fn assignment_in_branch_counts() {
+    fn assignment_in_both_branches_counts() {
+        // Member assigned on ALL paths → definitely assigned at merge.
+        let source = "\
+var target: Node2D
+
+func _ready():
+\tif true:
+\t\ttarget = get_node(\"T\")
+\telse:
+\t\ttarget = get_node(\"U\")
+\tsetup()
+
+func setup():
+\ttarget.visible = true
+";
+        assert!(check(source).is_empty());
+    }
+
+    #[test]
+    fn assignment_in_one_branch_warns() {
+        // Member assigned on only ONE path → not definitely assigned at merge.
         let source = "\
 var target: Node2D
 
@@ -902,7 +722,8 @@ func _ready():
 func setup():
 \ttarget.visible = true
 ";
-        assert!(check(source).is_empty());
+        let diags = check(source);
+        assert_eq!(diags.len(), 1);
     }
 
     #[test]
@@ -959,8 +780,6 @@ func setup():
 
     #[test]
     fn control_ready_assigns_suppresses_other_methods() {
-        // Procedural UI: _ready calls _build_ui which assigns _label,
-        // then _update reads _label — should not warn.
         let source = "\
 extends Control
 
@@ -981,7 +800,6 @@ func _update():
 
     #[test]
     fn control_ready_direct_assign_suppresses() {
-        // Direct assignment in _ready, read in another method.
         let source = "\
 extends Control
 
@@ -999,7 +817,6 @@ func _on_pressed():
 
     #[test]
     fn control_still_warns_in_ready_itself() {
-        // _ready calls setup before assigning — should still warn.
         let source = "\
 extends Control
 
@@ -1019,9 +836,6 @@ func _update():
 
     #[test]
     fn non_node_class_no_suppression() {
-        // RefCounted subclass — no _ready suppression.
-        // Even though _ready assigns _data via _build, RefCounted is not a Node
-        // so other functions calling _use_data should still warn.
         let source = "\
 extends RefCounted
 
@@ -1039,14 +853,12 @@ func process():
 func _use_data():
 \t_data.clear()
 ";
-        // RefCounted is not a Node, so no suppression for process() calling _use_data()
         let diags = check(source);
         assert!(!diags.is_empty());
     }
 
     #[test]
     fn panelcontainer_ready_suppresses() {
-        // PanelContainer extends Node transitively — _ready suppression should work.
         let source = "\
 extends PanelContainer
 
@@ -1072,7 +884,6 @@ func _advance_queue() -> void:
 
     #[test]
     fn node_subclass_suppresses() {
-        // Node2D extends Node — should suppress.
         let source = "\
 extends Node2D
 
@@ -1090,7 +901,6 @@ func _process(_delta):
 
     #[test]
     fn init_assigns_suppresses() {
-        // _init() is the constructor — assignments there are guaranteed.
         let source = "\
 extends Node
 
@@ -1110,8 +920,6 @@ func _use_processor():
 
     #[test]
     fn bare_identifier_null_check_not_flagged() {
-        // Bare identifier reads (null checks, comparisons, passing as args)
-        // are safe — only dereferences (member.something) are dangerous.
         let source = "\
 extends Node
 
@@ -1136,7 +944,6 @@ func _pass_arg():
 
     #[test]
     fn bare_identifier_guard_with_return_not_flagged() {
-        // `if not member: return` is a common guard pattern — safe.
         let source = "\
 extends Node
 
@@ -1155,8 +962,6 @@ func _process(_delta):
 
     #[test]
     fn null_guard_suppresses_dereference() {
-        // If a function null-checks a member before dereferencing it,
-        // the function is null-aware — don't flag the dereference.
         let source = "\
 extends Node
 
@@ -1183,7 +988,6 @@ func _process(_delta):
 
     #[test]
     fn dereference_without_guard_still_flagged() {
-        // member.property without prior assignment should still warn.
         let source = "\
 var target: Node2D
 
@@ -1201,7 +1005,6 @@ func setup():
 
     #[test]
     fn subscript_dereference_flagged() {
-        // member[index] is a dereference — should be flagged.
         let source = "\
 var _items: Array
 
@@ -1219,7 +1022,6 @@ func use_items():
 
     #[test]
     fn deep_transitive_chain() {
-        // _ready → _build_ui → _build_panels → assigns _panel
         let source = "\
 extends Control
 

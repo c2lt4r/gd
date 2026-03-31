@@ -1,3 +1,4 @@
+use gd_core::cfg::FunctionCfg;
 use gd_core::gd_ast::{GdDecl, GdExpr, GdFile, GdStmt};
 
 use super::{Fix, LintCategory, LintDiagnostic, LintRule, Severity};
@@ -32,27 +33,40 @@ fn check_decls(decls: &[GdDecl<'_>], source: &str, diags: &mut Vec<LintDiagnosti
     }
 }
 
-/// Check a list of statements for unreachable code after return/break/continue.
+/// Check a list of statements for unreachable code.
+///
+/// Detects two patterns:
+/// 1. Code after `return`/`break`/`continue` in the same block (linear)
+/// 2. Code after a construct that always terminates on every path, e.g.
+///    `if/else` where all branches return (cross-branch, uses CFG analysis)
 fn check_stmt_list(stmts: &[GdStmt<'_>], source: &str, diags: &mut Vec<LintDiagnostic>) {
-    let mut terminator_idx: Option<(usize, &str)> = None;
-
     for (i, stmt) in stmts.iter().enumerate() {
-        if let Some((_, term_name)) = terminator_idx {
-            // Found unreachable code: report from this statement to the end
-            emit_unreachable(stmts, i, term_name, source, diags);
-            break;
-        }
-
+        // Pattern 1: linear terminator (return/break/continue)
         match stmt {
             GdStmt::Return { .. } => {
-                // Skip return statements that follow a pending() call (GUT test-skip pattern)
-                if !is_after_pending(stmts, i) {
-                    terminator_idx = Some((i, "return"));
+                if i + 1 < stmts.len() && !is_after_pending(stmts, i) {
+                    emit_unreachable(stmts, i + 1, source, diags);
+                    return;
                 }
             }
-            GdStmt::Break { .. } => terminator_idx = Some((i, "break")),
-            GdStmt::Continue { .. } => terminator_idx = Some((i, "continue")),
+            GdStmt::Break { .. } | GdStmt::Continue { .. } => {
+                if i + 1 < stmts.len() {
+                    emit_unreachable(stmts, i + 1, source, diags);
+                    return;
+                }
+            }
             _ => {}
+        }
+
+        // Pattern 2: compound construct that always terminates on every path
+        // (if/elif/else where all branches terminate, match with wildcard).
+        // Build a sub-body CFG for just this statement to check.
+        if i + 1 < stmts.len()
+            && matches!(stmt, GdStmt::If(_) | GdStmt::Match { .. })
+            && !FunctionCfg::build_body(&stmts[i..=i]).can_fall_through()
+        {
+            emit_unreachable(stmts, i + 1, source, diags);
+            return;
         }
 
         // Recurse into nested statement bodies
@@ -65,7 +79,6 @@ fn is_after_pending(stmts: &[GdStmt<'_>], idx: usize) -> bool {
     if idx == 0 {
         return false;
     }
-    // In the typed AST, comments aren't included, so stmts[idx-1] is the actual previous statement
     let prev = &stmts[idx - 1];
     if let GdStmt::Expr { expr, .. } = prev
         && let GdExpr::Call { callee, .. } = expr
@@ -82,7 +95,6 @@ fn is_after_pending(stmts: &[GdStmt<'_>], idx: usize) -> bool {
 fn emit_unreachable(
     stmts: &[GdStmt<'_>],
     start_idx: usize,
-    term_name: &str,
     source: &str,
     diags: &mut Vec<LintDiagnostic>,
 ) {
@@ -113,7 +125,7 @@ fn emit_unreachable(
 
     diags.push(LintDiagnostic {
         rule: "unreachable-code",
-        message: format!("unreachable code after `{term_name}`"),
+        message: "unreachable code".to_string(),
         severity: Severity::Warning,
         line: first_node.start_position().row,
         column: first_node.start_position().column,
@@ -164,6 +176,8 @@ mod tests {
         UnreachableCode.check(&file, source, &config)
     }
 
+    // ── Existing tests (preserved) ───────────────────────────────────
+
     #[test]
     fn no_false_positive_on_comments_after_return() {
         let source = "func f() -> void:\n\treturn  # done\n";
@@ -186,24 +200,66 @@ mod tests {
 
     #[test]
     fn no_false_positive_pending_return_pattern() {
-        // GUT test-skip pattern: pending() + return + other code
         let source = "func test_thing() -> void:\n\tpending(\"not implemented\")\n\treturn\n\tvar x := 1\n\tassert_eq(x, 1)\n";
         assert!(check(source).is_empty());
     }
 
     #[test]
     fn no_false_positive_pending_return_with_comment() {
-        // pending() + comment + return + other code
         let source = "func test_thing() -> void:\n\tpending(\"wip\")\n\t# skipping for now\n\treturn\n\tvar x := 1\n";
         assert!(check(source).is_empty());
     }
 
     #[test]
     fn still_detects_unreachable_after_plain_return() {
-        // Plain return without preceding pending() should still warn
         let source = "func f() -> void:\n\tprint(\"done\")\n\treturn\n\tvar x := 1\n";
         let diags = check(source);
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].rule, "unreachable-code");
+    }
+
+    // ── New: cross-branch unreachable code ───────────────────────────
+
+    #[test]
+    fn detects_unreachable_after_if_else_both_return() {
+        let source =
+            "func f(x) -> int:\n\tif x:\n\t\treturn 1\n\telse:\n\t\treturn 2\n\tprint(\"dead\")\n";
+        let diags = check(source);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].rule, "unreachable-code");
+    }
+
+    #[test]
+    fn detects_unreachable_after_if_elif_else_all_return() {
+        let src = "func f(x: int) -> int:\n\tif x > 0:\n\t\treturn 1\n\telif x == 0:\n\t\treturn 0\n\telse:\n\t\treturn -1\n\tprint(\"dead\")\n";
+        let diags = check(src);
+        assert_eq!(diags.len(), 1);
+    }
+
+    #[test]
+    fn detects_unreachable_after_match_with_wildcard() {
+        let src = "func f(x) -> String:\n\tmatch x:\n\t\t1:\n\t\t\treturn \"one\"\n\t\t_:\n\t\t\treturn \"other\"\n\tprint(\"dead\")\n";
+        let diags = check(src);
+        assert_eq!(diags.len(), 1);
+    }
+
+    #[test]
+    fn no_false_positive_if_without_else() {
+        let source = "func f(x) -> int:\n\tif x:\n\t\treturn 1\n\treturn 0\n";
+        assert!(check(source).is_empty());
+    }
+
+    #[test]
+    fn no_false_positive_match_without_wildcard() {
+        let src = "func f(x) -> String:\n\tmatch x:\n\t\t1:\n\t\t\treturn \"one\"\n\t\t2:\n\t\t\treturn \"two\"\n\treturn \"other\"\n";
+        assert!(check(src).is_empty());
+    }
+
+    #[test]
+    fn detects_nested_unreachable_after_branches() {
+        // Inner if/else both return → code after in the outer if body is unreachable
+        let src = "func f(x, y):\n\tif x:\n\t\tif y:\n\t\t\treturn 1\n\t\telse:\n\t\t\treturn 2\n\t\tprint(\"dead\")\n";
+        let diags = check(src);
+        assert_eq!(diags.len(), 1);
     }
 }

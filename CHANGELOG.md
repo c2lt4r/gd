@@ -13,9 +13,16 @@
 - **Daemon transport: TCP → Unix Domain Sockets** — daemon IPC replaced from TCP (`127.0.0.1:<random port>`) with UDS (`.godot/gd-daemon.sock`). Eliminates port management, avoids firewall/antivirus interference, removes TCP handshake overhead. Socket path is deterministic (no port discovery via state file). `port` field removed from `gd-daemon.json`. Windows support via `uds_windows` crate (AF_UNIX, Windows 10 17063+).
 
 ### Added
+- **Control flow graph infrastructure (`gd-core/cfg`)** — CFG builder, sub-body analysis, and generic dataflow framework for flow-sensitive lint rules. Handles all GDScript control flow: if/elif/else, for, while, match (with wildcard exhaustiveness), return, break, continue. Two build modes: `build()` for functions, `build_body()` for sub-bodies where break/continue exit the scope. Worklist-based dataflow solver supports forward and backward analyses with custom lattices.
 - **`gd query view --symbol`** — view a symbol's full declaration including doc comments, annotations, and body. Optional `--refs` flag includes workspace references.
 - **`EditOutput.diagnostics` field** — mutation commands return lint diagnostic count after edit for tooling/agent use.
 - 10 new ClassDB query functions: `is_variant_type`, `builtin_member_type`, `builtin_method_return_type`, `builtin_constant_type`, `builtin_constructor_exists`, `function_return_type`, `operator_result_type`, `can_convert_type`, `annotation_def`, `godot_warning`.
+
+### Improved
+- **`missing-return` lint** — now uses CFG reachability (`can_fall_through`). No longer false-positives when dead code follows an exhaustive if/else or match with wildcard.
+- **`unreachable-code` lint** — detects unreachable code after if/elif/else where all branches return, and after match with wildcard where all arms terminate. Previously only caught code after linear return/break/continue.
+- **`redundant-else` lint** — uses CFG sub-body analysis for termination checks. Now detects redundant else when the if-body contains nested control flow that always terminates (e.g. inner if/else both returning).
+- **`use-before-assign` lint** — rewritten on DefinitelyInitialized dataflow over the CFG. Branch-sensitive: assignment in only one branch of an if (without else) is no longer treated as definite. 1242 → 1054 lines.
 
 ## [0.3.23] - 2026-03-18
 

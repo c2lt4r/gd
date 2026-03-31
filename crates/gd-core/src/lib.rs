@@ -1,5 +1,6 @@
 #![allow(clippy::must_use_candidate)]
 
+pub mod cfg;
 #[allow(dead_code)]
 pub mod color;
 pub mod config;
