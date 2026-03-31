@@ -48,9 +48,6 @@ pub enum RefactorCommand {
         /// Name for the extracted function
         #[arg(long)]
         name: String,
-        /// Preview without writing changes
-        #[arg(long)]
-        dry_run: bool,
         /// Output format: json or human (default: human)
         #[arg(long)]
         format: Option<String>,
@@ -63,9 +60,6 @@ pub enum RefactorCommand {
         /// Destination file path (relative to project root)
         #[arg(long)]
         to: String,
-        /// Preview without writing changes
-        #[arg(long)]
-        dry_run: bool,
         /// Output format: json or human (default: human)
         #[arg(long)]
         format: Option<String>,
@@ -96,9 +90,6 @@ pub enum RefactorCommand {
         /// Inner class containing the function
         #[arg(long)]
         class: Option<String>,
-        /// Preview without writing changes
-        #[arg(long)]
-        dry_run: bool,
         /// Output format: json or human (default: human)
         #[arg(long)]
         format: Option<String>,
@@ -268,11 +259,10 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
             start_line,
             end_line,
             name,
-            dry_run,
             format,
         } => {
             let result =
-                gd_lsp::query::query_extract_method(&file, start_line, end_line, &name, dry_run)?;
+                gd_lsp::query::query_extract_method(&file, start_line, end_line, &name)?;
             if is_json(format.as_ref()) {
                 let json =
                     serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
@@ -285,10 +275,9 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
         RefactorCommand::MoveFile {
             from,
             to,
-            dry_run,
             format,
         } => {
-            let result = gd_lsp::query::query_move_file(&from, &to, dry_run)?;
+            let result = gd_lsp::query::query_move_file(&from, &to)?;
             if is_json(format.as_ref()) {
                 let json =
                     serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
@@ -307,7 +296,6 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
             rename_param,
             reorder,
             class,
-            dry_run,
             format,
         } => {
             if name.is_some() && line.is_some() {
@@ -331,7 +319,6 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
                 &rename_param,
                 reorder.as_deref(),
                 class.as_deref(),
-                dry_run,
             )?;
             if is_json(format.as_ref()) {
                 let json =

@@ -3,6 +3,8 @@
 ## [0.3.24] - 2026-03-31
 
 ### Changed
+- **Mutation pipeline (`MutationSet` + `commit()`)** — all mutation commands (`gd edit` + `gd refactor`) now go through an atomic validate-then-persist pipeline. Mutations are validated in memory (parse-error baseline comparison) before anything touches disk. Multi-file commands (`change-signature`, `move-file`, `move-symbol`, `rename`) batch all writes into a single `MutationSet` — either all files are written or none. `WorkspaceIndex::commit_mutations()` provides the LSP path with automatic cache invalidation.
+- **`--dry-run` removed from all commands except `gd refactor rename`** — with the mutation pipeline, validation happens in memory before persistence. Commands either succeed and apply, or fail and write nothing. Rename retains `--apply` for semantic review of cross-file reference resolution.
 - **Refactoring simplification** — reduced `gd refactor` from 28 subcommands to 4 (`rename`, `extract-method`, `move-file`, `change-signature`). Removed 21 commands that are agent-composable from edit primitives + queries. Removed transaction/undo machinery; validate-then-persist pipeline rejects broken mutations before writing.
 - **`gd refactor rename` is now dry-run by default** — pass `--apply` to persist changes. Previously applied by default with `--dry-run` to preview.
 - **`gd edit` gains `remove`, `extract`, `insert-into`** — full set of edit primitives: `insert` (before/after), `insert-into` (class body), `remove` (symbol), `extract` (move symbol to file), `replace-body`, `replace-symbol`, `create-file`.
@@ -17,6 +19,7 @@
 - **Replace hardcoded completion lists with generated data** — `BUILTIN_TYPES` (35 entries) now sourced from `VARIANT_TYPES` (37 types), `BUILTIN_FUNCTIONS` (25 entries) now sourced from `UTILITY_FUNCTIONS` (128 functions), `KEYWORDS` (33 entries) now sourced from generated `GDSCRIPT_KEYWORDS` (36 keywords from Godot's tokenizer). Completion now covers all Godot utility functions and keywords, not just curated subsets.
 
 ### Added
+- **Typed AST rewriter infrastructure (`gd-core`)** — owned AST types (`OwnedExpr`, `OwnedStmt`, `OwnedFile`), bottom-up rewriter (`rewrite_file`, `rewrite_expr`, `rewrite_stmt`), and span-preserving printer (`print_file`, `print_expr`). Enables pure tree-in/tree-out code transformations — no byte-offset arithmetic or string splicing. Unchanged subtrees emit original source bytes verbatim; only rewritten nodes are printed from structure. Dirty propagation clears parent spans when children are rewritten.
 - **Control flow graph infrastructure (`gd-core/cfg`)** — CFG builder, sub-body analysis, and generic dataflow framework for flow-sensitive lint rules. Handles all GDScript control flow: if/elif/else, for, while, match (with wildcard exhaustiveness), return, break, continue. Two build modes: `build()` for functions, `build_body()` for sub-bodies where break/continue exit the scope. Worklist-based dataflow solver supports forward and backward analyses with custom lattices.
 - **`gd query view --symbol`** — view a symbol's full declaration including doc comments, annotations, and body. Optional `--refs` flag includes workspace references.
 - **`EditOutput.diagnostics` field** — mutation commands return lint diagnostic count after edit for tooling/agent use.

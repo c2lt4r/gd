@@ -28,9 +28,6 @@ pub enum EditGdCommand {
         /// Overwrite the file if it already exists
         #[arg(long)]
         force: bool,
-        /// Preview without writing
-        #[arg(long)]
-        dry_run: bool,
         /// Output format: json or human (default: human)
         #[arg(long)]
         format: Option<String>,
@@ -52,9 +49,6 @@ pub enum EditGdCommand {
         /// Skip auto-formatting the result
         #[arg(long)]
         no_format: bool,
-        /// Preview without writing changes
-        #[arg(long)]
-        dry_run: bool,
         /// Output format: json or human (default: human)
         #[arg(long)]
         format: Option<String>,
@@ -79,9 +73,6 @@ pub enum EditGdCommand {
         /// Skip auto-formatting the result
         #[arg(long)]
         no_format: bool,
-        /// Preview without writing changes
-        #[arg(long)]
-        dry_run: bool,
         /// Output format: json or human (default: human)
         #[arg(long)]
         format: Option<String>,
@@ -103,9 +94,6 @@ pub enum EditGdCommand {
         /// Remove even if references exist elsewhere
         #[arg(long)]
         force: bool,
-        /// Preview without writing changes
-        #[arg(long)]
-        dry_run: bool,
         /// Output format: json or human (default: human)
         #[arg(long)]
         format: Option<String>,
@@ -130,9 +118,6 @@ pub enum EditGdCommand {
         /// Update preload/load paths in files that reference the source
         #[arg(long)]
         update_callers: bool,
-        /// Preview without writing changes
-        #[arg(long)]
-        dry_run: bool,
         /// Output format: json or human (default: human)
         #[arg(long)]
         format: Option<String>,
@@ -151,9 +136,6 @@ pub enum EditGdCommand {
         /// Skip auto-formatting the result
         #[arg(long)]
         no_format: bool,
-        /// Preview without writing changes
-        #[arg(long)]
-        dry_run: bool,
         /// Output format: json or human (default: human)
         #[arg(long)]
         format: Option<String>,
@@ -175,9 +157,6 @@ pub enum EditGdCommand {
         /// Skip auto-formatting the result
         #[arg(long)]
         no_format: bool,
-        /// Preview without writing changes
-        #[arg(long)]
-        dry_run: bool,
         /// Output format: json or human (default: human)
         #[arg(long)]
         format: Option<String>,
@@ -353,7 +332,6 @@ pub fn exec(args: EditGdArgs) -> Result<()> {
             class_name,
             input_file,
             force,
-            dry_run,
             format,
         } => {
             // Read custom content from --input-file or stdin (if piped).
@@ -369,7 +347,6 @@ pub fn exec(args: EditGdArgs) -> Result<()> {
                 class_name.as_deref(),
                 custom_content.as_deref(),
                 force,
-                dry_run,
             )?;
             if is_json(format.as_ref()) {
                 let json =
@@ -386,7 +363,6 @@ pub fn exec(args: EditGdArgs) -> Result<()> {
             class,
             input_file,
             no_format,
-            dry_run,
             format,
         } => {
             let content = read_content(input_file.as_deref())?;
@@ -396,7 +372,6 @@ pub fn exec(args: EditGdArgs) -> Result<()> {
                 class.as_deref(),
                 &content,
                 no_format,
-                dry_run,
             )?;
             if is_json(format.as_ref()) {
                 let json =
@@ -414,7 +389,6 @@ pub fn exec(args: EditGdArgs) -> Result<()> {
             class,
             input_file,
             no_format,
-            dry_run,
             format,
         } => {
             let (anchor, is_after) = match (after, before) {
@@ -434,7 +408,6 @@ pub fn exec(args: EditGdArgs) -> Result<()> {
                 class.as_deref(),
                 &content,
                 no_format,
-                dry_run,
             )?;
             if is_json(format.as_ref()) {
                 let json =
@@ -451,7 +424,6 @@ pub fn exec(args: EditGdArgs) -> Result<()> {
             class,
             input_file,
             no_format,
-            dry_run,
             format,
         } => {
             let content = read_content(input_file.as_deref())?;
@@ -461,7 +433,6 @@ pub fn exec(args: EditGdArgs) -> Result<()> {
                 class.as_deref(),
                 &content,
                 no_format,
-                dry_run,
             )?;
             if is_json(format.as_ref()) {
                 let json =
@@ -478,7 +449,6 @@ pub fn exec(args: EditGdArgs) -> Result<()> {
             line,
             class,
             force,
-            dry_run,
             format,
         } => {
             if name.is_none() && line.is_none() {
@@ -492,7 +462,6 @@ pub fn exec(args: EditGdArgs) -> Result<()> {
                 name.as_deref(),
                 line,
                 force,
-                dry_run,
                 class.as_deref(),
             )?;
             if is_json(format.as_ref()) {
@@ -514,14 +483,12 @@ pub fn exec(args: EditGdArgs) -> Result<()> {
             class,
             target_class,
             update_callers,
-            dry_run,
             format,
         } => {
             let result = gd_lsp::query::query_extract(
                 &name,
                 &from,
                 &to,
-                dry_run,
                 class.as_deref(),
                 target_class.as_deref(),
                 update_callers,
@@ -540,12 +507,11 @@ pub fn exec(args: EditGdArgs) -> Result<()> {
             class,
             input_file,
             no_format,
-            dry_run,
             format,
         } => {
             let content = read_content(input_file.as_deref())?;
             let result =
-                gd_lsp::query::query_insert_into(&file, &class, &content, no_format, dry_run)?;
+                gd_lsp::query::query_insert_into(&file, &class, &content, no_format)?;
             if is_json(format.as_ref()) {
                 let json =
                     serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;

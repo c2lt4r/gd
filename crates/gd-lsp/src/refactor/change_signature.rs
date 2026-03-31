@@ -164,7 +164,6 @@ pub fn change_signature(
     rename_params: &[String],
     reorder: Option<&str>,
     class: Option<&str>,
-    dry_run: bool,
     project_root: &Path,
 ) -> Result<ChangeSignatureOutput> {
     let source =
@@ -329,114 +328,116 @@ pub fn change_signature(
     // ── Find overriding methods in subclasses ────────────────────────────
     let override_files = find_override_files(file, name, class, &project_index);
 
+    let mut ms = super::mutation::MutationSet::new();
     let mut call_sites_updated = 0u32;
     let mut overrides_updated = 0u32;
 
-    if dry_run {
-        call_sites_updated = call_sites.len() as u32;
-        overrides_updated = override_files.len() as u32;
-    } else {
-        // 1. Update function definition (signature + body renames)
-        let mut new_source = source.clone();
-        if let Some(pn) = params_node {
-            // Replace content between parens
-            let params_start = pn.start_byte();
-            let params_end = pn.end_byte();
-            let new_params_text = format!("({new_param_str})");
-            new_source.replace_range(params_start..params_end, &new_params_text);
-        }
-
-        // Rename param usages in function body (AST-aware)
-        if !rename_map.is_empty() {
-            // Re-parse after signature change to get correct byte offsets
-            let new_tree = gd_core::parser::parse(&new_source)?;
-            let new_file = gd_ast::convert(&new_tree, &new_source);
-            if let Some(new_func) = find_declaration_by_name(&new_file, name)
-                && let Some(body) = new_func.child_by_field_name("body")
-            {
-                let body_start = body.start_byte();
-                let body_end = body.end_byte();
-                let body_text = new_source[body_start..body_end].to_string();
-                let renamed = rename_identifiers_ast(&body_text, &rename_map);
-                new_source.replace_range(body_start..body_end, &renamed);
-            }
-        }
-
-        std::fs::write(file, &new_source).map_err(|e| miette::miette!("cannot write file: {e}"))?;
-
-        // 2. Update override methods in subclasses
-        for ovr_path in &override_files {
-            match apply_signature_to_override(ovr_path, name, &new_param_str, &rename_map) {
-                Ok(()) => overrides_updated += 1,
-                Err(e) => {
-                    let rel = gd_core::fs::relative_slash(ovr_path, project_root);
-                    warnings.push(format!("failed to update override in {rel}: {e}"));
-                }
-            }
-        }
-
-        // 3. Update call sites
-        // Group call sites by file
-        let mut sites_by_file: HashMap<PathBuf, Vec<(u32, u32)>> = HashMap::new();
-        for (path, line, col) in &call_sites {
-            sites_by_file
-                .entry(path.clone())
-                .or_default()
-                .push((*line, *col));
-        }
-
-        for (call_file, positions) in &sites_by_file {
-            let cs = std::fs::read_to_string(call_file)
-                .map_err(|e| miette::miette!("cannot read {}: {e}", call_file.display()))?;
-            let cs_tree = gd_core::parser::parse(&cs)?;
-            let cs_root = cs_tree.root_node();
-
-            let mut edits: Vec<(usize, usize, String)> = Vec::new();
-            for &(ref_line, ref_col) in positions {
-                let pt = tree_sitter::Point::new(ref_line as usize, ref_col as usize);
-                if let Some(call) = find_call_at(cs_root, pt)
-                    && let Some(args_node) = call.child_by_field_name("arguments")
-                {
-                    let old_args = extract_call_arguments(call, &cs);
-                    let (new_args, placeholder_params) = rewrite_call_arguments(
-                        &old_args,
-                        &original_params,
-                        &existing_params,
-                        remove_params,
-                        add_params,
-                        &rename_map,
-                        reorder,
-                    );
-                    for p in &placeholder_params {
-                        warnings.push(format!(
-                            "inserted `null` placeholder for parameter '{p}' (no default value)"
-                        ));
-                    }
-                    let new_args_text = format!("({})", new_args.join(", "));
-                    edits.push((args_node.start_byte(), args_node.end_byte(), new_args_text));
-                    call_sites_updated += 1;
-                }
-            }
-
-            if !edits.is_empty() {
-                edits.sort_by(|a, b| b.0.cmp(&a.0));
-                let mut cs_new = cs.clone();
-                for (start, end, replacement) in edits {
-                    cs_new.replace_range(start..end, &replacement);
-                }
-                super::validate_no_new_errors(&cs, &cs_new)?;
-                std::fs::write(call_file, &cs_new)
-                    .map_err(|e| miette::miette!("cannot write {}: {e}", call_file.display()))?;
-            }
-        }
-
-        // 4. Check .tscn signal connections that reference this handler
-        check_tscn_connections(name, project_root, &mut warnings);
+    // 1. Update function definition (signature + body renames)
+    let mut new_source = source.clone();
+    if let Some(pn) = params_node {
+        // Replace content between parens
+        let params_start = pn.start_byte();
+        let params_end = pn.end_byte();
+        let new_params_text = format!("({new_param_str})");
+        new_source.replace_range(params_start..params_end, &new_params_text);
     }
+
+    // Rename param usages in function body (AST-aware)
+    if !rename_map.is_empty() {
+        // Re-parse after signature change to get correct byte offsets
+        let new_tree = gd_core::parser::parse(&new_source)?;
+        let new_file = gd_ast::convert(&new_tree, &new_source);
+        if let Some(new_func) = find_declaration_by_name(&new_file, name)
+            && let Some(body) = new_func.child_by_field_name("body")
+        {
+            let body_start = body.start_byte();
+            let body_end = body.end_byte();
+            let body_text = new_source[body_start..body_end].to_string();
+            let renamed = rename_identifiers_ast(&body_text, &rename_map);
+            new_source.replace_range(body_start..body_end, &renamed);
+        }
+    }
+
+    ms.insert(file.to_path_buf(), new_source);
+
+    // 2. Update override methods in subclasses
+    for ovr_path in &override_files {
+        match apply_signature_to_override(ovr_path, name, &new_param_str, &rename_map, &mut ms) {
+            Ok(()) => overrides_updated += 1,
+            Err(e) => {
+                let rel = gd_core::fs::relative_slash(ovr_path, project_root);
+                warnings.push(format!("failed to update override in {rel}: {e}"));
+            }
+        }
+    }
+
+    // 3. Update call sites
+    // Group call sites by file
+    let mut sites_by_file: HashMap<PathBuf, Vec<(u32, u32)>> = HashMap::new();
+    for (path, line, col) in &call_sites {
+        sites_by_file
+            .entry(path.clone())
+            .or_default()
+            .push((*line, *col));
+    }
+
+    for (call_file, positions) in &sites_by_file {
+        // Use already-mutated content if available (e.g. same file as definition)
+        let cs = if let Some(mutated) = ms.get(call_file) {
+            mutated.clone()
+        } else {
+            std::fs::read_to_string(call_file)
+                .map_err(|e| miette::miette!("cannot read {}: {e}", call_file.display()))?
+        };
+        let cs_tree = gd_core::parser::parse(&cs)?;
+        let cs_root = cs_tree.root_node();
+
+        let mut edits: Vec<(usize, usize, String)> = Vec::new();
+        for &(ref_line, ref_col) in positions {
+            let pt = tree_sitter::Point::new(ref_line as usize, ref_col as usize);
+            if let Some(call) = find_call_at(cs_root, pt)
+                && let Some(args_node) = call.child_by_field_name("arguments")
+            {
+                let old_args = extract_call_arguments(call, &cs);
+                let (new_args, placeholder_params) = rewrite_call_arguments(
+                    &old_args,
+                    &original_params,
+                    &existing_params,
+                    remove_params,
+                    add_params,
+                    &rename_map,
+                    reorder,
+                );
+                for p in &placeholder_params {
+                    warnings.push(format!(
+                        "inserted `null` placeholder for parameter '{p}' (no default value)"
+                    ));
+                }
+                let new_args_text = format!("({})", new_args.join(", "));
+                edits.push((args_node.start_byte(), args_node.end_byte(), new_args_text));
+                call_sites_updated += 1;
+            }
+        }
+
+        if !edits.is_empty() {
+            edits.sort_by(|a, b| b.0.cmp(&a.0));
+            let mut cs_new = cs.clone();
+            for (start, end, replacement) in edits {
+                cs_new.replace_range(start..end, &replacement);
+            }
+            ms.insert(call_file.clone(), cs_new);
+        }
+    }
+
+    // 4. Check .tscn signal connections that reference this handler
+    check_tscn_connections(name, project_root, &mut warnings);
+
+    // 5. Commit all mutations atomically
+    super::mutation::commit(&ms, project_root)?;
 
     // Check for non-call references (variable references to the function name)
     let non_call_count = call_sites.len() as u32 - call_sites_updated;
-    if non_call_count > 0 && !dry_run {
+    if non_call_count > 0 {
         warnings.push(format!(
             "{non_call_count} non-call reference{} to '{name}' may need manual updating",
             if non_call_count == 1 { "" } else { "s" }
@@ -450,7 +451,7 @@ pub fn change_signature(
         new_signature,
         call_sites_updated,
         overrides_updated,
-        applied: !dry_run,
+        applied: true,
         warnings,
     })
 }
@@ -596,6 +597,7 @@ fn apply_signature_to_override(
     func_name: &str,
     new_param_str: &str,
     rename_map: &HashMap<String, String>,
+    ms: &mut super::mutation::MutationSet,
 ) -> Result<()> {
     let source =
         std::fs::read_to_string(file).map_err(|e| miette::miette!("cannot read file: {e}"))?;
@@ -635,8 +637,7 @@ fn apply_signature_to_override(
         }
     }
 
-    super::validate_no_new_errors(&source, &new_source)?;
-    std::fs::write(file, &new_source).map_err(|e| miette::miette!("cannot write file: {e}"))?;
+    ms.insert(file.to_path_buf(), new_source);
     Ok(())
 }
 
@@ -799,7 +800,6 @@ mod tests {
             &[],
             None,
             None,
-            false,
             temp.path(),
         )
         .unwrap();
@@ -830,7 +830,6 @@ mod tests {
             &[],
             None,
             None,
-            false,
             temp.path(),
         )
         .unwrap();
@@ -857,7 +856,6 @@ mod tests {
             &[],
             Some("c, a, b"),
             None,
-            false,
             temp.path(),
         )
         .unwrap();
@@ -881,7 +879,6 @@ mod tests {
             &[],
             None,
             None,
-            false,
             temp.path(),
         );
         assert!(result.is_err());
@@ -898,30 +895,9 @@ mod tests {
             &[],
             None,
             None,
-            false,
             temp.path(),
         );
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn change_sig_dry_run() {
-        let temp = setup_project(&[("player.gd", "func greet(name):\n\tpass\n")]);
-        let result = change_signature(
-            &temp.path().join("player.gd"),
-            "greet",
-            &["title".to_string()],
-            &[],
-            &[],
-            None,
-            None,
-            true,
-            temp.path(),
-        )
-        .unwrap();
-        assert!(!result.applied);
-        let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
-        assert!(!content.contains("title"), "dry run should not modify file");
     }
 
     #[test]
@@ -938,7 +914,6 @@ mod tests {
             &["victim_id=target_id".to_string()],
             None,
             None,
-            false,
             temp.path(),
         )
         .unwrap();
@@ -978,7 +953,6 @@ mod tests {
             &["nonexistent=new_name".to_string()],
             None,
             None,
-            false,
             temp.path(),
         );
         assert!(result.is_err());
@@ -1006,7 +980,6 @@ mod tests {
             &[],
             None,
             None,
-            false,
             temp.path(),
         )
         .unwrap();
@@ -1039,7 +1012,6 @@ mod tests {
             &[],
             None,
             None,
-            false,
             temp.path(),
         )
         .unwrap();
@@ -1071,7 +1043,6 @@ mod tests {
             &["victim_id=target_id".to_string()],
             None,
             None,
-            false,
             temp.path(),
         )
         .unwrap();
@@ -1115,7 +1086,6 @@ mod tests {
             &[],
             None,
             None,
-            false,
             temp.path(),
         )
         .unwrap();
@@ -1147,7 +1117,6 @@ mod tests {
             &[],
             None,
             None,
-            false,
             temp.path(),
         )
         .unwrap();
@@ -1170,7 +1139,6 @@ mod tests {
             &["victim_id=target_id".to_string()],
             None,
             None,
-            false,
             temp.path(),
         )
         .unwrap();
@@ -1200,7 +1168,6 @@ mod tests {
             &["victim_id=target_id".to_string()],
             None,
             None,
-            false,
             temp.path(),
         )
         .unwrap();
@@ -1237,7 +1204,6 @@ mod tests {
             &[],
             None,
             None,
-            false,
             temp.path(),
         )
         .unwrap();
@@ -1269,7 +1235,6 @@ mod tests {
             &[],
             None,
             None,
-            false,
             temp.path(),
         )
         .unwrap();

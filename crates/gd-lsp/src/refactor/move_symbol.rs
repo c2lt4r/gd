@@ -16,7 +16,6 @@ pub fn move_symbol(
     name: &str,
     from_file: &Path,
     to_file: &Path,
-    dry_run: bool,
     project_root: &Path,
     class: Option<&str>,
     target_class: Option<&str>,
@@ -169,91 +168,83 @@ pub fn move_symbol(
         .collect();
 
     let mut callers_updated = Vec::new();
+    let mut ms = super::mutation::MutationSet::new();
 
-    if !dry_run {
-        // Write target file
-        if to_file.exists() {
-            let mut target_source = std::fs::read_to_string(to_file)
-                .map_err(|e| miette::miette!("cannot read target file: {e}"))?;
+    // Build target file content
+    if to_file.exists() {
+        let mut target_source = std::fs::read_to_string(to_file)
+            .map_err(|e| miette::miette!("cannot read target file: {e}"))?;
 
-            if let Some(tc) = target_class {
-                // Insert into target class body
-                let target_tree = gd_core::parser::parse(&target_source)?;
-                let target_file = gd_ast::convert(&target_tree, &target_source);
-                let tc_node = find_class_definition(&target_file, tc).ok_or_else(|| {
-                    miette::miette!("target class '{tc}' not found in target file")
-                })?;
-                let insert_byte = tc_node.end_byte();
-                let spacing = "\n";
-                let insert_text = format!("{spacing}{decl_text}");
-                target_source.insert_str(insert_byte, &insert_text);
-            } else {
-                let spacing = insertion_spacing(decl.kind(), &target_source);
-                target_source.push_str(&spacing);
-                target_source.push_str(&decl_text);
-            }
-            super::validate_no_new_errors("", &target_source)?;
-            std::fs::write(to_file, &target_source)
-                .map_err(|e| miette::miette!("cannot write target file: {e}"))?;
+        if let Some(tc) = target_class {
+            // Insert into target class body
+            let target_tree = gd_core::parser::parse(&target_source)?;
+            let target_file = gd_ast::convert(&target_tree, &target_source);
+            let tc_node = find_class_definition(&target_file, tc).ok_or_else(|| {
+                miette::miette!("target class '{tc}' not found in target file")
+            })?;
+            let insert_byte = tc_node.end_byte();
+            let spacing = "\n";
+            let insert_text = format!("{spacing}{decl_text}");
+            target_source.insert_str(insert_byte, &insert_text);
         } else {
-            super::validate_no_new_errors("", &decl_text)?;
-            std::fs::write(to_file, &decl_text)
-                .map_err(|e| miette::miette!("cannot write target file: {e}"))?;
+            let spacing = insertion_spacing(decl.kind(), &target_source);
+            target_source.push_str(&spacing);
+            target_source.push_str(&decl_text);
         }
+        ms.insert(to_file.to_path_buf(), target_source);
+    } else {
+        ms.insert(to_file.to_path_buf(), decl_text.clone());
+    }
 
-        // Remove from source file
-        let mut new_source = String::with_capacity(source.len());
-        new_source.push_str(&source[..start_byte]);
-        new_source.push_str(&source[end_byte..]);
-        normalize_blank_lines(&mut new_source);
-        super::validate_no_new_errors(&source, &new_source)?;
-        std::fs::write(from_file, &new_source)
-            .map_err(|e| miette::miette!("cannot write source file: {e}"))?;
+    // Remove from source file
+    let mut new_source = String::with_capacity(source.len());
+    new_source.push_str(&source[..start_byte]);
+    new_source.push_str(&source[end_byte..]);
+    normalize_blank_lines(&mut new_source);
+    ms.insert(from_file.to_path_buf(), new_source);
 
-        // Update caller files that reference the source file via preload/load
-        if update_callers {
-            for preload_ref in &preloads {
-                let caller_path = project_root.join(&preload_ref.file);
-                if caller_path == from_file || caller_path == to_file {
-                    continue;
+    // Update caller files that reference the source file via preload/load
+    if update_callers {
+        for preload_ref in &preloads {
+            let caller_path = project_root.join(&preload_ref.file);
+            if caller_path == from_file || caller_path == to_file {
+                continue;
+            }
+            if !caller_path.exists() {
+                continue;
+            }
+
+            match update_caller_file(
+                &caller_path,
+                &from_res,
+                &to_res,
+                name,
+                &source_symbols,
+                preload_ref,
+            ) {
+                Ok(Some(update)) => {
+                    ms.insert(caller_path, update.new_content);
+                    callers_updated.push(CallerUpdateInfo {
+                        file: preload_ref.file.clone(),
+                        action: update.action,
+                    });
                 }
-                if !caller_path.exists() {
-                    continue;
-                }
-
-                match update_caller_file(
-                    &caller_path,
-                    &from_res,
-                    &to_res,
-                    name,
-                    &source_symbols,
-                    preload_ref,
-                ) {
-                    Ok(Some(update)) => {
-                        if let Err(e) = std::fs::write(&caller_path, &update.new_content) {
-                            warnings.push(format!("could not write {}: {e}", preload_ref.file));
-                        } else {
-                            callers_updated.push(CallerUpdateInfo {
-                                file: preload_ref.file.clone(),
-                                action: update.action,
-                            });
-                        }
-                    }
-                    Ok(None) => {}
-                    Err(e) => {
-                        warnings.push(format!("could not update {}: {e}", preload_ref.file));
-                    }
+                Ok(None) => {}
+                Err(e) => {
+                    warnings.push(format!("could not update {}: {e}", preload_ref.file));
                 }
             }
         }
     }
+
+    super::mutation::commit(&ms, project_root)?;
 
     Ok(MoveSymbolOutput {
         symbol: name.to_string(),
         kind,
         from: from_relative,
         to: to_relative,
-        applied: !dry_run,
+        applied: true,
         warnings,
         preloads,
         callers_updated,
@@ -690,7 +681,6 @@ mod tests {
             "helper",
             &temp.path().join("source.gd"),
             &temp.path().join("helpers.gd"),
-            false,
             temp.path(),
             None,
             None,
@@ -723,7 +713,6 @@ mod tests {
             "to_move",
             &temp.path().join("source.gd"),
             &temp.path().join("target.gd"),
-            false,
             temp.path(),
             None,
             None,
@@ -743,7 +732,6 @@ mod tests {
             "A",
             &temp.path().join("source.gd"),
             &temp.path().join("target.gd"),
-            false,
             temp.path(),
             None,
             None,
@@ -761,7 +749,6 @@ mod tests {
             "moved",
             &temp.path().join("source.gd"),
             &temp.path().join("target.gd"),
-            false,
             temp.path(),
             None,
             None,
@@ -779,7 +766,6 @@ mod tests {
             "Helper",
             &temp.path().join("source.gd"),
             &temp.path().join("target.gd"),
-            false,
             temp.path(),
             None,
             None,
@@ -800,42 +786,12 @@ mod tests {
             "helper",
             &temp.path().join("source.gd"),
             &temp.path().join("target.gd"),
-            false,
             temp.path(),
             None,
             None,
             false,
         );
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn move_dry_run() {
-        let temp = setup_project(&[(
-            "source.gd",
-            "func helper():\n\tpass\n\n\nfunc keep():\n\tpass\n",
-        )]);
-        let result = move_symbol(
-            "helper",
-            &temp.path().join("source.gd"),
-            &temp.path().join("target.gd"),
-            true,
-            temp.path(),
-            None,
-            None,
-            false,
-        )
-        .unwrap();
-        assert!(!result.applied);
-        assert!(
-            !temp.path().join("target.gd").exists(),
-            "dry run should not create file"
-        );
-        let source = fs::read_to_string(temp.path().join("source.gd")).unwrap();
-        assert!(
-            source.contains("helper"),
-            "dry run should not modify source"
-        );
     }
 
     #[test]
@@ -848,7 +804,6 @@ mod tests {
             "moved",
             &temp.path().join("source.gd"),
             &temp.path().join("target.gd"),
-            false,
             temp.path(),
             None,
             None,
@@ -874,7 +829,6 @@ mod tests {
             "helper",
             &temp.path().join("source.gd"),
             &temp.path().join("target.gd"),
-            false,
             temp.path(),
             Some("Inner"),
             None,
@@ -903,7 +857,6 @@ mod tests {
             "helper",
             &temp.path().join("source.gd"),
             &temp.path().join("target.gd"),
-            false,
             temp.path(),
             None,
             Some("Target"),
@@ -933,7 +886,6 @@ mod tests {
             "helper",
             &temp.path().join("source.gd"),
             &temp.path().join("target.gd"),
-            true,
             temp.path(),
             None,
             None,
@@ -957,7 +909,6 @@ mod tests {
             "helper",
             &temp.path().join("source.gd"),
             &temp.path().join("target.gd"),
-            true,
             temp.path(),
             None,
             None,
@@ -985,7 +936,6 @@ mod tests {
             "take_damage",
             &temp.path().join("source.gd"),
             &temp.path().join("target.gd"),
-            true,
             temp.path(),
             Some("Src"),
             Some("Dst"),
@@ -1012,7 +962,6 @@ mod tests {
             "take_damage",
             &temp.path().join("source.gd"),
             &temp.path().join("target.gd"),
-            true,
             temp.path(),
             Some("Src"),
             Some("Dst"),
@@ -1039,7 +988,6 @@ mod tests {
             "helper",
             &temp.path().join("source.gd"),
             &temp.path().join("target.gd"),
-            true,
             temp.path(),
             Some("Src"),
             Some("Dst"),
@@ -1071,7 +1019,6 @@ mod tests {
             "helper",
             &temp.path().join("source.gd"),
             &temp.path().join("dest.gd"),
-            false,
             temp.path(),
             None,
             None,
@@ -1113,7 +1060,6 @@ mod tests {
             "helper",
             &temp.path().join("source.gd"),
             &temp.path().join("dest.gd"),
-            false,
             temp.path(),
             None,
             None,
@@ -1148,38 +1094,6 @@ mod tests {
     }
 
     #[test]
-    fn move_dry_run_does_not_update_callers() {
-        let temp = setup_project(&[
-            ("source.gd", "func helper():\n\treturn 42\n"),
-            (
-                "caller.gd",
-                "const Source = preload(\"res://source.gd\")\n\nfunc _ready():\n\tSource.helper()\n",
-            ),
-        ]);
-        let result = move_symbol(
-            "helper",
-            &temp.path().join("source.gd"),
-            &temp.path().join("dest.gd"),
-            true,
-            temp.path(),
-            None,
-            None,
-            true,
-        )
-        .unwrap();
-        assert!(!result.applied);
-        assert!(
-            result.callers_updated.is_empty(),
-            "dry run should not update callers"
-        );
-        let caller = fs::read_to_string(temp.path().join("caller.gd")).unwrap();
-        assert!(
-            caller.contains("res://source.gd"),
-            "caller should be unchanged in dry run"
-        );
-    }
-
-    #[test]
     fn move_updates_inline_preload() {
         // Caller uses preload inline (not assigned to a variable)
         let temp = setup_project(&[
@@ -1193,7 +1107,6 @@ mod tests {
             "helper",
             &temp.path().join("source.gd"),
             &temp.path().join("dest.gd"),
-            false,
             temp.path(),
             None,
             None,
@@ -1242,7 +1155,6 @@ mod tests {
             "helper",
             &temp.path().join("source.gd"),
             &temp.path().join("dest.gd"),
-            false,
             temp.path(),
             None,
             None,
@@ -1271,7 +1183,6 @@ mod tests {
             "helper",
             &temp.path().join("source.gd"),
             &temp.path().join("dest.gd"),
-            false,
             temp.path(),
             None,
             None,

@@ -16,7 +16,6 @@ pub fn delete_symbol(
     name: Option<&str>,
     line: Option<usize>,
     force: bool,
-    dry_run: bool,
     project_root: &Path,
     class: Option<&str>,
 ) -> Result<DeleteSymbolOutput> {
@@ -24,7 +23,7 @@ pub fn delete_symbol(
     if let Some(name) = name
         && let Some((enum_name, member_name)) = name.split_once('.')
     {
-        return delete_enum_member(file, enum_name, member_name, force, dry_run, project_root);
+        return delete_enum_member(file, enum_name, member_name, force, project_root);
     }
 
     let source =
@@ -143,14 +142,14 @@ pub fn delete_symbol(
         });
     }
 
-    if !dry_run {
-        let mut new_source = String::with_capacity(source.len());
-        new_source.push_str(&source[..start_byte]);
-        new_source.push_str(&source[end_byte..]);
-        normalize_blank_lines(&mut new_source);
-        super::validate_no_new_errors(&source, &new_source)?;
-        std::fs::write(file, &new_source).map_err(|e| miette::miette!("cannot write file: {e}"))?;
-    }
+    let mut new_source = String::with_capacity(source.len());
+    new_source.push_str(&source[..start_byte]);
+    new_source.push_str(&source[end_byte..]);
+    normalize_blank_lines(&mut new_source);
+
+    let mut ms = super::mutation::MutationSet::new();
+    ms.insert(file.to_path_buf(), new_source);
+    super::mutation::commit(&ms, project_root)?;
 
     Ok(DeleteSymbolOutput {
         symbol: symbol_name,
@@ -161,7 +160,7 @@ pub fn delete_symbol(
             end: end_line_1 as u32,
         },
         references: ref_outputs,
-        applied: !dry_run,
+        applied: true,
     })
 }
 
@@ -173,7 +172,6 @@ fn delete_enum_member(
     enum_name: &str,
     member_name: &str,
     force: bool,
-    dry_run: bool,
     project_root: &Path,
 ) -> Result<DeleteSymbolOutput> {
     let source =
@@ -296,13 +294,13 @@ fn delete_enum_member(
         });
     }
 
-    if !dry_run {
-        let mut new_source = String::with_capacity(source.len());
-        new_source.push_str(&source[..remove_start]);
-        new_source.push_str(&source[remove_end..]);
-        super::validate_no_new_errors(&source, &new_source)?;
-        std::fs::write(file, &new_source).map_err(|e| miette::miette!("cannot write file: {e}"))?;
-    }
+    let mut new_source = String::with_capacity(source.len());
+    new_source.push_str(&source[..remove_start]);
+    new_source.push_str(&source[remove_end..]);
+
+    let mut ms = super::mutation::MutationSet::new();
+    ms.insert(file.to_path_buf(), new_source);
+    super::mutation::commit(&ms, project_root)?;
 
     Ok(DeleteSymbolOutput {
         symbol: format!("{enum_name}.{member_name}"),
@@ -313,7 +311,7 @@ fn delete_enum_member(
             end: end_line_1 as u32,
         },
         references: ref_outputs,
-        applied: !dry_run,
+        applied: true,
     })
 }
 
@@ -376,7 +374,6 @@ mod tests {
             Some("unused"),
             None,
             false,
-            false,
             temp.path(),
             None,
         )
@@ -397,7 +394,6 @@ mod tests {
             Some("unused_var"),
             None,
             false,
-            false,
             temp.path(),
             None,
         )
@@ -417,7 +413,6 @@ mod tests {
             Some("OLD"),
             None,
             false,
-            false,
             temp.path(),
             None,
         )
@@ -434,7 +429,6 @@ mod tests {
             Some("unused"),
             None,
             false,
-            false,
             temp.path(),
             None,
         )
@@ -450,7 +444,6 @@ mod tests {
             &temp.path().join("player.gd"),
             Some("OldState"),
             None,
-            false,
             false,
             temp.path(),
             None,
@@ -471,7 +464,6 @@ mod tests {
             Some("Unused"),
             None,
             false,
-            false,
             temp.path(),
             None,
         )
@@ -490,7 +482,6 @@ mod tests {
             &temp.path().join("player.gd"),
             Some("documented"),
             None,
-            false,
             false,
             temp.path(),
             None,
@@ -519,7 +510,6 @@ mod tests {
             None,
             Some(4), // line 4 is "func target():"
             false,
-            false,
             temp.path(),
             None,
         )
@@ -535,7 +525,6 @@ mod tests {
             &temp.path().join("player.gd"),
             Some("nonexistent"),
             None,
-            false,
             false,
             temp.path(),
             None,
@@ -556,7 +545,6 @@ mod tests {
             &temp.path().join("player.gd"),
             Some("speed"),
             None,
-            false,
             false,
             temp.path(),
             None,
@@ -579,8 +567,7 @@ mod tests {
             &temp.path().join("player.gd"),
             Some("speed"),
             None,
-            true,  // force
-            false, // not dry run
+            true, // force
             temp.path(),
             None,
         )
@@ -588,27 +575,6 @@ mod tests {
         assert!(result.applied, "force should override reference check");
         let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
         assert!(!content.contains("var speed"), "should be deleted");
-    }
-
-    #[test]
-    fn delete_dry_run() {
-        let temp = setup_project(&[(
-            "player.gd",
-            "func unused():\n\tpass\n\n\nfunc keep():\n\tpass\n",
-        )]);
-        let result = delete_symbol(
-            &temp.path().join("player.gd"),
-            Some("unused"),
-            None,
-            false,
-            true, // dry run
-            temp.path(),
-            None,
-        )
-        .unwrap();
-        assert!(!result.applied);
-        let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
-        assert!(content.contains("unused"), "dry run should not modify file");
     }
 
     // ── inner class operations ──────────────────────────────────────────
@@ -623,7 +589,6 @@ mod tests {
             &temp.path().join("player.gd"),
             Some("remove_me"),
             None,
-            false,
             false,
             temp.path(),
             Some("Inner"),
@@ -644,7 +609,6 @@ mod tests {
             Some("old"),
             None,
             false,
-            false,
             temp.path(),
             Some("Inner"),
         )
@@ -664,7 +628,6 @@ mod tests {
             Some("foo"),
             None,
             false,
-            false,
             temp.path(),
             Some("NonExistent"),
         );
@@ -680,7 +643,6 @@ mod tests {
             &temp.path().join("player.gd"),
             Some("State.IDLE"),
             None,
-            false,
             false,
             temp.path(),
             None,
@@ -702,7 +664,6 @@ mod tests {
             Some("State.JUMP"),
             None,
             false,
-            false,
             temp.path(),
             None,
         )
@@ -721,7 +682,6 @@ mod tests {
             &temp.path().join("player.gd"),
             Some("State.RUN"),
             None,
-            false,
             false,
             temp.path(),
             None,
@@ -742,7 +702,6 @@ mod tests {
             Some("State.RUN"),
             None,
             false,
-            false,
             temp.path(),
             None,
         )
@@ -760,7 +719,6 @@ mod tests {
             Some("State.ONLY"),
             None,
             false,
-            false,
             temp.path(),
             None,
         );
@@ -776,7 +734,6 @@ mod tests {
             &temp.path().join("player.gd"),
             Some("State.JUMP"),
             None,
-            false,
             false,
             temp.path(),
             None,

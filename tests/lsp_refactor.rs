@@ -134,43 +134,6 @@ fn test_lsp_extract_method_with_return() {
     );
 }
 
-#[test]
-fn test_lsp_extract_method_dry_run() {
-    let temp = setup_gd_project(&[(
-        "player.gd",
-        "func _ready():\n\tprint(\"hello\")\n\tprint(\"world\")\n",
-    )]);
-
-    let output = gd_bin()
-        .args([
-            "refactor",
-            "extract-method",
-            "player.gd",
-            "--start-line",
-            "2",
-            "--end-line",
-            "2",
-            "--name",
-            "greet",
-            "--dry-run",
-            "--format",
-            "json",
-        ])
-        .current_dir(temp.path())
-        .output()
-        .expect("Failed to run gd refactor extract-method --dry-run");
-
-    assert!(output.status.success());
-    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(json["applied"], false);
-
-    let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
-    assert!(
-        !content.contains("func greet"),
-        "dry-run should not modify file"
-    );
-}
-
 // ──────────────────────────────────────────────
 // Feature 5: Async extraction detection
 // ──────────────────────────────────────────────
@@ -391,38 +354,6 @@ fn test_lsp_change_signature_remove_param() {
     );
 }
 
-#[test]
-fn test_lsp_change_signature_dry_run() {
-    let temp = setup_gd_project(&[("player.gd", "func attack(target):\n\tprint(target)\n")]);
-
-    let output = gd_bin()
-        .args([
-            "refactor",
-            "change-signature",
-            "player.gd",
-            "--name",
-            "attack",
-            "--add-param",
-            "damage",
-            "--dry-run",
-            "--format",
-            "json",
-        ])
-        .current_dir(temp.path())
-        .output()
-        .expect("Failed to run gd refactor change-signature --dry-run");
-
-    assert!(output.status.success());
-    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(json["applied"], false);
-
-    let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
-    assert!(
-        !content.contains("damage"),
-        "dry-run should not modify file"
-    );
-}
-
 // ── AST-aware edit commands ─────────────────────────────────────────────────
 
 /// Helper: run a gd edit subcommand with stdin content piped in.
@@ -474,34 +405,6 @@ fn test_lsp_replace_body() {
     assert!(content.contains("print(\"hello\")"));
     assert!(!content.contains("\tpass"));
     assert!(content.contains("func _ready():"));
-}
-
-#[test]
-fn test_lsp_replace_body_dry_run() {
-    let temp = setup_gd_project(&[("player.gd", "extends Node\n\n\nfunc _ready():\n\tpass\n")]);
-
-    let output = run_lsp_edit(
-        temp.path(),
-        &[
-            "edit",
-            "replace-body",
-            "player.gd",
-            "--name",
-            "_ready",
-            "--no-format",
-            "--dry-run",
-            "--format",
-            "json",
-        ],
-        "\tprint(\"hello\")\n",
-    );
-
-    assert!(output.status.success());
-    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(json["applied"], false);
-
-    let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
-    assert!(content.contains("\tpass"), "dry-run should not modify file");
 }
 
 #[test]
@@ -640,34 +543,6 @@ fn test_lsp_insert_before() {
 }
 
 #[test]
-fn test_lsp_insert_dry_run() {
-    let temp = setup_gd_project(&[("player.gd", "extends Node\n\n\nfunc _ready():\n\tpass\n")]);
-
-    let output = run_lsp_edit(
-        temp.path(),
-        &[
-            "edit",
-            "insert",
-            "player.gd",
-            "--after",
-            "_ready",
-            "--no-format",
-            "--dry-run",
-            "--format",
-            "json",
-        ],
-        "\nfunc foo():\n\tpass\n",
-    );
-
-    assert!(output.status.success());
-    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(json["applied"], false);
-
-    let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
-    assert!(!content.contains("func foo()"));
-}
-
-#[test]
 fn test_lsp_insert_no_anchor_fails() {
     let temp = setup_gd_project(&[("player.gd", "extends Node\n\n\nfunc _ready():\n\tpass\n")]);
 
@@ -790,34 +665,6 @@ fn test_lsp_replace_symbol_function() {
     assert!(content.contains("func new_func():"));
     assert!(content.contains("print(\"replaced\")"));
     assert!(!content.contains("old_func"));
-}
-
-#[test]
-fn test_lsp_replace_symbol_dry_run() {
-    let temp = setup_gd_project(&[("player.gd", "extends Node\nvar speed = 10\n")]);
-
-    let output = run_lsp_edit(
-        temp.path(),
-        &[
-            "edit",
-            "replace-symbol",
-            "player.gd",
-            "--name",
-            "speed",
-            "--no-format",
-            "--dry-run",
-            "--format",
-            "json",
-        ],
-        "var speed = 99\n",
-    );
-
-    assert!(output.status.success());
-    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(json["applied"], false);
-
-    let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
-    assert!(content.contains("var speed = 10"));
 }
 
 #[test]

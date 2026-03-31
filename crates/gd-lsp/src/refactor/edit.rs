@@ -34,31 +34,11 @@ fn validate_no_new_errors(original: &str, edited: &str) -> Result<()> {
     super::validate_no_new_errors(original, edited)
 }
 
-/// Count lint diagnostics on source.
-fn lint_diagnostic_count(source: &str, project_root: &Path) -> u32 {
-    let Ok(tree) = gd_core::parser::parse(source) else {
-        return 0;
-    };
-    let file_ast = gd_core::gd_ast::convert(&tree, source);
-    let config = gd_core::config::Config::load(project_root).unwrap_or_default();
-    let rules = gd_lint::rules::all_rules(
-        &config.lint.disabled_rules,
-        &config.lint.rules,
-        &config.lint,
-        &[],
-    );
-    let mut count = 0u32;
-    for rule in &rules {
-        count += rule.check(&file_ast, source, &config.lint).len() as u32;
-    }
-    count
-}
-
 /// Validate that the mutation didn't introduce new lint diagnostics.
 /// Returns `Err` with exit-code-2 semantics if new diagnostics were introduced.
 fn validate_no_new_diagnostics(original: &str, mutated: &str, project_root: &Path) -> Result<u32> {
-    let original_count = lint_diagnostic_count(original, project_root);
-    let mutated_count = lint_diagnostic_count(mutated, project_root);
+    let original_count = super::mutation::lint_diagnostic_count(original, project_root);
+    let mutated_count = super::mutation::lint_diagnostic_count(mutated, project_root);
     if mutated_count > original_count {
         return Err(miette::miette!(
             "mutation introduced {} new lint diagnostic{} ({} → {})",
@@ -73,6 +53,14 @@ fn validate_no_new_diagnostics(original: &str, mutated: &str, project_root: &Pat
         ));
     }
     Ok(mutated_count)
+}
+
+/// Persist a single-file mutation through the [`MutationSet`] pipeline.
+fn persist(file: &Path, content: &str, project_root: &Path) -> Result<u32> {
+    let mut ms = super::mutation::MutationSet::new();
+    ms.insert(file.to_path_buf(), content.to_string());
+    let result = super::mutation::commit(&ms, project_root)?;
+    Ok(result.diagnostics.get(file).copied().unwrap_or(0))
 }
 
 /// Format GDScript source using the project's formatter config.
@@ -96,7 +84,6 @@ pub fn replace_body(
     class: Option<&str>,
     new_body: &str,
     no_format: bool,
-    dry_run: bool,
     project_root: &Path,
 ) -> Result<EditOutput> {
     let source =
@@ -194,19 +181,13 @@ pub fn replace_body(
 
     let lines_changed = diff_line_count(&source, &final_source);
 
-    let diagnostics = if dry_run {
-        0
-    } else {
-        std::fs::write(file, &final_source)
-            .map_err(|e| miette::miette!("cannot write file: {e}"))?;
-        lint_diagnostic_count(&final_source, project_root)
-    };
+    let diagnostics = persist(file, &final_source, project_root)?;
 
     Ok(EditOutput {
         file: rel,
         operation: "replace-body",
         symbol: Some(name.to_string()),
-        applied: !dry_run,
+        applied: true,
         lines_changed,
         diagnostics,
         warnings: vec![],
@@ -223,7 +204,6 @@ pub fn insert(
     class: Option<&str>,
     content: &str,
     no_format: bool,
-    dry_run: bool,
     project_root: &Path,
 ) -> Result<EditOutput> {
     let source =
@@ -280,19 +260,13 @@ pub fn insert(
 
     let lines_changed = diff_line_count(&source, &final_source);
 
-    let diagnostics = if dry_run {
-        0
-    } else {
-        std::fs::write(file, &final_source)
-            .map_err(|e| miette::miette!("cannot write file: {e}"))?;
-        lint_diagnostic_count(&final_source, project_root)
-    };
+    let diagnostics = persist(file, &final_source, project_root)?;
 
     Ok(EditOutput {
         file: rel,
         operation: "insert",
         symbol: Some(anchor_name.to_string()),
-        applied: !dry_run,
+        applied: true,
         lines_changed,
         diagnostics,
         warnings: vec![],
@@ -306,7 +280,6 @@ pub fn insert_into(
     class_name: &str,
     content: &str,
     no_format: bool,
-    dry_run: bool,
     project_root: &Path,
 ) -> Result<EditOutput> {
     let source =
@@ -357,19 +330,13 @@ pub fn insert_into(
 
     let lines_changed = diff_line_count(&source, &final_source);
 
-    let diagnostics = if dry_run {
-        0
-    } else {
-        std::fs::write(file, &final_source)
-            .map_err(|e| miette::miette!("cannot write file: {e}"))?;
-        lint_diagnostic_count(&final_source, project_root)
-    };
+    let diagnostics = persist(file, &final_source, project_root)?;
 
     Ok(EditOutput {
         file: rel,
         operation: "insert-into",
         symbol: Some(class_name.to_string()),
-        applied: !dry_run,
+        applied: true,
         lines_changed,
         diagnostics,
         warnings: vec![],
@@ -384,7 +351,6 @@ pub fn replace_symbol(
     class: Option<&str>,
     new_content: &str,
     no_format: bool,
-    dry_run: bool,
     project_root: &Path,
 ) -> Result<EditOutput> {
     let source =
@@ -444,19 +410,13 @@ pub fn replace_symbol(
 
     let lines_changed = diff_line_count(&source, &final_source);
 
-    let diagnostics = if dry_run {
-        0
-    } else {
-        std::fs::write(file, &final_source)
-            .map_err(|e| miette::miette!("cannot write file: {e}"))?;
-        lint_diagnostic_count(&final_source, project_root)
-    };
+    let diagnostics = persist(file, &final_source, project_root)?;
 
     Ok(EditOutput {
         file: rel,
         operation: "replace-symbol",
         symbol: Some(name.to_string()),
-        applied: !dry_run,
+        applied: true,
         lines_changed,
         diagnostics,
         warnings: vec![],
@@ -471,7 +431,6 @@ pub fn edit_range(
     end_line: usize,   // 1-based inclusive
     new_content: &str,
     no_format: bool,
-    dry_run: bool,
     project_root: &Path,
 ) -> Result<EditOutput> {
     let source =
@@ -506,20 +465,14 @@ pub fn edit_range(
 
         let lines_changed = diff_line_count(&source, &final_source);
 
-        let diagnostics = if dry_run {
-            0
-        } else {
-            let diag_count = validate_no_new_diagnostics(&source, &final_source, project_root)?;
-            std::fs::write(file, &final_source)
-                .map_err(|e| miette::miette!("cannot write file: {e}"))?;
-            diag_count
-        };
+        validate_no_new_diagnostics(&source, &final_source, project_root)?;
+        let diagnostics = persist(file, &final_source, project_root)?;
 
         return Ok(EditOutput {
             file: rel,
             operation: "edit-range",
             symbol: None,
-            applied: !dry_run,
+            applied: true,
             lines_changed,
             diagnostics,
             warnings: vec![],
@@ -564,19 +517,13 @@ pub fn edit_range(
 
     let lines_changed = diff_line_count(&source, &final_source);
 
-    let diagnostics = if dry_run {
-        0
-    } else {
-        std::fs::write(file, &final_source)
-            .map_err(|e| miette::miette!("cannot write file: {e}"))?;
-        lint_diagnostic_count(&final_source, project_root)
-    };
+    let diagnostics = persist(file, &final_source, project_root)?;
 
     Ok(EditOutput {
         file: rel,
         operation: "edit-range",
         symbol: None,
-        applied: !dry_run,
+        applied: true,
         lines_changed,
         diagnostics,
         warnings: vec![],
@@ -638,7 +585,6 @@ mod tests {
             None,
             "\tprint(\"hello\")\n",
             true, // no_format to keep it simple
-            false,
             temp.path(),
         )
         .unwrap();
@@ -653,26 +599,6 @@ mod tests {
     }
 
     #[test]
-    fn replace_body_dry_run() {
-        let temp = setup(&[("player.gd", "extends Node\n\n\nfunc _ready():\n\tpass\n")]);
-        let file = temp.path().join("player.gd");
-        let result = replace_body(
-            &file,
-            "_ready",
-            None,
-            "\tprint(\"hello\")\n",
-            true,
-            true, // dry_run
-            temp.path(),
-        )
-        .unwrap();
-        assert!(!result.applied);
-
-        let content = fs::read_to_string(&file).unwrap();
-        assert!(content.contains("\tpass"), "dry-run should not modify file");
-    }
-
-    #[test]
     fn replace_body_multiline() {
         let temp = setup(&[("player.gd", "extends Node\n\n\nfunc move(delta):\n\tpass\n")]);
         let file = temp.path().join("player.gd");
@@ -682,7 +608,6 @@ mod tests {
             None,
             "\tvar speed = 10\n\tposition += speed * delta\n",
             true,
-            false,
             temp.path(),
         )
         .unwrap();
@@ -706,7 +631,6 @@ mod tests {
             Some("Inner"),
             "\t\tprint(1)\n",
             true,
-            false,
             temp.path(),
         )
         .unwrap();
@@ -720,7 +644,7 @@ mod tests {
     fn replace_body_non_function_rejected() {
         let temp = setup(&[("player.gd", "extends Node\nvar speed = 10\n")]);
         let file = temp.path().join("player.gd");
-        let result = replace_body(&file, "speed", None, "\t42\n", true, false, temp.path());
+        let result = replace_body(&file, "speed", None, "\t42\n", true, temp.path());
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
         assert!(msg.contains("variable"));
@@ -736,7 +660,6 @@ mod tests {
             None,
             "\tprint(\"init\")\n",
             true,
-            false,
             temp.path(),
         )
         .unwrap();
@@ -757,7 +680,6 @@ mod tests {
             None,
             "print(\"hello\")\nprint(\"world\")\n",
             true,
-            false,
             temp.path(),
         )
         .unwrap();
@@ -778,7 +700,6 @@ mod tests {
             None,
             "func _ready():\n\tprint(\"hello\")\n",
             true,
-            false,
             temp.path(),
         );
         assert!(result.is_err());
@@ -802,7 +723,6 @@ mod tests {
             None,
             "static func helper():\n\tprint(1)\n",
             true,
-            false,
             temp.path(),
         );
         assert!(result.is_err());
@@ -826,7 +746,6 @@ mod tests {
             None,
             "\nfunc _process(delta):\n\tpass\n",
             true,
-            false,
             temp.path(),
         )
         .unwrap();
@@ -852,7 +771,6 @@ mod tests {
             None,
             "var speed = 10\n",
             true,
-            false,
             temp.path(),
         )
         .unwrap();
@@ -863,27 +781,6 @@ mod tests {
         let var_pos = content.find("var speed").unwrap();
         let ready_pos = content.find("func _ready()").unwrap();
         assert!(var_pos < ready_pos);
-    }
-
-    #[test]
-    fn insert_dry_run() {
-        let temp = setup(&[("player.gd", "extends Node\n\n\nfunc _ready():\n\tpass\n")]);
-        let file = temp.path().join("player.gd");
-        let result = insert(
-            &file,
-            "_ready",
-            true,
-            None,
-            "\nfunc foo():\n\tpass\n",
-            true,
-            true, // dry_run
-            temp.path(),
-        )
-        .unwrap();
-        assert!(!result.applied);
-
-        let content = fs::read_to_string(&file).unwrap();
-        assert!(!content.contains("func foo()"));
     }
 
     // ── replace-symbol ──────────────────────────────────────────────────
@@ -901,7 +798,6 @@ mod tests {
             None,
             "var speed: float = 42.0\n",
             true,
-            false,
             temp.path(),
         )
         .unwrap();
@@ -926,7 +822,6 @@ mod tests {
             None,
             "func new_func():\n\tprint(\"replaced\")\n",
             true,
-            false,
             temp.path(),
         )
         .unwrap();
@@ -951,7 +846,6 @@ mod tests {
             None,
             "class_name Npc\nextends Node\n\n\nvar speed = 200\n\n\nfunc _ready():\n\tprint(1)\n",
             true,
-            false,
             temp.path(),
         )
         .unwrap();
@@ -981,7 +875,6 @@ mod tests {
             Some("Inner"),
             "func get_name() -> Variant:\n\treturn name\n",
             true, // no_format — test raw re-indentation
-            false,
             temp.path(),
         )
         .unwrap();
@@ -1013,26 +906,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn replace_symbol_dry_run() {
-        let temp = setup(&[("player.gd", "extends Node\nvar speed = 10\n")]);
-        let file = temp.path().join("player.gd");
-        let result = replace_symbol(
-            &file,
-            "speed",
-            None,
-            "var speed = 99\n",
-            true,
-            true,
-            temp.path(),
-        )
-        .unwrap();
-        assert!(!result.applied);
-
-        let content = fs::read_to_string(&file).unwrap();
-        assert!(content.contains("var speed = 10"));
-    }
-
     // ── edit-range ──────────────────────────────────────────────────────
 
     #[test]
@@ -1048,7 +921,6 @@ mod tests {
             3, // replace lines 2-3
             "var x = 10\nvar y = 20\n",
             true,
-            false,
             temp.path(),
         )
         .unwrap();
@@ -1065,22 +937,10 @@ mod tests {
     }
 
     #[test]
-    fn edit_range_dry_run() {
-        let temp = setup(&[("player.gd", "extends Node\nvar a = 1\nvar b = 2\n")]);
-        let file = temp.path().join("player.gd");
-        let result =
-            edit_range(&file, 2, 2, "var replaced = 99\n", true, true, temp.path()).unwrap();
-        assert!(!result.applied);
-
-        let content = fs::read_to_string(&file).unwrap();
-        assert!(content.contains("var a = 1"));
-    }
-
-    #[test]
     fn edit_range_invalid_lines() {
         let temp = setup(&[("player.gd", "extends Node\nvar a = 1\n")]);
         let file = temp.path().join("player.gd");
-        let result = edit_range(&file, 3, 1, "x\n", true, false, temp.path());
+        let result = edit_range(&file, 3, 1, "x\n", true, temp.path());
         assert!(result.is_err());
     }
 
@@ -1088,7 +948,7 @@ mod tests {
     fn edit_range_zero_line() {
         let temp = setup(&[("player.gd", "extends Node\nvar a = 1\n")]);
         let file = temp.path().join("player.gd");
-        let result = edit_range(&file, 0, 1, "x\n", true, false, temp.path());
+        let result = edit_range(&file, 0, 1, "x\n", true, temp.path());
         assert!(result.is_err());
     }
 
@@ -1102,7 +962,6 @@ mod tests {
             1,
             "extends Node\n",
             true, // no_format
-            false,
             temp.path(),
         )
         .unwrap();
@@ -1121,7 +980,6 @@ mod tests {
             1,
             "extends Node\nvar x = 1\n",
             true,
-            false,
             temp.path(),
         )
         .unwrap();

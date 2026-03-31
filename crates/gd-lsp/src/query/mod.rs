@@ -203,7 +203,10 @@ fn position_to_byte_offset(source: &str, pos: Position) -> usize {
 // ── Apply rename ─────────────────────────────────────────────────────────────
 
 pub fn apply_rename(output: &RenameOutput, project_root: &Path) -> Result<usize> {
-    let mut files_changed = 0;
+    use crate::refactor::mutation::{self, MutationSet};
+
+    let mut ms = MutationSet::new();
+
     for file_edits in &output.changes {
         let path = project_root.join(&file_edits.file);
         let mut content = std::fs::read_to_string(&path)
@@ -223,11 +226,11 @@ pub fn apply_rename(output: &RenameOutput, project_root: &Path) -> Result<usize>
             content.replace_range(start..end, &edit.new_text);
         }
 
-        std::fs::write(&path, &content)
-            .map_err(|e| miette::miette!("cannot write {}: {e}", file_edits.file))?;
-        files_changed += 1;
+        ms.insert(path, content);
     }
-    Ok(files_changed)
+
+    let result = mutation::commit(&ms, project_root)?;
+    Ok(result.files_written)
 }
 
 // ── Internal converters ──────────────────────────────────────────────────────

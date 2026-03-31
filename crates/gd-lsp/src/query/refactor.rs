@@ -9,11 +9,10 @@ pub fn query_extract_method(
     start_line: usize,
     end_line: usize,
     name: &str,
-    dry_run: bool,
 ) -> Result<crate::refactor::ExtractMethodOutput> {
     let path = resolve_file(file)?;
     let project_root = find_root(&path)?;
-    crate::refactor::extract_method(&path, start_line, end_line, name, dry_run, &project_root)
+    crate::refactor::extract_method(&path, start_line, end_line, name, &project_root)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -25,7 +24,6 @@ pub fn query_change_signature(
     rename_params: &[String],
     reorder: Option<&str>,
     class: Option<&str>,
-    dry_run: bool,
 ) -> Result<crate::refactor::ChangeSignatureOutput> {
     let path = resolve_file(file)?;
     let project_root = find_root(&path)?;
@@ -37,7 +35,6 @@ pub fn query_change_signature(
         rename_params,
         reorder,
         class,
-        dry_run,
         &project_root,
     )
 }
@@ -47,7 +44,6 @@ pub fn query_change_signature(
 pub fn query_move_file(
     from: &str,
     to: &str,
-    dry_run: bool,
 ) -> Result<crate::refactor::MoveFileOutput> {
     let from_path = resolve_file(from)?;
     let project_root = find_root(&from_path)?;
@@ -56,5 +52,5 @@ pub fn query_move_file(
     } else {
         project_root.join(to)
     };
-    crate::refactor::move_file(&from_path, &to_path, dry_run, &project_root)
+    crate::refactor::move_file(&from_path, &to_path, &project_root)
 }
