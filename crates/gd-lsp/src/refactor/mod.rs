@@ -1,58 +1,16 @@
-mod bulk_delete;
-mod bulk_rename;
 mod change_signature;
 pub mod collision;
-mod convert_node_path;
-mod convert_onready;
-mod convert_signal;
 mod delete_symbol;
 mod edit;
-mod encapsulate_field;
-mod extract_class;
-mod extract_constant;
-mod extract_guards;
 mod extract_method;
-mod extract_superclass;
-mod inline_delegate;
-mod inline_method;
-mod inline_variable;
-mod introduce_parameter;
-mod introduce_variable;
-mod invert_if;
 mod move_file;
 mod move_symbol;
-mod pull_up_member;
-mod push_down_member;
-mod split_join_declaration;
-mod transaction;
-mod undo;
-
-pub use bulk_delete::*;
-pub use bulk_rename::*;
 pub use change_signature::*;
-pub use convert_node_path::*;
-pub use convert_onready::*;
-pub use convert_signal::*;
 pub use delete_symbol::*;
 pub use edit::*;
-pub use encapsulate_field::*;
-pub use extract_class::*;
-pub use extract_constant::*;
-pub use extract_guards::*;
 pub use extract_method::*;
-pub use extract_superclass::*;
-pub use inline_delegate::*;
-pub use inline_method::*;
-pub use inline_variable::*;
-pub use introduce_parameter::*;
-pub use introduce_variable::*;
-pub use invert_if::*;
 pub use move_file::*;
 pub use move_symbol::*;
-pub use pull_up_member::*;
-pub use push_down_member::*;
-pub use split_join_declaration::*;
-pub use undo::*;
 
 use serde::Serialize;
 use tree_sitter::Node;
@@ -107,6 +65,13 @@ pub struct CallerUpdateInfo {
     pub action: String,
 }
 
+#[derive(Serialize)]
+pub struct PreloadRef {
+    pub file: String,
+    pub line: u32,
+    pub path: String,
+}
+
 #[derive(Serialize, Debug)]
 pub struct ExtractMethodOutput {
     pub function: String,
@@ -127,13 +92,6 @@ pub struct ParameterOutput {
     pub name: String,
     #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
     pub type_hint: Option<String>,
-}
-
-#[derive(Serialize)]
-pub struct PreloadRef {
-    pub file: String,
-    pub line: u32,
-    pub path: String,
 }
 
 #[derive(Serialize)]
@@ -170,7 +128,7 @@ pub(super) const DECLARATION_KINDS: &[&str] = &[
     "class_name_statement",
 ];
 
-pub(super) fn declaration_kind_str(kind: &str) -> &str {
+pub(crate) fn declaration_kind_str(kind: &str) -> &str {
     match kind {
         "function_definition" | "constructor_definition" => "function",
         "variable_statement" => "variable",
@@ -196,7 +154,7 @@ pub(super) fn get_declaration_name(node: Node, source: &str) -> Option<String> {
 }
 
 /// Find a top-level declaration by name.
-pub(super) fn find_declaration_by_name<'a>(file: &GdFile<'a>, name: &str) -> Option<Node<'a>> {
+pub(crate) fn find_declaration_by_name<'a>(file: &GdFile<'a>, name: &str) -> Option<Node<'a>> {
     if let Some(node) = file.find_decl_by_name(name).map(gd_ast::GdDecl::node) {
         return Some(node);
     }
@@ -208,9 +166,6 @@ pub(super) fn find_declaration_by_name<'a>(file: &GdFile<'a>, name: &str) -> Opt
     None
 }
 
-/// Find a top-level declaration at the given line (0-based).
-/// Only matches the declaration's start line — pointing to a line inside
-/// a function body does NOT match the enclosing function.
 pub(super) fn find_declaration_by_line<'a>(file: &GdFile<'a>, line: usize) -> Option<Node<'a>> {
     file.find_decl_by_line(line).map(gd_ast::GdDecl::node)
 }
@@ -241,7 +196,7 @@ fn is_section_divider(line: &str) -> bool {
 /// Bridges up to 2 blank lines when `##` doc comments exist above the gap.
 /// Stops at `# ===`-style section dividers so they don't travel with the symbol.
 /// Returns (start_byte, end_byte) covering annotations + comments + declaration + trailing newline.
-pub(super) fn declaration_full_range(node: Node, source: &str) -> (usize, usize) {
+pub(crate) fn declaration_full_range(node: Node, source: &str) -> (usize, usize) {
     let starts = line_starts(source);
     let lines: Vec<&str> = starts
         .iter()
@@ -403,7 +358,7 @@ pub(super) fn normalize_blank_lines(source: &mut String) {
 // ── Inner class helpers ─────────────────────────────────────────────────────
 
 /// Find a class_definition by name.
-pub(super) fn find_class_definition<'a>(file: &GdFile<'a>, class_name: &str) -> Option<Node<'a>> {
+pub(crate) fn find_class_definition<'a>(file: &GdFile<'a>, class_name: &str) -> Option<Node<'a>> {
     file.find_class(class_name).map(|c| c.node)
 }
 

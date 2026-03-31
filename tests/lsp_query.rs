@@ -520,13 +520,12 @@ fn test_lsp_rename_dry_run_does_not_modify_file() {
             "5",
             "--new-name",
             "velocity",
-            "--dry-run",
             "--format",
             "json",
         ])
         .current_dir(temp.path())
         .output()
-        .expect("Failed to run gd refactor rename --dry-run");
+        .expect("Failed to run gd refactor rename (dry-run default)");
 
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -561,6 +560,7 @@ fn test_lsp_rename_applies_changes_to_disk() {
             "5",
             "--new-name",
             "velocity",
+            "--apply",
         ])
         .current_dir(temp.path())
         .output()
@@ -611,6 +611,7 @@ fn test_lsp_rename_cross_file() {
             "5",
             "--new-name",
             "velocity",
+            "--apply",
         ])
         .current_dir(temp.path())
         .output()
@@ -854,6 +855,7 @@ fn test_lsp_rename_local_variable_scoped() {
             "8", // on `x`
             "--new-name",
             "y",
+            "--apply",
         ])
         .current_dir(temp.path())
         .output()
@@ -1366,161 +1368,6 @@ fn test_lsp_symbols_kind_field_alias() {
     let names: Vec<&str> = arr.iter().map(|s| s["name"].as_str().unwrap()).collect();
     assert!(names.contains(&"health"), "should include regular var");
     assert!(names.contains(&"label"), "should include @onready var");
-}
-
-// ─── Safe-delete-file tests ────────────────────────────────────────────────
-
-#[test]
-fn test_lsp_safe_delete_file_does_not_delete_without_force() {
-    let temp = setup_gd_project(&[
-        ("main.gd", "extends Node\n\nfunc _ready():\n\tpass\n"),
-        ("helper.gd", "extends Node\n\nfunc help():\n\tpass\n"),
-    ]);
-
-    // Run safe-delete-file WITHOUT --force — should only report, not delete
-    let output = gd_bin()
-        .args([
-            "refactor",
-            "safe-delete-file",
-            "helper.gd",
-            "--format",
-            "json",
-        ])
-        .current_dir(temp.path())
-        .output()
-        .expect("Failed to run gd refactor safe-delete-file");
-
-    assert!(output.status.success());
-    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(json["deleted"], false, "should NOT delete without --force");
-
-    // File must still exist on disk
-    assert!(
-        temp.path().join("helper.gd").exists(),
-        "file must NOT be deleted without --force flag"
-    );
-}
-
-#[test]
-fn test_lsp_safe_delete_file_does_not_delete_unreferenced_without_force() {
-    // This is the exact bug scenario: unreferenced file was auto-deleted
-    let temp = setup_gd_project(&[("orphan.gd", "extends Node\n\nfunc unused():\n\tpass\n")]);
-
-    // No other file references orphan.gd — previously this would delete it!
-    let output = gd_bin()
-        .args([
-            "refactor",
-            "safe-delete-file",
-            "orphan.gd",
-            "--format",
-            "json",
-        ])
-        .current_dir(temp.path())
-        .output()
-        .expect("Failed to run gd refactor safe-delete-file");
-
-    assert!(output.status.success());
-    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(
-        json["deleted"], false,
-        "must NOT auto-delete unreferenced files"
-    );
-    assert!(
-        temp.path().join("orphan.gd").exists(),
-        "unreferenced file must NOT be deleted without --force"
-    );
-}
-
-#[test]
-fn test_lsp_safe_delete_file_deletes_with_force() {
-    let temp = setup_gd_project(&[("deleteme.gd", "extends Node\n\nfunc bye():\n\tpass\n")]);
-
-    let output = gd_bin()
-        .args([
-            "refactor",
-            "safe-delete-file",
-            "deleteme.gd",
-            "--force",
-            "--format",
-            "json",
-        ])
-        .current_dir(temp.path())
-        .output()
-        .expect("Failed to run gd refactor safe-delete-file --force");
-
-    assert!(output.status.success());
-    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(json["deleted"], true, "should delete with --force");
-    assert!(
-        !temp.path().join("deleteme.gd").exists(),
-        "file should be deleted with --force"
-    );
-}
-
-#[test]
-fn test_lsp_safe_delete_file_dry_run_with_force_does_not_delete() {
-    let temp = setup_gd_project(&[("keepme.gd", "extends Node\n\nfunc stay():\n\tpass\n")]);
-
-    let output = gd_bin()
-        .args([
-            "refactor",
-            "safe-delete-file",
-            "keepme.gd",
-            "--force",
-            "--dry-run",
-            "--format",
-            "json",
-        ])
-        .current_dir(temp.path())
-        .output()
-        .expect("Failed to run gd refactor safe-delete-file --force --dry-run");
-
-    assert!(output.status.success());
-    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(json["deleted"], false, "--dry-run should prevent deletion");
-    assert!(
-        temp.path().join("keepme.gd").exists(),
-        "--dry-run should prevent deletion even with --force"
-    );
-}
-
-#[test]
-fn test_lsp_safe_delete_file_reports_references() {
-    let temp = setup_gd_project(&[
-        ("base.gd", "class_name Base\n\nfunc run():\n\tpass\n"),
-        (
-            "child.gd",
-            "extends \"res://base.gd\"\n\nfunc run():\n\tprint(\"child\")\n",
-        ),
-    ]);
-
-    let output = gd_bin()
-        .args([
-            "refactor",
-            "safe-delete-file",
-            "base.gd",
-            "--format",
-            "json",
-        ])
-        .current_dir(temp.path())
-        .output()
-        .expect("Failed to run gd refactor safe-delete-file");
-
-    // Exit code 1 is expected when references exist (signals "unsafe to delete")
-    let json: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("should output valid JSON");
-    let refs = json["references"].as_array().unwrap();
-    assert!(
-        !refs.is_empty(),
-        "should find extends reference from child.gd"
-    );
-    let files: Vec<&str> = refs.iter().filter_map(|r| r["file"].as_str()).collect();
-    assert!(
-        files.contains(&"child.gd"),
-        "should reference child.gd, got: {files:?}"
-    );
-    assert_eq!(json["deleted"], false, "should not delete");
-    assert!(temp.path().join("base.gd").exists());
 }
 
 // ─── Symbols detail tests ──────────────────────────────────────────────────
@@ -2172,6 +2019,7 @@ fn test_rename_enum_member_cross_file_qualified() {
             "14",
             "--new-name",
             "WAITING",
+            "--apply",
             "--format",
             "json",
         ])
@@ -2221,6 +2069,7 @@ fn test_rename_enum_member_cross_file_by_name() {
             "UP",
             "--new-name",
             "NORTH",
+            "--apply",
             "--format",
             "json",
         ])

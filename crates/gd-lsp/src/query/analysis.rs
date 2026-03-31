@@ -142,14 +142,16 @@ pub fn query_safe_delete_file(
     let mut references = Vec::new();
 
     // Find preload()/load() references
-    let preloads = crate::refactor::find_preloads_to_file(&res_path, &workspace, &project_root);
-    for p in preloads {
-        references.push(FileReference {
-            file: p.file,
-            line: p.line,
-            kind: "preload".to_string(),
-            text: p.path,
-        });
+    for (fpath, content) in workspace.all_files() {
+        if let Ok(tree) = gd_core::parser::parse(&content) {
+            find_preloads_in_tree(
+                tree.root_node(),
+                &content,
+                &res_path,
+                &gd_core::fs::relative_slash(&fpath, &project_root),
+                &mut references,
+            );
+        }
     }
 
     // Find extends "res://..." references
@@ -188,6 +190,48 @@ pub fn query_safe_delete_file(
         references,
         deleted,
     })
+}
+
+// ── Preload/load reference scanning ─────────────────────────────────────────
+
+fn find_preloads_in_tree(
+    node: tree_sitter::Node,
+    source: &str,
+    target_path: &str,
+    file: &str,
+    refs: &mut Vec<FileReference>,
+) {
+    if node.kind() == "call" {
+        let func_name = node
+            .child_by_field_name("function")
+            .or_else(|| node.named_child(0));
+        if let Some(func) = func_name
+            && let Ok(name) = func.utf8_text(source.as_bytes())
+            && (name == "preload" || name == "load")
+            && let Some(args) = node.child_by_field_name("arguments")
+        {
+            let mut arg_cursor = args.walk();
+            for arg in args.children(&mut arg_cursor) {
+                if arg.kind() == "string"
+                    && let Ok(text) = arg.utf8_text(source.as_bytes())
+                {
+                    let unquoted = text.trim_matches('"').trim_matches('\'');
+                    if unquoted == target_path {
+                        refs.push(FileReference {
+                            file: file.to_string(),
+                            line: node.start_position().row as u32 + 1,
+                            kind: "preload".to_string(),
+                            text: unquoted.to_string(),
+                        });
+                    }
+                }
+            }
+        }
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        find_preloads_in_tree(child, source, target_path, file, refs);
+    }
 }
 
 // ── Find implementations ─────────────────────────────────────────────────────

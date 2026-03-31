@@ -86,17 +86,65 @@ pub enum EditGdCommand {
         #[arg(long)]
         format: Option<String>,
     },
-    /// Replace an entire symbol declaration (reads new content from stdin or --input-file)
-    ReplaceSymbol {
+    /// Remove a symbol (function, variable, signal, enum, class) from a file
+    Remove {
         /// Path to the GDScript file
         #[arg()]
         file: String,
-        /// Symbol name to replace
+        /// Symbol name to remove (alternative to --line)
         #[arg(long)]
-        name: String,
-        /// Inner class containing the symbol
+        name: Option<String>,
+        /// Line number of declaration to remove (1-based; alternative to --name)
+        #[arg(long)]
+        line: Option<usize>,
+        /// Inner class to operate within
         #[arg(long)]
         class: Option<String>,
+        /// Remove even if references exist elsewhere
+        #[arg(long)]
+        force: bool,
+        /// Preview without writing changes
+        #[arg(long)]
+        dry_run: bool,
+        /// Output format: json or human (default: human)
+        #[arg(long)]
+        format: Option<String>,
+    },
+    /// Move a symbol from one file to another
+    Extract {
+        /// Symbol name to extract
+        #[arg(long)]
+        name: String,
+        /// Source file
+        #[arg(long)]
+        from: String,
+        /// Destination file (created if doesn't exist)
+        #[arg(long)]
+        to: String,
+        /// Source inner class
+        #[arg(long)]
+        class: Option<String>,
+        /// Target inner class (defaults to top-level)
+        #[arg(long)]
+        target_class: Option<String>,
+        /// Update preload/load paths in files that reference the source
+        #[arg(long)]
+        update_callers: bool,
+        /// Preview without writing changes
+        #[arg(long)]
+        dry_run: bool,
+        /// Output format: json or human (default: human)
+        #[arg(long)]
+        format: Option<String>,
+    },
+    /// Insert code into a class body (reads content from stdin or --input-file)
+    InsertInto {
+        /// Path to the GDScript file
+        #[arg()]
+        file: String,
+        /// Class name to insert into (inner class or top-level class_name)
+        #[arg(long)]
+        class: String,
         /// Read content from a file instead of stdin
         #[arg(long)]
         input_file: Option<String>,
@@ -110,20 +158,17 @@ pub enum EditGdCommand {
         #[arg(long)]
         format: Option<String>,
     },
-    /// Replace a range of lines (reads new content from stdin or --input-file)
-    EditRange {
+    /// Replace an entire symbol declaration (reads new content from stdin or --input-file)
+    ReplaceSymbol {
         /// Path to the GDScript file
         #[arg()]
         file: String,
-        /// Line range as START-END (e.g. 5-20; 1-based, inclusive)
-        #[arg(long, conflicts_with_all = ["start_line", "end_line"])]
-        range: Option<String>,
-        /// First line to replace (1-based, inclusive)
+        /// Symbol name to replace
         #[arg(long)]
-        start_line: Option<usize>,
-        /// Last line to replace (1-based, inclusive)
+        name: String,
+        /// Inner class containing the symbol
         #[arg(long)]
-        end_line: Option<usize>,
+        class: Option<String>,
         /// Read content from a file instead of stdin
         #[arg(long)]
         input_file: Option<String>,
@@ -154,7 +199,7 @@ fn print_edit_human(r: &gd_lsp::refactor::EditOutput) {
         "insert_after" => "Inserted after",
         "insert_before" => "Inserted before",
         "replace_symbol" => "Replaced",
-        "edit_range" => "Replaced range in",
+        "insert-into" => "Inserted into",
         _ => r.operation,
     };
     let symbol_part = r
@@ -166,6 +211,50 @@ fn print_edit_human(r: &gd_lsp::refactor::EditOutput) {
         r.file.cyan(),
         r.lines_changed,
         if r.lines_changed == 1 { "" } else { "s" },
+        dry_run_suffix(r.applied),
+    );
+    for w in &r.warnings {
+        cprintln!("  {}: {w}", "warning".yellow());
+    }
+}
+
+fn print_remove_human(r: &gd_lsp::refactor::DeleteSymbolOutput) {
+    use owo_colors::OwoColorize;
+    cprintln!(
+        "{} {} {} (lines {}-{}){}",
+        if r.applied { "Removed" } else { "Would remove" },
+        r.kind.dimmed(),
+        r.symbol.bold(),
+        r.removed_lines.start,
+        r.removed_lines.end,
+        dry_run_suffix(r.applied),
+    );
+    if !r.references.is_empty() {
+        cprintln!(
+            "  {} dangling reference{}:",
+            r.references.len().to_string().yellow(),
+            if r.references.len() == 1 { "" } else { "s" }
+        );
+        for loc in &r.references {
+            cprintln!("  {}:{}:{}", loc.file.cyan(), loc.line, loc.column);
+        }
+    }
+}
+
+fn print_extract_human(r: &gd_lsp::refactor::MoveSymbolOutput) {
+    use owo_colors::OwoColorize;
+    cprintln!(
+        "{} {} ({}) {} {} {}{}",
+        if r.applied {
+            "Extracted"
+        } else {
+            "Would extract"
+        },
+        r.symbol.bold(),
+        r.kind.dimmed(),
+        r.from.cyan(),
+        "→".dimmed(),
+        r.to.cyan(),
         dry_run_suffix(r.applied),
     );
     for w in &r.warnings {
@@ -190,31 +279,6 @@ fn print_create_file_human(r: &gd_lsp::query::CreateFileOutput) {
         if r.lines == 1 { "" } else { "s" },
         dry_run_suffix(r.applied),
     );
-}
-
-/// Parse a range string like "5-20" into (start, end) line numbers.
-fn parse_range(range: &str) -> Result<(usize, usize)> {
-    let parts: Vec<&str> = range.splitn(2, '-').collect();
-    if parts.len() != 2 {
-        return Err(miette::miette!(
-            "invalid range '{range}' — expected START-END (e.g. 5-20)"
-        ));
-    }
-    let start: usize = parts[0]
-        .parse()
-        .map_err(|_| miette::miette!("invalid start line in range: '{}'", parts[0]))?;
-    let end: usize = parts[1]
-        .parse()
-        .map_err(|_| miette::miette!("invalid end line in range: '{}'", parts[1]))?;
-    if start == 0 || end == 0 {
-        return Err(miette::miette!("line numbers are 1-based"));
-    }
-    if start > end {
-        return Err(miette::miette!(
-            "start ({start}) must be <= end ({end}) in range"
-        ));
-    }
-    Ok((start, end))
 }
 
 /// Read content from `--input-file` if provided, otherwise from stdin.
@@ -408,28 +472,80 @@ pub fn exec(args: EditGdArgs) -> Result<()> {
             }
             Ok(())
         }
-        EditGdCommand::EditRange {
+        EditGdCommand::Remove {
             file,
-            range,
-            start_line,
-            end_line,
+            name,
+            line,
+            class,
+            force,
+            dry_run,
+            format,
+        } => {
+            if name.is_none() && line.is_none() {
+                return Err(miette::miette!("either --name or --line is required"));
+            }
+            if name.is_some() && line.is_some() {
+                return Err(miette::miette!("--name and --line are mutually exclusive"));
+            }
+            let result = gd_lsp::query::query_remove(
+                &file,
+                name.as_deref(),
+                line,
+                force,
+                dry_run,
+                class.as_deref(),
+            )?;
+            if is_json(format.as_ref()) {
+                let json =
+                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+                cprintln!("{json}");
+            } else {
+                print_remove_human(&result);
+            }
+            if !force && !result.references.is_empty() {
+                std::process::exit(1);
+            }
+            Ok(())
+        }
+        EditGdCommand::Extract {
+            name,
+            from,
+            to,
+            class,
+            target_class,
+            update_callers,
+            dry_run,
+            format,
+        } => {
+            let result = gd_lsp::query::query_extract(
+                &name,
+                &from,
+                &to,
+                dry_run,
+                class.as_deref(),
+                target_class.as_deref(),
+                update_callers,
+            )?;
+            if is_json(format.as_ref()) {
+                let json =
+                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+                cprintln!("{json}");
+            } else {
+                print_extract_human(&result);
+            }
+            Ok(())
+        }
+        EditGdCommand::InsertInto {
+            file,
+            class,
             input_file,
             no_format,
             dry_run,
             format,
         } => {
-            let (start, end) = if let Some(ref r) = range {
-                parse_range(r)?
-            } else {
-                let s = start_line
-                    .ok_or_else(|| miette::miette!("--start-line or --range is required"))?;
-                let e =
-                    end_line.ok_or_else(|| miette::miette!("--end-line or --range is required"))?;
-                (s, e)
-            };
             let content = read_content(input_file.as_deref())?;
             let result =
-                gd_lsp::query::query_edit_range(&file, start, end, &content, no_format, dry_run)?;
+                gd_lsp::query::query_insert_into(&file, &class, &content, no_format, dry_run)?;
             if is_json(format.as_ref()) {
                 let json =
                     serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;

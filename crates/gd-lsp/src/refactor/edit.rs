@@ -1,5 +1,4 @@
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use miette::Result;
 use serde::Serialize;
@@ -21,6 +20,9 @@ pub struct EditOutput {
     pub symbol: Option<String>,
     pub applied: bool,
     pub lines_changed: u32,
+    /// Number of lint diagnostics on the file after the edit.
+    /// 0 means clean (exit 0), >0 means applied with warnings (exit 2).
+    pub diagnostics: u32,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
 }
@@ -30,6 +32,47 @@ pub struct EditOutput {
 /// Validate that an edit didn't introduce new parse errors compared to the original.
 fn validate_no_new_errors(original: &str, edited: &str) -> Result<()> {
     super::validate_no_new_errors(original, edited)
+}
+
+/// Count lint diagnostics on source.
+fn lint_diagnostic_count(source: &str, project_root: &Path) -> u32 {
+    let Ok(tree) = gd_core::parser::parse(source) else {
+        return 0;
+    };
+    let file_ast = gd_core::gd_ast::convert(&tree, source);
+    let config = gd_core::config::Config::load(project_root).unwrap_or_default();
+    let rules = gd_lint::rules::all_rules(
+        &config.lint.disabled_rules,
+        &config.lint.rules,
+        &config.lint,
+        &[],
+    );
+    let mut count = 0u32;
+    for rule in &rules {
+        count += rule.check(&file_ast, source, &config.lint).len() as u32;
+    }
+    count
+}
+
+/// Validate that the mutation didn't introduce new lint diagnostics.
+/// Returns `Err` with exit-code-2 semantics if new diagnostics were introduced.
+fn validate_no_new_diagnostics(original: &str, mutated: &str, project_root: &Path) -> Result<u32> {
+    let original_count = lint_diagnostic_count(original, project_root);
+    let mutated_count = lint_diagnostic_count(mutated, project_root);
+    if mutated_count > original_count {
+        return Err(miette::miette!(
+            "mutation introduced {} new lint diagnostic{} ({} → {})",
+            mutated_count - original_count,
+            if mutated_count - original_count == 1 {
+                ""
+            } else {
+                "s"
+            },
+            original_count,
+            mutated_count,
+        ));
+    }
+    Ok(mutated_count)
 }
 
 /// Format GDScript source using the project's formatter config.
@@ -151,21 +194,13 @@ pub fn replace_body(
 
     let lines_changed = diff_line_count(&source, &final_source);
 
-    if !dry_run {
+    let diagnostics = if dry_run {
+        0
+    } else {
         std::fs::write(file, &final_source)
             .map_err(|e| miette::miette!("cannot write file: {e}"))?;
-
-        // Record undo
-        let mut snaps: HashMap<PathBuf, Option<Vec<u8>>> = HashMap::new();
-        snaps.insert(file.to_path_buf(), Some(source.as_bytes().to_vec()));
-        let stack = super::undo::UndoStack::open(project_root);
-        let _ = stack.record(
-            "replace-body",
-            &format!("replace body of {name}"),
-            &snaps,
-            project_root,
-        );
-    }
+        lint_diagnostic_count(&final_source, project_root)
+    };
 
     Ok(EditOutput {
         file: rel,
@@ -173,6 +208,7 @@ pub fn replace_body(
         symbol: Some(name.to_string()),
         applied: !dry_run,
         lines_changed,
+        diagnostics,
         warnings: vec![],
     })
 }
@@ -244,21 +280,13 @@ pub fn insert(
 
     let lines_changed = diff_line_count(&source, &final_source);
 
-    if !dry_run {
+    let diagnostics = if dry_run {
+        0
+    } else {
         std::fs::write(file, &final_source)
             .map_err(|e| miette::miette!("cannot write file: {e}"))?;
-
-        // Record undo
-        let mut snaps: HashMap<PathBuf, Option<Vec<u8>>> = HashMap::new();
-        snaps.insert(file.to_path_buf(), Some(source.as_bytes().to_vec()));
-        let stack = super::undo::UndoStack::open(project_root);
-        let _ = stack.record(
-            "insert",
-            &format!("insert near {anchor_name}"),
-            &snaps,
-            project_root,
-        );
-    }
+        lint_diagnostic_count(&final_source, project_root)
+    };
 
     Ok(EditOutput {
         file: rel,
@@ -266,6 +294,84 @@ pub fn insert(
         symbol: Some(anchor_name.to_string()),
         applied: !dry_run,
         lines_changed,
+        diagnostics,
+        warnings: vec![],
+    })
+}
+
+// ── insert-into (class body) ────────────────────────────────────────────────
+
+pub fn insert_into(
+    file: &Path,
+    class_name: &str,
+    content: &str,
+    no_format: bool,
+    dry_run: bool,
+    project_root: &Path,
+) -> Result<EditOutput> {
+    let source =
+        std::fs::read_to_string(file).map_err(|e| miette::miette!("cannot read file: {e}"))?;
+    let tree = gd_core::parser::parse(&source)?;
+    let file_ast = gd_ast::convert(&tree, &source);
+    let rel = gd_core::fs::relative_slash(file, project_root);
+
+    let class_node = super::find_class_definition(&file_ast, class_name)
+        .ok_or_else(|| miette::miette!("class '{class_name}' not found in {rel}"))?;
+
+    // Find the body node of the class
+    let body = class_node
+        .child_by_field_name("body")
+        .ok_or_else(|| miette::miette!("class '{class_name}' has no body"))?;
+
+    // Insert before the end of the class body
+    let insert_byte = body.end_byte();
+
+    // Determine indentation (inner class content is indented one level deeper)
+    let class_line = class_node.start_position().row;
+    let starts = line_starts(&source);
+    let line_start = starts[class_line];
+    let line_text = &source[line_start..class_node.start_byte()];
+    let class_indent = line_text.chars().filter(|&c| c == '\t').count();
+    let content_indent = class_indent + 1;
+
+    let reindented = super::re_indent_to_depth(content.trim_end(), content_indent);
+
+    let mut result = String::with_capacity(source.len() + reindented.len());
+    result.push_str(&source[..insert_byte]);
+    if !result.ends_with('\n') {
+        result.push('\n');
+    }
+    result.push_str(&reindented);
+    if !reindented.ends_with('\n') {
+        result.push('\n');
+    }
+    result.push_str(&source[insert_byte..]);
+
+    validate_no_new_errors(&source, &result)?;
+
+    let final_source = if no_format {
+        result
+    } else {
+        format_source(&result, project_root)?
+    };
+
+    let lines_changed = diff_line_count(&source, &final_source);
+
+    let diagnostics = if dry_run {
+        0
+    } else {
+        std::fs::write(file, &final_source)
+            .map_err(|e| miette::miette!("cannot write file: {e}"))?;
+        lint_diagnostic_count(&final_source, project_root)
+    };
+
+    Ok(EditOutput {
+        file: rel,
+        operation: "insert-into",
+        symbol: Some(class_name.to_string()),
+        applied: !dry_run,
+        lines_changed,
+        diagnostics,
         warnings: vec![],
     })
 }
@@ -338,21 +444,13 @@ pub fn replace_symbol(
 
     let lines_changed = diff_line_count(&source, &final_source);
 
-    if !dry_run {
+    let diagnostics = if dry_run {
+        0
+    } else {
         std::fs::write(file, &final_source)
             .map_err(|e| miette::miette!("cannot write file: {e}"))?;
-
-        // Record undo
-        let mut snaps: HashMap<PathBuf, Option<Vec<u8>>> = HashMap::new();
-        snaps.insert(file.to_path_buf(), Some(source.as_bytes().to_vec()));
-        let stack = super::undo::UndoStack::open(project_root);
-        let _ = stack.record(
-            "replace-symbol",
-            &format!("replace symbol {name}"),
-            &snaps,
-            project_root,
-        );
-    }
+        lint_diagnostic_count(&final_source, project_root)
+    };
 
     Ok(EditOutput {
         file: rel,
@@ -360,6 +458,7 @@ pub fn replace_symbol(
         symbol: Some(name.to_string()),
         applied: !dry_run,
         lines_changed,
+        diagnostics,
         warnings: vec![],
     })
 }
@@ -407,21 +506,14 @@ pub fn edit_range(
 
         let lines_changed = diff_line_count(&source, &final_source);
 
-        if !dry_run {
+        let diagnostics = if dry_run {
+            0
+        } else {
+            let diag_count = validate_no_new_diagnostics(&source, &final_source, project_root)?;
             std::fs::write(file, &final_source)
                 .map_err(|e| miette::miette!("cannot write file: {e}"))?;
-
-            // Record undo
-            let mut snaps: HashMap<PathBuf, Option<Vec<u8>>> = HashMap::new();
-            snaps.insert(file.to_path_buf(), Some(source.as_bytes().to_vec()));
-            let stack = super::undo::UndoStack::open(project_root);
-            let _ = stack.record(
-                "edit-range",
-                &format!("edit range {start_line}-{end_line}"),
-                &snaps,
-                project_root,
-            );
-        }
+            diag_count
+        };
 
         return Ok(EditOutput {
             file: rel,
@@ -429,6 +521,7 @@ pub fn edit_range(
             symbol: None,
             applied: !dry_run,
             lines_changed,
+            diagnostics,
             warnings: vec![],
         });
     }
@@ -471,21 +564,13 @@ pub fn edit_range(
 
     let lines_changed = diff_line_count(&source, &final_source);
 
-    if !dry_run {
+    let diagnostics = if dry_run {
+        0
+    } else {
         std::fs::write(file, &final_source)
             .map_err(|e| miette::miette!("cannot write file: {e}"))?;
-
-        // Record undo
-        let mut snaps: HashMap<PathBuf, Option<Vec<u8>>> = HashMap::new();
-        snaps.insert(file.to_path_buf(), Some(source.as_bytes().to_vec()));
-        let stack = super::undo::UndoStack::open(project_root);
-        let _ = stack.record(
-            "edit-range",
-            &format!("edit range {start_line}-{end_line}"),
-            &snaps,
-            project_root,
-        );
-    }
+        lint_diagnostic_count(&final_source, project_root)
+    };
 
     Ok(EditOutput {
         file: rel,
@@ -493,6 +578,7 @@ pub fn edit_range(
         symbol: None,
         applied: !dry_run,
         lines_changed,
+        diagnostics,
         warnings: vec![],
     })
 }

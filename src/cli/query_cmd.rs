@@ -104,14 +104,17 @@ pub enum QueryCommand {
         #[arg(long, default_value = "human")]
         format: String,
     },
-    /// View lines from a GDScript file (with optional line range)
+    /// View lines from a GDScript file (line range or symbol)
     View {
         /// Path to the GDScript file
         #[arg()]
         file: String,
-        /// Line range as START-END (e.g. 5-20; 1-based, inclusive)
+        /// Show a symbol's full declaration (doc comments, annotations, body)
         #[arg(long, conflicts_with_all = ["start_line", "end_line"])]
-        range: Option<String>,
+        symbol: Option<String>,
+        /// Include workspace references for the symbol (requires --symbol)
+        #[arg(long, requires = "symbol")]
+        refs: bool,
         /// First line to show (1-based, inclusive; default: 1)
         #[arg(long)]
         start_line: Option<usize>,
@@ -486,31 +489,6 @@ fn is_json(format: Option<&String>) -> bool {
     format.map(String::as_str) == Some("json")
 }
 
-/// Parse a range string like "5-20" into (start, end) line numbers.
-fn parse_range(range: &str) -> Result<(usize, usize)> {
-    let parts: Vec<&str> = range.splitn(2, '-').collect();
-    if parts.len() != 2 {
-        return Err(miette::miette!(
-            "invalid range '{range}' — expected START-END (e.g. 5-20)"
-        ));
-    }
-    let start: usize = parts[0]
-        .parse()
-        .map_err(|_| miette::miette!("invalid start line in range: '{}'", parts[0]))?;
-    let end: usize = parts[1]
-        .parse()
-        .map_err(|_| miette::miette!("invalid end line in range: '{}'", parts[1]))?;
-    if start == 0 || end == 0 {
-        return Err(miette::miette!("line numbers are 1-based"));
-    }
-    if start > end {
-        return Err(miette::miette!(
-            "start ({start}) must be <= end ({end}) in range"
-        ));
-    }
-    Ok((start, end))
-}
-
 #[allow(clippy::too_many_lines)]
 pub fn exec(args: QueryArgs) -> Result<()> {
     match args.command {
@@ -756,33 +734,65 @@ pub fn exec(args: QueryArgs) -> Result<()> {
         }
         QueryCommand::View {
             file,
-            range,
+            symbol,
+            refs,
             start_line,
             end_line,
             context,
             format,
         } => {
-            let (start_line, end_line) = if let Some(ref r) = range {
-                let (s, e) = parse_range(r)?;
-                (Some(s), Some(e))
-            } else {
-                (start_line, end_line)
-            };
-            let result = gd_lsp::query::query_view(&file, start_line, end_line, context)?;
-            if format.as_deref() == Some("json") {
-                let json =
-                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
-                cprintln!("{json}");
-            } else {
-                // Human-readable output (cat -n style)
-                let width = if result.end_line > 0 {
-                    result.end_line.to_string().len()
+            if let Some(ref sym) = symbol {
+                let result = gd_lsp::query::query_view_symbol(&file, sym, refs)?;
+                if format.as_deref() == Some("json") {
+                    let json = serde_json::to_string_pretty(&result)
+                        .map_err(|e| miette::miette!("{e}"))?;
+                    cprintln!("{json}");
                 } else {
-                    1
-                };
-                for (i, line) in result.content.lines().enumerate() {
-                    let line_num = result.start_line as usize + i;
-                    cprintln!("{line_num:>width$}\t{line}");
+                    use owo_colors::OwoColorize;
+                    cprintln!(
+                        "{} {} in {}",
+                        result.kind.dimmed(),
+                        result.name.bold(),
+                        result.file.cyan(),
+                    );
+                    let width = result.end_line.to_string().len();
+                    for (i, line) in result.content.lines().enumerate() {
+                        let line_num = result.start_line as usize + i;
+                        cprintln!("{line_num:>width$}\t{line}");
+                    }
+                    if let Some(ref refs_list) = result.references {
+                        cprintln!(
+                            "\n{} reference{}:",
+                            refs_list.len(),
+                            if refs_list.len() == 1 { "" } else { "s" },
+                        );
+                        for r in refs_list {
+                            cprintln!(
+                                "  {}:{}:{}  {}",
+                                r.file.cyan(),
+                                r.line,
+                                r.column,
+                                r.context.dimmed(),
+                            );
+                        }
+                    }
+                }
+            } else {
+                let result = gd_lsp::query::query_view(&file, start_line, end_line, context)?;
+                if format.as_deref() == Some("json") {
+                    let json = serde_json::to_string_pretty(&result)
+                        .map_err(|e| miette::miette!("{e}"))?;
+                    cprintln!("{json}");
+                } else {
+                    let width = if result.end_line > 0 {
+                        result.end_line.to_string().len()
+                    } else {
+                        1
+                    };
+                    for (i, line) in result.content.lines().enumerate() {
+                        let line_num = result.start_line as usize + i;
+                        cprintln!("{line_num:>width$}\t{line}");
+                    }
                 }
             }
             Ok(())

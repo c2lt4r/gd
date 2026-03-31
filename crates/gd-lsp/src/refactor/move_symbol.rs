@@ -171,8 +171,6 @@ pub fn move_symbol(
     let mut callers_updated = Vec::new();
 
     if !dry_run {
-        let mut tx = super::transaction::RefactorTransaction::new();
-
         // Write target file
         if to_file.exists() {
             let mut target_source = std::fs::read_to_string(to_file)
@@ -186,7 +184,6 @@ pub fn move_symbol(
                     miette::miette!("target class '{tc}' not found in target file")
                 })?;
                 let insert_byte = tc_node.end_byte();
-                // Insert before end of class with proper spacing
                 let spacing = "\n";
                 let insert_text = format!("{spacing}{decl_text}");
                 target_source.insert_str(insert_byte, &insert_text);
@@ -196,10 +193,12 @@ pub fn move_symbol(
                 target_source.push_str(&decl_text);
             }
             super::validate_no_new_errors("", &target_source)?;
-            tx.write_file(to_file, &target_source)?;
+            std::fs::write(to_file, &target_source)
+                .map_err(|e| miette::miette!("cannot write target file: {e}"))?;
         } else {
             super::validate_no_new_errors("", &decl_text)?;
-            tx.write_file(to_file, &decl_text)?;
+            std::fs::write(to_file, &decl_text)
+                .map_err(|e| miette::miette!("cannot write target file: {e}"))?;
         }
 
         // Remove from source file
@@ -208,13 +207,13 @@ pub fn move_symbol(
         new_source.push_str(&source[end_byte..]);
         normalize_blank_lines(&mut new_source);
         super::validate_no_new_errors(&source, &new_source)?;
-        tx.write_file(from_file, &new_source)?;
+        std::fs::write(from_file, &new_source)
+            .map_err(|e| miette::miette!("cannot write source file: {e}"))?;
 
         // Update caller files that reference the source file via preload/load
         if update_callers {
             for preload_ref in &preloads {
                 let caller_path = project_root.join(&preload_ref.file);
-                // Skip files that are part of the move itself
                 if caller_path == from_file || caller_path == to_file {
                     continue;
                 }
@@ -231,28 +230,22 @@ pub fn move_symbol(
                     preload_ref,
                 ) {
                     Ok(Some(update)) => {
-                        tx.write_file(&caller_path, &update.new_content)?;
-                        callers_updated.push(CallerUpdateInfo {
-                            file: preload_ref.file.clone(),
-                            action: update.action,
-                        });
+                        if let Err(e) = std::fs::write(&caller_path, &update.new_content) {
+                            warnings.push(format!("could not write {}: {e}", preload_ref.file));
+                        } else {
+                            callers_updated.push(CallerUpdateInfo {
+                                file: preload_ref.file.clone(),
+                                action: update.action,
+                            });
+                        }
                     }
-                    Ok(None) => {} // no update needed
+                    Ok(None) => {}
                     Err(e) => {
                         warnings.push(format!("could not update {}: {e}", preload_ref.file));
                     }
                 }
             }
         }
-
-        let snapshots = tx.into_snapshots();
-        let stack = super::undo::UndoStack::open(project_root);
-        let _ = stack.record(
-            "move-symbol",
-            &format!("move {name} from {from_relative} to {to_relative}"),
-            &snapshots,
-            project_root,
-        );
     }
 
     Ok(MoveSymbolOutput {
@@ -1216,35 +1209,6 @@ mod tests {
         assert!(
             caller.contains("res://dest.gd"),
             "inline preload should be updated, got: {caller}"
-        );
-    }
-
-    #[test]
-    fn move_caller_undo_snapshot_includes_callers() {
-        let temp = setup_project(&[
-            ("source.gd", "func helper():\n\treturn 42\n"),
-            (
-                "caller.gd",
-                "const Source = preload(\"res://source.gd\")\n\nfunc _ready():\n\tSource.helper()\n",
-            ),
-        ]);
-        let result = move_symbol(
-            "helper",
-            &temp.path().join("source.gd"),
-            &temp.path().join("dest.gd"),
-            false,
-            temp.path(),
-            None,
-            None,
-            true,
-        )
-        .unwrap();
-        assert!(result.applied);
-        let undo_stack = crate::refactor::UndoStack::open(temp.path());
-        let entries = undo_stack.list().unwrap();
-        assert!(
-            !entries.is_empty(),
-            "undo stack should have an entry for the move"
         );
     }
 

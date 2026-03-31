@@ -6,10 +6,138 @@ use serde::Serialize;
 
 use std::fmt::Write;
 
-use super::inline_method::{
-    ParamInfo, extract_call_arguments, extract_function_params, find_call_at,
-};
 use super::{find_declaration_by_name, find_declaration_in_class};
+
+// ── Helpers (formerly in inline_method) ─────────────────────────────────────
+
+fn find_call_at(
+    root: tree_sitter::Node<'_>,
+    point: tree_sitter::Point,
+) -> Option<tree_sitter::Node<'_>> {
+    let leaf = root.descendant_for_point_range(point, point)?;
+    let mut node = leaf;
+    loop {
+        if node.kind() == "call" {
+            return Some(node);
+        }
+        if node.kind() == "attribute" && has_attribute_call_child(node) {
+            return Some(node);
+        }
+        node = node.parent()?;
+    }
+}
+
+fn has_attribute_call_child(node: tree_sitter::Node) -> bool {
+    let mut cursor = node.walk();
+    node.children(&mut cursor)
+        .any(|c| c.kind() == "attribute_call")
+}
+
+fn extract_call_arguments(call: tree_sitter::Node, source: &str) -> Vec<String> {
+    let arg_source = if call.kind() == "attribute" {
+        let mut cursor = call.walk();
+        call.children(&mut cursor)
+            .find(|c| c.kind() == "attribute_call")
+    } else {
+        Some(call)
+    };
+
+    let mut args = Vec::new();
+    if let Some(source_node) = arg_source
+        && let Some(arg_node) = source_node.child_by_field_name("arguments")
+    {
+        let mut cursor = arg_node.walk();
+        for child in arg_node.children(&mut cursor) {
+            if child.is_named()
+                && child.kind() != "("
+                && child.kind() != ")"
+                && child.kind() != ","
+                && let Ok(text) = child.utf8_text(source.as_bytes())
+            {
+                args.push(text.to_string());
+            }
+        }
+    }
+    args
+}
+
+#[derive(Debug)]
+struct ParamInfo {
+    name: String,
+    #[allow(dead_code)]
+    type_hint: Option<String>,
+    default: Option<String>,
+}
+
+fn extract_function_params(func: tree_sitter::Node, source: &str) -> Vec<ParamInfo> {
+    let mut params = Vec::new();
+    let Some(params_node) = func.child_by_field_name("parameters") else {
+        return params;
+    };
+    let mut cursor = params_node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            let child = cursor.node();
+            match child.kind() {
+                "identifier" => {
+                    params.push(ParamInfo {
+                        name: source[child.byte_range()].to_string(),
+                        type_hint: None,
+                        default: None,
+                    });
+                }
+                "typed_parameter" => {
+                    if let Some(name_node) = child.child(0) {
+                        let type_hint = child
+                            .child_by_field_name("type")
+                            .and_then(|t| t.utf8_text(source.as_bytes()).ok())
+                            .map(std::string::ToString::to_string);
+                        params.push(ParamInfo {
+                            name: source[name_node.byte_range()].to_string(),
+                            type_hint,
+                            default: None,
+                        });
+                    }
+                }
+                "default_parameter" => {
+                    if let Some(name_node) = child.child(0) {
+                        let default = child
+                            .child_by_field_name("value")
+                            .and_then(|v| v.utf8_text(source.as_bytes()).ok())
+                            .map(std::string::ToString::to_string);
+                        params.push(ParamInfo {
+                            name: source[name_node.byte_range()].to_string(),
+                            type_hint: None,
+                            default,
+                        });
+                    }
+                }
+                "typed_default_parameter" => {
+                    if let Some(name_node) = child.child(0) {
+                        let type_hint = child
+                            .child_by_field_name("type")
+                            .and_then(|t| t.utf8_text(source.as_bytes()).ok())
+                            .map(std::string::ToString::to_string);
+                        let default = child
+                            .child_by_field_name("value")
+                            .and_then(|v| v.utf8_text(source.as_bytes()).ok())
+                            .map(std::string::ToString::to_string);
+                        params.push(ParamInfo {
+                            name: source[name_node.byte_range()].to_string(),
+                            type_hint,
+                            default,
+                        });
+                    }
+                }
+                _ => {}
+            }
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+    }
+    params
+}
 use gd_core::gd_ast;
 
 // ── change-signature ────────────────────────────────────────────────────────
@@ -208,30 +336,6 @@ pub fn change_signature(
         call_sites_updated = call_sites.len() as u32;
         overrides_updated = override_files.len() as u32;
     } else {
-        // Snapshot all affected files for undo before any writes
-        let mut snaps: HashMap<PathBuf, Option<Vec<u8>>> = HashMap::new();
-        snaps.insert(file.to_path_buf(), Some(source.as_bytes().to_vec()));
-        // Pre-read call-site files for snapshot
-        {
-            let mut seen: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
-            seen.insert(file.to_path_buf());
-            for (path, _, _) in &call_sites {
-                if seen.insert(path.clone())
-                    && let Ok(content) = std::fs::read(path)
-                {
-                    snaps.insert(path.clone(), Some(content));
-                }
-            }
-            // Also snapshot override files
-            for ovr_path in &override_files {
-                if seen.insert(ovr_path.clone())
-                    && let Ok(content) = std::fs::read(ovr_path)
-                {
-                    snaps.insert(ovr_path.clone(), Some(content));
-                }
-            }
-        }
-
         // 1. Update function definition (signature + body renames)
         let mut new_source = source.clone();
         if let Some(pn) = params_node {
@@ -328,15 +432,6 @@ pub fn change_signature(
 
         // 4. Check .tscn signal connections that reference this handler
         check_tscn_connections(name, project_root, &mut warnings);
-
-        // Record undo
-        let stack = super::undo::UndoStack::open(project_root);
-        let _ = stack.record(
-            "change-signature",
-            &format!("change signature of {name}"),
-            &snaps,
-            project_root,
-        );
     }
 
     // Check for non-call references (variable references to the function name)

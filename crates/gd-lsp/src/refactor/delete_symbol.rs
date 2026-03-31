@@ -1,5 +1,4 @@
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use miette::Result;
 
@@ -151,16 +150,6 @@ pub fn delete_symbol(
         normalize_blank_lines(&mut new_source);
         super::validate_no_new_errors(&source, &new_source)?;
         std::fs::write(file, &new_source).map_err(|e| miette::miette!("cannot write file: {e}"))?;
-
-        let mut snaps: HashMap<PathBuf, Option<Vec<u8>>> = HashMap::new();
-        snaps.insert(file.to_path_buf(), Some(source.as_bytes().to_vec()));
-        let stack = super::undo::UndoStack::open(project_root);
-        let _ = stack.record(
-            "delete-symbol",
-            &format!("delete {symbol_name}"),
-            &snaps,
-            project_root,
-        );
     }
 
     Ok(DeleteSymbolOutput {
@@ -313,16 +302,6 @@ fn delete_enum_member(
         new_source.push_str(&source[remove_end..]);
         super::validate_no_new_errors(&source, &new_source)?;
         std::fs::write(file, &new_source).map_err(|e| miette::miette!("cannot write file: {e}"))?;
-
-        let mut snaps: HashMap<PathBuf, Option<Vec<u8>>> = HashMap::new();
-        snaps.insert(file.to_path_buf(), Some(source.as_bytes().to_vec()));
-        let stack = super::undo::UndoStack::open(project_root);
-        let _ = stack.record(
-            "delete-symbol",
-            &format!("delete {enum_name}.{member_name}"),
-            &snaps,
-            project_root,
-        );
     }
 
     Ok(DeleteSymbolOutput {

@@ -7,24 +7,16 @@ pub use analysis::{
     query_code_actions, query_find_implementations, query_safe_delete_file, query_symbols,
 };
 pub use edit::{
-    CreateFileOutput, SceneInfoOutput, SceneNodeOutput, query_create_file, query_edit_range,
-    query_insert, query_replace_body, query_replace_symbol, query_scene_info, query_view,
+    CreateFileOutput, SceneInfoOutput, SceneNodeOutput, SymbolViewOutput, query_create_file,
+    query_extract, query_insert, query_insert_into, query_remove, query_replace_body,
+    query_replace_symbol, query_scene_info, query_view, query_view_symbol,
 };
 pub use navigation::{
     SceneRefOutput, SignalConnectionOutput, query_completions, query_definition, query_hover,
     query_references, query_references_by_name, query_rename, query_rename_by_name,
     query_scene_refs, query_signal_connections,
 };
-pub use refactor::{
-    query_bulk_delete_symbol, query_bulk_rename, query_change_signature, query_convert_node_path,
-    query_convert_onready, query_convert_signal, query_delete_symbol, query_encapsulate_field,
-    query_extract_class, query_extract_constant, query_extract_guards, query_extract_method,
-    query_extract_superclass, query_inline_delegate, query_inline_method,
-    query_inline_method_by_name, query_inline_variable, query_introduce_parameter,
-    query_introduce_variable, query_invert_if, query_join_declaration, query_move_file,
-    query_move_symbol, query_pull_up_member, query_push_down_member, query_split_declaration,
-    query_undo, query_undo_list,
-};
+pub use refactor::{query_change_signature, query_extract_method, query_move_file};
 
 use std::path::{Path, PathBuf};
 
@@ -236,24 +228,6 @@ pub fn apply_rename(output: &RenameOutput, project_root: &Path) -> Result<usize>
         files_changed += 1;
     }
     Ok(files_changed)
-}
-
-/// Convert a `WorkspaceEdit` from `rename_cross_file` into a `RenameOutput`.
-/// Used by `bulk_rename` to avoid going through `resolve_file` / `find_root`.
-pub fn convert_rename_edit(
-    edit: &WorkspaceEdit,
-    project_root: &Path,
-    old_name: &str,
-    new_name: &str,
-) -> RenameOutput {
-    let changes = convert_workspace_edit(edit, project_root);
-    RenameOutput {
-        symbol: old_name.to_string(),
-        new_name: new_name.to_string(),
-        changes,
-        summary: None,
-        warnings: Vec::new(),
-    }
 }
 
 // ── Internal converters ──────────────────────────────────────────────────────

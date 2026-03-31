@@ -242,7 +242,9 @@ gd query completions <f> --line <L> --column <C> --kind <kind>  # Filter by kind
 gd query symbols <f>                                   # List symbols in file
 gd query symbols <f> --kind <kind>                     # Filter: function,variable,class,signal,enum
 gd query code-actions <f> --line <L> --column <C>      # Available code actions
-gd query view <f> [--range 5-20]                       # View file lines (with optional range)
+gd query view <f> [--start-line <L> --end-line <L>]     # View file lines (with optional range)
+gd query view <f> --symbol <sym>                       # View symbol (doc comments, annotations, body)
+gd query view <f> --symbol <sym> --refs                # View symbol + workspace references
 gd query scene-info <f>                                # Scene structure from .tscn
 gd query scene-info <f> --nodes-only                   # Compact: nodes only
 gd query scene-refs <f>                                # All scenes that reference a .gd file
@@ -250,81 +252,27 @@ gd query signal-connections <f>                        # Signal connections targ
 gd query find-implementations --name <method>          # All classes implementing a method
 gd query find-implementations --name <method> --base <class>  # Filter by base class
 
-## Refactor (all support --dry-run to preview, human-readable default)
-# Rename
-gd refactor rename <f> --line <L> --column <C> --new-name <name>   # Rename by position
-gd refactor rename --name <sym> --new-name <name>                   # Rename by name (project-wide)
-gd refactor bulk-rename <f> --renames "old1:new1,old2:new2"         # Rename multiple symbols atomically
-gd refactor bulk-rename <f> --renames "old:new" --scope file        # Restrict to target file only
-
-# Delete
-gd refactor delete-symbol <f> --name <sym>             # Delete symbol (refuses if references exist)
-gd refactor delete-symbol <f> --name <sym> --force     # Delete even with references
-gd refactor delete-symbol <f> --names "a,b,c"          # Bulk delete multiple symbols
-gd refactor safe-delete-file <f>                       # Check cross-file refs before deleting
-gd refactor safe-delete-file <f> --force               # Actually delete the file
-
-# Move
-gd refactor move-symbol --name <sym> --from <f> --to <f>           # Move symbol between files
-gd refactor move-symbol --name <sym> --from <f> --to <f> --update-callers  # Update preload/load paths
-gd refactor move-file --from <f> --to <f>              # Move/rename file + update all references
-
-# Extract
+## Refactor (cross-file, scope-aware — all support --dry-run)
+gd refactor rename <f> --line <L> --column <C> --new-name <name>   # Rename preview (dry-run default)
+gd refactor rename --name <sym> --new-name <name> --apply           # Rename and apply changes
 gd refactor extract-method <f> --start-line <L> --end-line <L> --name <name>
-gd refactor extract-constant <f> --line <L> --column <C> --end-column <C> --name <NAME>
-gd refactor extract-constant <f> --line <L> --column <C> --end-column <C> --name <NAME> --replace-all
-gd refactor extract-constant <f> --line <L> --column <C> --end-column <C> --name <NAME> --class <cls>  # Into inner class
-gd refactor extract-class <f> --symbols "a,b" --to <new_file>
-gd refactor extract-superclass <f> --symbols "a,b" --to <new_file> [--class-name <name>]
-gd refactor extract-guards <f> --name <name>           # Flatten nested ifs to early return/continue guards
-
-# Inline
-gd refactor inline-method <f> --line <L> --column <C>  # Inline single call site
-gd refactor inline-method <f> --name <sym> --all       # Inline all call sites + delete function
-gd refactor inline-variable <f> --line <L> --column <C>  # Replace usages with initializer, delete decl
-gd refactor inline-variable <f> --name <sym>           # By name
-gd refactor inline-delegate <f> --name <sym>           # Inline pass-through delegate
-
-# Introduce
-gd refactor introduce-variable <f> --line <L> --column <C> --end-column <C> --name <name>
-gd refactor introduce-variable <f> --line <L> --column <C> --end-column <C> --name <name> --const --replace-all
-gd refactor introduce-parameter <f> --line <L> --column <C> --end-column <C> --name <name> [--type <hint>]
-
-# Signature & structure
+gd refactor move-file --from <f> --to <f>              # Move/rename file + update all references
 gd refactor change-signature <f> --name <sym> --add-param "name: Type = default" --remove-param <name> --rename-param "old=new" --reorder "a,b,c"
-gd refactor encapsulate-field <f> --name <sym>         # Add set/get accessors (inline property syntax)
-gd refactor encapsulate-field <f> --name <sym> --backing-field  # Use _name + getter/setter functions
-gd refactor push-down-member <f> --name <sym>          # Push member to child classes (auto-discovers)
-gd refactor push-down-member <f> --name <sym> --to "child1.gd,child2.gd"
-gd refactor pull-up-member <f> --name <sym>            # Pull member up to parent class
-gd refactor split-declaration <f> --line <L>           # Split var x = expr into declaration + assignment
-gd refactor join-declaration <f> --line <L>            # Join bare var + following assignment
-
-# Convert
-gd refactor invert-if <f> --line <L>                   # Negate condition, swap branches
-gd refactor convert-node-path <f> --line <L> --column <C>  # $Path <-> get_node("Path")
-gd refactor convert-onready <f> --name <sym> --to-ready    # @onready var -> _ready() assignment
-gd refactor convert-onready <f> --name <sym> --to-onready  # _ready() assignment -> @onready var
-gd refactor convert-signal <f.tscn> --signal <sig> --from <node> --method <m> --to-code
-gd refactor convert-signal <f.tscn> --signal <sig> --from <node> --method <m> --to-scene
-
-# Undo
-gd refactor undo                                       # Undo most recent refactoring
-gd refactor undo --id <N>                              # Undo specific entry
-gd refactor undo --list                                # List undo-able operations
 
 ## Edit (code editing primitives — read content from stdin or --input-file)
 gd edit create-file <f>                                # Create with boilerplate
 gd edit create-file <f> --extends <T> --class-name <n> # Custom extends/class_name
 gd edit create-file <f> --input-file <src>             # Create from file content
 gd edit replace-body <f> --name <sym>                  # Replace function body (stdin)
-gd edit replace-body <f> --name <sym> --input-file <src>
 gd edit replace-symbol <f> --name <sym>                # Replace entire symbol (stdin)
 gd edit insert <f> --after <sym>                       # Insert after symbol (stdin)
 gd edit insert <f> --before <sym>                      # Insert before symbol (stdin)
-gd edit edit-range <f> --range 5-20                    # Replace lines 5-20 (stdin)
-gd edit edit-range <f> --start-line <L> --end-line <L> # Alternative range syntax
-# All edit commands support --dry-run, --no-format, --class <inner>
+gd edit insert-into <f> --class <cls>                  # Insert into class body (stdin)
+gd edit remove <f> --name <sym>                        # Remove a symbol
+gd edit remove <f> --line <L>                          # Remove declaration at line
+gd edit extract --name <sym> --from <f> --to <f>       # Move symbol to another file
+gd edit extract --name <sym> --from <f> --to <f> --update-callers  # Also update preload/load paths
+# All edit commands support --dry-run, --no-format, --format json
 
 ## Project Analysis
 gd overview                            # Project architecture overview
@@ -378,5 +326,6 @@ gd upgrade [--check]                   # Self-update
 # res:// paths            Godot resource paths used in debug breakpoints and live editing
 # Object IDs              From scene-tree output, used in inspect/set-prop/set-prop-field
 # Live edit IDs           From live-set-root mapping, used in live-node-prop/live-res-prop (different from object IDs)
-# stdin commands          replace-body, replace-symbol, insert, edit-range read content from stdin (or --input-file)
+# stdin commands          replace-body, replace-symbol, insert, insert-into read content from stdin (or --input-file)
+# --symbol                query view --symbol <sym> shows full declaration with doc comments/annotations
 "#;

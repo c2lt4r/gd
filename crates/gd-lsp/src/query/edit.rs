@@ -1,9 +1,21 @@
 use miette::Result;
 use serde::Serialize;
 
-use super::{find_root, resolve_file};
+use super::{ReferenceOutput, find_root, resolve_file};
 
 // ── Output structs ───────────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+pub struct SymbolViewOutput {
+    pub file: String,
+    pub name: String,
+    pub kind: String,
+    pub start_line: u32,
+    pub end_line: u32,
+    pub content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub references: Option<Vec<ReferenceOutput>>,
+}
 
 #[derive(Serialize)]
 pub struct CreateFileOutput {
@@ -117,24 +129,66 @@ pub fn query_replace_symbol(
     )
 }
 
-pub fn query_edit_range(
+// ── Insert into class body ──────────────────────────────────────────────────
+
+pub fn query_insert_into(
     file: &str,
-    start_line: usize,
-    end_line: usize,
+    class_name: &str,
     content: &str,
     no_format: bool,
     dry_run: bool,
 ) -> Result<crate::refactor::EditOutput> {
     let path = resolve_file(file)?;
     let project_root = find_root(&path)?;
-    crate::refactor::edit_range(
+    crate::refactor::insert_into(
         &path,
-        start_line,
-        end_line,
+        class_name,
         content,
         no_format,
         dry_run,
         &project_root,
+    )
+}
+
+// ── Remove (delete symbol) ──────────────────────────────────────────────────
+
+pub fn query_remove(
+    file: &str,
+    name: Option<&str>,
+    line: Option<usize>,
+    force: bool,
+    dry_run: bool,
+    class: Option<&str>,
+) -> Result<crate::refactor::DeleteSymbolOutput> {
+    let path = resolve_file(file)?;
+    let project_root = find_root(&path)?;
+    crate::refactor::delete_symbol(&path, name, line, force, dry_run, &project_root, class)
+}
+
+// ── Extract (move symbol to another file) ───────────────────────────────────
+
+#[allow(clippy::too_many_arguments)]
+pub fn query_extract(
+    name: &str,
+    from: &str,
+    to: &str,
+    dry_run: bool,
+    class: Option<&str>,
+    target_class: Option<&str>,
+    update_callers: bool,
+) -> Result<crate::refactor::MoveSymbolOutput> {
+    let from_path = resolve_file(from)?;
+    let project_root = find_root(&from_path)?;
+    let to_path = project_root.join(to);
+    crate::refactor::move_symbol(
+        name,
+        &from_path,
+        &to_path,
+        dry_run,
+        &project_root,
+        class,
+        target_class,
+        update_callers,
     )
 }
 
@@ -244,6 +298,65 @@ pub fn query_view(
         end_line: end as u32,
         total_lines: total as u32,
         content,
+    })
+}
+
+// ── View symbol ─────────────────────────────────────────────────────────────
+
+pub fn query_view_symbol(file: &str, symbol: &str, include_refs: bool) -> Result<SymbolViewOutput> {
+    let path = resolve_file(file)?;
+    let project_root = find_root(&path)?;
+    let rel = gd_core::fs::relative_slash(&path, &project_root);
+
+    let source =
+        std::fs::read_to_string(&path).map_err(|e| miette::miette!("cannot read file: {e}"))?;
+    let tree = gd_core::parser::parse(&source)?;
+    let file_ast = gd_core::gd_ast::convert(&tree, &source);
+
+    let decl = crate::refactor::find_declaration_by_name(&file_ast, symbol)
+        .ok_or_else(|| miette::miette!("symbol '{symbol}' not found in {rel}"))?;
+
+    let kind = crate::refactor::declaration_kind_str(decl.kind()).to_string();
+    let (full_start, full_end) = crate::refactor::declaration_full_range(decl, &source);
+
+    let content = source[full_start..full_end].to_string();
+    let start_line = source[..full_start].matches('\n').count() as u32 + 1;
+    let end_line = source[..full_end].matches('\n').count() as u32;
+
+    let references = if include_refs {
+        let name_node = decl.child_by_field_name("name");
+        let (line, column) = if let Some(n) = name_node {
+            (n.start_position().row + 1, n.start_position().column + 1)
+        } else {
+            (
+                decl.start_position().row + 1,
+                decl.start_position().column + 1,
+            )
+        };
+        // Use the references query to find all workspace references
+        let refs_result = super::query_references_by_name(symbol, Some(file), None)?;
+        Some(
+            refs_result
+                .references
+                .into_iter()
+                .filter(|r| {
+                    // Exclude the definition itself
+                    !(r.file == rel && r.line == line as u32 && r.column == column as u32)
+                })
+                .collect(),
+        )
+    } else {
+        None
+    };
+
+    Ok(SymbolViewOutput {
+        file: rel,
+        name: symbol.to_string(),
+        kind,
+        start_line,
+        end_line,
+        content,
+        references,
     })
 }
 
