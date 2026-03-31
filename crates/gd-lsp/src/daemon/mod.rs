@@ -4,12 +4,14 @@ mod dispatch_eval;
 mod dispatch_live;
 mod dispatch_lsp;
 mod helpers;
+pub(crate) mod stream;
 
 use std::io::{BufRead, BufReader, Write};
-use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
+
+use stream::{UnixListener, UnixStream};
 
 use serde::{Deserialize, Serialize};
 
@@ -27,7 +29,6 @@ struct GameInfo {
 #[derive(Serialize, Deserialize)]
 pub struct DaemonState {
     pub pid: u32,
-    pub port: u16,
     /// PID of the game process launched by `gd run` (persisted for `gd stop`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub game_pid: Option<u32>,
@@ -49,7 +50,7 @@ pub fn current_build_id() -> String {
     format!("{version}-{mtime}")
 }
 
-/// A daemon request sent over TCP.
+/// A daemon request sent over the UDS transport.
 #[derive(Deserialize)]
 struct DaemonRequest {
     method: String,
@@ -57,7 +58,7 @@ struct DaemonRequest {
     params: serde_json::Value,
 }
 
-/// A daemon response sent over TCP.
+/// A daemon response sent over the UDS transport.
 #[derive(Serialize)]
 struct DaemonResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -132,19 +133,20 @@ pub fn run(project_root: &Path, godot_port: u16) -> miette::Result<()> {
     }
     // lock_file is kept alive (not dropped) for the lifetime of the daemon
 
-    // Bind to a random available port
-    let listener = TcpListener::bind("127.0.0.1:0")
-        .map_err(|e| miette::miette!("cannot bind TCP listener: {e}"))?;
-    let port = listener
-        .local_addr()
-        .map_err(|e| miette::miette!("cannot get local address: {e}"))?
-        .port();
+    // Bind to a Unix domain socket.
+    // Remove any stale socket from a crashed daemon — the lock file above
+    // guarantees we're the only running instance, so the socket is safe to
+    // delete.
+    let socket_path = project_root.join(".godot").join("gd-daemon.sock");
+    let _ = std::fs::remove_file(&socket_path);
+    let listener = UnixListener::bind(&socket_path)
+        .map_err(|e| miette::miette!("cannot bind UDS listener: {e}"))?;
 
     // Write state file immediately after binding so clients can discover us.
     // This must happen BEFORE the workspace build which can take seconds on
     // large projects (especially on Windows where FS operations are slower).
     let state_path = project_root.join(".godot").join("gd-daemon.json");
-    write_state_file(&state_path, port, None)?;
+    write_state_file(&state_path, None)?;
 
     // Build workspace index for cross-file resolution
     let workspace = WorkspaceIndex::new(project_root.to_path_buf());
@@ -181,19 +183,22 @@ pub fn run(project_root: &Path, godot_port: u16) -> miette::Result<()> {
 
     // Spawn idle monitor thread
     let state_path_clone = state_path.clone();
+    let socket_path_clone = socket_path.clone();
     let server_idle = std::sync::Arc::clone(&server);
-    std::thread::spawn(move || idle_monitor(&server_idle, &state_path_clone));
+    std::thread::spawn(move || idle_monitor(&server_idle, &state_path_clone, &socket_path_clone));
 
     // Accept connections — spawn threads for blocking requests
     for conn in listener.incoming().flatten() {
         *server.last_activity.lock().unwrap() = Instant::now();
         let srv = std::sync::Arc::clone(&server);
         let sp = state_path.clone();
+        let sock = socket_path.clone();
         std::thread::spawn(move || {
             if let Some(should_exit) = handle_connection(&srv, conn)
                 && should_exit
             {
                 let _ = std::fs::remove_file(&sp);
+                let _ = std::fs::remove_file(&sock);
                 std::process::exit(0);
             }
         });
@@ -204,14 +209,13 @@ pub fn run(project_root: &Path, godot_port: u16) -> miette::Result<()> {
     Ok(())
 }
 
-fn write_state_file(path: &Path, port: u16, game_pid: Option<u32>) -> miette::Result<()> {
+fn write_state_file(path: &Path, game_pid: Option<u32>) -> miette::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| miette::miette!("cannot create state directory: {e}"))?;
     }
     let state = DaemonState {
         pid: std::process::id(),
-        port,
         game_pid,
         build_id: current_build_id(),
     };
@@ -239,7 +243,7 @@ fn update_game_pid_in_state(project_root: &Path, game_pid: Option<u32>) {
     }
 }
 
-fn idle_monitor(server: &DaemonServer, state_path: &Path) {
+fn idle_monitor(server: &DaemonServer, state_path: &Path, socket_path: &Path) {
     loop {
         std::thread::sleep(IDLE_CHECK_INTERVAL);
 
@@ -255,14 +259,15 @@ fn idle_monitor(server: &DaemonServer, state_path: &Path) {
             let elapsed = server.last_activity.lock().unwrap().elapsed();
             if elapsed >= IDLE_TIMEOUT {
                 let _ = std::fs::remove_file(state_path);
+                let _ = std::fs::remove_file(socket_path);
                 std::process::exit(0);
             }
         }
     }
 }
 
-/// Handle a single TCP connection. Returns `Some(true)` for shutdown.
-fn handle_connection(server: &DaemonServer, mut stream: TcpStream) -> Option<bool> {
+/// Handle a single UDS connection. Returns `Some(true)` for shutdown.
+fn handle_connection(server: &DaemonServer, mut stream: UnixStream) -> Option<bool> {
     stream.set_read_timeout(Some(Duration::from_secs(5))).ok()?;
     stream
         .set_write_timeout(Some(Duration::from_secs(5)))
@@ -689,14 +694,13 @@ mod tests {
     fn test_state_file_roundtrip() {
         let state = DaemonState {
             pid: 12345,
-            port: 54321,
             game_pid: None,
             build_id: "0.1.0-123456".to_string(),
         };
         let json = serde_json::to_string(&state).unwrap();
         let parsed: DaemonState = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.pid, 12345);
-        assert_eq!(parsed.port, 54321);
+        assert_eq!(parsed.build_id, "0.1.0-123456");
     }
 
     #[test]
@@ -742,5 +746,47 @@ mod tests {
         let mut reader = std::io::BufReader::new(frame.as_bytes());
         let req = read_request(&mut reader).unwrap();
         assert_eq!(req.method, "shutdown");
+    }
+
+    /// Regression test: full UDS round-trip (bind, connect, framed request/response).
+    #[test]
+    fn test_uds_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let sock_path = dir.path().join("gd-daemon.sock");
+
+        let listener = UnixListener::bind(&sock_path).unwrap();
+
+        // Client thread: connect and send a framed request
+        let sock = sock_path.clone();
+        let client = std::thread::spawn(move || {
+            let mut stream = UnixStream::connect(&sock).unwrap();
+            let body = r#"{"method":"status","params":{}}"#;
+            let header = format!("Content-Length: {}\r\n\r\n", body.len());
+            stream.write_all(header.as_bytes()).unwrap();
+            stream.write_all(body.as_bytes()).unwrap();
+            stream.flush().unwrap();
+
+            // Read response
+            let mut reader = std::io::BufReader::new(stream);
+            let len = read_content_length(&mut reader).unwrap();
+            let mut buf = vec![0u8; len];
+            std::io::Read::read_exact(&mut reader, &mut buf).unwrap();
+            let resp: serde_json::Value = serde_json::from_slice(&buf).unwrap();
+            resp
+        });
+
+        // Server side: accept, read request, write canned response
+        let (stream, _) = listener.accept().unwrap();
+        let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
+        let req = read_request(&mut reader).unwrap();
+        assert_eq!(req.method, "status");
+
+        let resp = ok_response(serde_json::json!({"ok": true}));
+        let mut writer = stream;
+        write_response(&mut writer, &resp).unwrap();
+
+        // Verify client got the response
+        let result = client.join().unwrap();
+        assert_eq!(result["result"]["ok"], true);
     }
 }

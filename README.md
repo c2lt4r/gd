@@ -60,7 +60,7 @@ gd run
 | `gd init` | Initialize gd toolchain in an existing project (detects export paths) |
 | `gd fmt` | Format GDScript files |
 | `gd lint` | Lint GDScript files |
-| `gd run` | Run the Godot project (non-blocking, eval server enabled by default, `--bare` to disable eval, `--file-ipc` for file-based transport) |
+| `gd run` | Run the Godot project (non-blocking, eval server enabled by default, `--bare` to disable eval) |
 | `gd stop` | Stop the running Godot game |
 | `gd log` | View game output log via debug protocol ring buffer (`--tail N`, `--follow`, `--errors`, `--grep`, `--json`, `--clear`) |
 | `gd build` | Build/export the Godot project |

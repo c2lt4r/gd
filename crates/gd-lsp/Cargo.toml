@@ -33,6 +33,7 @@ libc.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows-sys.workspace = true
+uds_windows.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

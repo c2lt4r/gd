@@ -6,6 +6,7 @@
 - **Remove `gd-mesh` crate** — experimental half-edge mesh engine removed from workspace. Drops `earcutr`, `bincode`, `indexmap` dependencies.
 - **Regenerate ClassDB from runtime-verified Godot metadata** — richer generated data: 771 operator type combinations, 154 builtin type constructors, 128 function return types, 36 annotation definitions, 48 warning codes, type conversion matrices.
 - **Replace hand-coded type inference with generated lookups** — `is_builtin_type()`, `constructor_return_type()`, `builtin_member_type()`, `builtin_function_return_type()`, and `leak_str()` now delegate to generated data tables instead of maintaining manual match arms.
+- **Daemon transport: TCP → Unix Domain Sockets** — daemon IPC replaced from TCP (`127.0.0.1:<random port>`) with UDS (`.godot/gd-daemon.sock`). Eliminates port management, avoids firewall/antivirus interference, removes TCP handshake overhead. Socket path is deterministic (no port discovery via state file). `port` field removed from `gd-daemon.json`. Windows support via `uds_windows` crate (AF_UNIX, Windows 10 17063+).
 
 ### Added
 - 10 new ClassDB query functions: `is_variant_type`, `builtin_member_type`, `builtin_method_return_type`, `builtin_constant_type`, `builtin_constructor_exists`, `function_return_type`, `operator_result_type`, `can_convert_type`, `annotation_def`, `godot_warning`.

@@ -1,7 +1,8 @@
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::TcpStream;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
+
+use super::daemon::stream::UnixStream;
 
 /// Outcome of sending a query to the daemon.
 enum SendResult {
@@ -26,6 +27,11 @@ pub fn query_daemon(
     query_daemon_with_root(&project_root, method, &params, timeout)
 }
 
+/// Return the UDS socket path for a given project root.
+fn socket_path(project_root: &Path) -> PathBuf {
+    project_root.join(".godot").join("gd-daemon.sock")
+}
+
 fn query_daemon_with_root(
     project_root: &Path,
     method: &str,
@@ -33,6 +39,7 @@ fn query_daemon_with_root(
     timeout: Option<Duration>,
 ) -> Option<serde_json::Value> {
     let timeout = timeout.unwrap_or(Duration::from_secs(5));
+    let sock = socket_path(project_root);
 
     // Try existing daemon first
     if let Some(state) = super::daemon::read_state_file(project_root)
@@ -41,9 +48,9 @@ fn query_daemon_with_root(
         // Check if daemon was built from the same binary — auto-restart if stale
         let current_id = super::daemon::current_build_id();
         if !state.build_id.is_empty() && state.build_id != current_id {
-            kill_daemon(state.pid, state.port, project_root);
+            kill_daemon(state.pid, project_root);
         } else {
-            match send_query(state.port, method, params, timeout) {
+            match send_query(&sock, method, params, timeout) {
                 SendResult::Ok(result) => return Some(result),
                 SendResult::DaemonError(msg) => {
                     // Daemon is alive but returned an error — don't delete state file
@@ -67,7 +74,7 @@ fn query_daemon_with_root(
 
     // Wait for daemon to be ready (up to 5s).
     // The daemon writes its state file early, but it may still be building
-    // its workspace index before accepting TCP connections. Keep retrying
+    // its workspace index before accepting UDS connections. Keep retrying
     // on ConnectionFailed — only give up on DaemonError (daemon is alive
     // but rejected the request) or timeout.
     let start = std::time::Instant::now();
@@ -76,7 +83,7 @@ fn query_daemon_with_root(
         if let Some(state) = super::daemon::read_state_file(project_root)
             && is_pid_alive(state.pid)
         {
-            match send_query(state.port, method, params, timeout) {
+            match send_query(&sock, method, params, timeout) {
                 SendResult::Ok(result) => return Some(result),
                 SendResult::DaemonError(_) => return None,
                 SendResult::ConnectionFailed => {} // daemon still starting, retry
@@ -88,15 +95,12 @@ fn query_daemon_with_root(
 }
 
 fn send_query(
-    port: u16,
+    sock: &Path,
     method: &str,
     params: &serde_json::Value,
     timeout: Duration,
 ) -> SendResult {
-    let Ok(addr) = format!("127.0.0.1:{port}").parse() else {
-        return SendResult::ConnectionFailed;
-    };
-    let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_secs(2)) else {
+    let Ok(mut stream) = UnixStream::connect(sock) else {
         return SendResult::ConnectionFailed;
     };
 
@@ -153,7 +157,7 @@ pub fn stop_daemon(project_root: &Path) -> bool {
     if let Some(state) = super::daemon::read_state_file(project_root)
         && is_pid_alive(state.pid)
     {
-        kill_daemon(state.pid, state.port, project_root);
+        kill_daemon(state.pid, project_root);
         true
     } else {
         false
@@ -161,13 +165,14 @@ pub fn stop_daemon(project_root: &Path) -> bool {
 }
 
 /// Send shutdown to a daemon, wait for it to die, then clean up.
-fn kill_daemon(pid: u32, port: u16, project_root: &Path) {
+fn kill_daemon(pid: u32, project_root: &Path) {
     // Read game_pid before shutting down — we may need to kill an orphaned game
     let game_pid = super::daemon::read_state_file(project_root).and_then(|s| s.game_pid);
 
     // Try graceful shutdown first
+    let sock = socket_path(project_root);
     let _ = send_query(
-        port,
+        &sock,
         "shutdown",
         &serde_json::json!({}),
         Duration::from_secs(2),
@@ -195,7 +200,7 @@ fn kill_daemon(pid: u32, port: u16, project_root: &Path) {
                 .args(["/F", "/PID", &pid.to_string()])
                 .output();
         }
-        // Wait for force-kill to take effect and port to be released
+        // Wait for force-kill to take effect
         for _ in 0..10 {
             if !is_pid_alive(pid) {
                 break;
@@ -212,8 +217,9 @@ fn kill_daemon(pid: u32, port: u16, project_root: &Path) {
         gd_core::process::kill_game_process(gpid);
     }
 
-    // Clean up state and stale eval files
+    // Clean up state, socket, and stale eval files
     let _ = std::fs::remove_file(project_root.join(".godot").join("gd-daemon.json"));
+    let _ = std::fs::remove_file(&sock);
     gd_core::fs::cleanup_stale_eval_files(project_root);
 }
 
