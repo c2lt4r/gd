@@ -71,7 +71,10 @@ fn rewrite_expr_children(expr: OwnedExpr, rule: &impl Fn(OwnedExpr) -> OwnedExpr
 
         // ── Compound nodes ─────────────────────────────────────────
         OwnedExpr::Array { span, elements } => {
-            let elements: Vec<_> = elements.into_iter().map(|e| rewrite_expr(e, rule)).collect();
+            let elements: Vec<_> = elements
+                .into_iter()
+                .map(|e| rewrite_expr(e, rule))
+                .collect();
             let dirty = elements.iter().any(|e| e.span().is_none());
             OwnedExpr::Array {
                 span: if dirty { None } else { span },
@@ -84,7 +87,9 @@ fn rewrite_expr_children(expr: OwnedExpr, rule: &impl Fn(OwnedExpr) -> OwnedExpr
                 .into_iter()
                 .map(|(k, v)| (rewrite_expr(k, rule), rewrite_expr(v, rule)))
                 .collect();
-            let dirty = pairs.iter().any(|(k, v)| k.span().is_none() || v.span().is_none());
+            let dirty = pairs
+                .iter()
+                .any(|(k, v)| k.span().is_none() || v.span().is_none());
             OwnedExpr::Dict {
                 span: if dirty { None } else { span },
                 pairs,
@@ -102,7 +107,12 @@ fn rewrite_expr_children(expr: OwnedExpr, rule: &impl Fn(OwnedExpr) -> OwnedExpr
             }
         }
 
-        OwnedExpr::MethodCall { span, receiver, method, args } => {
+        OwnedExpr::MethodCall {
+            span,
+            receiver,
+            method,
+            args,
+        } => {
             let receiver = Box::new(rewrite_expr(*receiver, rule));
             let args: Vec<_> = args.into_iter().map(|a| rewrite_expr(a, rule)).collect();
             let dirty = receiver.span().is_none() || args.iter().any(|a| a.span().is_none());
@@ -124,7 +134,11 @@ fn rewrite_expr_children(expr: OwnedExpr, rule: &impl Fn(OwnedExpr) -> OwnedExpr
             }
         }
 
-        OwnedExpr::PropertyAccess { span, receiver, property } => {
+        OwnedExpr::PropertyAccess {
+            span,
+            receiver,
+            property,
+        } => {
             let receiver = Box::new(rewrite_expr(*receiver, rule));
             let dirty = receiver.span().is_none();
             OwnedExpr::PropertyAccess {
@@ -134,7 +148,11 @@ fn rewrite_expr_children(expr: OwnedExpr, rule: &impl Fn(OwnedExpr) -> OwnedExpr
             }
         }
 
-        OwnedExpr::Subscript { span, receiver, index } => {
+        OwnedExpr::Subscript {
+            span,
+            receiver,
+            index,
+        } => {
             let receiver = Box::new(rewrite_expr(*receiver, rule));
             let index = Box::new(rewrite_expr(*index, rule));
             let dirty = receiver.span().is_none() || index.span().is_none();
@@ -145,7 +163,12 @@ fn rewrite_expr_children(expr: OwnedExpr, rule: &impl Fn(OwnedExpr) -> OwnedExpr
             }
         }
 
-        OwnedExpr::BinOp { span, left, op, right } => {
+        OwnedExpr::BinOp {
+            span,
+            left,
+            op,
+            right,
+        } => {
             let left = Box::new(rewrite_expr(*left, rule));
             let right = Box::new(rewrite_expr(*right, rule));
             let dirty = left.span().is_none() || right.span().is_none();
@@ -167,7 +190,11 @@ fn rewrite_expr_children(expr: OwnedExpr, rule: &impl Fn(OwnedExpr) -> OwnedExpr
             }
         }
 
-        OwnedExpr::Cast { span, expr, target_type } => {
+        OwnedExpr::Cast {
+            span,
+            expr,
+            target_type,
+        } => {
             let expr = Box::new(rewrite_expr(*expr, rule));
             let dirty = expr.span().is_none();
             OwnedExpr::Cast {
@@ -177,7 +204,11 @@ fn rewrite_expr_children(expr: OwnedExpr, rule: &impl Fn(OwnedExpr) -> OwnedExpr
             }
         }
 
-        OwnedExpr::Is { span, expr, type_name } => {
+        OwnedExpr::Is {
+            span,
+            expr,
+            type_name,
+        } => {
             let expr = Box::new(rewrite_expr(*expr, rule));
             let dirty = expr.span().is_none();
             OwnedExpr::Is {
@@ -187,12 +218,18 @@ fn rewrite_expr_children(expr: OwnedExpr, rule: &impl Fn(OwnedExpr) -> OwnedExpr
             }
         }
 
-        OwnedExpr::Ternary { span, true_val, condition, false_val } => {
+        OwnedExpr::Ternary {
+            span,
+            true_val,
+            condition,
+            false_val,
+        } => {
             let true_val = Box::new(rewrite_expr(*true_val, rule));
             let condition = Box::new(rewrite_expr(*condition, rule));
             let false_val = Box::new(rewrite_expr(*false_val, rule));
-            let dirty =
-                true_val.span().is_none() || condition.span().is_none() || false_val.span().is_none();
+            let dirty = true_val.span().is_none()
+                || condition.span().is_none()
+                || false_val.span().is_none();
             OwnedExpr::Ternary {
                 span: if dirty { None } else { span },
                 true_val,
@@ -225,6 +262,7 @@ fn rewrite_expr_children(expr: OwnedExpr, rule: &impl Fn(OwnedExpr) -> OwnedExpr
 //  Statement rewriting
 // ═══════════════════════════════════════════════════════════════════════
 
+#[allow(clippy::too_many_lines)]
 fn rewrite_stmt_inner(stmt: OwnedStmt, rule: &impl Fn(OwnedExpr) -> OwnedExpr) -> OwnedStmt {
     match stmt {
         OwnedStmt::Expr { span, expr } => {
@@ -238,7 +276,11 @@ fn rewrite_stmt_inner(stmt: OwnedStmt, rule: &impl Fn(OwnedExpr) -> OwnedExpr) -
 
         OwnedStmt::Var(v) => OwnedStmt::Var(rewrite_var(v, rule)),
 
-        OwnedStmt::Assign { span, target, value } => {
+        OwnedStmt::Assign {
+            span,
+            target,
+            value,
+        } => {
             let target = rewrite_expr(target, rule);
             let value = rewrite_expr(value, rule);
             let dirty = target.span().is_none() || value.span().is_none();
@@ -249,7 +291,12 @@ fn rewrite_stmt_inner(stmt: OwnedStmt, rule: &impl Fn(OwnedExpr) -> OwnedExpr) -
             }
         }
 
-        OwnedStmt::AugAssign { span, target, op, value } => {
+        OwnedStmt::AugAssign {
+            span,
+            target,
+            op,
+            value,
+        } => {
             let target = rewrite_expr(target, rule);
             let value = rewrite_expr(value, rule);
             let dirty = target.span().is_none() || value.span().is_none();
@@ -272,11 +319,19 @@ fn rewrite_stmt_inner(stmt: OwnedStmt, rule: &impl Fn(OwnedExpr) -> OwnedExpr) -
 
         OwnedStmt::If(i) => OwnedStmt::If(rewrite_if(i, rule)),
 
-        OwnedStmt::For { span, var, var_type, iter, body } => {
+        OwnedStmt::For {
+            span,
+            var,
+            var_type,
+            iter,
+            body,
+        } => {
             let iter = rewrite_expr(iter, rule);
-            let body: Vec<_> = body.into_iter().map(|s| rewrite_stmt_inner(s, rule)).collect();
-            let dirty =
-                iter.span().is_none() || body.iter().any(|s| s.span().is_none());
+            let body: Vec<_> = body
+                .into_iter()
+                .map(|s| rewrite_stmt_inner(s, rule))
+                .collect();
+            let dirty = iter.span().is_none() || body.iter().any(|s| s.span().is_none());
             OwnedStmt::For {
                 span: if dirty { None } else { span },
                 var,
@@ -286,11 +341,17 @@ fn rewrite_stmt_inner(stmt: OwnedStmt, rule: &impl Fn(OwnedExpr) -> OwnedExpr) -
             }
         }
 
-        OwnedStmt::While { span, condition, body } => {
+        OwnedStmt::While {
+            span,
+            condition,
+            body,
+        } => {
             let condition = rewrite_expr(condition, rule);
-            let body: Vec<_> = body.into_iter().map(|s| rewrite_stmt_inner(s, rule)).collect();
-            let dirty =
-                condition.span().is_none() || body.iter().any(|s| s.span().is_none());
+            let body: Vec<_> = body
+                .into_iter()
+                .map(|s| rewrite_stmt_inner(s, rule))
+                .collect();
+            let dirty = condition.span().is_none() || body.iter().any(|s| s.span().is_none());
             OwnedStmt::While {
                 span: if dirty { None } else { span },
                 condition,
@@ -300,9 +361,11 @@ fn rewrite_stmt_inner(stmt: OwnedStmt, rule: &impl Fn(OwnedExpr) -> OwnedExpr) -
 
         OwnedStmt::Match { span, value, arms } => {
             let value = rewrite_expr(value, rule);
-            let arms: Vec<_> = arms.into_iter().map(|a| rewrite_match_arm(a, rule)).collect();
-            let dirty =
-                value.span().is_none() || arms.iter().any(|a| a.span.is_none());
+            let arms: Vec<_> = arms
+                .into_iter()
+                .map(|a| rewrite_match_arm(a, rule))
+                .collect();
+            let dirty = value.span().is_none() || arms.iter().any(|a| a.span.is_none());
             OwnedStmt::Match {
                 span: if dirty { None } else { span },
                 value,
@@ -335,8 +398,16 @@ fn rewrite_decl(decl: OwnedDecl, rule: &impl Fn(OwnedExpr) -> OwnedExpr) -> Owne
 }
 
 fn rewrite_func(f: OwnedFunc, rule: &impl Fn(OwnedExpr) -> OwnedExpr) -> OwnedFunc {
-    let params: Vec<_> = f.params.into_iter().map(|p| rewrite_param(p, rule)).collect();
-    let body: Vec<_> = f.body.into_iter().map(|s| rewrite_stmt_inner(s, rule)).collect();
+    let params: Vec<_> = f
+        .params
+        .into_iter()
+        .map(|p| rewrite_param(p, rule))
+        .collect();
+    let body: Vec<_> = f
+        .body
+        .into_iter()
+        .map(|s| rewrite_stmt_inner(s, rule))
+        .collect();
     let annotations: Vec<_> = f
         .annotations
         .into_iter()
@@ -409,7 +480,11 @@ fn rewrite_signal(
     s: crate::ast_owned::OwnedSignal,
     rule: &impl Fn(OwnedExpr) -> OwnedExpr,
 ) -> crate::ast_owned::OwnedSignal {
-    let params: Vec<_> = s.params.into_iter().map(|p| rewrite_param(p, rule)).collect();
+    let params: Vec<_> = s
+        .params
+        .into_iter()
+        .map(|p| rewrite_param(p, rule))
+        .collect();
     let dirty = params.iter().any(|p| p.span.is_none());
     crate::ast_owned::OwnedSignal {
         span: if dirty { None } else { s.span },
@@ -468,19 +543,29 @@ fn rewrite_class(c: OwnedClass, rule: &impl Fn(OwnedExpr) -> OwnedExpr) -> Owned
 
 fn rewrite_if(i: OwnedIf, rule: &impl Fn(OwnedExpr) -> OwnedExpr) -> OwnedIf {
     let condition = rewrite_expr(i.condition, rule);
-    let body: Vec<_> = i.body.into_iter().map(|s| rewrite_stmt_inner(s, rule)).collect();
+    let body: Vec<_> = i
+        .body
+        .into_iter()
+        .map(|s| rewrite_stmt_inner(s, rule))
+        .collect();
     let elif_branches: Vec<_> = i
         .elif_branches
         .into_iter()
         .map(|(cond, stmts)| {
             let cond = rewrite_expr(cond, rule);
-            let stmts: Vec<_> = stmts.into_iter().map(|s| rewrite_stmt_inner(s, rule)).collect();
+            let stmts: Vec<_> = stmts
+                .into_iter()
+                .map(|s| rewrite_stmt_inner(s, rule))
+                .collect();
             (cond, stmts)
         })
         .collect();
-    let else_body = i
-        .else_body
-        .map(|stmts| stmts.into_iter().map(|s| rewrite_stmt_inner(s, rule)).collect());
+    let else_body = i.else_body.map(|stmts| {
+        stmts
+            .into_iter()
+            .map(|s| rewrite_stmt_inner(s, rule))
+            .collect()
+    });
     let dirty = condition.span().is_none()
         || body.iter().any(|s| s.span().is_none())
         || elif_branches
@@ -499,9 +584,17 @@ fn rewrite_if(i: OwnedIf, rule: &impl Fn(OwnedExpr) -> OwnedExpr) -> OwnedIf {
 }
 
 fn rewrite_match_arm(arm: OwnedMatchArm, rule: &impl Fn(OwnedExpr) -> OwnedExpr) -> OwnedMatchArm {
-    let patterns: Vec<_> = arm.patterns.into_iter().map(|p| rewrite_expr(p, rule)).collect();
+    let patterns: Vec<_> = arm
+        .patterns
+        .into_iter()
+        .map(|p| rewrite_expr(p, rule))
+        .collect();
     let guard = arm.guard.map(|g| rewrite_expr(g, rule));
-    let body: Vec<_> = arm.body.into_iter().map(|s| rewrite_stmt_inner(s, rule)).collect();
+    let body: Vec<_> = arm
+        .body
+        .into_iter()
+        .map(|s| rewrite_stmt_inner(s, rule))
+        .collect();
     let dirty = patterns.iter().any(|p| p.span().is_none())
         || guard.as_ref().is_some_and(|g| g.span().is_none())
         || body.iter().any(|s| s.span().is_none());
@@ -621,19 +714,25 @@ mod tests {
         let src = "func run():\n\tplayer.damage(10)\n";
         let file = parse_to_owned(src);
         let rewritten = rewrite_file(file, &|expr| match expr {
-            OwnedExpr::MethodCall { receiver, method, args, .. } if method == "damage" => {
-                OwnedExpr::MethodCall {
-                    span: None,
-                    receiver,
-                    method: "take_damage".to_string(),
-                    args,
-                }
-            }
+            OwnedExpr::MethodCall {
+                receiver,
+                method,
+                args,
+                ..
+            } if method == "damage" => OwnedExpr::MethodCall {
+                span: None,
+                receiver,
+                method: "take_damage".to_string(),
+                args,
+            },
             other => other,
         });
 
         let printed = printer::print_file(&rewritten, src);
-        assert!(printed.contains("player.take_damage(10)"), "printed: {printed}");
+        assert!(
+            printed.contains("player.take_damage(10)"),
+            "printed: {printed}"
+        );
     }
 
     // ── Call-chain rewrite (the motivating case) ────────────────────
@@ -645,18 +744,21 @@ mod tests {
         let file = parse_to_owned(src);
 
         let rewritten = rewrite_file(file, &|expr| match expr {
-            OwnedExpr::MethodCall { receiver, method, args, .. } if method == "damage" => {
-                OwnedExpr::MethodCall {
+            OwnedExpr::MethodCall {
+                receiver,
+                method,
+                args,
+                ..
+            } if method == "damage" => OwnedExpr::MethodCall {
+                span: None,
+                receiver: Box::new(OwnedExpr::PropertyAccess {
                     span: None,
-                    receiver: Box::new(OwnedExpr::PropertyAccess {
-                        span: None,
-                        receiver,
-                        property: "combat".to_string(),
-                    }),
-                    method,
-                    args,
-                }
-            }
+                    receiver,
+                    property: "combat".to_string(),
+                }),
+                method,
+                args,
+            },
             other => other,
         });
 
@@ -673,25 +775,34 @@ mod tests {
         let file = parse_to_owned(src);
 
         let rewritten = rewrite_file(file, &|expr| match expr {
-            OwnedExpr::MethodCall { receiver, method, args, .. } if method == "damage" => {
-                OwnedExpr::MethodCall {
+            OwnedExpr::MethodCall {
+                receiver,
+                method,
+                args,
+                ..
+            } if method == "damage" => OwnedExpr::MethodCall {
+                span: None,
+                receiver: Box::new(OwnedExpr::PropertyAccess {
                     span: None,
-                    receiver: Box::new(OwnedExpr::PropertyAccess {
-                        span: None,
-                        receiver,
-                        property: "stats".to_string(),
-                    }),
-                    method,
-                    args,
-                }
-            }
+                    receiver,
+                    property: "stats".to_string(),
+                }),
+                method,
+                args,
+            },
             other => other,
         });
 
         let printed = printer::print_file(&rewritten, src);
         // Both damage calls should be rewritten.
-        assert!(printed.contains("player.stats.damage(5)"), "printed: {printed}");
-        assert!(printed.contains("player.stats.damage(20)"), "printed: {printed}");
+        assert!(
+            printed.contains("player.stats.damage(5)"),
+            "printed: {printed}"
+        );
+        assert!(
+            printed.contains("player.stats.damage(20)"),
+            "printed: {printed}"
+        );
         // heal should be untouched.
         assert!(printed.contains("enemy.heal(10)"), "printed: {printed}");
     }

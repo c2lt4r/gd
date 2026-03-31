@@ -378,8 +378,12 @@ fn infer_binary(node: &Node, source: &str, file: &GdFile) -> Option<InferredType
     let right_node = node
         .child_by_field_name("right")
         .or_else(|| node.named_child(1));
-    let lt = left_node.as_ref().and_then(|l| infer_expression_type(l, source, file));
-    let rt = right_node.as_ref().and_then(|r| infer_expression_type(r, source, file));
+    let lt = left_node
+        .as_ref()
+        .and_then(|l| infer_expression_type(l, source, file));
+    let rt = right_node
+        .as_ref()
+        .and_then(|r| infer_expression_type(r, source, file));
 
     if let Some(left_name) = lt.as_ref().and_then(InferredType::class_db_name)
         && let Some(right_name) = rt.as_ref().and_then(InferredType::class_db_name)

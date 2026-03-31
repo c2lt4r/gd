@@ -86,7 +86,15 @@ pub fn query_insert(
 ) -> Result<crate::refactor::EditOutput> {
     let path = resolve_file(file)?;
     let project_root = find_root(&path)?;
-    crate::refactor::insert(&path, anchor, after, class, content, no_format, &project_root)
+    crate::refactor::insert(
+        &path,
+        anchor,
+        after,
+        class,
+        content,
+        no_format,
+        &project_root,
+    )
 }
 
 pub fn query_replace_symbol(
@@ -210,8 +218,7 @@ pub fn query_create_file(
         std::fs::create_dir_all(parent)
             .map_err(|e| miette::miette!("cannot create directories: {e}"))?;
     }
-    std::fs::write(&full_path, &content)
-        .map_err(|e| miette::miette!("cannot write file: {e}"))?;
+    std::fs::write(&full_path, &content).map_err(|e| miette::miette!("cannot write file: {e}"))?;
 
     Ok(CreateFileOutput {
         file: file.to_string(),

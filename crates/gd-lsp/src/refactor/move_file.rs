@@ -10,11 +10,7 @@ use super::{MoveFileOutput, UpdatedReference};
 /// Scans .gd files for `preload()`/`load()` and `extends "res://..."` references,
 /// .tscn/.tres files for `ext_resource` path entries, and project.godot for autoloads.
 #[allow(clippy::too_many_lines)]
-pub fn move_file(
-    from: &Path,
-    to: &Path,
-    project_root: &Path,
-) -> Result<MoveFileOutput> {
+pub fn move_file(from: &Path, to: &Path, project_root: &Path) -> Result<MoveFileOutput> {
     if !from.exists() {
         return Err(miette::miette!("source file not found: {}", from.display()));
     }

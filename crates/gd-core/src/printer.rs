@@ -11,8 +11,8 @@
 //! post-pass if formatting matters.
 
 use crate::ast_owned::{
-    OwnedAnnotation, OwnedClass, OwnedDecl, OwnedExpr, OwnedExtends, OwnedFile, OwnedFunc,
-    OwnedIf, OwnedMatchArm, OwnedParam, OwnedStmt, OwnedVar, Span,
+    OwnedAnnotation, OwnedClass, OwnedDecl, OwnedExpr, OwnedExtends, OwnedFile, OwnedFunc, OwnedIf,
+    OwnedMatchArm, OwnedParam, OwnedStmt, OwnedVar, Span,
 };
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -126,7 +126,12 @@ fn write_expr(expr: &OwnedExpr, source: &str, out: &mut String) {
             out.push(')');
         }
 
-        OwnedExpr::MethodCall { receiver, method, args, .. } => {
+        OwnedExpr::MethodCall {
+            receiver,
+            method,
+            args,
+            ..
+        } => {
             write_expr(receiver, source, out);
             out.push('.');
             out.push_str(method);
@@ -146,13 +151,17 @@ fn write_expr(expr: &OwnedExpr, source: &str, out: &mut String) {
             out.push(')');
         }
 
-        OwnedExpr::PropertyAccess { receiver, property, .. } => {
+        OwnedExpr::PropertyAccess {
+            receiver, property, ..
+        } => {
             write_expr(receiver, source, out);
             out.push('.');
             out.push_str(property);
         }
 
-        OwnedExpr::Subscript { receiver, index, .. } => {
+        OwnedExpr::Subscript {
+            receiver, index, ..
+        } => {
             write_expr(receiver, source, out);
             out.push('[');
             write_expr(index, source, out);
@@ -164,7 +173,9 @@ fn write_expr(expr: &OwnedExpr, source: &str, out: &mut String) {
             out.push_str(path);
         }
 
-        OwnedExpr::BinOp { left, op, right, .. } => {
+        OwnedExpr::BinOp {
+            left, op, right, ..
+        } => {
             write_expr(left, source, out);
             out.push(' ');
             out.push_str(op);
@@ -181,19 +192,28 @@ fn write_expr(expr: &OwnedExpr, source: &str, out: &mut String) {
             write_expr(operand, source, out);
         }
 
-        OwnedExpr::Cast { expr, target_type, .. } => {
+        OwnedExpr::Cast {
+            expr, target_type, ..
+        } => {
             write_expr(expr, source, out);
             out.push_str(" as ");
             out.push_str(target_type);
         }
 
-        OwnedExpr::Is { expr, type_name, .. } => {
+        OwnedExpr::Is {
+            expr, type_name, ..
+        } => {
             write_expr(expr, source, out);
             out.push_str(" is ");
             out.push_str(type_name);
         }
 
-        OwnedExpr::Ternary { true_val, condition, false_val, .. } => {
+        OwnedExpr::Ternary {
+            true_val,
+            condition,
+            false_val,
+            ..
+        } => {
             write_expr(true_val, source, out);
             out.push_str(" if ");
             write_expr(condition, source, out);
@@ -291,7 +311,9 @@ fn write_stmt(stmt: &OwnedStmt, source: &str, out: &mut String, indent: &str) {
             out.push('\n');
         }
 
-        OwnedStmt::AugAssign { target, op, value, .. } => {
+        OwnedStmt::AugAssign {
+            target, op, value, ..
+        } => {
             out.push_str(indent);
             write_expr(target, source, out);
             out.push(' ');
@@ -313,7 +335,13 @@ fn write_stmt(stmt: &OwnedStmt, source: &str, out: &mut String, indent: &str) {
 
         OwnedStmt::If(i) => write_if(i, source, out, indent),
 
-        OwnedStmt::For { var, var_type, iter, body, .. } => {
+        OwnedStmt::For {
+            var,
+            var_type,
+            iter,
+            body,
+            ..
+        } => {
             out.push_str(indent);
             out.push_str("for ");
             out.push_str(var);
@@ -327,7 +355,9 @@ fn write_stmt(stmt: &OwnedStmt, source: &str, out: &mut String, indent: &str) {
             write_body(body, source, out, indent);
         }
 
-        OwnedStmt::While { condition, body, .. } => {
+        OwnedStmt::While {
+            condition, body, ..
+        } => {
             out.push_str(indent);
             out.push_str("while ");
             write_expr(condition, source, out);

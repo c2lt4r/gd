@@ -1004,14 +1004,8 @@ mod tests {
             "func process():\n\tvar a = 1\n\tvar b = 2\n\ta += 1\n\tb += 1\n\tprint(a)\n\tprint(b)\n",
         )]);
         // Extract lines 4-5: both a and b are written and used after → Dictionary return
-        let result = extract_method(
-            &temp.path().join("player.gd"),
-            4,
-            5,
-            "update",
-            temp.path(),
-        )
-        .unwrap();
+        let result =
+            extract_method(&temp.path().join("player.gd"), 4, 5, "update", temp.path()).unwrap();
         assert!(result.applied);
         assert!(result.returns.is_none(), "single return should be None");
         assert_eq!(result.return_vars.len(), 2);
@@ -1061,14 +1055,8 @@ mod tests {
             "player.gd",
             "func process():\n\tvar a = 1\n\tvar b = 2\n\tvar _result = 0\n\ta += 1\n\tb += 1\n\tprint(a)\n\tprint(b)\n",
         )]);
-        let result = extract_method(
-            &temp.path().join("player.gd"),
-            5,
-            6,
-            "update",
-            temp.path(),
-        )
-        .unwrap();
+        let result =
+            extract_method(&temp.path().join("player.gd"), 5, 6, "update", temp.path()).unwrap();
         assert!(result.applied);
         let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
         assert!(
@@ -1080,13 +1068,7 @@ mod tests {
     #[test]
     fn extract_contains_return_error() {
         let temp = setup_project(&[("player.gd", "func process():\n\tvar x = 1\n\treturn x\n")]);
-        let result = extract_method(
-            &temp.path().join("player.gd"),
-            3,
-            3,
-            "helper",
-            temp.path(),
-        );
+        let result = extract_method(&temp.path().join("player.gd"), 3, 3, "helper", temp.path());
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("return"), "should error on return: {err}");
@@ -1095,13 +1077,7 @@ mod tests {
     #[test]
     fn extract_outside_function_error() {
         let temp = setup_project(&[("player.gd", "var x = 1\nvar y = 2\n")]);
-        let result = extract_method(
-            &temp.path().join("player.gd"),
-            1,
-            1,
-            "helper",
-            temp.path(),
-        );
+        let result = extract_method(&temp.path().join("player.gd"), 1, 1, "helper", temp.path());
         assert!(result.is_err());
     }
 
@@ -1111,14 +1087,8 @@ mod tests {
             "player.gd",
             "func process():\n\t\tvar deeply = 1\n\t\tprint(deeply)\n",
         )]);
-        let result = extract_method(
-            &temp.path().join("player.gd"),
-            2,
-            3,
-            "helper",
-            temp.path(),
-        )
-        .unwrap();
+        let result =
+            extract_method(&temp.path().join("player.gd"), 2, 3, "helper", temp.path()).unwrap();
         assert!(result.applied);
         let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
         // The extracted function body should be re-indented to 1 tab
@@ -1174,14 +1144,8 @@ mod tests {
             "player.gd",
             "func process():\n\tprint(\"hello\")\n\tprint(\"world\")\n",
         )]);
-        let result = extract_method(
-            &temp.path().join("player.gd"),
-            2,
-            2,
-            "greet",
-            temp.path(),
-        )
-        .unwrap();
+        let result =
+            extract_method(&temp.path().join("player.gd"), 2, 2, "greet", temp.path()).unwrap();
         assert!(result.warnings.is_empty(), "no await = no warning");
     }
 
@@ -1230,14 +1194,8 @@ mod tests {
             "func process():\n\tvar tmp = 42\n\tprint(tmp)\n\tprint(\"done\")\n",
         )]);
         // Extract lines 2-3: var tmp = 42; print(tmp)
-        let result = extract_method(
-            &temp.path().join("player.gd"),
-            2,
-            3,
-            "helper",
-            temp.path(),
-        )
-        .unwrap();
+        let result =
+            extract_method(&temp.path().join("player.gd"), 2, 3, "helper", temp.path()).unwrap();
         assert!(result.applied);
         assert!(
             result.returns.is_none(),
@@ -1291,14 +1249,8 @@ mod tests {
             "func process():\n\tvar x = 1\n\tx += 10\n\tvar y = x * 2\n\tprint(x)\n\tprint(y)\n",
         )]);
         // Extract lines 3-4: x += 10; var y = x * 2
-        let result = extract_method(
-            &temp.path().join("player.gd"),
-            3,
-            4,
-            "compute",
-            temp.path(),
-        )
-        .unwrap();
+        let result =
+            extract_method(&temp.path().join("player.gd"), 3, 4, "compute", temp.path()).unwrap();
         assert!(result.applied);
         assert_eq!(result.return_vars.len(), 2);
         let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
@@ -1375,13 +1327,7 @@ mod tests {
             "func process():\n\tvar x = 1\n\tbreak\n\tprint(x)\n",
         )]);
         // Extract lines 2-3: var x = 1; break — break has no enclosing loop
-        let result = extract_method(
-            &temp.path().join("player.gd"),
-            2,
-            3,
-            "helper",
-            temp.path(),
-        );
+        let result = extract_method(&temp.path().join("player.gd"), 2, 3, "helper", temp.path());
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("break"), "should error on break: {err}");
@@ -1395,13 +1341,7 @@ mod tests {
             "func process():\n\tvar x = 1\n\tcontinue\n\tprint(x)\n",
         )]);
         // Extract lines 2-3: var x = 1; continue — continue has no enclosing loop
-        let result = extract_method(
-            &temp.path().join("player.gd"),
-            2,
-            3,
-            "helper",
-            temp.path(),
-        );
+        let result = extract_method(&temp.path().join("player.gd"), 2, 3, "helper", temp.path());
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("continue"), "should error on continue: {err}");
@@ -1458,14 +1398,8 @@ mod tests {
             "player.gd",
             "func process():\n\tvar speed = 10.0\n\tvar count = 5\n\tprint(speed + count)\n\tprint(\"end\")\n",
         )]);
-        let result = extract_method(
-            &temp.path().join("player.gd"),
-            4,
-            4,
-            "show",
-            temp.path(),
-        )
-        .unwrap();
+        let result =
+            extract_method(&temp.path().join("player.gd"), 4, 4, "show", temp.path()).unwrap();
         assert_eq!(result.parameters.len(), 2);
         let count_p = result
             .parameters
@@ -1531,14 +1465,8 @@ mod tests {
             "player.gd",
             "func process(delta: float):\n\tvar x = delta * 2\n\tprint(\"end\")\n",
         )]);
-        let result = extract_method(
-            &temp.path().join("player.gd"),
-            2,
-            2,
-            "compute",
-            temp.path(),
-        )
-        .unwrap();
+        let result =
+            extract_method(&temp.path().join("player.gd"), 2, 2, "compute", temp.path()).unwrap();
         assert_eq!(result.parameters.len(), 1);
         assert_eq!(result.parameters[0].name, "delta");
         assert_eq!(
@@ -1589,14 +1517,8 @@ mod tests {
             "player.gd",
             "static func calculate(x: int, y: int):\n\tvar sum = x + y\n\tprint(sum)\n",
         )]);
-        let result = extract_method(
-            &temp.path().join("player.gd"),
-            2,
-            2,
-            "add",
-            temp.path(),
-        )
-        .unwrap();
+        let result =
+            extract_method(&temp.path().join("player.gd"), 2, 2, "add", temp.path()).unwrap();
         assert!(result.applied);
         assert_eq!(result.parameters.len(), 2);
         let x_p = result.parameters.iter().find(|p| p.name == "x").unwrap();
@@ -1663,14 +1585,8 @@ mod tests {
             "player.gd",
             "func process():\n\tvar typed: int = 5\n\tvar untyped = unknown()\n\tprint(typed + untyped)\n\tprint(\"end\")\n",
         )]);
-        let result = extract_method(
-            &temp.path().join("player.gd"),
-            4,
-            4,
-            "compute",
-            temp.path(),
-        )
-        .unwrap();
+        let result =
+            extract_method(&temp.path().join("player.gd"), 4, 4, "compute", temp.path()).unwrap();
         assert_eq!(result.parameters.len(), 2);
         let typed_p = result
             .parameters
@@ -1708,14 +1624,8 @@ mod tests {
             "player.gd",
             "func process():\n\tvar a: int = 1\n\tvar b: float = 2.0\n\ta += 1\n\tb += 1.0\n\tprint(a)\n\tprint(b)\n",
         )]);
-        let result = extract_method(
-            &temp.path().join("player.gd"),
-            4,
-            5,
-            "update",
-            temp.path(),
-        )
-        .unwrap();
+        let result =
+            extract_method(&temp.path().join("player.gd"), 4, 5, "update", temp.path()).unwrap();
         assert!(result.applied);
         let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
         assert!(
@@ -1789,14 +1699,8 @@ mod tests {
             "player.gd",
             "func _ready():\n\tprint(\"hello\")\n\tprint(\"world\")\n",
         )]);
-        let result = extract_method(
-            &temp.path().join("player.gd"),
-            2,
-            2,
-            "greet",
-            temp.path(),
-        )
-        .unwrap();
+        let result =
+            extract_method(&temp.path().join("player.gd"), 2, 2, "greet", temp.path()).unwrap();
         assert!(result.applied);
         let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
         assert!(
@@ -1812,14 +1716,8 @@ mod tests {
             "static func compute():\n\tvar x = 1\n\tx += 10\n\tprint(x)\n",
         )]);
         // Extract `x += 10` (line 3) — x is written and used after
-        let result = extract_method(
-            &temp.path().join("utils.gd"),
-            3,
-            3,
-            "bump",
-            temp.path(),
-        )
-        .unwrap();
+        let result =
+            extract_method(&temp.path().join("utils.gd"), 3, 3, "bump", temp.path()).unwrap();
         assert!(result.applied);
         let content = fs::read_to_string(temp.path().join("utils.gd")).unwrap();
         assert!(
@@ -1924,14 +1822,8 @@ class Utils:
 ",
         )]);
         // Extract `print("b")` (line 6)
-        let result = extract_method(
-            &temp.path().join("player.gd"),
-            6,
-            6,
-            "print_b",
-            temp.path(),
-        )
-        .unwrap();
+        let result =
+            extract_method(&temp.path().join("player.gd"), 6, 6, "print_b", temp.path()).unwrap();
         assert!(result.applied);
         let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
         assert!(

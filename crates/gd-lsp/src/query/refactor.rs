@@ -41,10 +41,7 @@ pub fn query_change_signature(
 
 // ── Move file ────────────────────────────────────────────────────────────────
 
-pub fn query_move_file(
-    from: &str,
-    to: &str,
-) -> Result<crate::refactor::MoveFileOutput> {
+pub fn query_move_file(from: &str, to: &str) -> Result<crate::refactor::MoveFileOutput> {
     let from_path = resolve_file(from)?;
     let project_root = find_root(&from_path)?;
     let to_path = if std::path::Path::new(to).is_absolute() {

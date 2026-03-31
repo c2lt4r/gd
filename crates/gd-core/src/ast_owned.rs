@@ -178,44 +178,127 @@ pub struct OwnedMatchArm {
 #[derive(Debug, Clone)]
 pub enum OwnedExpr {
     // Literals
-    IntLiteral { span: Option<Span>, value: String },
-    FloatLiteral { span: Option<Span>, value: String },
-    StringLiteral { span: Option<Span>, value: String },
-    StringName { span: Option<Span>, value: String },
-    Bool { span: Option<Span>, value: bool },
-    Null { span: Option<Span> },
+    IntLiteral {
+        span: Option<Span>,
+        value: String,
+    },
+    FloatLiteral {
+        span: Option<Span>,
+        value: String,
+    },
+    StringLiteral {
+        span: Option<Span>,
+        value: String,
+    },
+    StringName {
+        span: Option<Span>,
+        value: String,
+    },
+    Bool {
+        span: Option<Span>,
+        value: bool,
+    },
+    Null {
+        span: Option<Span>,
+    },
 
     // Identifiers
-    Ident { span: Option<Span>, name: String },
+    Ident {
+        span: Option<Span>,
+        name: String,
+    },
 
     // Collections
-    Array { span: Option<Span>, elements: Vec<OwnedExpr> },
-    Dict { span: Option<Span>, pairs: Vec<(OwnedExpr, OwnedExpr)> },
+    Array {
+        span: Option<Span>,
+        elements: Vec<OwnedExpr>,
+    },
+    Dict {
+        span: Option<Span>,
+        pairs: Vec<(OwnedExpr, OwnedExpr)>,
+    },
 
     // Calls
-    Call { span: Option<Span>, callee: Box<OwnedExpr>, args: Vec<OwnedExpr> },
-    MethodCall { span: Option<Span>, receiver: Box<OwnedExpr>, method: String, args: Vec<OwnedExpr> },
-    SuperCall { span: Option<Span>, method: Option<String>, args: Vec<OwnedExpr> },
+    Call {
+        span: Option<Span>,
+        callee: Box<OwnedExpr>,
+        args: Vec<OwnedExpr>,
+    },
+    MethodCall {
+        span: Option<Span>,
+        receiver: Box<OwnedExpr>,
+        method: String,
+        args: Vec<OwnedExpr>,
+    },
+    SuperCall {
+        span: Option<Span>,
+        method: Option<String>,
+        args: Vec<OwnedExpr>,
+    },
 
     // Access
-    PropertyAccess { span: Option<Span>, receiver: Box<OwnedExpr>, property: String },
-    Subscript { span: Option<Span>, receiver: Box<OwnedExpr>, index: Box<OwnedExpr> },
-    GetNode { span: Option<Span>, path: String },
+    PropertyAccess {
+        span: Option<Span>,
+        receiver: Box<OwnedExpr>,
+        property: String,
+    },
+    Subscript {
+        span: Option<Span>,
+        receiver: Box<OwnedExpr>,
+        index: Box<OwnedExpr>,
+    },
+    GetNode {
+        span: Option<Span>,
+        path: String,
+    },
 
     // Operators
-    BinOp { span: Option<Span>, left: Box<OwnedExpr>, op: String, right: Box<OwnedExpr> },
-    UnaryOp { span: Option<Span>, op: String, operand: Box<OwnedExpr> },
-    Cast { span: Option<Span>, expr: Box<OwnedExpr>, target_type: String },
-    Is { span: Option<Span>, expr: Box<OwnedExpr>, type_name: String },
-    Ternary { span: Option<Span>, true_val: Box<OwnedExpr>, condition: Box<OwnedExpr>, false_val: Box<OwnedExpr> },
+    BinOp {
+        span: Option<Span>,
+        left: Box<OwnedExpr>,
+        op: String,
+        right: Box<OwnedExpr>,
+    },
+    UnaryOp {
+        span: Option<Span>,
+        op: String,
+        operand: Box<OwnedExpr>,
+    },
+    Cast {
+        span: Option<Span>,
+        expr: Box<OwnedExpr>,
+        target_type: String,
+    },
+    Is {
+        span: Option<Span>,
+        expr: Box<OwnedExpr>,
+        type_name: String,
+    },
+    Ternary {
+        span: Option<Span>,
+        true_val: Box<OwnedExpr>,
+        condition: Box<OwnedExpr>,
+        false_val: Box<OwnedExpr>,
+    },
 
     // Misc
-    Await { span: Option<Span>, expr: Box<OwnedExpr> },
-    Lambda { span: Option<Span>, func: Box<OwnedFunc> },
-    Preload { span: Option<Span>, path: String },
+    Await {
+        span: Option<Span>,
+        expr: Box<OwnedExpr>,
+    },
+    Lambda {
+        span: Option<Span>,
+        func: Box<OwnedFunc>,
+    },
+    Preload {
+        span: Option<Span>,
+        path: String,
+    },
 
     // Error recovery
-    Invalid { span: Option<Span> },
+    Invalid {
+        span: Option<Span>,
+    },
 }
 
 // ── Statements ────────────────────────────────────────────────────────
@@ -223,11 +306,26 @@ pub enum OwnedExpr {
 /// Owned equivalent of [`gd_ast::GdStmt`].
 #[derive(Debug, Clone)]
 pub enum OwnedStmt {
-    Expr { span: Option<Span>, expr: OwnedExpr },
+    Expr {
+        span: Option<Span>,
+        expr: OwnedExpr,
+    },
     Var(OwnedVar),
-    Assign { span: Option<Span>, target: OwnedExpr, value: OwnedExpr },
-    AugAssign { span: Option<Span>, target: OwnedExpr, op: String, value: OwnedExpr },
-    Return { span: Option<Span>, value: Option<OwnedExpr> },
+    Assign {
+        span: Option<Span>,
+        target: OwnedExpr,
+        value: OwnedExpr,
+    },
+    AugAssign {
+        span: Option<Span>,
+        target: OwnedExpr,
+        op: String,
+        value: OwnedExpr,
+    },
+    Return {
+        span: Option<Span>,
+        value: Option<OwnedExpr>,
+    },
     If(OwnedIf),
     For {
         span: Option<Span>,
@@ -236,13 +334,31 @@ pub enum OwnedStmt {
         iter: OwnedExpr,
         body: Vec<OwnedStmt>,
     },
-    While { span: Option<Span>, condition: OwnedExpr, body: Vec<OwnedStmt> },
-    Match { span: Option<Span>, value: OwnedExpr, arms: Vec<OwnedMatchArm> },
-    Pass { span: Option<Span> },
-    Break { span: Option<Span> },
-    Continue { span: Option<Span> },
-    Breakpoint { span: Option<Span> },
-    Invalid { span: Option<Span> },
+    While {
+        span: Option<Span>,
+        condition: OwnedExpr,
+        body: Vec<OwnedStmt>,
+    },
+    Match {
+        span: Option<Span>,
+        value: OwnedExpr,
+        arms: Vec<OwnedMatchArm>,
+    },
+    Pass {
+        span: Option<Span>,
+    },
+    Break {
+        span: Option<Span>,
+    },
+    Continue {
+        span: Option<Span>,
+    },
+    Breakpoint {
+        span: Option<Span>,
+    },
+    Invalid {
+        span: Option<Span>,
+    },
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -323,7 +439,11 @@ impl OwnedFile {
             extends: file.extends.map(|e| OwnedExtends::from_borrowed(&e)),
             is_tool: file.is_tool,
             has_static_unload: file.has_static_unload,
-            declarations: file.declarations.iter().map(OwnedDecl::from_borrowed).collect(),
+            declarations: file
+                .declarations
+                .iter()
+                .map(OwnedDecl::from_borrowed)
+                .collect(),
         }
     }
 }
@@ -363,7 +483,11 @@ impl OwnedFunc {
             body: f.body.iter().map(OwnedStmt::from_borrowed).collect(),
             is_static: f.is_static,
             is_constructor: f.is_constructor,
-            annotations: f.annotations.iter().map(OwnedAnnotation::from_borrowed).collect(),
+            annotations: f
+                .annotations
+                .iter()
+                .map(OwnedAnnotation::from_borrowed)
+                .collect(),
             doc: f.doc.map(String::from),
         }
     }
@@ -391,7 +515,11 @@ impl OwnedVar {
             value: v.value.as_ref().map(OwnedExpr::from_borrowed),
             is_const: v.is_const,
             is_static: v.is_static,
-            annotations: v.annotations.iter().map(OwnedAnnotation::from_borrowed).collect(),
+            annotations: v
+                .annotations
+                .iter()
+                .map(OwnedAnnotation::from_borrowed)
+                .collect(),
             setter: v.setter.map(String::from),
             getter: v.getter.map(String::from),
             doc: v.doc.map(String::from),
@@ -439,7 +567,11 @@ impl OwnedEnum {
         Self {
             span: Some(node_span(e.node)),
             name: e.name.to_string(),
-            members: e.members.iter().map(OwnedEnumMember::from_borrowed).collect(),
+            members: e
+                .members
+                .iter()
+                .map(OwnedEnumMember::from_borrowed)
+                .collect(),
             doc: e.doc.map(String::from),
         }
     }
@@ -463,7 +595,11 @@ impl OwnedClass {
             span: Some(node_span(c.node)),
             name: c.name.to_string(),
             extends: c.extends.map(|e| OwnedExtends::from_borrowed(&e)),
-            declarations: c.declarations.iter().map(OwnedDecl::from_borrowed).collect(),
+            declarations: c
+                .declarations
+                .iter()
+                .map(OwnedDecl::from_borrowed)
+                .collect(),
             doc: c.doc.map(String::from),
         }
     }
@@ -508,16 +644,35 @@ impl OwnedMatchArm {
 
 impl OwnedExpr {
     #[must_use]
+    #[allow(clippy::too_many_lines)]
     pub fn from_borrowed(expr: &gd_ast::GdExpr) -> Self {
         let span = Some(node_span(expr.node()));
         match expr {
-            gd_ast::GdExpr::IntLiteral { value, .. } => Self::IntLiteral { span, value: (*value).to_string() },
-            gd_ast::GdExpr::FloatLiteral { value, .. } => Self::FloatLiteral { span, value: (*value).to_string() },
-            gd_ast::GdExpr::StringLiteral { value, .. } => Self::StringLiteral { span, value: (*value).to_string() },
-            gd_ast::GdExpr::StringName { value, .. } => Self::StringName { span, value: (*value).to_string() },
-            gd_ast::GdExpr::Bool { value, .. } => Self::Bool { span, value: *value },
+            gd_ast::GdExpr::IntLiteral { value, .. } => Self::IntLiteral {
+                span,
+                value: (*value).to_string(),
+            },
+            gd_ast::GdExpr::FloatLiteral { value, .. } => Self::FloatLiteral {
+                span,
+                value: (*value).to_string(),
+            },
+            gd_ast::GdExpr::StringLiteral { value, .. } => Self::StringLiteral {
+                span,
+                value: (*value).to_string(),
+            },
+            gd_ast::GdExpr::StringName { value, .. } => Self::StringName {
+                span,
+                value: (*value).to_string(),
+            },
+            gd_ast::GdExpr::Bool { value, .. } => Self::Bool {
+                span,
+                value: *value,
+            },
             gd_ast::GdExpr::Null { .. } => Self::Null { span },
-            gd_ast::GdExpr::Ident { name, .. } => Self::Ident { span, name: (*name).to_string() },
+            gd_ast::GdExpr::Ident { name, .. } => Self::Ident {
+                span,
+                name: (*name).to_string(),
+            },
             gd_ast::GdExpr::Array { elements, .. } => Self::Array {
                 span,
                 elements: elements.iter().map(Self::from_borrowed).collect(),
@@ -534,7 +689,12 @@ impl OwnedExpr {
                 callee: Box::new(Self::from_borrowed(callee)),
                 args: args.iter().map(Self::from_borrowed).collect(),
             },
-            gd_ast::GdExpr::MethodCall { receiver, method, args, .. } => Self::MethodCall {
+            gd_ast::GdExpr::MethodCall {
+                receiver,
+                method,
+                args,
+                ..
+            } => Self::MethodCall {
                 span,
                 receiver: Box::new(Self::from_borrowed(receiver)),
                 method: (*method).to_string(),
@@ -545,18 +705,27 @@ impl OwnedExpr {
                 method: method.map(String::from),
                 args: args.iter().map(Self::from_borrowed).collect(),
             },
-            gd_ast::GdExpr::PropertyAccess { receiver, property, .. } => Self::PropertyAccess {
+            gd_ast::GdExpr::PropertyAccess {
+                receiver, property, ..
+            } => Self::PropertyAccess {
                 span,
                 receiver: Box::new(Self::from_borrowed(receiver)),
                 property: (*property).to_string(),
             },
-            gd_ast::GdExpr::Subscript { receiver, index, .. } => Self::Subscript {
+            gd_ast::GdExpr::Subscript {
+                receiver, index, ..
+            } => Self::Subscript {
                 span,
                 receiver: Box::new(Self::from_borrowed(receiver)),
                 index: Box::new(Self::from_borrowed(index)),
             },
-            gd_ast::GdExpr::GetNode { path, .. } => Self::GetNode { span, path: (*path).to_string() },
-            gd_ast::GdExpr::BinOp { left, op, right, .. } => Self::BinOp {
+            gd_ast::GdExpr::GetNode { path, .. } => Self::GetNode {
+                span,
+                path: (*path).to_string(),
+            },
+            gd_ast::GdExpr::BinOp {
+                left, op, right, ..
+            } => Self::BinOp {
                 span,
                 left: Box::new(Self::from_borrowed(left)),
                 op: (*op).to_string(),
@@ -567,17 +736,26 @@ impl OwnedExpr {
                 op: (*op).to_string(),
                 operand: Box::new(Self::from_borrowed(operand)),
             },
-            gd_ast::GdExpr::Cast { expr, target_type, .. } => Self::Cast {
+            gd_ast::GdExpr::Cast {
+                expr, target_type, ..
+            } => Self::Cast {
                 span,
                 expr: Box::new(Self::from_borrowed(expr)),
                 target_type: (*target_type).to_string(),
             },
-            gd_ast::GdExpr::Is { expr, type_name, .. } => Self::Is {
+            gd_ast::GdExpr::Is {
+                expr, type_name, ..
+            } => Self::Is {
                 span,
                 expr: Box::new(Self::from_borrowed(expr)),
                 type_name: (*type_name).to_string(),
             },
-            gd_ast::GdExpr::Ternary { true_val, condition, false_val, .. } => Self::Ternary {
+            gd_ast::GdExpr::Ternary {
+                true_val,
+                condition,
+                false_val,
+                ..
+            } => Self::Ternary {
                 span,
                 true_val: Box::new(Self::from_borrowed(true_val)),
                 condition: Box::new(Self::from_borrowed(condition)),
@@ -591,7 +769,10 @@ impl OwnedExpr {
                 span,
                 func: Box::new(OwnedFunc::from_borrowed(func)),
             },
-            gd_ast::GdExpr::Preload { path, .. } => Self::Preload { span, path: (*path).to_string() },
+            gd_ast::GdExpr::Preload { path, .. } => Self::Preload {
+                span,
+                path: (*path).to_string(),
+            },
             gd_ast::GdExpr::Invalid { .. } => Self::Invalid { span },
         }
     }
@@ -606,12 +787,21 @@ impl OwnedStmt {
                 expr: OwnedExpr::from_borrowed(expr),
             },
             gd_ast::GdStmt::Var(v) => Self::Var(OwnedVar::from_borrowed(v)),
-            gd_ast::GdStmt::Assign { node, target, value } => Self::Assign {
+            gd_ast::GdStmt::Assign {
+                node,
+                target,
+                value,
+            } => Self::Assign {
                 span: Some(node_span(*node)),
                 target: OwnedExpr::from_borrowed(target),
                 value: OwnedExpr::from_borrowed(value),
             },
-            gd_ast::GdStmt::AugAssign { node, target, op, value } => Self::AugAssign {
+            gd_ast::GdStmt::AugAssign {
+                node,
+                target,
+                op,
+                value,
+            } => Self::AugAssign {
                 span: Some(node_span(*node)),
                 target: OwnedExpr::from_borrowed(target),
                 op: (*op).to_string(),
@@ -622,14 +812,25 @@ impl OwnedStmt {
                 value: value.as_ref().map(OwnedExpr::from_borrowed),
             },
             gd_ast::GdStmt::If(i) => Self::If(OwnedIf::from_borrowed(i)),
-            gd_ast::GdStmt::For { node, var, var_type, iter, body, .. } => Self::For {
+            gd_ast::GdStmt::For {
+                node,
+                var,
+                var_type,
+                iter,
+                body,
+                ..
+            } => Self::For {
                 span: Some(node_span(*node)),
                 var: (*var).to_string(),
                 var_type: var_type.as_ref().map(OwnedTypeRef::from_borrowed),
                 iter: OwnedExpr::from_borrowed(iter),
                 body: body.iter().map(OwnedStmt::from_borrowed).collect(),
             },
-            gd_ast::GdStmt::While { node, condition, body } => Self::While {
+            gd_ast::GdStmt::While {
+                node,
+                condition,
+                body,
+            } => Self::While {
                 span: Some(node_span(*node)),
                 condition: OwnedExpr::from_borrowed(condition),
                 body: body.iter().map(OwnedStmt::from_borrowed).collect(),
@@ -639,11 +840,21 @@ impl OwnedStmt {
                 value: OwnedExpr::from_borrowed(value),
                 arms: arms.iter().map(OwnedMatchArm::from_borrowed).collect(),
             },
-            gd_ast::GdStmt::Pass { node } => Self::Pass { span: Some(node_span(*node)) },
-            gd_ast::GdStmt::Break { node } => Self::Break { span: Some(node_span(*node)) },
-            gd_ast::GdStmt::Continue { node } => Self::Continue { span: Some(node_span(*node)) },
-            gd_ast::GdStmt::Breakpoint { node } => Self::Breakpoint { span: Some(node_span(*node)) },
-            gd_ast::GdStmt::Invalid { node } => Self::Invalid { span: Some(node_span(*node)) },
+            gd_ast::GdStmt::Pass { node } => Self::Pass {
+                span: Some(node_span(*node)),
+            },
+            gd_ast::GdStmt::Break { node } => Self::Break {
+                span: Some(node_span(*node)),
+            },
+            gd_ast::GdStmt::Continue { node } => Self::Continue {
+                span: Some(node_span(*node)),
+            },
+            gd_ast::GdStmt::Breakpoint { node } => Self::Breakpoint {
+                span: Some(node_span(*node)),
+            },
+            gd_ast::GdStmt::Invalid { node } => Self::Invalid {
+                span: Some(node_span(*node)),
+            },
         }
     }
 }

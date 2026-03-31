@@ -261,8 +261,7 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
             name,
             format,
         } => {
-            let result =
-                gd_lsp::query::query_extract_method(&file, start_line, end_line, &name)?;
+            let result = gd_lsp::query::query_extract_method(&file, start_line, end_line, &name)?;
             if is_json(format.as_ref()) {
                 let json =
                     serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
@@ -272,11 +271,7 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
             }
             Ok(())
         }
-        RefactorCommand::MoveFile {
-            from,
-            to,
-            format,
-        } => {
+        RefactorCommand::MoveFile { from, to, format } => {
             let result = gd_lsp::query::query_move_file(&from, &to)?;
             if is_json(format.as_ref()) {
                 let json =

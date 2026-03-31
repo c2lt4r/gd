@@ -457,13 +457,8 @@ pub fn exec(args: EditGdArgs) -> Result<()> {
             if name.is_some() && line.is_some() {
                 return Err(miette::miette!("--name and --line are mutually exclusive"));
             }
-            let result = gd_lsp::query::query_remove(
-                &file,
-                name.as_deref(),
-                line,
-                force,
-                class.as_deref(),
-            )?;
+            let result =
+                gd_lsp::query::query_remove(&file, name.as_deref(), line, force, class.as_deref())?;
             if is_json(format.as_ref()) {
                 let json =
                     serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
@@ -510,8 +505,7 @@ pub fn exec(args: EditGdArgs) -> Result<()> {
             format,
         } => {
             let content = read_content(input_file.as_deref())?;
-            let result =
-                gd_lsp::query::query_insert_into(&file, &class, &content, no_format)?;
+            let result = gd_lsp::query::query_insert_into(&file, &class, &content, no_format)?;
             if is_json(format.as_ref()) {
                 let json =
                     serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;

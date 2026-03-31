@@ -16,7 +16,11 @@ fn keywords() -> impl Iterator<Item = &'static str> {
     gd_class_db::builtin_generated::GDSCRIPT_KEYWORDS
         .iter()
         .copied()
-        .chain(["true", "false", "null", "tool", "onready", "export", "load"].iter().copied())
+        .chain(
+            ["true", "false", "null", "tool", "onready", "export", "load"]
+                .iter()
+                .copied(),
+        )
 }
 
 // Built-in types sourced from ClassDB generated VARIANT_TYPES table (37 types).
@@ -177,8 +181,7 @@ pub(super) fn resolve_simple_receiver(
     }
 
     // 2b. Built-in types (Vector2, String, Array, etc.) — not in ClassDB but have members
-    if is_builtin_type(receiver) || !super::builtins::members_for_class(receiver).is_empty()
-    {
+    if is_builtin_type(receiver) || !super::builtins::members_for_class(receiver).is_empty() {
         return Some(receiver.to_string());
     }
 

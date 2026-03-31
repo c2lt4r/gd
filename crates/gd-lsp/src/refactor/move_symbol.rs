@@ -179,9 +179,8 @@ pub fn move_symbol(
             // Insert into target class body
             let target_tree = gd_core::parser::parse(&target_source)?;
             let target_file = gd_ast::convert(&target_tree, &target_source);
-            let tc_node = find_class_definition(&target_file, tc).ok_or_else(|| {
-                miette::miette!("target class '{tc}' not found in target file")
-            })?;
+            let tc_node = find_class_definition(&target_file, tc)
+                .ok_or_else(|| miette::miette!("target class '{tc}' not found in target file"))?;
             let insert_byte = tc_node.end_byte();
             let spacing = "\n";
             let insert_text = format!("{spacing}{decl_text}");

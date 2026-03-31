@@ -974,15 +974,8 @@ mod tests {
     fn edit_range_newline_only_file() {
         let temp = setup(&[("nl.gd", "\n")]);
         let file = temp.path().join("nl.gd");
-        let result = edit_range(
-            &file,
-            1,
-            1,
-            "extends Node\nvar x = 1\n",
-            true,
-            temp.path(),
-        )
-        .unwrap();
+        let result =
+            edit_range(&file, 1, 1, "extends Node\nvar x = 1\n", true, temp.path()).unwrap();
         assert!(result.applied);
         let content = fs::read_to_string(&file).unwrap();
         assert!(content.contains("extends Node"));
