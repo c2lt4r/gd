@@ -70,19 +70,10 @@ pub fn query_replace_body(
     class: Option<&str>,
     content: &str,
     no_format: bool,
-    dry_run: bool,
 ) -> Result<crate::refactor::EditOutput> {
     let path = resolve_file(file)?;
     let project_root = find_root(&path)?;
-    crate::refactor::replace_body(
-        &path,
-        name,
-        class,
-        content,
-        no_format,
-        dry_run,
-        &project_root,
-    )
+    crate::refactor::replace_body(&path, name, class, content, no_format, &project_root)
 }
 
 pub fn query_insert(
@@ -92,20 +83,10 @@ pub fn query_insert(
     class: Option<&str>,
     content: &str,
     no_format: bool,
-    dry_run: bool,
 ) -> Result<crate::refactor::EditOutput> {
     let path = resolve_file(file)?;
     let project_root = find_root(&path)?;
-    crate::refactor::insert(
-        &path,
-        anchor,
-        after,
-        class,
-        content,
-        no_format,
-        dry_run,
-        &project_root,
-    )
+    crate::refactor::insert(&path, anchor, after, class, content, no_format, &project_root)
 }
 
 pub fn query_replace_symbol(
@@ -114,19 +95,10 @@ pub fn query_replace_symbol(
     class: Option<&str>,
     content: &str,
     no_format: bool,
-    dry_run: bool,
 ) -> Result<crate::refactor::EditOutput> {
     let path = resolve_file(file)?;
     let project_root = find_root(&path)?;
-    crate::refactor::replace_symbol(
-        &path,
-        name,
-        class,
-        content,
-        no_format,
-        dry_run,
-        &project_root,
-    )
+    crate::refactor::replace_symbol(&path, name, class, content, no_format, &project_root)
 }
 
 // ── Insert into class body ──────────────────────────────────────────────────
@@ -136,18 +108,10 @@ pub fn query_insert_into(
     class_name: &str,
     content: &str,
     no_format: bool,
-    dry_run: bool,
 ) -> Result<crate::refactor::EditOutput> {
     let path = resolve_file(file)?;
     let project_root = find_root(&path)?;
-    crate::refactor::insert_into(
-        &path,
-        class_name,
-        content,
-        no_format,
-        dry_run,
-        &project_root,
-    )
+    crate::refactor::insert_into(&path, class_name, content, no_format, &project_root)
 }
 
 // ── Remove (delete symbol) ──────────────────────────────────────────────────
@@ -200,7 +164,6 @@ pub fn query_create_file(
     class_name: Option<&str>,
     custom_content: Option<&str>,
     force: bool,
-    dry_run: bool,
 ) -> Result<CreateFileOutput> {
     let path = std::path::Path::new(file);
 
@@ -247,20 +210,18 @@ pub fn query_create_file(
 
     let lines = content.lines().count() as u32;
 
-    if !dry_run {
-        if let Some(parent) = full_path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| miette::miette!("cannot create directories: {e}"))?;
-        }
-        std::fs::write(&full_path, &content)
-            .map_err(|e| miette::miette!("cannot write file: {e}"))?;
+    if let Some(parent) = full_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| miette::miette!("cannot create directories: {e}"))?;
     }
+    std::fs::write(&full_path, &content)
+        .map_err(|e| miette::miette!("cannot write file: {e}"))?;
 
     Ok(CreateFileOutput {
         file: file.to_string(),
         extends: extends.to_string(),
         class_name: class_name.map(std::string::ToString::to_string),
-        applied: !dry_run,
+        applied: true,
         lines,
     })
 }

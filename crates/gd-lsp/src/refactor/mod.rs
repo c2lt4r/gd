@@ -5,6 +5,7 @@ mod edit;
 mod extract_method;
 mod move_file;
 mod move_symbol;
+pub mod mutation;
 pub use change_signature::*;
 pub use delete_symbol::*;
 pub use edit::*;

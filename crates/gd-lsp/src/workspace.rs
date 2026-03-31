@@ -801,6 +801,22 @@ impl WorkspaceIndex {
         }
         result
     }
+
+    /// Validate and persist a [`MutationSet`], then refresh caches for affected files.
+    ///
+    /// Delegates to [`crate::refactor::mutation::commit`] for the
+    /// validate-then-persist pipeline, then updates the workspace index
+    /// for every file that was written.
+    pub fn commit_mutations(
+        &self,
+        mutations: &crate::refactor::mutation::MutationSet,
+    ) -> miette::Result<crate::refactor::mutation::CommitResult> {
+        let result = crate::refactor::mutation::commit(mutations, &self.project_root)?;
+        for path in result.diagnostics.keys() {
+            self.refresh_file(path);
+        }
+        Ok(result)
+    }
 }
 
 /// Try to discover the Godot project root from LSP initialize params.

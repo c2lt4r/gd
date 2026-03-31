@@ -3,6 +3,8 @@
 ## [0.3.24] - 2026-03-31
 
 ### Changed
+- **Mutation pipeline (`MutationSet` + `commit()`)** — all `gd edit` commands now go through an atomic validate-then-persist pipeline. Mutations are validated in memory (parse-error baseline comparison) before anything touches disk. Commands no longer call `std::fs::write` directly. `WorkspaceIndex::commit_mutations()` provides the LSP path with automatic cache invalidation.
+- **`--dry-run` removed from `gd edit` commands** — with the mutation pipeline, validation happens in memory before persistence. Commands either succeed and apply, or fail and write nothing. `--dry-run` is retained only on `gd refactor rename` and `change-signature` where semantic review of cross-file changes is needed.
 - **Refactoring simplification** — reduced `gd refactor` from 28 subcommands to 4 (`rename`, `extract-method`, `move-file`, `change-signature`). Removed 21 commands that are agent-composable from edit primitives + queries. Removed transaction/undo machinery; validate-then-persist pipeline rejects broken mutations before writing.
 - **`gd refactor rename` is now dry-run by default** — pass `--apply` to persist changes. Previously applied by default with `--dry-run` to preview.
 - **`gd edit` gains `remove`, `extract`, `insert-into`** — full set of edit primitives: `insert` (before/after), `insert-into` (class body), `remove` (symbol), `extract` (move symbol to file), `replace-body`, `replace-symbol`, `create-file`.
