@@ -5,18 +5,6 @@ use gd_core::config::LintConfig;
 
 pub struct PhysicsInProcess;
 
-const PHYSICS_METHODS: &[&str] = &[
-    "move_and_slide",
-    "move_and_collide",
-    "apply_force",
-    "apply_impulse",
-    "apply_central_force",
-    "apply_central_impulse",
-    "apply_torque",
-    "apply_torque_impulse",
-    "set_velocity",
-];
-
 impl LintRule for PhysicsInProcess {
     fn name(&self) -> &'static str {
         "physics-in-process"
@@ -169,14 +157,14 @@ fn check_physics_expr(expr: &GdExpr<'_>, diags: &mut Vec<LintDiagnostic>) {
     // Bare call: move_and_slide() (implicit self)
     if let GdExpr::Call { node, callee, .. } = expr
         && let GdExpr::Ident { name, .. } = callee.as_ref()
-        && PHYSICS_METHODS.contains(name)
+        && gd_class_db::curated::is_physics_method(name)
     {
         diags.push(make_diagnostic(name, node));
     }
 
     // Method call: self.move_and_slide() or body.apply_force(...)
     if let GdExpr::MethodCall { node, method, .. } = expr
-        && PHYSICS_METHODS.contains(method)
+        && gd_class_db::curated::is_physics_method(method)
     {
         diags.push(make_diagnostic(method, node));
     }

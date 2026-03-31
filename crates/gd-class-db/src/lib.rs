@@ -3,6 +3,7 @@
 
 pub mod builtin_generated;
 pub mod builtins;
+pub mod curated;
 #[allow(dead_code)]
 pub(crate) mod generated;
 
@@ -381,28 +382,6 @@ pub fn utility_function(name: &str) -> Option<&'static generated::UtilityFunctio
         .map(|i| &generated::UTILITY_FUNCTIONS[i])
 }
 
-/// Curated list of methods that require the node to be in the scene tree.
-pub fn is_tree_dependent_method(method: &str) -> bool {
-    matches!(
-        method,
-        "look_at"
-            | "look_at_from_position"
-            | "to_global"
-            | "to_local"
-            | "get_global_position"
-            | "get_global_transform"
-            | "global_translate"
-            | "global_rotate"
-            | "get_parent"
-            | "get_tree"
-            | "get_node"
-            | "get_node_or_null"
-            | "find_child"
-            | "get_children"
-            | "get_viewport"
-    )
-}
-
 /// Check if a method name returns void on any class in the database.
 /// Used to detect void-returning calls in eval expressions where we
 /// don't have full type inference on the receiver.
@@ -600,14 +579,6 @@ mod tests {
         assert!(method_exists("Node", "add_child"));
         assert!(method_exists("Node2D", "add_child")); // inherited
         assert!(!method_exists("Node", "nonexistent_method"));
-    }
-
-    #[test]
-    fn test_tree_dependent_methods() {
-        assert!(is_tree_dependent_method("look_at"));
-        assert!(is_tree_dependent_method("to_global"));
-        assert!(is_tree_dependent_method("get_parent"));
-        assert!(!is_tree_dependent_method("add_child"));
     }
 
     #[test]

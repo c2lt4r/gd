@@ -6,22 +6,6 @@ use gd_core::config::LintConfig;
 
 pub struct MonitoringInSignal;
 
-/// Signals that trigger during physics overlap resolution where modifying
-/// `monitoring` or `monitorable` causes a Godot runtime error.
-const AREA_SIGNALS: &[&str] = &[
-    "body_entered",
-    "body_exited",
-    "area_entered",
-    "area_exited",
-    "body_shape_entered",
-    "body_shape_exited",
-    "area_shape_entered",
-    "area_shape_exited",
-];
-
-/// Properties that must not be directly assigned inside these callbacks.
-const DANGEROUS_PROPS: &[&str] = &["monitoring", "monitorable"];
-
 impl LintRule for MonitoringInSignal {
     fn name(&self) -> &'static str {
         "monitoring-in-signal"
@@ -82,7 +66,7 @@ fn collect_signal_connect<'a>(expr: &GdExpr<'a>, callbacks: &mut HashSet<&'a str
         _ => return,
     };
 
-    if !AREA_SIGNALS.contains(&signal_name) {
+    if !gd_class_db::builtin_generated::AREA_MONITORING_SIGNALS.contains(&signal_name) {
         return;
     }
 
@@ -98,7 +82,7 @@ fn is_auto_connected_signal_handler(name: &str) -> bool {
         return false;
     }
     let suffix = &name[4..]; // strip "_on_"
-    for signal in AREA_SIGNALS {
+    for signal in gd_class_db::builtin_generated::AREA_MONITORING_SIGNALS {
         // _on_Area2D_body_entered or _on_body_entered
         if suffix.ends_with(signal)
             && (suffix.len() == signal.len()
@@ -143,7 +127,7 @@ fn extract_dangerous_prop<'a>(target: &GdExpr<'a>) -> Option<&'a str> {
         } if matches!(receiver.as_ref(), GdExpr::Ident { name: "self", .. }) => *property,
         _ => return None,
     };
-    if DANGEROUS_PROPS.contains(&name) {
+    if gd_class_db::curated::is_area_dangerous_property(name) {
         Some(name)
     } else {
         None

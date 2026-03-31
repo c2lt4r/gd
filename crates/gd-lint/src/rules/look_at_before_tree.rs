@@ -151,7 +151,7 @@ fn check_expr_for_tree_calls(
         && let GdExpr::Ident { name, .. } = receiver.as_ref()
         && unattached.contains_key(name)
         && !attached.contains(name)
-        && gd_class_db::is_tree_dependent_method(method)
+        && gd_class_db::curated::is_tree_dependent_method(method)
     {
         diags.push(LintDiagnostic {
             rule: "look-at-before-tree",
@@ -254,17 +254,8 @@ fn extract_add_child_arg<'a>(expr: &GdExpr<'a>) -> Option<&'a str> {
     }
 }
 
-/// Global properties that are silently wrong when set before the node is in the tree.
-const GLOBAL_PROPERTIES: &[&str] = &[
-    "global_position",
-    "global_rotation",
-    "global_rotation_degrees",
-    "global_transform",
-    "global_basis",
-];
-
 fn is_global_property(name: &str) -> bool {
-    GLOBAL_PROPERTIES.contains(&name)
+    gd_class_db::curated::is_tree_dependent_property(name)
 }
 
 #[cfg(test)]

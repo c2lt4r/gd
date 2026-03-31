@@ -19,7 +19,7 @@ impl LintRule for PrintStatement {
         gd_ast::visit_exprs(file, &mut |expr| {
             if let GdExpr::Call { node, callee, .. } = expr
                 && let GdExpr::Ident { name, .. } = callee.as_ref()
-                && PRINT_FUNCTIONS.contains(name)
+                && gd_class_db::builtin_generated::PRINT_FUNCTIONS.contains(name)
             {
                 diags.push(LintDiagnostic {
                     rule: "print-statement",
@@ -36,20 +36,6 @@ impl LintRule for PrintStatement {
         diags
     }
 }
-
-/// Debug print function names to detect.
-/// Note: push_error() and push_warning() are intentionally excluded — they are
-/// Godot's structured logging (appear in debugger with stack traces) and belong
-/// in production code for error conditions and graceful degradation.
-const PRINT_FUNCTIONS: &[&str] = &[
-    "print",
-    "prints",
-    "printt",
-    "printraw",
-    "print_debug",
-    "print_rich",
-    "print_verbose",
-];
 
 #[cfg(test)]
 mod tests {

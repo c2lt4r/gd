@@ -16469,3 +16469,27 @@ pub static GDSCRIPT_KEYWORDS: &[&str] = &[
     "while",
     "yield",
 ];
+
+/// Signals defined on Area2D/Area3D (8 signals).
+pub static AREA_MONITORING_SIGNALS: &[&str] = &[
+    "area_entered",
+    "area_exited",
+    "area_shape_entered",
+    "area_shape_exited",
+    "body_entered",
+    "body_exited",
+    "body_shape_entered",
+    "body_shape_exited",
+];
+
+/// Debug print/output utility functions (8 functions).
+pub static PRINT_FUNCTIONS: &[&str] = &[
+    "print",
+    "print_debug",
+    "print_rich",
+    "print_stack",
+    "print_verbose",
+    "printraw",
+    "prints",
+    "printt",
+];
