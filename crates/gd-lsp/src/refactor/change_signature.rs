@@ -461,7 +461,7 @@ pub fn change_signature(
                     }
                 }
                 OwnedExpr::MethodCall {
-                    span,
+                    span: _,
                     receiver,
                     method,
                     args,
