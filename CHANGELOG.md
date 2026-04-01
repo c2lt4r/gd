@@ -27,6 +27,9 @@
 - **`EditOutput.diagnostics` field** — mutation commands return lint diagnostic count after edit for tooling/agent use.
 - 10 new ClassDB query functions: `is_variant_type`, `builtin_member_type`, `builtin_method_return_type`, `builtin_constant_type`, `builtin_constructor_exists`, `function_return_type`, `operator_result_type`, `can_convert_type`, `annotation_def`, `godot_warning`.
 
+### Fixed
+- **Filter 469 void "properties" from generated ClassDB data** — inspector category headers (e.g. `CollisionObject2D.Input`, `Area2D.Gravity`) were leaking into the properties table as type `void`, causing `lookup_member("Input")` to shadow the `Input` engine class. Generator now skips properties with type `void`.
+
 ### Improved
 - **`missing-return` lint** — now uses CFG reachability (`can_fall_through`). No longer false-positives when dead code follows an exhaustive if/else or match with wildcard.
 - **`unreachable-code` lint** — detects unreachable code after if/elif/else where all branches return, and after match with wildcard where all arms terminate. Previously only caught code after linear return/break/continue.
