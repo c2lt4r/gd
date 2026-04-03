@@ -19,5 +19,6 @@ pub mod resource_parser;
 #[allow(dead_code)]
 pub mod rewriter;
 pub mod scene;
+pub mod ssr;
 pub mod type_inference;
 pub mod workspace_index;
