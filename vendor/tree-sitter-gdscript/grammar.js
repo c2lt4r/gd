@@ -489,6 +489,7 @@ module.exports = grammar({
     _enumerator_expression: ($) =>
       choice(
         $.integer,
+        $.float,
         $.binary_operator,
         $.identifier,
         $.unary_operator,
