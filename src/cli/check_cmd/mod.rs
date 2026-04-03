@@ -56,11 +56,11 @@ struct CheckOutput {
 }
 
 #[derive(Serialize)]
-struct ParseError {
-    file: String,
-    line: u32,
-    column: u32,
-    message: String,
+pub struct ParseError {
+    pub file: String,
+    pub line: u32,
+    pub column: u32,
+    pub message: String,
 }
 
 #[derive(Debug)]
@@ -285,7 +285,7 @@ pub fn exec(args: &CheckArgs) -> Result<()> {
 // Tree-sitter error reporting (existing)
 // ---------------------------------------------------------------------------
 
-fn report_errors(cursor: &mut tree_sitter::TreeCursor, source: &str, file: &Path) {
+pub fn report_errors(cursor: &mut tree_sitter::TreeCursor, source: &str, file: &Path) {
     use owo_colors::OwoColorize;
     loop {
         let node = cursor.node();
@@ -484,7 +484,7 @@ fn report_scene_errors(errors: &[ParseError], _file: &Path) {
     }
 }
 
-fn collect_errors(
+pub fn collect_errors(
     cursor: &mut tree_sitter::TreeCursor,
     file: &Path,
     base: &Path,

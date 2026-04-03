@@ -20,6 +20,8 @@ pub mod log_cmd;
 pub mod lsp_cmd;
 pub mod man_cmd;
 pub mod new_cmd;
+pub mod parse_cmd;
+
 pub mod overview_cmd;
 pub mod query_cmd;
 pub mod refactor_cmd;
@@ -64,6 +66,8 @@ pub enum Command {
     Build(build_cmd::BuildArgs),
     /// Check project for errors without building
     Check(check_cmd::CheckArgs),
+    /// Parse GDScript files and report syntax errors (no semantic analysis)
+    Parse(parse_cmd::ParseArgs),
     /// Clean build artifacts
     Clean(clean_cmd::CleanArgs),
     /// Test runner and automation
@@ -126,6 +130,7 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Stop => stop_cmd::exec(),
         Command::Build(ref args) => build_cmd::exec(args),
         Command::Check(ref args) => check_cmd::exec(args),
+        Command::Parse(ref args) => parse_cmd::exec(args),
         Command::Clean(ref args) => clean_cmd::exec(args),
         Command::Test(ref args) => test_cmd::exec(args),
         Command::Completions(ref args) => completions_cmd::exec(args),
