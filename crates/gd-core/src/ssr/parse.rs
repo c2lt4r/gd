@@ -26,7 +26,7 @@ use crate::parser;
 
 use super::pattern::{
     PatternKind, PlaceholderInfo, SSR_PREFIX, SSRV_PREFIX, SsrPattern, SsrTemplate,
-    is_ident_continue, is_ident_start,
+    StructuralPredicate, TypeConstraint, is_ident_continue, is_ident_start,
 };
 
 /// Name of the wrapper variable used to parse expression patterns.
@@ -107,13 +107,9 @@ fn strip_stmt_prefix(input: &str) -> (bool, &str) {
 
 /// Replace `$` placeholders with sentinel identifiers, extract type
 /// constraints into a side table.
-///
-/// - `$name`       → `__ssr_name`
-/// - `$$name`      → `__ssrv_name`
-/// - `$name:Type`  → `__ssr_name` + constraint `("name", "Type")`
-fn preprocess(input: &str) -> Result<(String, HashMap<String, String>)> {
+fn preprocess(input: &str) -> Result<(String, HashMap<String, TypeConstraint>)> {
     let mut out = String::with_capacity(input.len() + 32);
-    let mut constraints: HashMap<String, String> = HashMap::new();
+    let mut constraints: HashMap<String, TypeConstraint> = HashMap::new();
     let bytes = input.as_bytes();
     let len = bytes.len();
     let mut i = 0;
@@ -125,11 +121,9 @@ fn preprocess(input: &str) -> Result<(String, HashMap<String, String>)> {
             continue;
         }
 
-        // We hit a '$'.  Check for variadic '$$'.
         let variadic = i + 1 < len && bytes[i + 1] == b'$';
         i += if variadic { 2 } else { 1 };
 
-        // Read the identifier name.
         let name_start = i;
         if i >= len || !is_ident_start(bytes[i]) {
             return Err(miette!(
@@ -142,21 +136,12 @@ fn preprocess(input: &str) -> Result<(String, HashMap<String, String>)> {
         }
         let name = &input[name_start..i];
 
-        // Check for `:Type` constraint (not valid on variadics).
         if !variadic && i < len && bytes[i] == b':' {
-            i += 1; // skip ':'
-            let type_start = i;
-            if i >= len || !is_ident_start(bytes[i]) {
-                return Err(miette!("expected type name after ':' in '${name}:'"));
-            }
-            while i < len && is_ident_continue(bytes[i]) {
-                i += 1;
-            }
-            let type_name = &input[type_start..i];
-            constraints.insert(name.to_string(), type_name.to_string());
+            i += 1;
+            let constraint = parse_constraint(input, bytes, &mut i)?;
+            constraints.insert(name.to_string(), constraint);
         }
 
-        // Emit the sentinel identifier.
         if variadic {
             out.push_str(SSRV_PREFIX);
         } else {
@@ -166,6 +151,67 @@ fn preprocess(input: &str) -> Result<(String, HashMap<String, String>)> {
     }
 
     Ok((out, constraints))
+}
+fn parse_constraint(input: &str, bytes: &[u8], i: &mut usize) -> Result<TypeConstraint> {
+    let len = bytes.len();
+    if *i < len && bytes[*i] == b'{' {
+        *i += 1;
+        return parse_structural_predicate(input, bytes, i);
+    }
+    let type_start = *i;
+    if *i >= len || !is_ident_start(bytes[*i]) {
+        return Err(miette!("expected type name or '{{' after ':'"));
+    }
+    while *i < len && is_ident_continue(bytes[*i]) {
+        *i += 1;
+    }
+    let type_name = &input[type_start..*i];
+    if type_name == "Variant" {
+        Ok(TypeConstraint::VariantOnly)
+    } else {
+        Ok(TypeConstraint::Nominal(type_name.to_string()))
+    }
+}
+fn parse_structural_predicate(input: &str, bytes: &[u8], i: &mut usize) -> Result<TypeConstraint> {
+    let len = bytes.len();
+    let pred_start = *i;
+    while *i < len && is_ident_continue(bytes[*i]) {
+        *i += 1;
+    }
+    let pred_name = &input[pred_start..*i];
+    if *i >= len || bytes[*i] != b'(' {
+        return Err(miette!("expected '(' after predicate '{pred_name}'"));
+    }
+    *i += 1;
+    if *i >= len || bytes[*i] != b'"' {
+        return Err(miette!("expected '\"' in predicate argument"));
+    }
+    *i += 1;
+    let arg_start = *i;
+    while *i < len && bytes[*i] != b'"' {
+        *i += 1;
+    }
+    if *i >= len {
+        return Err(miette!("unterminated string in predicate argument"));
+    }
+    let arg = &input[arg_start..*i];
+    *i += 1;
+    if *i >= len || bytes[*i] != b')' {
+        return Err(miette!("expected ')' after predicate argument"));
+    }
+    *i += 1;
+    if *i >= len || bytes[*i] != b'}' {
+        return Err(miette!("expected '}}' to close structural constraint"));
+    }
+    *i += 1;
+    let predicate = match pred_name {
+        "has_method" => StructuralPredicate::HasMethod(arg.to_string()),
+        "has_property" => StructuralPredicate::HasProperty(arg.to_string()),
+        "has_signal" => StructuralPredicate::HasSignal(arg.to_string()),
+        "extends" => StructuralPredicate::Extends(arg.to_string()),
+        _ => return Err(miette!("unknown predicate '{pred_name}'")),
+    };
+    Ok(TypeConstraint::Structural(predicate))
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -239,10 +285,9 @@ fn extract_stmt_from_func(file: &OwnedFile) -> Result<OwnedStmt> {
 //  Placeholder extraction
 // ═══════════════════════════════════════════════════════════════════════
 
-/// Walk the pattern AST to collect all placeholder identifiers.
 fn extract_placeholders(
     kind: &PatternKind,
-    constraints: &HashMap<String, String>,
+    constraints: &HashMap<String, TypeConstraint>,
 ) -> HashMap<String, PlaceholderInfo> {
     let mut out = HashMap::new();
     match kind {
@@ -255,22 +300,20 @@ fn extract_placeholders(
     }
     out
 }
-
-/// If `name` is a sentinel identifier, record the placeholder.
 fn insert_placeholder(
     name: &str,
-    constraints: &HashMap<String, String>,
+    constraints: &HashMap<String, TypeConstraint>,
     out: &mut HashMap<String, PlaceholderInfo>,
 ) {
     if let Some(ph) = name.strip_prefix(SSRV_PREFIX) {
         out.entry(ph.to_string()).or_insert(PlaceholderInfo {
             variadic: true,
-            type_constraint: None,
+            constraint: None,
         });
     } else if let Some(ph) = name.strip_prefix(SSR_PREFIX) {
         out.entry(ph.to_string()).or_insert(PlaceholderInfo {
             variadic: false,
-            type_constraint: constraints.get(ph).cloned(),
+            constraint: constraints.get(ph).cloned(),
         });
     }
 }

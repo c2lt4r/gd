@@ -38,6 +38,34 @@ pub(super) fn is_ident_continue(b: u8) -> bool {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
+//  Type constraints
+// ═══════════════════════════════════════════════════════════════════════
+
+/// A type constraint on an SSR placeholder.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TypeConstraint {
+    /// `$x:Node` — nominal type check with inheritance.
+    Nominal(String),
+    /// `$x:{predicate}` — structural/duck-typing check.
+    Structural(StructuralPredicate),
+    /// `$x:Variant` — must be dynamically typed.
+    VariantOnly,
+}
+
+/// A structural predicate for duck-typing constraints.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StructuralPredicate {
+    /// `has_method("name")` — type has a method with this name.
+    HasMethod(String),
+    /// `has_property("name")` — type has a property/variable with this name.
+    HasProperty(String),
+    /// `has_signal("name")` — type has a signal with this name.
+    HasSignal(String),
+    /// `extends("ClassName")` — alias for nominal constraint.
+    Extends(String),
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 //  Placeholder info
 // ═══════════════════════════════════════════════════════════════════════
 
@@ -46,9 +74,9 @@ pub(super) fn is_ident_continue(b: u8) -> bool {
 pub struct PlaceholderInfo {
     /// True for `$$args` — matches zero or more expressions in a call.
     pub variadic: bool,
-    /// Type constraint from `$x:Type` syntax.  `None` = match anything.
-    /// Resolved in Phase 4.
-    pub type_constraint: Option<String>,
+    /// Type constraint from `$x:Type` or `$x:{predicate}` syntax.
+    /// `None` = match anything.
+    pub constraint: Option<TypeConstraint>,
 }
 
 // ═══════════════════════════════════════════════════════════════════════

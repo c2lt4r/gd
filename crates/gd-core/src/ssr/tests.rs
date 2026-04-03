@@ -147,8 +147,8 @@ fn variadic_with_other_args() {
 fn type_constraint_on_placeholder() {
     let pat = parse_pattern("$x:Node.foo()").unwrap();
     assert_eq!(
-        pat.placeholders["x"].type_constraint.as_deref(),
-        Some("Node")
+        pat.placeholders["x"].constraint,
+        Some(TypeConstraint::Nominal("Node".into()))
     );
 }
 
@@ -156,12 +156,12 @@ fn type_constraint_on_placeholder() {
 fn type_constraint_multiple() {
     let pat = parse_pattern("$a:Node.add_child($b:Control)").unwrap();
     assert_eq!(
-        pat.placeholders["a"].type_constraint.as_deref(),
-        Some("Node")
+        pat.placeholders["a"].constraint,
+        Some(TypeConstraint::Nominal("Node".into()))
     );
     assert_eq!(
-        pat.placeholders["b"].type_constraint.as_deref(),
-        Some("Control")
+        pat.placeholders["b"].constraint,
+        Some(TypeConstraint::Nominal("Control".into()))
     );
 }
 
@@ -624,4 +624,72 @@ fn replace_variadic_render() {
     ];
     captures.insert("args".into(), Capture::ArgList(args));
     assert_eq!(render_replacement(&tmpl, &captures), "log(a, b)");
+}
+
+fn find_constrained(pattern_str: &str, source: &str) -> Vec<MatchResult> {
+    let pat = parse_pattern(pattern_str).unwrap();
+    let tree = crate::parser::parse(source).unwrap();
+    let file = crate::gd_ast::convert(&tree, source);
+    find_matches_constrained(&pat, &file, source, std::path::PathBuf::new(), None)
+}
+
+#[test]
+fn constraint_nominal_int_matches_literal() {
+    let src = "func f():\n\tvar x: int = 1 + 2\n";
+    let m = find_constrained("$a:int + $b", src);
+    assert_eq!(m.len(), 1);
+}
+
+#[test]
+fn constraint_nominal_int_rejects_string() {
+    let src = "func f():\n\tvar x = \"hello\" + \"world\"\n";
+    let m = find_constrained("$a:int + $b", src);
+    assert!(m.is_empty());
+}
+
+#[test]
+fn constraint_nominal_rejects_untyped() {
+    // Untyped parameter — type is unknown → constraint not satisfied.
+    let src = "func f(x):\n\tx.add_child(null)\n";
+    let m = find_constrained("$n:Node.add_child($c)", src);
+    assert!(m.is_empty());
+}
+
+#[test]
+fn constraint_variant_only_matches_variant() {
+    let src = "func f(x):\n\tx.foo()\n";
+    let m = find_constrained("$r:Variant.foo()", src);
+    assert!(m.is_empty());
+}
+
+#[test]
+fn constraint_unconstrained_still_matches() {
+    let src = "func f(x):\n\tx.foo()\n";
+    let m = find("$r.foo()", src);
+    assert!(!m.is_empty());
+}
+
+#[test]
+fn constraint_structural_predicate_parsed() {
+    let pat = parse_pattern("$obj:{has_method(\"process\")}.process($d)").unwrap();
+    assert_eq!(
+        pat.placeholders["obj"].constraint,
+        Some(TypeConstraint::Structural(StructuralPredicate::HasMethod(
+            "process".into()
+        )))
+    );
+}
+
+#[test]
+fn constraint_variant_only_parsed() {
+    let pat = parse_pattern("$x:Variant.foo()").unwrap();
+    assert_eq!(
+        pat.placeholders["x"].constraint,
+        Some(TypeConstraint::VariantOnly)
+    );
+}
+
+#[test]
+fn constraint_unknown_predicate_rejected() {
+    assert!(parse_pattern("$x:{unknown(\"foo\")}.bar()").is_err());
 }
