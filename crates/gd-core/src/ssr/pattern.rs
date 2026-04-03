@@ -17,6 +17,12 @@ pub enum PatternKind {
     Stmt(Box<OwnedStmt>),
 }
 
+/// Prefix for regular placeholder sentinels (`$name` → `__ssr_name`).
+pub(super) const SSR_PREFIX: &str = "__ssr_";
+
+/// Prefix for variadic placeholder sentinels (`$$name` → `__ssrv_name`).
+pub(super) const SSRV_PREFIX: &str = "__ssrv_";
+
 // ═══════════════════════════════════════════════════════════════════════
 //  Placeholder info
 // ═══════════════════════════════════════════════════════════════════════

@@ -24,17 +24,9 @@ use crate::ast_owned::{OwnedDecl, OwnedExpr, OwnedFile, OwnedStmt};
 use crate::gd_ast;
 use crate::parser;
 
-use super::pattern::{PatternKind, PlaceholderInfo, SsrPattern, SsrTemplate};
-
-// ═══════════════════════════════════════════════════════════════════════
-//  Constants
-// ═══════════════════════════════════════════════════════════════════════
-
-/// Prefix for regular placeholder sentinels (`$name` → `__ssr_name`).
-const SSR_PREFIX: &str = "__ssr_";
-
-/// Prefix for variadic placeholder sentinels (`$$name` → `__ssrv_name`).
-const SSRV_PREFIX: &str = "__ssrv_";
+use super::pattern::{
+    PatternKind, PlaceholderInfo, SSR_PREFIX, SSRV_PREFIX, SsrPattern, SsrTemplate,
+};
 
 /// Name of the wrapper variable used to parse expression patterns.
 const WRAPPER_VAR: &str = "__ssr_result__";
