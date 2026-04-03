@@ -456,8 +456,17 @@ fn expr_to_dotted_name(expr: &GdExpr) -> Option<String> {
 }
 
 /// Check if a type name is known (builtin, ClassDB, user class, enum, or inner class).
-#[allow(clippy::too_many_lines)]
 pub(super) fn is_known_type(name: &str, file: &GdFile, project: &ProjectIndex) -> bool {
+    is_known_type_inner(name, file, project, &mut Vec::new())
+}
+/// Inner implementation with cycle detection for const type-alias resolution.
+#[allow(clippy::too_many_lines)]
+fn is_known_type_inner(
+    name: &str,
+    file: &GdFile,
+    project: &ProjectIndex,
+    seen: &mut Vec<String>,
+) -> bool {
     // GDScript built-in types
     let builtins = [
         "void",
@@ -569,15 +578,23 @@ pub(super) fn is_known_type(name: &str, file: &GdFile, project: &ProjectIndex) -
                 Some(GdExpr::Ident {
                     name: alias_name, ..
                 }) => {
-                    if is_known_type(alias_name, file, project) {
-                        return true;
+                    // Guard against cyclic const aliases (const A = B; const B = A)
+                    if !seen.contains(&name.to_string()) {
+                        seen.push(name.to_string());
+                        if is_known_type_inner(alias_name, file, project, seen) {
+                            return true;
+                        }
                     }
                 }
                 Some(expr @ GdExpr::PropertyAccess { .. }) => {
-                    if let Some(dotted) = expr_to_dotted_name(expr)
-                        && is_known_type(&dotted, file, project)
-                    {
-                        return true;
+                    if let Some(dotted) = expr_to_dotted_name(expr) {
+                        // Guard against cyclic const aliases
+                        if !seen.contains(&name.to_string()) {
+                            seen.push(name.to_string());
+                            if is_known_type_inner(&dotted, file, project, seen) {
+                                return true;
+                            }
+                        }
                     }
                 }
                 _ => {}
