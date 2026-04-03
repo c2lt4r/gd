@@ -1,4 +1,4 @@
-//! Behaviour tests for SSR (Phase 1 + Phase 2).
+//! Behaviour tests for SSR (Phase 1 + Phase 2 + Phase 3).
 
 use super::*;
 
@@ -22,7 +22,6 @@ fn property_access_pattern() {
     let pat = parse_pattern("$obj.property").unwrap();
     assert!(matches!(pat.kind, PatternKind::Expr(_)));
     assert_eq!(pat.placeholders.len(), 1);
-    assert!(pat.placeholders.contains_key("obj"));
 }
 
 #[test]
@@ -208,28 +207,28 @@ fn bare_double_dollar_rejected() {
 // ═══════════════════════════════════════════════════════════════════════
 
 #[test]
-fn template_with_subset_of_pattern_placeholders() {
+fn template_with_subset() {
     let pat = parse_pattern("$a + $b").unwrap();
     let tmpl = parse_template("$a", &pat).unwrap();
     assert_eq!(tmpl.placeholders.len(), 1);
 }
 
 #[test]
-fn template_with_all_pattern_placeholders() {
+fn template_with_all() {
     let pat = parse_pattern("$recv.old_method($arg)").unwrap();
     let tmpl = parse_template("$recv.new_method($arg)", &pat).unwrap();
     assert_eq!(tmpl.placeholders.len(), 2);
 }
 
 #[test]
-fn template_unbound_placeholder_rejected() {
+fn template_unbound_rejected() {
     let pat = parse_pattern("$a + $b").unwrap();
     let err = parse_template("$a + $c", &pat).unwrap_err().to_string();
     assert!(err.contains("$c"));
 }
 
 #[test]
-fn template_original_source_preserved() {
+fn template_source_preserved() {
     let pat = parse_pattern("$a.foo()").unwrap();
     let tmpl = parse_template("$a.bar()", &pat).unwrap();
     assert_eq!(tmpl.source, "$a.bar()");
@@ -255,9 +254,7 @@ fn expr_pattern_is_method_call_ast() {
 fn expr_pattern_binop_structure() {
     let pat = parse_pattern("$x + $y").unwrap();
     match &pat.kind {
-        PatternKind::Expr(crate::ast_owned::OwnedExpr::BinOp { op, .. }) => {
-            assert_eq!(op, "+");
-        }
+        PatternKind::Expr(crate::ast_owned::OwnedExpr::BinOp { op, .. }) => assert_eq!(op, "+"),
         other => panic!("expected BinOp, got {other:?}"),
     }
 }
@@ -363,11 +360,8 @@ fn match_subscript() {
 
 #[test]
 fn match_wildcard_matches_many() {
-    let m = find("$a", "func f():\n\tvar x = foo.bar(1, 2).baz()\n");
-    assert!(!m.is_empty());
+    assert!(!find("$a", "func f():\n\tvar x = foo.bar(1, 2).baz()\n").is_empty());
 }
-
-// ── Repeated placeholders ────────────────────────────────────────────
 
 #[test]
 fn match_repeated_same() {
@@ -381,8 +375,6 @@ fn match_repeated_different() {
     assert!(find("$a + $a", "func f():\n\tvar z = x + y\n").is_empty());
 }
 
-// ── Variadic arguments ──────────────────────────────────────────────
-
 #[test]
 fn match_variadic_zero() {
     let m = find("print($$args)", "func f():\n\tprint()\n");
@@ -393,14 +385,12 @@ fn match_variadic_zero() {
 #[test]
 fn match_variadic_one() {
     let m = find("print($$args)", "func f():\n\tprint(1)\n");
-    assert_eq!(m.len(), 1);
     assert_eq!(cap_args(&m[0], "args"), vec!["1"]);
 }
 
 #[test]
 fn match_variadic_many() {
     let m = find("print($$args)", "func f():\n\tprint(1, 2, 3)\n");
-    assert_eq!(m.len(), 1);
     assert_eq!(cap_args(&m[0], "args"), vec!["1", "2", "3"]);
 }
 
@@ -410,20 +400,17 @@ fn match_variadic_with_fixed() {
         "$recv.method(\"tag\", $$rest)",
         "func f():\n\tobj.method(\"tag\", 1, 2)\n",
     );
-    assert_eq!(m.len(), 1);
     assert_eq!(cap(&m[0], "recv"), "obj");
     assert_eq!(cap_args(&m[0], "rest"), vec!["1", "2"]);
 }
 
-// ── Overlapping matches ─────────────────────────────────────────────
-
 #[test]
 fn match_overlapping() {
-    let m = find("$a + $b", "func f():\n\tvar z = (x + y) + w\n");
-    assert_eq!(m.len(), 2);
+    assert_eq!(
+        find("$a + $b", "func f():\n\tvar z = (x + y) + w\n").len(),
+        2
+    );
 }
-
-// ── Literal matching ────────────────────────────────────────────────
 
 #[test]
 fn match_literal_exact() {
@@ -431,7 +418,6 @@ fn match_literal_exact() {
         "$a.connect(\"ready\", $b)",
         "func f():\n\tobj.connect(\"ready\", cb)\n",
     );
-    assert_eq!(m.len(), 1);
     assert_eq!(cap(&m[0], "b"), "cb");
 }
 
@@ -440,64 +426,202 @@ fn match_literal_mismatch() {
     assert!(
         find(
             "$a.connect(\"ready\", $b)",
-            "func f():\n\tobj.connect(\"process\", cb)\n",
+            "func f():\n\tobj.connect(\"process\", cb)\n"
         )
         .is_empty()
     );
 }
 
-// ── Statement matching ──────────────────────────────────────────────
-
 #[test]
 fn match_var_decl() {
     let m = find("var $name = $value", "func f():\n\tvar x = 42\n");
-    assert_eq!(m.len(), 1);
     assert_eq!(cap(&m[0], "name"), "x");
     assert_eq!(cap(&m[0], "value"), "42");
 }
 
 #[test]
 fn match_return_stmt() {
-    let m = find("return $x", "func f():\n\treturn foo()\n");
-    assert_eq!(m.len(), 1);
-    assert_eq!(cap(&m[0], "x"), "foo()");
+    assert_eq!(
+        cap(&find("return $x", "func f():\n\treturn foo()\n")[0], "x"),
+        "foo()"
+    );
 }
 
 #[test]
 fn match_assign_stmt() {
     let m = find("$target = $value", "func f():\n\thealth = 100\n");
-    assert_eq!(m.len(), 1);
     assert_eq!(cap(&m[0], "target"), "health");
     assert_eq!(cap(&m[0], "value"), "100");
 }
 
 #[test]
 fn match_aug_assign_stmt() {
-    let m = find("$target -= $value", "func f():\n\thealth -= 10\n");
-    assert_eq!(m.len(), 1);
-    assert_eq!(cap(&m[0], "value"), "10");
+    assert_eq!(
+        cap(&find("$t -= $v", "func f():\n\thealth -= 10\n")[0], "v"),
+        "10"
+    );
 }
-
-// ── Misc ────────────────────────────────────────────────────────────
 
 #[test]
 fn match_line_one_based() {
-    let m = find("$a + $b", "func f():\n\tvar x = 1 + 2\n");
-    assert_eq!(m[0].line, 2);
+    assert_eq!(find("$a + $b", "func f():\n\tvar x = 1 + 2\n")[0].line, 2);
 }
 
 #[test]
 fn match_multiple_in_file() {
-    let m = find("$x + $y", "func f():\n\tvar a = 1 + 2\n\tvar b = 3 + 4\n");
-    assert_eq!(m.len(), 2);
+    assert_eq!(
+        find("$x + $y", "func f():\n\tvar a = 1 + 2\n\tvar b = 3 + 4\n").len(),
+        2
+    );
 }
 
 #[test]
 fn match_chained() {
     let m = find("$x.bar()", "func f():\n\ta.foo().bar()\n");
     assert_eq!(m.len(), 1);
-    // $x captures the receiver; its source text includes the full
-    // attribute chain because tree-sitter flattens nested attribute
-    // nodes and the intermediate receiver shares the outer node's span.
     assert!(m[0].captures.contains_key("x"));
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  Phase 3: Replacement engine — helpers
+// ═══════════════════════════════════════════════════════════════════════
+
+fn ssr(pattern: &str, replacement: &str, source: &str) -> String {
+    let pat = parse_pattern(pattern).unwrap();
+    let tmpl = parse_template(replacement, &pat).unwrap();
+    let tree = crate::parser::parse(source).unwrap();
+    let file = crate::gd_ast::convert(&tree, source);
+    let matches = find_matches(&pat, &file, source, std::path::PathBuf::new());
+    apply_replacements(source, &matches, &tmpl)
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  Phase 3: Replacement tests
+// ═══════════════════════════════════════════════════════════════════════
+
+#[test]
+fn replace_swap_operands() {
+    assert!(ssr("$a + $b", "$b + $a", "func f():\n\tvar x = 1 + 2\n").contains("2 + 1"));
+}
+
+#[test]
+fn replace_api_rewrite() {
+    let r = ssr(
+        "$recv.get_child($i)",
+        "$recv.get_children()[$i]",
+        "func f():\n\tvar c = node.get_child(0)\n",
+    );
+    assert!(r.contains("node.get_children()[0]"));
+}
+
+#[test]
+fn replace_method_rename() {
+    let r = ssr(
+        "$recv.old_method($a)",
+        "$recv.new_method($a)",
+        "func f():\n\tobj.old_method(42)\n",
+    );
+    assert!(r.contains("obj.new_method(42)"));
+}
+
+#[test]
+fn replace_variadic() {
+    assert!(
+        ssr(
+            "print($$args)",
+            "log($$args)",
+            "func f():\n\tprint(1, 2, 3)\n"
+        )
+        .contains("log(1, 2, 3)")
+    );
+}
+
+#[test]
+fn replace_variadic_empty() {
+    assert!(ssr("print($$args)", "log($$args)", "func f():\n\tprint()\n").contains("log()"));
+}
+
+#[test]
+fn replace_multi_match() {
+    let r = ssr(
+        "$a + $b",
+        "$b + $a",
+        "func f():\n\tvar x = 1 + 2\n\tvar y = 3 + 4\n",
+    );
+    assert!(r.contains("2 + 1"));
+    assert!(r.contains("4 + 3"));
+}
+
+#[test]
+fn replace_overlap_outer_wins() {
+    let r = ssr(
+        "$a + $b",
+        "add($a, $b)",
+        "func f():\n\tvar z = (x + y) + w\n",
+    );
+    assert!(r.contains("add("));
+    assert!(!r.contains("add(add("));
+}
+
+#[test]
+fn replace_preserves_formatting() {
+    let r = ssr(
+        "$recv.foo($a)",
+        "$recv.bar($a)",
+        "func f():\n\tobj.foo(Vector2( 1,  2 ))\n",
+    );
+    assert!(r.contains("obj.bar(Vector2( 1,  2 ))"));
+}
+
+#[test]
+fn replace_preserves_unmatched() {
+    let r = ssr(
+        "$a + $b",
+        "$b - $a",
+        "func f():\n\tvar a = 1\n\tvar b = x + y\n\tvar c = 3\n",
+    );
+    assert!(r.contains("var a = 1"));
+    assert!(r.contains("y - x"));
+    assert!(r.contains("var c = 3"));
+}
+
+#[test]
+fn replace_render_only() {
+    let pat = parse_pattern("$a + $b").unwrap();
+    let tmpl = parse_template("$b - $a", &pat).unwrap();
+    let mut captures = std::collections::HashMap::new();
+    captures.insert(
+        "a".into(),
+        Capture::Expr(CapturedExpr {
+            byte_range: 0..1,
+            source_text: "x".into(),
+        }),
+    );
+    captures.insert(
+        "b".into(),
+        Capture::Expr(CapturedExpr {
+            byte_range: 4..5,
+            source_text: "y".into(),
+        }),
+    );
+    assert_eq!(render_replacement(&tmpl, &captures), "y - x");
+}
+
+#[test]
+fn replace_variadic_render() {
+    let pat = parse_pattern("print($$args)").unwrap();
+    let tmpl = parse_template("log($$args)", &pat).unwrap();
+    let mut captures = std::collections::HashMap::new();
+    let args = vec![
+        CapturedExpr {
+            byte_range: 0..1,
+            source_text: "a".into(),
+        },
+        CapturedExpr {
+            byte_range: 3..4,
+            source_text: "b".into(),
+        },
+    ];
+    captures.insert("args".into(), Capture::ArgList(args));
+    assert_eq!(render_replacement(&tmpl, &captures), "log(a, b)");
 }

@@ -26,6 +26,7 @@ use crate::parser;
 
 use super::pattern::{
     PatternKind, PlaceholderInfo, SSR_PREFIX, SSRV_PREFIX, SsrPattern, SsrTemplate,
+    is_ident_continue, is_ident_start,
 };
 
 /// Name of the wrapper variable used to parse expression patterns.
@@ -165,14 +166,6 @@ fn preprocess(input: &str) -> Result<(String, HashMap<String, String>)> {
     }
 
     Ok((out, constraints))
-}
-
-fn is_ident_start(b: u8) -> bool {
-    b.is_ascii_alphabetic() || b == b'_'
-}
-
-fn is_ident_continue(b: u8) -> bool {
-    b.is_ascii_alphanumeric() || b == b'_'
 }
 
 // ═══════════════════════════════════════════════════════════════════════

@@ -17,11 +17,25 @@ pub enum PatternKind {
     Stmt(Box<OwnedStmt>),
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+//  Sentinel prefixes + shared helpers
+// ═══════════════════════════════════════════════════════════════════════
+
 /// Prefix for regular placeholder sentinels (`$name` → `__ssr_name`).
 pub(super) const SSR_PREFIX: &str = "__ssr_";
 
 /// Prefix for variadic placeholder sentinels (`$$name` → `__ssrv_name`).
 pub(super) const SSRV_PREFIX: &str = "__ssrv_";
+
+/// Returns `true` if `b` can start a GDScript identifier.
+pub(super) fn is_ident_start(b: u8) -> bool {
+    b.is_ascii_alphabetic() || b == b'_'
+}
+
+/// Returns `true` if `b` can continue a GDScript identifier.
+pub(super) fn is_ident_continue(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_'
+}
 
 // ═══════════════════════════════════════════════════════════════════════
 //  Placeholder info
