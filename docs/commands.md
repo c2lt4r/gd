@@ -31,6 +31,7 @@
 | `gd refactor` | Refactoring operations (rename, extract, inline, change-signature, undo, etc.) |
 | `gd edit` | Code editing primitives (replace-body, insert, replace-symbol, edit-range, create-file) |
 | `gd query` | Code intelligence queries (references, hover, definition, symbols, completions, etc.) |
+| `gd ssr` | Structural search and replace for GDScript (`$placeholder` patterns, type constraints, `--dry-run`, `--format json`) |
 | `gd deps` | Show script dependency graph (`--include-resources` for `.tscn`/`.tres`) |
 | `gd env` | Show environment info (gd version, Godot version/path, OS, project root) |
 | `gd man` | Generate man page |
@@ -658,3 +659,44 @@ gd edit insert player.gd --after _ready --input-file /tmp/new_func.gd
 ```
 
 Edit commands support `--dry-run` to preview, `--no-format` to skip auto-formatting, `--class` for inner class targets, and `--input-file` to read from a file instead of stdin.
+
+## Structural Search & Replace
+
+```sh
+# Search: find all additions in the project
+gd ssr '$a + $b'
+
+# Search with count only
+gd ssr '$a + $b' -c
+
+# Replace: swap operands (dry-run preview)
+gd ssr '$a + $b' -r '$b + $a' -n
+
+# Replace: apply changes
+gd ssr '$a + $b' -r '$b + $a'
+
+# Replace deprecated API pattern
+gd ssr '$node.get_child($i).name' -r '$node.get_child($i).get_name()'
+
+# Variadic: rename function calls with any number of arguments
+gd ssr 'print($$args)' -r 'log($$args)'
+
+# Type-constrained: match only when receiver is a Node (or subclass)
+gd ssr '$recv:Node.remove_child($c)' -r '$recv.remove_child($c); $c.queue_free()'
+
+# Duck-typing: match calls on types that have a specific method
+gd ssr '$obj:{has_method("process")}.process($d)'
+
+# Restrict to specific files
+gd ssr '$a + $b' -f player.gd -f enemy.gd
+
+# JSON output for tooling
+gd ssr '$a + $b' --format json
+
+# Statement patterns (var declarations, assignments, return)
+gd ssr 'var $name = $value'
+gd ssr 'return $expr'
+gd ssr '$target += $value'
+```
+
+Patterns are GDScript with `$`-prefixed placeholders. `$name` matches any single expression, `$$name` matches zero or more arguments (variadic, call-position only), and `$name:Type` adds a type constraint. Repeated placeholders (`$a + $a`) require structurally identical matches. Respects `ignore_patterns` from `gd.toml`.

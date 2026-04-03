@@ -8,9 +8,11 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use crate::gd_ast::{self, GdExpr, GdFile, GdStmt, GdVar};
+use crate::gd_ast::{self, GdDecl, GdExpr, GdFile, GdStmt, GdVar};
+use crate::parser;
 
 use super::captures::{Capture, CapturedExpr, MatchResult};
+use super::equality::structurally_equal_expr;
 use super::pattern::{PatternKind, PlaceholderInfo, SSR_PREFIX, SSRV_PREFIX, SsrPattern};
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -459,31 +461,8 @@ fn capture_or_verify(
     captures: &mut HashMap<String, Capture>,
 ) -> bool {
     if let Some(existing) = captures.get(ph_name) {
-        // Repeated placeholder — must be structurally identical.
         match existing {
-            Capture::Expr(prev) => {
-                // Use structural equality on the AST nodes for correctness.
-                // We need to re-parse the previous capture to compare...
-                // But we can use source text comparison as a fast path:
-                // if both come from the same file with the same source,
-                // structurally equal expressions have the same text IF they
-                // appear identically in the source.
-                //
-                // For true structural comparison, use the candidate directly:
-                // parse the captured source text and compare.  For now,
-                // compare the candidate with the previous via the existing
-                // `structurally_equal_expr` by holding onto a temp reference.
-                //
-                // Actually, since both candidates come from the same parse
-                // tree and the visitor gives us the real AST nodes, we just
-                // need to compare them.  But we only have source_text from
-                // the previous capture.  Use source text comparison — it's
-                // correct for expressions from the same source file.
-                let node = candidate.node();
-                let range = node.byte_range();
-                let text = &source[range];
-                prev.source_text == text
-            }
+            Capture::Expr(prev) => structurally_equal_via_reparse(&prev.source_text, candidate),
             Capture::ArgList(_) => false,
         }
     } else {
@@ -493,6 +472,30 @@ fn capture_or_verify(
         );
         true
     }
+}
+
+/// Compare a previously captured source text with a candidate `GdExpr`
+/// by re-parsing the source text into an AST and comparing structurally.
+///
+/// This handles whitespace and parenthesization differences correctly:
+/// `(x + y)` and `x + y` compare as structurally equal because both
+/// parse to the same `BinOp` node.
+fn structurally_equal_via_reparse(prev_text: &str, candidate: &GdExpr<'_>) -> bool {
+    let wrapped = format!("var __cmp = {prev_text}\n");
+    let Ok(tree) = parser::parse(&wrapped) else {
+        return false;
+    };
+    if tree.root_node().has_error() {
+        return false;
+    }
+    let file = crate::gd_ast::convert(&tree, &wrapped);
+    let Some(GdDecl::Var(var)) = file.declarations.first() else {
+        return false;
+    };
+    let Some(prev_expr) = &var.value else {
+        return false;
+    };
+    structurally_equal_expr(prev_expr, candidate)
 }
 
 /// Build a `CapturedExpr` from a borrowed `GdExpr`.

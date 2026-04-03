@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.26] - 2026-04-03
+
+### Added
+- **`gd ssr` command** — structural search and replace for GDScript. Write a GDScript-like template with `$placeholders`, find all structural matches in the project, and optionally rewrite them. Supports expression and statement patterns, variadic placeholders (`$$args`), type constraints (`$x:Node`, `$x:{has_method("process")}`), dry-run preview, JSON output, file filtering, and `--count` mode. Respects `ignore_patterns` from `gd.toml`. Repeated placeholders use structural equality (ignoring whitespace and parenthesization differences).
+
 ## [0.3.25] - 2026-04-03
 
 ### Added

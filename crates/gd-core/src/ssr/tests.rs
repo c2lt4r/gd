@@ -376,6 +376,13 @@ fn match_repeated_different() {
 }
 
 #[test]
+fn match_repeated_ignores_parens() {
+    // (x) and x are structurally identical — parens are stripped by the parser.
+    let m = find("$a + $a", "func f():\n\tvar z = (x) + x\n");
+    assert_eq!(m.len(), 1);
+}
+
+#[test]
 fn match_variadic_zero() {
     let m = find("print($$args)", "func f():\n\tprint()\n");
     assert_eq!(m.len(), 1);

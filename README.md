@@ -74,6 +74,7 @@ See [Getting Started](docs/getting-started.md) for templates, editor setup, and 
 | `gd refactor` | Refactoring operations (rename, extract, inline, etc.) |
 | `gd edit` | Code editing primitives (replace-body, insert, replace-symbol, etc.) |
 | `gd query` | Code intelligence queries (references, hover, definition, etc.) |
+| `gd ssr` | Structural search and replace (`$placeholder` patterns, type constraints, dry-run) |
 | `gd deps` | Show script dependency graph |
 | `gd env` | Show environment info |
 | `gd man` | Generate man page |

@@ -13,8 +13,8 @@ use gd_core::fs::collect_gdscript_files;
 use gd_core::gd_ast;
 use gd_core::parser;
 use gd_core::ssr::{
-    Capture, MatchResult, SsrPattern, SsrTemplate, apply_replacements,
-    find_matches_constrained, parse_pattern, parse_template, render_replacement,
+    Capture, MatchResult, SsrPattern, SsrTemplate, apply_replacements, find_matches_constrained,
+    parse_pattern, parse_template, render_replacement,
 };
 use gd_core::workspace_index::ProjectIndex;
 
@@ -80,15 +80,21 @@ pub fn exec(args: &SsrArgs) -> Result<()> {
         .map(|r| parse_template(r, &pattern))
         .transpose()?;
 
-    // 3. Find project root.
+    // 3. Find project root and load config.
     let cwd =
         std::env::current_dir().map_err(|e| miette!("failed to get working directory: {e}"))?;
     let project_root = config::find_project_root(&cwd)
         .ok_or_else(|| miette!("not in a Godot project (no project.godot found)"))?;
+    let cfg = config::Config::load(&cwd)?;
 
-    // 4. Collect target files.
+    // 4. Collect target files, respecting ignore_patterns from gd.toml.
     let files = if args.file.is_empty() {
-        collect_gdscript_files(&project_root)?
+        let all = collect_gdscript_files(&project_root)?;
+        all.into_iter()
+            .filter(|p| {
+                !gd_core::fs::matches_ignore_pattern(p, &project_root, &cfg.lint.ignore_patterns)
+            })
+            .collect()
     } else {
         args.file.clone()
     };
