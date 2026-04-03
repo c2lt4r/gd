@@ -23,11 +23,13 @@ pub mod new_cmd;
 pub mod parse_cmd;
 
 pub mod overview_cmd;
+
 pub mod query_cmd;
 pub mod refactor_cmd;
 pub mod resource_cmd;
 pub mod run_cmd;
 pub mod scene_cmd;
+pub mod ssr_cmd;
 pub mod stats_cmd;
 pub mod stop_cmd;
 pub mod test_cmd;
@@ -116,6 +118,8 @@ pub enum Command {
     Man(man_cmd::ManArgs),
     /// Upgrade gd to the latest version
     Upgrade(upgrade_cmd::UpgradeArgs),
+    /// Structural search and replace for GDScript
+    Ssr(ssr_cmd::SsrArgs),
     /// Print AI-readable command reference (like llms.txt)
     Llm,
 }
@@ -156,5 +160,6 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Man(ref args) => man_cmd::exec(args),
         Command::Upgrade(ref args) => upgrade_cmd::exec(args),
         Command::Llm => llm_cmd::exec(),
+        Command::Ssr(ref args) => ssr_cmd::exec(args),
     }
 }
