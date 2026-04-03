@@ -765,7 +765,7 @@ dependencies = [
 
 [[package]]
 name = "gd"
-version = "0.3.24"
+version = "0.3.25"
 dependencies = [
  "clap",
  "clap_complete",
@@ -811,14 +811,14 @@ dependencies = [
 
 [[package]]
 name = "gd-class-db"
-version = "0.3.24"
+version = "0.3.25"
 dependencies = [
  "strsim",
 ]
 
 [[package]]
 name = "gd-core"
-version = "0.3.24"
+version = "0.3.25"
 dependencies = [
  "gd-class-db",
  "libc",
@@ -838,7 +838,7 @@ dependencies = [
 
 [[package]]
 name = "gd-fmt"
-version = "0.3.24"
+version = "0.3.25"
 dependencies = [
  "gd-core",
  "miette",
@@ -851,7 +851,7 @@ dependencies = [
 
 [[package]]
 name = "gd-interp"
-version = "0.3.24"
+version = "0.3.25"
 dependencies = [
  "gd-class-db",
  "gd-core",
@@ -861,7 +861,7 @@ dependencies = [
 
 [[package]]
 name = "gd-lint"
-version = "0.3.24"
+version = "0.3.25"
 dependencies = [
  "gd-class-db",
  "gd-core",
@@ -878,7 +878,7 @@ dependencies = [
 
 [[package]]
 name = "gd-lsp"
-version = "0.3.24"
+version = "0.3.25"
 dependencies = [
  "dashmap 6.1.0",
  "gd-class-db",

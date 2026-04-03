@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.25] - 2026-04-03
+
+### Added
+- **`gd parse` command** — pure syntax validation using tree-sitter only. Reports parse errors (ERROR/MISSING nodes) without semantic analysis. Useful for differential testing against reference parsers where semantic errors are noise. Supports `--format json`.
+
+### Fixed
+- **Stack overflow on cyclic const type aliases** — `gd check` and `gd lint` crashed (SIGABRT) on files with cyclic const references like `const A = B; const B = A`. Added cycle detection to `is_known_type` const-alias resolution.
+
 ## [0.3.24] - 2026-03-31
 
 ### Changed

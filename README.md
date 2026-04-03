@@ -65,6 +65,7 @@ gd run
 | `gd log` | View game output log via debug protocol ring buffer (`--tail N`, `--follow`, `--errors`, `--grep`, `--json`, `--clear`) |
 | `gd build` | Build/export the Godot project |
 | `gd check` | Check project for errors with 100% Godot compiler parity (parse, structural, semantic, `.tscn`/`.tres` validation) (`--format json`) |
+| `gd parse` | Parse GDScript files and report syntax errors only (no semantic analysis) (`--format json`) |
 | `gd clean` | Clean build artifacts |
 | `gd eval` | Evaluate GDScript expressions or scripts — live against a running game or offline headless |
 | `gd test` | Run GDScript tests with GUT, gdUnit4, or raw scripts (`--list`, `--name`, `--class`, `--junit`, `--filter`, `--runner`, `--format json`) |
