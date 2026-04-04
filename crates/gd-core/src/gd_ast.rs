@@ -946,6 +946,9 @@ fn visit_expr<'a>(expr: &GdExpr<'a>, f: &mut impl FnMut(&GdExpr<'a>)) {
                     visit_expr(default, f);
                 }
             }
+            for stmt in &func.body {
+                visit_stmt_exprs(stmt, f);
+            }
         }
         GdExpr::IntLiteral { .. }
         | GdExpr::FloatLiteral { .. }

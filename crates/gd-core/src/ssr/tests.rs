@@ -489,6 +489,24 @@ fn match_chained() {
     assert!(m[0].captures.contains_key("x"));
 }
 
+#[test]
+fn match_inside_lambda_body() {
+    let src = "func f():\n\tsignal.connect(\n\t\tfunc():\n\t\tobj.do_thing(42)\n\t)\n";
+    let m = find("$x.do_thing($a)", src);
+    assert_eq!(m.len(), 1);
+    assert_eq!(cap(&m[0], "x"), "obj");
+    assert_eq!(cap(&m[0], "a"), "42");
+}
+
+#[test]
+fn replace_inside_lambda_body() {
+    let src = "func f():\n\tsignal.connect(\n\t\tfunc():\n\t\tobj.old_method(42)\n\t)\n\tobj.old_method(99)\n";
+    let result = ssr("obj.old_method($a)", "obj.new_method($a)", src);
+    assert!(result.contains("obj.new_method(42)"));
+    assert!(result.contains("obj.new_method(99)"));
+    assert!(!result.contains("old_method"));
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 //  Phase 3: Replacement engine — helpers
 // ═══════════════════════════════════════════════════════════════════════
