@@ -101,7 +101,10 @@ pub fn signal_exists(class: &str, signal: &str) -> bool {
     let mut current = class;
     loop {
         let key = format!("{current}.{signal}");
-        if generated::SIGNALS.binary_search(&key.as_str()).is_ok() {
+        if generated::SIGNALS
+            .binary_search_by_key(&key.as_str(), |s| s.key)
+            .is_ok()
+        {
             return true;
         }
         match parent_class(current) {
@@ -117,7 +120,7 @@ pub fn property_exists(class: &str, property: &str) -> bool {
     loop {
         let key = format!("{current}.{property}");
         if generated::PROPERTIES
-            .binary_search_by_key(&key.as_str(), |&(k, _)| k)
+            .binary_search_by_key(&key.as_str(), |p| p.key)
             .is_ok()
         {
             return true;
@@ -135,8 +138,8 @@ pub fn property_type(class: &str, property: &str) -> Option<&'static str> {
     let mut current = class;
     loop {
         let key = format!("{current}.{property}");
-        if let Ok(i) = generated::PROPERTIES.binary_search_by_key(&key.as_str(), |&(k, _)| k) {
-            return Some(generated::PROPERTIES[i].1);
+        if let Ok(i) = generated::PROPERTIES.binary_search_by_key(&key.as_str(), |p| p.key) {
+            return Some(generated::PROPERTIES[i].type_name);
         }
         match parent_class(current) {
             Some(parent) => current = parent,
@@ -170,7 +173,7 @@ pub fn method_is_static(class: &str, method: &str) -> bool {
 pub fn method_exists(class: &str, method: &str) -> bool {
     let key = format!("{class}.{method}");
     if generated::METHODS
-        .binary_search_by_key(&key.as_str(), |&(k, _)| k)
+        .binary_search_by_key(&key.as_str(), |m| m.key)
         .is_ok()
     {
         return true;
@@ -199,11 +202,11 @@ pub fn class_methods(class: &str) -> Vec<(&'static str, &'static str, &'static s
     let mut current: &'static str = start;
     loop {
         let prefix = format!("{current}.");
-        for &(key, ret_type) in generated::METHODS {
-            if let Some(method_name) = key.strip_prefix(&prefix)
+        for entry in generated::METHODS {
+            if let Some(method_name) = entry.key.strip_prefix(&prefix)
                 && seen.insert(method_name)
             {
-                result.push((method_name, ret_type, current));
+                result.push((method_name, entry.return_type, current));
             }
         }
         match parent_class(current) {
@@ -230,11 +233,11 @@ pub fn class_properties(class: &str) -> Vec<(&'static str, &'static str, &'stati
     let mut current: &'static str = start;
     loop {
         let prefix = format!("{current}.");
-        for &(key, prop_type) in generated::PROPERTIES {
-            if let Some(prop_name) = key.strip_prefix(&prefix)
+        for entry in generated::PROPERTIES {
+            if let Some(prop_name) = entry.key.strip_prefix(&prefix)
                 && seen.insert(prop_name)
             {
-                result.push((prop_name, prop_type, current));
+                result.push((prop_name, entry.type_name, current));
             }
         }
         match parent_class(current) {
@@ -252,8 +255,8 @@ pub fn method_return_type(class: &str, method: &str) -> Option<&'static str> {
     let mut current = class;
     loop {
         let key = format!("{current}.{method}");
-        if let Ok(i) = generated::METHODS.binary_search_by_key(&key.as_str(), |&(k, _)| k) {
-            return Some(generated::METHODS[i].1);
+        if let Ok(i) = generated::METHODS.binary_search_by_key(&key.as_str(), |m| m.key) {
+            return Some(generated::METHODS[i].return_type);
         }
         match parent_class(current) {
             Some(parent) => current = parent,
@@ -269,6 +272,10 @@ pub struct MethodSignature {
     pub total_params: u8,
     /// Comma-separated list of parameter types.
     pub param_types: &'static str,
+    /// Whether the return value is nullable.
+    pub return_is_nullable: bool,
+    /// Bitmask of nullable arguments (bit 0 = first arg).
+    pub nullable_args: u64,
 }
 
 /// Look up the full signature of a method on a class, walking the inheritance chain.
@@ -283,6 +290,8 @@ pub fn method_signature(class: &str, method: &str) -> Option<MethodSignature> {
                 required_params: sig.required_params,
                 total_params: sig.total_params,
                 param_types: sig.param_types,
+                return_is_nullable: sig.return_is_nullable,
+                nullable_args: sig.nullable_args,
             });
         }
         match parent_class(current) {
@@ -389,7 +398,7 @@ pub fn is_method_void_anywhere(method: &str) -> bool {
     let suffix = format!(".{method}");
     generated::METHODS
         .iter()
-        .any(|(key, ret)| key.ends_with(&suffix) && *ret == "void")
+        .any(|m| m.key.ends_with(&suffix) && m.return_type == "void")
 }
 
 /// Suggest similar constants for a typo using Levenshtein distance (walks inheritance).
@@ -451,9 +460,9 @@ pub fn builtin_member_type(type_name: &str, member: &str) -> Option<&'static str
 pub fn builtin_method_return_type(type_name: &str, method: &str) -> Option<&'static str> {
     let key = format!("{type_name}.{method}");
     builtin_generated::BUILTIN_METHOD_RETURNS
-        .binary_search_by_key(&key.as_str(), |&(k, _)| k)
+        .binary_search_by_key(&key.as_str(), |m| m.key)
         .ok()
-        .map(|i| builtin_generated::BUILTIN_METHOD_RETURNS[i].1)
+        .map(|i| builtin_generated::BUILTIN_METHOD_RETURNS[i].return_type)
 }
 
 /// Look up the type of a builtin type's constant (e.g. "Vector2", "ZERO" → "Vector2").
@@ -475,9 +484,9 @@ pub fn builtin_constructor_exists(type_name: &str, arity: u8) -> bool {
 /// Look up the return type of a utility or GDScript function (e.g. "sin" → "float").
 pub fn function_return_type(name: &str) -> Option<&'static str> {
     builtin_generated::FUNCTION_RETURNS
-        .binary_search_by_key(&name, |&(k, _)| k)
+        .binary_search_by_key(&name, |f| f.name)
         .ok()
-        .map(|i| builtin_generated::FUNCTION_RETURNS[i].1)
+        .map(|i| builtin_generated::FUNCTION_RETURNS[i].return_type)
 }
 
 /// Return all utility function names (print, lerp, sin, etc.) from ClassDB.
@@ -532,6 +541,55 @@ pub fn godot_warning(name: &str) -> Option<&'static builtin_generated::WarningDe
         .binary_search_by_key(&name, |w| w.name)
         .ok()
         .map(|i| &builtin_generated::GODOT_WARNINGS[i])
+}
+
+/// Check if a method's return value is nullable (Object-derived or Variant that may be null).
+/// Walks the inheritance chain.
+pub fn method_return_is_nullable(class: &str, method: &str) -> bool {
+    let mut current = class;
+    loop {
+        let key = format!("{current}.{method}");
+        if let Ok(i) = generated::METHODS.binary_search_by_key(&key.as_str(), |m| m.key) {
+            return generated::METHODS[i].return_is_nullable;
+        }
+        match parent_class(current) {
+            Some(parent) => current = parent,
+            None => return false,
+        }
+    }
+}
+
+/// Check if a property is nullable (Object-derived or Variant that may be null).
+/// Walks the inheritance chain.
+pub fn property_is_nullable(class: &str, property: &str) -> bool {
+    let mut current = class;
+    loop {
+        let key = format!("{current}.{property}");
+        if let Ok(i) = generated::PROPERTIES.binary_search_by_key(&key.as_str(), |p| p.key) {
+            return generated::PROPERTIES[i].is_nullable;
+        }
+        match parent_class(current) {
+            Some(parent) => current = parent,
+            None => return false,
+        }
+    }
+}
+
+/// Check if a builtin type method's return value is nullable.
+pub fn builtin_method_return_is_nullable(type_name: &str, method: &str) -> bool {
+    let key = format!("{type_name}.{method}");
+    builtin_generated::BUILTIN_METHOD_RETURNS
+        .binary_search_by_key(&key.as_str(), |m| m.key)
+        .ok()
+        .is_some_and(|i| builtin_generated::BUILTIN_METHOD_RETURNS[i].return_is_nullable)
+}
+
+/// Check if a utility/GDScript function's return value is nullable.
+pub fn function_return_is_nullable(name: &str) -> bool {
+    builtin_generated::FUNCTION_RETURNS
+        .binary_search_by_key(&name, |f| f.name)
+        .ok()
+        .is_some_and(|i| builtin_generated::FUNCTION_RETURNS[i].return_is_nullable)
 }
 
 #[cfg(test)]

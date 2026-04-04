@@ -86,13 +86,13 @@ pub fn lookup_function(name: &str) -> Option<BuiltinDoc<'_>> {
     if super::is_godot_virtual_method(name) {
         // Find the first class that defines this virtual method
         let suffix = format!(".{name}");
-        for &(key, ret_type) in super::generated::METHODS {
-            if let Some(class) = key.strip_suffix(suffix.as_str()) {
-                let method_name = &key[class.len() + 1..]; // &'static str slice
-                let doc = super::method_doc(class, method_name).unwrap_or(ret_type);
+        for entry in super::generated::METHODS {
+            if let Some(class) = entry.key.strip_suffix(suffix.as_str()) {
+                let method_name = &entry.key[class.len() + 1..]; // &'static str slice
+                let doc = super::method_doc(class, method_name).unwrap_or(entry.return_type);
                 return Some(BuiltinDoc {
                     name: method_name,
-                    brief: ret_type,
+                    brief: entry.return_type,
                     description: doc,
                 });
             }
@@ -181,25 +181,25 @@ pub fn members_for_class(class: &str) -> Vec<BuiltinMember> {
     let static_class = static_class_name(class);
     if let Some(sc) = static_class {
         let prefix = format!("{sc}.");
-        for &(key, ret_type) in super::generated::METHODS {
-            if let Some(method_name) = key.strip_prefix(&prefix) {
+        for entry in super::generated::METHODS {
+            if let Some(method_name) = entry.key.strip_prefix(&prefix) {
                 let doc = super::method_doc(sc, method_name).unwrap_or("");
                 result.push(BuiltinMember {
                     class: sc,
                     name: method_name,
-                    brief: ret_type,
+                    brief: entry.return_type,
                     description: doc,
                     kind: Method,
                 });
             }
         }
-        for &(key, prop_type) in super::generated::PROPERTIES {
-            if let Some(prop_name) = key.strip_prefix(&prefix) {
+        for entry in super::generated::PROPERTIES {
+            if let Some(prop_name) = entry.key.strip_prefix(&prefix) {
                 let doc = super::property_doc(sc, prop_name).unwrap_or("");
                 result.push(BuiltinMember {
                     class: sc,
                     name: prop_name,
-                    brief: prop_type,
+                    brief: entry.type_name,
                     description: doc,
                     kind: Property,
                 });
@@ -225,17 +225,17 @@ pub fn lookup_member(name: &str) -> Option<BuiltinMember> {
 
     // 2. ClassDB methods — scan for ".name" suffix
     let suffix = format!(".{name}");
-    for &(key, ret_type) in super::generated::METHODS {
-        if let Some(class_str) = key.strip_suffix(suffix.as_str())
+    for entry in super::generated::METHODS {
+        if let Some(class_str) = entry.key.strip_suffix(suffix.as_str())
             && let Some(sc) = static_class_name(class_str)
         {
             // key is "Class.method" (&'static str); split after the dot to get the method name
-            let method_name = &key[sc.len() + 1..];
+            let method_name = &entry.key[sc.len() + 1..];
             let doc = super::method_doc(sc, method_name).unwrap_or("");
             return Some(BuiltinMember {
                 class: sc,
                 name: method_name,
-                brief: ret_type,
+                brief: entry.return_type,
                 description: doc,
                 kind: Method,
             });
@@ -243,16 +243,16 @@ pub fn lookup_member(name: &str) -> Option<BuiltinMember> {
     }
 
     // 3. ClassDB properties
-    for &(key, prop_type) in super::generated::PROPERTIES {
-        if let Some(class_str) = key.strip_suffix(suffix.as_str())
+    for entry in super::generated::PROPERTIES {
+        if let Some(class_str) = entry.key.strip_suffix(suffix.as_str())
             && let Some(sc) = static_class_name(class_str)
         {
-            let prop_name = &key[sc.len() + 1..];
+            let prop_name = &entry.key[sc.len() + 1..];
             let doc = super::property_doc(sc, prop_name).unwrap_or("");
             return Some(BuiltinMember {
                 class: sc,
                 name: prop_name,
-                brief: prop_type,
+                brief: entry.type_name,
                 description: doc,
                 kind: Property,
             });
@@ -276,30 +276,30 @@ pub fn lookup_member_for(class: &str, name: &str) -> Option<BuiltinMember> {
 
     // 2. ClassDB method
     let key = format!("{class}.{name}");
-    if let Ok(i) = super::generated::METHODS.binary_search_by_key(&key.as_str(), |&(k, _)| k) {
-        let (method_key, ret_type) = super::generated::METHODS[i];
+    if let Ok(i) = super::generated::METHODS.binary_search_by_key(&key.as_str(), |m| m.key) {
+        let entry = &super::generated::METHODS[i];
         let sc = static_class_name(class)?;
-        let method_name = &method_key[sc.len() + 1..];
+        let method_name = &entry.key[sc.len() + 1..];
         let doc = super::method_doc(sc, method_name).unwrap_or("");
         return Some(BuiltinMember {
             class: sc,
             name: method_name,
-            brief: ret_type,
+            brief: entry.return_type,
             description: doc,
             kind: Method,
         });
     }
 
     // 3. ClassDB property
-    if let Ok(i) = super::generated::PROPERTIES.binary_search_by_key(&key.as_str(), |&(k, _)| k) {
-        let (prop_key, prop_type) = super::generated::PROPERTIES[i];
+    if let Ok(i) = super::generated::PROPERTIES.binary_search_by_key(&key.as_str(), |p| p.key) {
+        let entry = &super::generated::PROPERTIES[i];
         let sc = static_class_name(class)?;
-        let prop_name = &prop_key[sc.len() + 1..];
+        let prop_name = &entry.key[sc.len() + 1..];
         let doc = super::property_doc(sc, prop_name).unwrap_or("");
         return Some(BuiltinMember {
             class: sc,
             name: prop_name,
-            brief: prop_type,
+            brief: entry.type_name,
             description: doc,
             kind: Property,
         });
