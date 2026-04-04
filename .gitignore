@@ -13,3 +13,4 @@ tools/
 extension_api.json
 data/*.json
 tests/corpus/godot-4.6.1/
+templates/
