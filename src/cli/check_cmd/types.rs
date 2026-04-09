@@ -327,105 +327,19 @@ fn operator_valid(op: &str, left: &str, right: &str) -> bool {
     if left == "Variant" || right == "Variant" {
         return true;
     }
-    match op {
-        "+" | "-" => {
-            // Numeric: int+int, int+float, float+float, float+int
-            if is_numeric_type(left) && is_numeric_type(right) {
-                return true;
-            }
-            // String + String
-            if left == "String" && right == "String" {
-                return true;
-            }
-            // Vector arithmetic (same type)
-            if left == right && is_vector_type(left) {
-                return true;
-            }
-            // Array + Array
-            if left == "Array" && right == "Array" {
-                return true;
-            }
-            // PackedByteArray + PackedByteArray (and other packed arrays)
-            if left == right && left.starts_with("Packed") {
-                return true;
-            }
-            false
-        }
-        "*" | "/" => {
-            if is_numeric_type(left) && is_numeric_type(right) {
-                return true;
-            }
-            // Vector * scalar, scalar * Vector
-            if is_vector_type(left) && is_numeric_type(right) {
-                return true;
-            }
-            if is_numeric_type(left) && is_vector_type(right) {
-                return true;
-            }
-            // Vector * Vector (element-wise)
-            if left == right && is_vector_type(left) {
-                return true;
-            }
-            // Transform multiplication and composition
-            if is_transform_type(left) && is_transform_type(right) {
-                return true;
-            }
-            // Transform * Vector (apply transform)
-            if is_transform_type(left) && is_vector_type(right) {
-                return true;
-            }
-            if is_vector_type(left) && is_transform_type(right) {
-                return true;
-            }
-            // Basis * Basis, Basis * Vector3
-            if left == "Basis" || right == "Basis" {
-                return true;
-            }
-            // String * int (repeat)
-            if op == "*" && left == "String" && right == "int" {
-                return true;
-            }
-            false
-        }
-        "%" => {
-            // Numeric modulo
-            if is_numeric_type(left) && is_numeric_type(right) {
-                return true;
-            }
-            // GDScript string formatting: "Hello %s" % value
-            if left == "String" {
-                return true;
-            }
-            // Vector element-wise modulo
-            left == right && is_vector_type(left)
-        }
-        "<" | ">" | "<=" | ">=" => {
-            if is_numeric_type(left) && is_numeric_type(right) {
-                return true;
-            }
-            if left == "String" && right == "String" {
-                return true;
-            }
-            false
-        }
-        // ==, !=, and/or/&&/||, and unknown ops: always valid
-        _ => true,
+    // Equality/inequality, boolean logic, and unknown ops: always valid
+    if matches!(op, "==" | "!=" | "and" | "or" | "&&" | "||") {
+        return true;
     }
-}
-
-fn is_numeric_type(ty: &str) -> bool {
-    matches!(ty, "int" | "float")
-}
-
-fn is_vector_type(ty: &str) -> bool {
-    matches!(
-        ty,
-        "Vector2" | "Vector2i" | "Vector3" | "Vector3i" | "Vector4" | "Vector4i" | "Color"
-    )
-}
-
-fn is_transform_type(ty: &str) -> bool {
-    matches!(ty, "Transform2D" | "Transform3D" | "Projection")
+    // Consult the generated operator table from ClassDB
+    if gd_class_db::operator_result_type(left, op, right).is_some() {
+        return true;
+    }
+    // GDScript string formatting: "Hello %s" % value
+    if op == "%" && left == "String" {
+        return true;
+    }
+    false
 }
 
 /// B6: Invalid cast — `x as Node` where x: int.

@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.3.27] - 2026-04-09
 
 ### Changed
 - **`gd edit` consolidated to CRUD primitives** — 5 overlapping commands (`replace-body`, `replace-symbol`, `replace-range`, `insert`, `insert-into`) replaced by 2 AST-safe commands: `gd edit replace` and `gd edit insert`. All mutations go through the owned AST pipeline (parse -> modify -> print). No text splicing.
@@ -18,6 +18,7 @@
 - **Constructor validation uses generated data** — replaced hardcoded `constructor_param_counts()` with `builtin_constructor_exists()` backed by the generated `BUILTIN_CONSTRUCTORS` table. Fixes `Basis(Quaternion)` and `Quaternion(Basis)` false positives and prevents future drift.
 - **Skip arg type checking for `call`/`call_deferred`/`callv`** — these methods are variadic on `Callable` but `Object.call()` has a fixed `(StringName, ...)` signature. When the receiver type can't be fully resolved, the checker would match `Object.call()` and produce false "argument should be StringName" errors.
 - **Transform/matrix * Variant no longer guesses wrong type** — when one operand of `*` is a transform type (Transform2D, Transform3D, Basis, Projection) and the other is Variant/unknown, the fallback now returns Variant instead of incorrectly assuming the transform type dominates (e.g. `Transform3D * Vector3` was inferred as `Transform3D` instead of `Vector3`).
+- **Operator validation uses generated ClassDB table** — replaced hardcoded `operator_valid()` with `gd_class_db::operator_result_type()` backed by 771 generated operator combinations. Fixes false "invalid operands" errors for `Quaternion * Quaternion`, `Quaternion * Vector3`, and any other valid operator pairs that were missing from the hand-maintained allowlist.
 - **Type inference for binary operations with builtin types** — `Vector3 / float`, `Vector3 * float`, `Color + Color`, `Transform3D * Vector3`, and all other ClassDB operator combinations now resolve correctly. Previously, operand types (variant type constants like `Vector3.ZERO`, function parameters, local variables) couldn't be resolved, so the ClassDB operator table was never consulted and the fallback incorrectly returned `float`. Fixes false positive "cannot return a value of type float from function with return type Vector3" errors.
 - **Variant type constant resolution** — `Vector3.ZERO`, `Vector2.ONE`, `Color.RED`, `Basis.IDENTITY` and all other builtin type constants now resolve to their correct types in the type inference engine.
 - **Function parameter type resolution** — typed function parameters (e.g. `func f(pos: Vector3)`) now resolve in expression type inference, enabling correct binary operation type checking.
