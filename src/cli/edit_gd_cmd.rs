@@ -32,15 +32,21 @@ pub enum EditGdCommand {
         #[arg(long)]
         format: Option<String>,
     },
-    /// Replace a function's body (AST-aware, reads new body from stdin or --input-file)
-    ReplaceBody {
+    /// Replace AST nodes by name or line range (reads content from stdin or --input-file)
+    Replace {
         /// Path to the GDScript file
         #[arg()]
         file: String,
-        /// Function name whose body to replace
+        /// Symbol name to replace
         #[arg(long)]
-        name: String,
-        /// Inner class containing the function
+        name: Option<String>,
+        /// Line or line range (e.g. "5" or "5-10")
+        #[arg(long)]
+        line: Option<String>,
+        /// Replace only the function body, not the signature (requires --name)
+        #[arg(long)]
+        body: bool,
+        /// Inner class to operate within
         #[arg(long)]
         class: Option<String>,
         /// Read content from a file instead of stdin
@@ -53,18 +59,30 @@ pub enum EditGdCommand {
         #[arg(long)]
         format: Option<String>,
     },
-    /// Insert code before or after a named symbol (reads content from stdin or --input-file)
+    /// Insert code relative to an AST node (reads content from stdin or --input-file)
     Insert {
         /// Path to the GDScript file
         #[arg()]
         file: String,
-        /// Insert after this symbol
-        #[arg(long, conflicts_with = "before")]
-        after: Option<String>,
-        /// Insert before this symbol
-        #[arg(long, conflicts_with = "after")]
-        before: Option<String>,
-        /// Inner class containing the anchor symbol
+        /// Anchor symbol name
+        #[arg(long)]
+        name: Option<String>,
+        /// Anchor line number
+        #[arg(long)]
+        line: Option<usize>,
+        /// Insert before the anchor
+        #[arg(long)]
+        before: bool,
+        /// Insert after the anchor
+        #[arg(long)]
+        after: bool,
+        /// Insert as first child of anchor (function body or class body)
+        #[arg(long)]
+        into: bool,
+        /// Insert as last child of anchor (function body or class body)
+        #[arg(long)]
+        into_end: bool,
+        /// Inner class to operate within
         #[arg(long)]
         class: Option<String>,
         /// Read content from a file instead of stdin
@@ -122,66 +140,24 @@ pub enum EditGdCommand {
         #[arg(long)]
         format: Option<String>,
     },
-    /// Insert code into a class body (reads content from stdin or --input-file)
-    InsertInto {
-        /// Path to the GDScript file
-        #[arg()]
-        file: String,
-        /// Class name to insert into (inner class or top-level class_name)
-        #[arg(long)]
-        class: String,
-        /// Read content from a file instead of stdin
-        #[arg(long)]
-        input_file: Option<String>,
-        /// Skip auto-formatting the result
-        #[arg(long)]
-        no_format: bool,
-        /// Output format: json or human (default: human)
-        #[arg(long)]
-        format: Option<String>,
-    },
-    /// Replace an entire symbol declaration (reads new content from stdin or --input-file)
-    ReplaceSymbol {
-        /// Path to the GDScript file
-        #[arg()]
-        file: String,
-        /// Symbol name to replace
-        #[arg(long)]
-        name: String,
-        /// Inner class containing the symbol
-        #[arg(long)]
-        class: Option<String>,
-        /// Read content from a file instead of stdin
-        #[arg(long)]
-        input_file: Option<String>,
-        /// Skip auto-formatting the result
-        #[arg(long)]
-        no_format: bool,
-        /// Output format: json or human (default: human)
-        #[arg(long)]
-        format: Option<String>,
-    },
-    /// Replace a range of lines (AST-safe, reads new content from stdin or --input-file)
-    ReplaceRange {
-        /// Path to the GDScript file
-        #[arg()]
-        file: String,
-        /// Start line (1-based, inclusive)
-        #[arg(long)]
-        start_line: usize,
-        /// End line (1-based, inclusive)
-        #[arg(long)]
-        end_line: usize,
-        /// Read content from a file instead of stdin
-        #[arg(long)]
-        input_file: Option<String>,
-        /// Skip auto-formatting the result
-        #[arg(long)]
-        no_format: bool,
-        /// Output format: json or human (default: human)
-        #[arg(long)]
-        format: Option<String>,
-    },
+}
+
+/// Parse `--line` argument: "5" → (5, None), "5-10" → (5, Some(10))
+fn parse_line_arg(s: &str) -> Result<(usize, Option<usize>)> {
+    if let Some((a, b)) = s.split_once('-') {
+        let start: usize = a
+            .parse()
+            .map_err(|_| miette::miette!("invalid start line: {a}"))?;
+        let end: usize = b
+            .parse()
+            .map_err(|_| miette::miette!("invalid end line: {b}"))?;
+        Ok((start, Some(end)))
+    } else {
+        let line: usize = s
+            .parse()
+            .map_err(|_| miette::miette!("invalid line number: {s}"))?;
+        Ok((line, None))
+    }
 }
 
 fn is_json(format: Option<&String>) -> bool {
@@ -195,11 +171,9 @@ fn dry_run_suffix(applied: bool) -> &'static str {
 fn print_edit_human(r: &gd_lsp::refactor::EditOutput) {
     use owo_colors::OwoColorize;
     let verb = match r.operation {
-        "replace_body" => "Replaced body of",
-        "insert_after" => "Inserted after",
-        "insert_before" => "Inserted before",
-        "replace_symbol" => "Replaced",
-        "replace-range" => "Replaced range in",
+        "replace" => "Replaced",
+        "insert-before" => "Inserted before",
+        "insert-after" => "Inserted after",
         "insert-into" => "Inserted into",
         _ => r.operation,
     };
@@ -283,8 +257,6 @@ fn print_create_file_human(r: &gd_lsp::query::CreateFileOutput) {
 }
 
 /// Read content from `--input-file` if provided, otherwise from stdin.
-/// Uses the ripgrep `is_readable_stdin()` pattern (fstat-based) to avoid
-/// blocking when stdin is a terminal, /dev/null, or a closed descriptor.
 fn read_content(input_file: Option<&str>) -> Result<String> {
     if let Some(path) = input_file {
         std::fs::read_to_string(path)
@@ -302,9 +274,6 @@ fn read_content(input_file: Option<&str>) -> Result<String> {
     }
 }
 
-/// Check if stdin has readable data (pipe, file, or socket).
-/// Returns false for terminals, /dev/null (char device), and closed descriptors.
-/// Based on ripgrep's `grep_cli::is_readable_stdin()` pattern.
 fn is_stdin_readable() -> bool {
     if std::io::stdin().is_terminal() {
         return false;
@@ -324,9 +293,6 @@ fn is_stdin_pipe_or_file() -> bool {
         return false;
     };
     let ft = md.file_type();
-    // Accept pipes (echo "x" | gd edit ...) and file redirects (< file).
-    // Exclude sockets — background process managers often attach stdin to a
-    // socket with no writer, which would block read_to_string forever.
     ft.is_file() || ft.is_fifo()
 }
 
@@ -334,7 +300,6 @@ fn is_stdin_pipe_or_file() -> bool {
 fn is_stdin_pipe_or_file() -> bool {
     use std::os::windows::io::AsRawHandle;
     let handle = std::io::stdin().as_raw_handle() as windows_sys::Win32::Foundation::HANDLE;
-    // SAFETY: GetFileType is a well-defined Win32 API; we pass a valid handle.
     let ft = unsafe { windows_sys::Win32::Storage::FileSystem::GetFileType(handle) };
     ft == windows_sys::Win32::Storage::FileSystem::FILE_TYPE_DISK
         || ft == windows_sys::Win32::Storage::FileSystem::FILE_TYPE_PIPE
@@ -342,7 +307,7 @@ fn is_stdin_pipe_or_file() -> bool {
 
 #[cfg(not(any(unix, windows)))]
 fn is_stdin_pipe_or_file() -> bool {
-    true // Best-effort: assume readable on unknown platforms
+    true
 }
 
 #[allow(clippy::too_many_lines)]
@@ -356,8 +321,6 @@ pub fn exec(args: EditGdArgs) -> Result<()> {
             force,
             format,
         } => {
-            // Read custom content from --input-file or stdin (if piped).
-            // Falls back to generating boilerplate when neither is provided.
             let custom_content = if input_file.is_some() || is_stdin_readable() {
                 Some(read_content(input_file.as_deref())?)
             } else {
@@ -379,18 +342,42 @@ pub fn exec(args: EditGdArgs) -> Result<()> {
             }
             Ok(())
         }
-        EditGdCommand::ReplaceBody {
+        EditGdCommand::Replace {
             file,
             name,
+            line,
+            body,
             class,
             input_file,
             no_format,
             format,
         } => {
+            if name.is_none() && line.is_none() {
+                return Err(miette::miette!("either --name or --line is required"));
+            }
+            if name.is_some() && line.is_some() {
+                return Err(miette::miette!("--name and --line are mutually exclusive"));
+            }
+            if body && name.is_none() {
+                return Err(miette::miette!("--body requires --name"));
+            }
+            let target = if let Some(n) = name {
+                gd_lsp::refactor::ReplaceTarget::Name {
+                    name: n,
+                    body_only: body,
+                }
+            } else {
+                let (start, end) = parse_line_arg(line.as_deref().unwrap())?;
+                if let Some(e) = end {
+                    gd_lsp::refactor::ReplaceTarget::LineRange { start, end: e }
+                } else {
+                    gd_lsp::refactor::ReplaceTarget::Line(start)
+                }
+            };
             let content = read_content(input_file.as_deref())?;
-            let result = gd_lsp::query::query_replace_body(
+            let result = gd_lsp::query::query_replace(
                 &file,
-                &name,
+                &target,
                 class.as_deref(),
                 &content,
                 no_format,
@@ -406,52 +393,49 @@ pub fn exec(args: EditGdArgs) -> Result<()> {
         }
         EditGdCommand::Insert {
             file,
-            after,
+            name,
+            line,
             before,
+            after,
+            into,
+            into_end,
             class,
             input_file,
             no_format,
             format,
         } => {
-            let (anchor, is_after) = match (after, before) {
-                (Some(a), None) => (a, true),
-                (None, Some(b)) => (b, false),
-                _ => {
-                    return Err(miette::miette!(
-                        "exactly one of --after or --before is required"
-                    ));
-                }
+            if name.is_none() && line.is_none() {
+                return Err(miette::miette!("either --name or --line is required"));
+            }
+            if name.is_some() && line.is_some() {
+                return Err(miette::miette!("--name and --line are mutually exclusive"));
+            }
+            let pos_count =
+                u8::from(before) + u8::from(after) + u8::from(into) + u8::from(into_end);
+            if pos_count != 1 {
+                return Err(miette::miette!(
+                    "exactly one of --before, --after, --into, --into-end is required"
+                ));
+            }
+            let anchor = if let Some(n) = name {
+                gd_lsp::refactor::InsertAnchor::Name(n)
+            } else {
+                gd_lsp::refactor::InsertAnchor::Line(line.unwrap())
+            };
+            let position = if before {
+                gd_lsp::refactor::InsertPosition::Before
+            } else if after {
+                gd_lsp::refactor::InsertPosition::After
+            } else if into {
+                gd_lsp::refactor::InsertPosition::Into
+            } else {
+                gd_lsp::refactor::InsertPosition::IntoEnd
             };
             let content = read_content(input_file.as_deref())?;
-            let result = gd_lsp::query::query_insert(
+            let result = gd_lsp::query::query_insert_cmd(
                 &file,
                 &anchor,
-                is_after,
-                class.as_deref(),
-                &content,
-                no_format,
-            )?;
-            if is_json(format.as_ref()) {
-                let json =
-                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
-                cprintln!("{json}");
-            } else {
-                print_edit_human(&result);
-            }
-            Ok(())
-        }
-        EditGdCommand::ReplaceSymbol {
-            file,
-            name,
-            class,
-            input_file,
-            no_format,
-            format,
-        } => {
-            let content = read_content(input_file.as_deref())?;
-            let result = gd_lsp::query::query_replace_symbol(
-                &file,
-                &name,
+                &position,
                 class.as_deref(),
                 &content,
                 no_format,
@@ -516,45 +500,6 @@ pub fn exec(args: EditGdArgs) -> Result<()> {
                 cprintln!("{json}");
             } else {
                 print_extract_human(&result);
-            }
-            Ok(())
-        }
-        EditGdCommand::InsertInto {
-            file,
-            class,
-            input_file,
-            no_format,
-            format,
-        } => {
-            let content = read_content(input_file.as_deref())?;
-            let result = gd_lsp::query::query_insert_into(&file, &class, &content, no_format)?;
-            if is_json(format.as_ref()) {
-                let json =
-                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
-                cprintln!("{json}");
-            } else {
-                print_edit_human(&result);
-            }
-            Ok(())
-        }
-        EditGdCommand::ReplaceRange {
-            file,
-            start_line,
-            end_line,
-            input_file,
-            no_format,
-            format,
-        } => {
-            let content = read_content(input_file.as_deref())?;
-            let result = gd_lsp::query::query_replace_range(
-                &file, start_line, end_line, &content, no_format,
-            )?;
-            if is_json(format.as_ref()) {
-                let json =
-                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
-                cprintln!("{json}");
-            } else {
-                print_edit_human(&result);
             }
             Ok(())
         }

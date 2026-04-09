@@ -64,32 +64,32 @@ pub struct SceneNodeOutput {
 
 // ── AST-aware edit commands ──────────────────────────────────────────────────
 
-pub fn query_replace_body(
+pub fn query_replace(
     file: &str,
-    name: &str,
+    target: &crate::refactor::ReplaceTarget,
     class: Option<&str>,
     content: &str,
     no_format: bool,
 ) -> Result<crate::refactor::EditOutput> {
     let path = resolve_file(file)?;
     let project_root = find_root(&path)?;
-    crate::refactor::replace_body(&path, name, class, content, no_format, &project_root)
+    crate::refactor::replace(&path, target, class, content, no_format, &project_root)
 }
 
-pub fn query_insert(
+pub fn query_insert_cmd(
     file: &str,
-    anchor: &str,
-    after: bool,
+    anchor: &crate::refactor::InsertAnchor,
+    position: &crate::refactor::InsertPosition,
     class: Option<&str>,
     content: &str,
     no_format: bool,
 ) -> Result<crate::refactor::EditOutput> {
     let path = resolve_file(file)?;
     let project_root = find_root(&path)?;
-    crate::refactor::insert(
+    crate::refactor::insert_cmd(
         &path,
         anchor,
-        after,
+        position,
         class,
         content,
         no_format,
@@ -97,49 +97,7 @@ pub fn query_insert(
     )
 }
 
-pub fn query_replace_symbol(
-    file: &str,
-    name: &str,
-    class: Option<&str>,
-    content: &str,
-    no_format: bool,
-) -> Result<crate::refactor::EditOutput> {
-    let path = resolve_file(file)?;
-    let project_root = find_root(&path)?;
-    crate::refactor::replace_symbol(&path, name, class, content, no_format, &project_root)
-}
-
-pub fn query_replace_range(
-    file: &str,
-    start_line: usize,
-    end_line: usize,
-    content: &str,
-    no_format: bool,
-) -> Result<crate::refactor::EditOutput> {
-    let path = resolve_file(file)?;
-    let project_root = find_root(&path)?;
-    crate::refactor::edit_range(
-        &path,
-        start_line,
-        end_line,
-        content,
-        no_format,
-        &project_root,
-    )
-}
-
 // ── Insert into class body ──────────────────────────────────────────────────
-
-pub fn query_insert_into(
-    file: &str,
-    class_name: &str,
-    content: &str,
-    no_format: bool,
-) -> Result<crate::refactor::EditOutput> {
-    let path = resolve_file(file)?;
-    let project_root = find_root(&path)?;
-    crate::refactor::insert_into(&path, class_name, content, no_format, &project_root)
-}
 
 // ── Remove (delete symbol) ──────────────────────────────────────────────────
 

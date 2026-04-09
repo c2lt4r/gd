@@ -384,10 +384,11 @@ fn test_lsp_replace_body() {
         temp.path(),
         &[
             "edit",
-            "replace-body",
+            "replace",
             "player.gd",
             "--name",
             "_ready",
+            "--body",
             "--no-format",
             "--format",
             "json",
@@ -395,9 +396,9 @@ fn test_lsp_replace_body() {
         "\tprint(\"hello\")\n",
     );
 
-    assert!(output.status.success(), "replace-body should succeed");
+    assert!(output.status.success(), "replace --body should succeed");
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(json["operation"], "replace-body");
+    assert_eq!(json["operation"], "replace");
     assert_eq!(json["symbol"], "_ready");
     assert_eq!(json["applied"], true);
 
@@ -411,15 +412,15 @@ fn test_lsp_replace_body() {
 fn test_lsp_replace_body_reindents() {
     let temp = setup_gd_project(&[("player.gd", "extends Node\n\n\nfunc _ready():\n\tpass\n")]);
 
-    // Send content with no indentation — should be reindented to 1 tab
     let output = run_lsp_edit(
         temp.path(),
         &[
             "edit",
-            "replace-body",
+            "replace",
             "player.gd",
             "--name",
             "_ready",
+            "--body",
             "--no-format",
             "--format",
             "json",
@@ -441,10 +442,11 @@ fn test_lsp_replace_body_non_function_fails() {
         temp.path(),
         &[
             "edit",
-            "replace-body",
+            "replace",
             "player.gd",
             "--name",
             "speed",
+            "--body",
             "--no-format",
             "--format",
             "json",
@@ -466,10 +468,11 @@ fn test_lsp_replace_body_with_class() {
         temp.path(),
         &[
             "edit",
-            "replace-body",
+            "replace",
             "player.gd",
             "--name",
             "foo",
+            "--body",
             "--class",
             "Inner",
             "--no-format",
@@ -481,7 +484,7 @@ fn test_lsp_replace_body_with_class() {
 
     assert!(output.status.success());
     let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
-    assert!(content.contains("\t\tprint(1)"));
+    assert!(content.contains("print(1)"));
 }
 
 #[test]
@@ -494,18 +497,19 @@ fn test_lsp_insert_after() {
             "edit",
             "insert",
             "player.gd",
-            "--after",
+            "--name",
             "_ready",
+            "--after",
             "--no-format",
             "--format",
             "json",
         ],
-        "\nfunc _process(delta):\n\tpass\n",
+        "func _process(delta):\n\tpass\n",
     );
 
     assert!(output.status.success(), "insert --after should succeed");
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(json["operation"], "insert");
+    assert_eq!(json["operation"], "insert-after");
     assert_eq!(json["applied"], true);
 
     let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
@@ -525,8 +529,9 @@ fn test_lsp_insert_before() {
             "edit",
             "insert",
             "player.gd",
-            "--before",
+            "--name",
             "_ready",
+            "--before",
             "--no-format",
             "--format",
             "json",
@@ -543,7 +548,7 @@ fn test_lsp_insert_before() {
 }
 
 #[test]
-fn test_lsp_insert_no_anchor_fails() {
+fn test_lsp_insert_no_position_fails() {
     let temp = setup_gd_project(&[("player.gd", "extends Node\n\n\nfunc _ready():\n\tpass\n")]);
 
     let output = run_lsp_edit(
@@ -552,6 +557,8 @@ fn test_lsp_insert_no_anchor_fails() {
             "edit",
             "insert",
             "player.gd",
+            "--name",
+            "_ready",
             "--no-format",
             "--format",
             "json",
@@ -561,7 +568,7 @@ fn test_lsp_insert_no_anchor_fails() {
 
     assert!(
         !output.status.success(),
-        "should fail without --after or --before"
+        "should fail without position flag"
     );
 }
 
@@ -569,17 +576,17 @@ fn test_lsp_insert_no_anchor_fails() {
 fn test_lsp_insert_input_file() {
     let temp = setup_gd_project(&[("player.gd", "extends Node\n\n\nfunc _ready():\n\tpass\n")]);
 
-    // Write content to a temp file instead of piping through stdin
     let input_path = temp.path().join("_input.tmp");
-    fs::write(&input_path, "\nfunc _process(delta):\n\tpass\n").unwrap();
+    fs::write(&input_path, "func _process(delta):\n\tpass\n").unwrap();
 
     let output = gd_bin()
         .args([
             "edit",
             "insert",
             "player.gd",
-            "--after",
+            "--name",
             "_ready",
+            "--after",
             "--no-format",
             "--input-file",
         ])
@@ -595,7 +602,7 @@ fn test_lsp_insert_input_file() {
         String::from_utf8_lossy(&output.stderr)
     );
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(json["operation"], "insert");
+    assert_eq!(json["operation"], "insert-after");
     assert_eq!(json["applied"], true);
 
     let content = fs::read_to_string(temp.path().join("player.gd")).unwrap();
@@ -616,7 +623,7 @@ fn test_lsp_replace_symbol() {
         temp.path(),
         &[
             "edit",
-            "replace-symbol",
+            "replace",
             "player.gd",
             "--name",
             "speed",
@@ -627,9 +634,9 @@ fn test_lsp_replace_symbol() {
         "var speed: float = 42.0\n",
     );
 
-    assert!(output.status.success(), "replace-symbol should succeed");
+    assert!(output.status.success(), "replace --name should succeed");
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(json["operation"], "replace-symbol");
+    assert_eq!(json["operation"], "replace");
     assert_eq!(json["symbol"], "speed");
     assert_eq!(json["applied"], true);
 
@@ -649,7 +656,7 @@ fn test_lsp_replace_symbol_function() {
         temp.path(),
         &[
             "edit",
-            "replace-symbol",
+            "replace",
             "player.gd",
             "--name",
             "old_func",
@@ -671,15 +678,15 @@ fn test_lsp_replace_symbol_function() {
 fn test_lsp_replace_body_with_format() {
     let temp = setup_gd_project(&[("player.gd", "extends Node\n\n\nfunc _ready():\n\tpass\n")]);
 
-    // Don't pass --no-format — formatter should run
     let output = run_lsp_edit(
         temp.path(),
         &[
             "edit",
-            "replace-body",
+            "replace",
             "player.gd",
             "--name",
             "_ready",
+            "--body",
             "--format",
             "json",
         ],
@@ -688,7 +695,7 @@ fn test_lsp_replace_body_with_format() {
 
     assert!(
         output.status.success(),
-        "replace-body with format should succeed: {}",
+        "replace --body with format should succeed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
 

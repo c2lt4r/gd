@@ -8,8 +8,8 @@ pub use analysis::{
 };
 pub use edit::{
     CreateFileOutput, SceneInfoOutput, SceneNodeOutput, SymbolViewOutput, query_create_file,
-    query_extract, query_insert, query_insert_into, query_remove, query_replace_body,
-    query_replace_range, query_replace_symbol, query_scene_info, query_view, query_view_symbol,
+    query_extract, query_insert_cmd, query_remove, query_replace, query_scene_info, query_view,
+    query_view_symbol,
 };
 pub use navigation::{
     SceneRefOutput, SignalConnectionOutput, query_completions, query_definition, query_hover,

@@ -713,6 +713,35 @@ impl OwnedDecl {
             Self::Stmt(s) => s.clear_spans(),
         }
     }
+
+    /// Return the name of this declaration, or `""` for bare statements.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        match self {
+            Self::Func(f) => &f.name,
+            Self::Var(v) => &v.name,
+            Self::Signal(s) => &s.name,
+            Self::Enum(e) => &e.name,
+            Self::Class(c) => &c.name,
+            Self::Stmt(_) => "",
+        }
+    }
+
+    /// Find the index of a declaration by name in a slice (skips bare statements).
+    #[must_use]
+    pub fn find_by_name(decls: &[Self], name: &str) -> Option<usize> {
+        decls
+            .iter()
+            .position(|d| !matches!(d, Self::Stmt(_)) && d.name() == name)
+    }
+
+    /// Find the index of the declaration whose span contains `byte`.
+    #[must_use]
+    pub fn find_at_byte(decls: &[Self], byte: usize) -> Option<usize> {
+        decls
+            .iter()
+            .position(|d| d.span().is_some_and(|s| s.start <= byte && byte < s.end))
+    }
 }
 
 impl OwnedFunc {

@@ -5,10 +5,7 @@ use serde::Serialize;
 
 use gd_core::gd_ast;
 
-use super::{
-    declaration_full_range, find_declaration_by_name, find_declaration_in_class, line_starts,
-    re_indent_to_depth,
-};
+use super::line_starts;
 
 // ── Output ──────────────────────────────────────────────────────────────────
 
@@ -25,6 +22,34 @@ pub struct EditOutput {
     pub diagnostics: u32,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
+}
+
+/// How the user identifies the target AST node(s) for `replace`.
+pub enum ReplaceTarget {
+    /// `--name <sym>` (+ optional `--body`)
+    Name { name: String, body_only: bool },
+    /// `--line <N>` — single AST node at this line
+    Line(usize),
+    /// `--line <N>-<M>` — AST nodes in line range
+    LineRange { start: usize, end: usize },
+}
+
+/// How the user identifies the anchor for `insert`.
+pub enum InsertAnchor {
+    /// `--name <sym>`
+    Name(String),
+    /// `--line <N>`
+    Line(usize),
+}
+
+/// Where to insert relative to the anchor.
+pub enum InsertPosition {
+    Before,
+    After,
+    /// First child of anchor (function body or class body)
+    Into,
+    /// Last child of anchor (function body or class body)
+    IntoEnd,
 }
 
 // ── Shared helpers ──────────────────────────────────────────────────────────
@@ -78,276 +103,17 @@ fn format_source(source: &str, project_root: &Path) -> Result<String> {
 
 // ── replace-body ────────────────────────────────────────────────────────────
 
-pub fn replace_body(
-    file: &Path,
-    name: &str,
-    class: Option<&str>,
-    new_body: &str,
-    no_format: bool,
-    project_root: &Path,
-) -> Result<EditOutput> {
-    let source =
-        std::fs::read_to_string(file).map_err(|e| miette::miette!("cannot read file: {e}"))?;
-    let tree = gd_core::parser::parse(&source)?;
-    let file_ast = gd_ast::convert(&tree, &source);
-    let rel = gd_core::fs::relative_slash(file, project_root);
-
-    // Find the target function/constructor
-    let decl = if let Some(cls) = class {
-        let inner = file_ast
-            .find_class(cls)
-            .ok_or_else(|| miette::miette!("class '{cls}' not found in {rel}"))?;
-        find_declaration_in_class(inner, name)
-            .ok_or_else(|| miette::miette!("symbol '{name}' not found in class '{cls}'"))?
-    } else {
-        find_declaration_by_name(&file_ast, name)
-            .ok_or_else(|| miette::miette!("symbol '{name}' not found in {rel}"))?
-    };
-
-    let kind = decl.kind();
-    if kind != "function_definition" && kind != "constructor_definition" {
-        return Err(miette::miette!(
-            "'{name}' is a {}, not a function — replace-body only works on functions",
-            super::declaration_kind_str(kind)
-        ));
-    }
-
-    // Guard: reject input that looks like it contains a function signature.
-    // The body of a function cannot legitimately start with `func ` or `static func `.
-    let first_content_line = new_body
-        .lines()
-        .find(|l| !l.trim().is_empty())
-        .unwrap_or("")
-        .trim();
-    if first_content_line.starts_with("func ") || first_content_line.starts_with("static func ") {
-        return Err(miette::miette!(
-            "input appears to contain a function signature (`{}`); \
-             replace-body expects only the body (indented statements), not the signature",
-            first_content_line.chars().take(60).collect::<String>()
-        ));
-    }
-
-    // Get the body node
-    let body = decl
-        .child_by_field_name("body")
-        .ok_or_else(|| miette::miette!("function '{name}' has no body"))?;
-
-    // Find the first named child (actual statement) to get indentation.
-    // The body node itself starts right after `:`, including the newline.
-    let first_stmt = body
-        .named_child(0)
-        .ok_or_else(|| miette::miette!("function '{name}' has an empty body"))?;
-
-    let body_end = body.end_byte();
-
-    // Determine target indentation from the first statement's line
-    let stmt_line = first_stmt.start_position().row;
-    let starts = line_starts(&source);
-    let line_start = starts[stmt_line];
-    let line_end = starts.get(stmt_line + 1).copied().unwrap_or(source.len());
-    let first_line = &source[line_start..line_end].trim_end_matches('\n');
-    let target_indent_count = first_line.len() - first_line.trim_start().len();
-
-    // Determine indent unit: if tabs, count tabs; if spaces, count spaces
-    let target_tabs = if first_line.starts_with('\t') {
-        target_indent_count
-    } else {
-        // For space indentation, approximate tab depth
-        target_indent_count / 4
-    };
-
-    // Re-indent the new body to match
-    let reindented = re_indent_to_depth(new_body.trim_end(), target_tabs);
-
-    // Build the new source — replace from first statement to body end
-    // Keep everything up to (and including) the newline after `:` on the signature line
-    let mut result = String::with_capacity(source.len());
-    result.push_str(&source[..line_start]);
-    result.push_str(&reindented);
-    if !reindented.ends_with('\n') {
-        result.push('\n');
-    }
-    result.push_str(&source[body_end..]);
-
-    // Validate
-    validate_no_new_errors(&source, &result)?;
-
-    // Format
-    let final_source = if no_format {
-        result
-    } else {
-        format_source(&result, project_root)?
-    };
-
-    let lines_changed = diff_line_count(&source, &final_source);
-
-    let diagnostics = persist(file, &final_source, project_root)?;
-
-    Ok(EditOutput {
-        file: rel,
-        operation: "replace-body",
-        symbol: Some(name.to_string()),
-        applied: true,
-        lines_changed,
-        diagnostics,
-        warnings: vec![],
-    })
-}
-
 // ── insert ──────────────────────────────────────────────────────────────────
-
-#[allow(clippy::too_many_arguments)]
-pub fn insert(
-    file: &Path,
-    anchor_name: &str,
-    after: bool, // true = --after, false = --before
-    class: Option<&str>,
-    content: &str,
-    no_format: bool,
-    project_root: &Path,
-) -> Result<EditOutput> {
-    let source =
-        std::fs::read_to_string(file).map_err(|e| miette::miette!("cannot read file: {e}"))?;
-    let tree = gd_core::parser::parse(&source)?;
-    let file_ast = gd_ast::convert(&tree, &source);
-    let rel = gd_core::fs::relative_slash(file, project_root);
-
-    let decl = if let Some(cls) = class {
-        let inner = file_ast
-            .find_class(cls)
-            .ok_or_else(|| miette::miette!("class '{cls}' not found in {rel}"))?;
-        find_declaration_in_class(inner, anchor_name)
-            .ok_or_else(|| miette::miette!("symbol '{anchor_name}' not found in class '{cls}'"))?
-    } else {
-        find_declaration_by_name(&file_ast, anchor_name)
-            .ok_or_else(|| miette::miette!("symbol '{anchor_name}' not found in {rel}"))?
-    };
-
-    let (full_start, full_end) = declaration_full_range(decl, &source);
-
-    let insert_point = if after { full_end } else { full_start };
-
-    // Build new source
-    let mut result = String::with_capacity(source.len() + content.len());
-    result.push_str(&source[..insert_point]);
-
-    // Ensure proper newline separation
-    if after {
-        if !result.ends_with('\n') {
-            result.push('\n');
-        }
-        result.push_str(content.trim_end());
-        result.push('\n');
-    } else {
-        let trimmed = content.trim_end();
-        result.push_str(trimmed);
-        if !trimmed.ends_with('\n') {
-            result.push('\n');
-        }
-    }
-
-    result.push_str(&source[insert_point..]);
-
-    // Validate
-    validate_no_new_errors(&source, &result)?;
-
-    // Format
-    let final_source = if no_format {
-        result
-    } else {
-        format_source(&result, project_root)?
-    };
-
-    let lines_changed = diff_line_count(&source, &final_source);
-
-    let diagnostics = persist(file, &final_source, project_root)?;
-
-    Ok(EditOutput {
-        file: rel,
-        operation: "insert",
-        symbol: Some(anchor_name.to_string()),
-        applied: true,
-        lines_changed,
-        diagnostics,
-        warnings: vec![],
-    })
-}
 
 // ── insert-into (class body) ────────────────────────────────────────────────
 
-pub fn insert_into(
-    file: &Path,
-    class_name: &str,
-    content: &str,
-    no_format: bool,
-    project_root: &Path,
-) -> Result<EditOutput> {
-    let source =
-        std::fs::read_to_string(file).map_err(|e| miette::miette!("cannot read file: {e}"))?;
-    let tree = gd_core::parser::parse(&source)?;
-    let file_ast = gd_ast::convert(&tree, &source);
-    let rel = gd_core::fs::relative_slash(file, project_root);
-
-    let class_node = super::find_class_definition(&file_ast, class_name)
-        .ok_or_else(|| miette::miette!("class '{class_name}' not found in {rel}"))?;
-
-    // Find the body node of the class
-    let body = class_node
-        .child_by_field_name("body")
-        .ok_or_else(|| miette::miette!("class '{class_name}' has no body"))?;
-
-    // Insert before the end of the class body
-    let insert_byte = body.end_byte();
-
-    // Determine indentation (inner class content is indented one level deeper)
-    let class_line = class_node.start_position().row;
-    let starts = line_starts(&source);
-    let line_start = starts[class_line];
-    let line_text = &source[line_start..class_node.start_byte()];
-    let class_indent = line_text.chars().filter(|&c| c == '\t').count();
-    let content_indent = class_indent + 1;
-
-    let reindented = super::re_indent_to_depth(content.trim_end(), content_indent);
-
-    let mut result = String::with_capacity(source.len() + reindented.len());
-    result.push_str(&source[..insert_byte]);
-    if !result.ends_with('\n') {
-        result.push('\n');
-    }
-    result.push_str(&reindented);
-    if !reindented.ends_with('\n') {
-        result.push('\n');
-    }
-    result.push_str(&source[insert_byte..]);
-
-    validate_no_new_errors(&source, &result)?;
-
-    let final_source = if no_format {
-        result
-    } else {
-        format_source(&result, project_root)?
-    };
-
-    let lines_changed = diff_line_count(&source, &final_source);
-
-    let diagnostics = persist(file, &final_source, project_root)?;
-
-    Ok(EditOutput {
-        file: rel,
-        operation: "insert-into",
-        symbol: Some(class_name.to_string()),
-        applied: true,
-        lines_changed,
-        diagnostics,
-        warnings: vec![],
-    })
-}
-
 // ── replace-symbol ──────────────────────────────────────────────────────────
 
-pub fn replace_symbol(
+// ── edit-range ──────────────────────────────────────────────────────────────
+
+pub fn replace(
     file: &Path,
-    name: &str,
+    target: &ReplaceTarget,
     class: Option<&str>,
     new_content: &str,
     no_format: bool,
@@ -355,75 +121,390 @@ pub fn replace_symbol(
 ) -> Result<EditOutput> {
     let source =
         std::fs::read_to_string(file).map_err(|e| miette::miette!("cannot read file: {e}"))?;
-    let tree = gd_core::parser::parse(&source)?;
-    let file_ast = gd_ast::convert(&tree, &source);
     let rel = gd_core::fs::relative_slash(file, project_root);
-
-    let decl = if let Some(cls) = class {
-        let inner = file_ast
-            .find_class(cls)
-            .ok_or_else(|| miette::miette!("class '{cls}' not found in {rel}"))?;
-        find_declaration_in_class(inner, name)
-            .ok_or_else(|| miette::miette!("symbol '{name}' not found in class '{cls}'"))?
-    } else {
-        find_declaration_by_name(&file_ast, name)
-            .ok_or_else(|| miette::miette!("symbol '{name}' not found in {rel}"))?
+    let ctx = EditCtx {
+        file,
+        source: &source,
+        rel,
+        no_format,
+        project_root,
     };
 
-    // When the target is a class_name_statement the whole file IS that class,
-    // so replace the entire file content rather than just the one-line statement.
-    let (full_start, full_end) = if decl.kind() == "class_name_statement" {
-        (0, source.len())
-    } else {
-        declaration_full_range(decl, &source)
-    };
-
-    // Determine the indentation depth of the original declaration so we can
-    // re-indent the replacement content to match (critical for inner classes).
-    let starts = line_starts(&source);
-    let decl_line = decl.start_position().row;
-    let line_start = starts[decl_line];
-    let line_text = &source[line_start..decl.start_byte()];
-    let target_tabs = line_text.chars().filter(|&c| c == '\t').count();
-
-    // Re-indent new content to match the original declaration depth
-    let reindented = re_indent_to_depth(new_content.trim_end(), target_tabs);
-
-    // Build new source
-    let mut result = String::with_capacity(source.len());
-    result.push_str(&source[..full_start]);
-    result.push_str(&reindented);
-    if !reindented.ends_with('\n') {
-        result.push('\n');
+    match target {
+        ReplaceTarget::Name { name, body_only } => {
+            replace_by_name(&ctx, name, *body_only, class, new_content)
+        }
+        ReplaceTarget::Line(line) => replace_by_line_range(&ctx, *line, *line, new_content),
+        ReplaceTarget::LineRange { start, end } => {
+            replace_by_line_range(&ctx, *start, *end, new_content)
+        }
     }
-    result.push_str(&source[full_end..]);
-
-    // Validate
-    validate_no_new_errors(&source, &result)?;
-
-    // Format
-    let final_source = if no_format {
-        result
-    } else {
-        format_source(&result, project_root)?
-    };
-
-    let lines_changed = diff_line_count(&source, &final_source);
-
-    let diagnostics = persist(file, &final_source, project_root)?;
-
-    Ok(EditOutput {
-        file: rel,
-        operation: "replace-symbol",
-        symbol: Some(name.to_string()),
-        applied: true,
-        lines_changed,
-        diagnostics,
-        warnings: vec![],
-    })
 }
 
-// ── edit-range ──────────────────────────────────────────────────────────────
+/// Common context threaded through replace/insert helpers.
+struct EditCtx<'a> {
+    file: &'a Path,
+    source: &'a str,
+    rel: String,
+    no_format: bool,
+    project_root: &'a Path,
+}
+
+impl EditCtx<'_> {
+    fn finish(
+        &self,
+        owned: &gd_core::ast_owned::OwnedFile,
+        operation: &'static str,
+        symbol: Option<String>,
+    ) -> Result<EditOutput> {
+        let result = gd_core::printer::print_file(owned, self.source);
+        validate_no_new_errors(self.source, &result)?;
+        let final_source = if self.no_format {
+            result
+        } else {
+            format_source(&result, self.project_root)?
+        };
+        let lines_changed = diff_line_count(self.source, &final_source);
+        let diagnostics = persist(self.file, &final_source, self.project_root)?;
+        Ok(EditOutput {
+            file: self.rel.clone(),
+            operation,
+            symbol,
+            applied: true,
+            lines_changed,
+            diagnostics,
+            warnings: vec![],
+        })
+    }
+}
+
+fn replace_by_name(
+    ctx: &EditCtx<'_>,
+    name: &str,
+    body_only: bool,
+    class: Option<&str>,
+    new_content: &str,
+) -> Result<EditOutput> {
+    let tree =
+        gd_core::parser::parse(ctx.source).map_err(|e| miette::miette!("parse error: {e}"))?;
+    let gd_file = gd_ast::convert(&tree, ctx.source);
+    let mut owned = gd_core::ast_owned::OwnedFile::from_borrowed(&gd_file);
+
+    // Special case: class_name replaces entire file
+    if owned.class_name.as_deref() == Some(name) && class.is_none() && !body_only {
+        let parse_input = new_content.to_string();
+        if let Ok(new_tree) = gd_core::parser::parse(&parse_input) {
+            let new_file = gd_ast::convert(&new_tree, &parse_input);
+            let new_owned = gd_core::ast_owned::OwnedFile::from_borrowed(&new_file);
+            owned.class_name = new_owned.class_name;
+            owned.extends = new_owned.extends;
+            owned.is_tool = new_owned.is_tool;
+            owned.declarations = new_owned.declarations;
+            for d in &mut owned.declarations {
+                d.clear_spans();
+            }
+        }
+        owned.span = None;
+        return ctx.finish(&owned, "replace", Some(name.to_string()));
+    }
+
+    if body_only {
+        replace_body_ast(&mut owned, ctx, name, class, new_content)
+    } else {
+        replace_decl_ast(&mut owned, ctx, name, class, new_content)
+    }
+}
+
+fn replace_body_ast(
+    owned: &mut gd_core::ast_owned::OwnedFile,
+    ctx: &EditCtx<'_>,
+    name: &str,
+    class: Option<&str>,
+    new_content: &str,
+) -> Result<EditOutput> {
+    let first_content_line = new_content
+        .lines()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or("")
+        .trim();
+    if first_content_line.starts_with("func ") || first_content_line.starts_with("static func ") {
+        return Err(miette::miette!(
+            "input appears to contain a function signature (`{}`); \
+             replace --body expects only the body (indented statements), not the signature",
+            first_content_line.chars().take(60).collect::<String>()
+        ));
+    }
+
+    let decls = if let Some(cls) = class {
+        let class_idx = gd_core::ast_owned::OwnedDecl::find_by_name(&owned.declarations, cls)
+            .ok_or_else(|| miette::miette!("class '{cls}' not found in {}", ctx.rel))?;
+        let gd_core::ast_owned::OwnedDecl::Class(ref mut c) = owned.declarations[class_idx] else {
+            return Err(miette::miette!("'{cls}' is not a class"));
+        };
+        c.span = None;
+        &mut c.declarations as &mut Vec<_>
+    } else {
+        &mut owned.declarations
+    };
+
+    let idx = gd_core::ast_owned::OwnedDecl::find_by_name(decls, name)
+        .ok_or_else(|| miette::miette!("symbol '{name}' not found in {}", ctx.rel))?;
+
+    let gd_core::ast_owned::OwnedDecl::Func(ref mut func) = decls[idx] else {
+        return Err(miette::miette!(
+            "'{name}' is not a function — --body only works on functions"
+        ));
+    };
+
+    let new_stmts = parse_replacement_stmts(new_content)?;
+    func.body = new_stmts;
+    func.span = None;
+    owned.span = None;
+
+    ctx.finish(owned, "replace", Some(name.to_string()))
+}
+
+fn replace_decl_ast(
+    owned: &mut gd_core::ast_owned::OwnedFile,
+    ctx: &EditCtx<'_>,
+    name: &str,
+    class: Option<&str>,
+    new_content: &str,
+) -> Result<EditOutput> {
+    let new_decls = parse_replacement_decls(new_content)?;
+
+    if let Some(cls) = class {
+        let class_idx = gd_core::ast_owned::OwnedDecl::find_by_name(&owned.declarations, cls)
+            .ok_or_else(|| miette::miette!("class '{cls}' not found in {}", ctx.rel))?;
+        let gd_core::ast_owned::OwnedDecl::Class(ref mut c) = owned.declarations[class_idx] else {
+            return Err(miette::miette!("'{cls}' is not a class"));
+        };
+        let idx = gd_core::ast_owned::OwnedDecl::find_by_name(&c.declarations, name)
+            .ok_or_else(|| miette::miette!("symbol '{name}' not found in class '{cls}'"))?;
+        splice_vec(&mut c.declarations, idx, idx, new_decls);
+        c.span = None;
+    } else {
+        let idx = gd_core::ast_owned::OwnedDecl::find_by_name(&owned.declarations, name)
+            .ok_or_else(|| miette::miette!("symbol '{name}' not found in {}", ctx.rel))?;
+        splice_vec(&mut owned.declarations, idx, idx, new_decls);
+    }
+
+    owned.span = None;
+    ctx.finish(owned, "replace", Some(name.to_string()))
+}
+
+fn replace_by_line_range(
+    ctx: &EditCtx<'_>,
+    start_line: usize,
+    end_line: usize,
+    new_content: &str,
+) -> Result<EditOutput> {
+    if start_line == 0 || end_line == 0 {
+        return Err(miette::miette!("line numbers are 1-based"));
+    }
+    if start_line > end_line {
+        return Err(miette::miette!(
+            "start-line ({start_line}) must be <= end-line ({end_line})"
+        ));
+    }
+
+    let effectively_empty =
+        ctx.source.is_empty() || ctx.source.chars().all(|c| c == '\n' || c == '\r');
+    if effectively_empty && start_line == 1 && end_line == 1 {
+        return edit_range_into_empty(
+            ctx.source,
+            new_content,
+            ctx.no_format,
+            ctx.project_root,
+            ctx.file,
+            &ctx.rel,
+        );
+    }
+
+    let starts = line_starts(ctx.source);
+    let total_lines = starts.len();
+
+    if start_line > total_lines {
+        return Err(miette::miette!(
+            "start-line {start_line} exceeds file length ({total_lines} lines)"
+        ));
+    }
+
+    let start_byte = starts[start_line - 1];
+    let end_byte = if end_line >= total_lines {
+        ctx.source.len()
+    } else {
+        starts[end_line]
+    };
+
+    let tree =
+        gd_core::parser::parse(ctx.source).map_err(|e| miette::miette!("parse error: {e}"))?;
+    let gd_file = gd_ast::convert(&tree, ctx.source);
+    let mut owned = gd_core::ast_owned::OwnedFile::from_borrowed(&gd_file);
+
+    let target = find_range_target(
+        &owned.declarations,
+        start_byte,
+        end_byte,
+        start_line,
+        end_line,
+        &starts,
+    )?;
+    apply_range_target(&mut owned, target, new_content)?;
+
+    ctx.finish(&owned, "replace", None)
+}
+
+// ── Unified insert ──────────────────────────────────────────────────────────
+
+pub fn insert_cmd(
+    file: &Path,
+    anchor: &InsertAnchor,
+    position: &InsertPosition,
+    class: Option<&str>,
+    content: &str,
+    no_format: bool,
+    project_root: &Path,
+) -> Result<EditOutput> {
+    let source =
+        std::fs::read_to_string(file).map_err(|e| miette::miette!("cannot read file: {e}"))?;
+    let rel = gd_core::fs::relative_slash(file, project_root);
+    let ctx = EditCtx {
+        file,
+        source: &source,
+        rel,
+        no_format,
+        project_root,
+    };
+
+    let tree = gd_core::parser::parse(&source).map_err(|e| miette::miette!("parse error: {e}"))?;
+    let gd_file = gd_ast::convert(&tree, &source);
+    let mut owned = gd_core::ast_owned::OwnedFile::from_borrowed(&gd_file);
+
+    let (decls, anchor_idx, anchor_name) =
+        resolve_anchor(&mut owned, anchor, class, &ctx.rel, &source)?;
+
+    match position {
+        InsertPosition::Before => {
+            let new_decls = parse_replacement_decls(content)?;
+            insert_vec(decls, anchor_idx, new_decls);
+        }
+        InsertPosition::After => {
+            let new_decls = parse_replacement_decls(content)?;
+            insert_vec(decls, anchor_idx + 1, new_decls);
+        }
+        InsertPosition::Into | InsertPosition::IntoEnd => {
+            let at_end = matches!(position, InsertPosition::IntoEnd);
+            insert_into_container(&mut decls[anchor_idx], content, at_end, &anchor_name)?;
+        }
+    }
+
+    owned.span = None;
+
+    let op = match position {
+        InsertPosition::Before => "insert-before",
+        InsertPosition::After => "insert-after",
+        InsertPosition::Into | InsertPosition::IntoEnd => "insert-into",
+    };
+
+    ctx.finish(&owned, op, Some(anchor_name))
+}
+
+/// Resolve an `InsertAnchor` to the mutable declaration list and index.
+fn resolve_anchor<'a>(
+    owned: &'a mut gd_core::ast_owned::OwnedFile,
+    anchor: &InsertAnchor,
+    class: Option<&str>,
+    rel: &str,
+    source: &str,
+) -> Result<(&'a mut Vec<gd_core::ast_owned::OwnedDecl>, usize, String)> {
+    if let Some(cls) = class {
+        let class_idx = gd_core::ast_owned::OwnedDecl::find_by_name(&owned.declarations, cls)
+            .ok_or_else(|| miette::miette!("class '{cls}' not found in {rel}"))?;
+        let gd_core::ast_owned::OwnedDecl::Class(ref mut c) = owned.declarations[class_idx] else {
+            return Err(miette::miette!("'{cls}' is not a class"));
+        };
+        c.span = None;
+        let (idx, name) = match anchor {
+            InsertAnchor::Name(n) => {
+                let i = gd_core::ast_owned::OwnedDecl::find_by_name(&c.declarations, n)
+                    .ok_or_else(|| miette::miette!("symbol '{n}' not found in class '{cls}'"))?;
+                (i, n.clone())
+            }
+            InsertAnchor::Line(line) => {
+                let starts = line_starts(source);
+                if *line == 0 || *line > starts.len() {
+                    return Err(miette::miette!("line {line} out of range"));
+                }
+                let byte = starts[*line - 1];
+                let i = gd_core::ast_owned::OwnedDecl::find_at_byte(&c.declarations, byte)
+                    .ok_or_else(|| miette::miette!("no declaration found at line {line}"))?;
+                let n = c.declarations[i].name().to_string();
+                (i, n)
+            }
+        };
+        Ok((&mut c.declarations, idx, name))
+    } else {
+        let (idx, name) = match anchor {
+            InsertAnchor::Name(n) => {
+                let i = gd_core::ast_owned::OwnedDecl::find_by_name(&owned.declarations, n)
+                    .ok_or_else(|| miette::miette!("symbol '{n}' not found in {rel}"))?;
+                (i, n.clone())
+            }
+            InsertAnchor::Line(line) => {
+                let starts = line_starts(source);
+                if *line == 0 || *line > starts.len() {
+                    return Err(miette::miette!("line {line} out of range"));
+                }
+                let byte = starts[*line - 1];
+                let i = gd_core::ast_owned::OwnedDecl::find_at_byte(&owned.declarations, byte)
+                    .ok_or_else(|| miette::miette!("no declaration found at line {line}"))?;
+                let n = owned.declarations[i].name().to_string();
+                (i, n)
+            }
+        };
+        Ok((&mut owned.declarations, idx, name))
+    }
+}
+
+/// Insert content into a container declaration (function body or class body).
+fn insert_into_container(
+    decl: &mut gd_core::ast_owned::OwnedDecl,
+    content: &str,
+    at_end: bool,
+    anchor_name: &str,
+) -> Result<()> {
+    use gd_core::ast_owned::OwnedDecl;
+    match decl {
+        OwnedDecl::Func(f) => {
+            let new_stmts = parse_replacement_stmts(content)?;
+            let pos = if at_end { f.body.len() } else { 0 };
+            for (i, stmt) in new_stmts.into_iter().enumerate() {
+                f.body.insert(pos + i, stmt);
+            }
+            f.span = None;
+            for s in &mut f.body {
+                s.clear_spans();
+            }
+            Ok(())
+        }
+        OwnedDecl::Class(c) => {
+            let new_decls = parse_replacement_decls(content)?;
+            let pos = if at_end { c.declarations.len() } else { 0 };
+            for (i, d) in new_decls.into_iter().enumerate() {
+                c.declarations.insert(pos + i, d);
+            }
+            c.span = None;
+            for d in &mut c.declarations {
+                d.clear_spans();
+            }
+            Ok(())
+        }
+        _ => Err(miette::miette!(
+            "'{anchor_name}' is not a function or class — --into requires a container"
+        )),
+    }
+}
 
 fn edit_range_into_empty(
     source: &str,
@@ -641,13 +722,37 @@ fn parse_replacement_decls(content: &str) -> Result<Vec<gd_core::ast_owned::Owne
     Ok(decls)
 }
 /// Parse replacement content as function body statements.
+/// If content has no indentation, auto-indents with one tab so it parses
+/// correctly inside the wrapper function.
 fn parse_replacement_stmts(content: &str) -> Result<Vec<gd_core::ast_owned::OwnedStmt>> {
-    let parse_input = format!("extends Node\nfunc _wrapper():\n{content}");
+    // Ensure content is indented so it parses as function body
+    let indented = if content.lines().any(|l| !l.trim().is_empty())
+        && content
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .all(|l| !l.starts_with('\t') && !l.starts_with(' '))
+    {
+        // No indentation at all — add one tab to each non-empty line
+        content
+            .lines()
+            .map(|l| {
+                if l.trim().is_empty() {
+                    String::new()
+                } else {
+                    format!("\t{l}")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    } else {
+        content.to_string()
+    };
+
+    let parse_input = format!("extends Node\nfunc _wrapper():\n{indented}");
     let tree = gd_core::parser::parse(&parse_input)
         .map_err(|e| miette::miette!("replacement content has parse errors: {e}"))?;
     let gd_file = gd_ast::convert(&tree, &parse_input);
     let owned = gd_core::ast_owned::OwnedFile::from_borrowed(&gd_file);
-    // Extract _wrapper's body
     for decl in &owned.declarations {
         if let gd_core::ast_owned::OwnedDecl::Func(f) = decl
             && f.name == "_wrapper"
@@ -678,86 +783,6 @@ fn insert_vec<T: Clone>(vec: &mut Vec<T>, at: usize, new_items: Vec<T>) {
     result.extend(new_items);
     result.extend(vec[at..].iter().cloned());
     *vec = result;
-}
-
-pub fn edit_range(
-    file: &Path,
-    start_line: usize,
-    end_line: usize,
-    new_content: &str,
-    no_format: bool,
-    project_root: &Path,
-) -> Result<EditOutput> {
-    let source =
-        std::fs::read_to_string(file).map_err(|e| miette::miette!("cannot read file: {e}"))?;
-    let rel = gd_core::fs::relative_slash(file, project_root);
-
-    if start_line == 0 || end_line == 0 {
-        return Err(miette::miette!("line numbers are 1-based"));
-    }
-    if start_line > end_line {
-        return Err(miette::miette!(
-            "start-line ({start_line}) must be <= end-line ({end_line})"
-        ));
-    }
-
-    let effectively_empty = source.is_empty() || source.chars().all(|c| c == '\n' || c == '\r');
-    if effectively_empty && start_line == 1 && end_line == 1 {
-        return edit_range_into_empty(&source, new_content, no_format, project_root, file, &rel);
-    }
-
-    let starts = line_starts(&source);
-    let total_lines = starts.len();
-
-    if start_line > total_lines {
-        return Err(miette::miette!(
-            "start-line {start_line} exceeds file length ({total_lines} lines)"
-        ));
-    }
-
-    let start_byte = starts[start_line - 1];
-    let end_byte = if end_line >= total_lines {
-        source.len()
-    } else {
-        starts[end_line]
-    };
-
-    let tree = gd_core::parser::parse(&source).map_err(|e| miette::miette!("parse error: {e}"))?;
-    let gd_file = gd_ast::convert(&tree, &source);
-    let mut owned = gd_core::ast_owned::OwnedFile::from_borrowed(&gd_file);
-
-    let target = find_range_target(
-        &owned.declarations,
-        start_byte,
-        end_byte,
-        start_line,
-        end_line,
-        &starts,
-    )?;
-
-    apply_range_target(&mut owned, target, new_content)?;
-
-    let result = gd_core::printer::print_file(&owned, &source);
-    validate_no_new_errors(&source, &result)?;
-
-    let final_source = if no_format {
-        result
-    } else {
-        format_source(&result, project_root)?
-    };
-
-    let lines_changed = diff_line_count(&source, &final_source);
-    let diagnostics = persist(file, &final_source, project_root)?;
-
-    Ok(EditOutput {
-        file: rel,
-        operation: "replace-range",
-        symbol: None,
-        applied: true,
-        lines_changed,
-        diagnostics,
-        warnings: vec![],
-    })
 }
 /// Apply a `RangeTarget` by parsing replacement content and splicing into the AST.
 fn apply_range_target(
@@ -851,61 +876,151 @@ mod tests {
         temp
     }
 
-    // ── replace-body ────────────────────────────────────────────────────
+    // ── replace ─────────────────────────────────────────────────────────
 
     #[test]
-    fn replace_body_basic() {
-        let temp = setup(&[("player.gd", "extends Node\n\n\nfunc _ready():\n\tpass\n")]);
+    fn replace_name_whole_decl() {
+        let temp = setup(&[(
+            "player.gd",
+            "extends Node\n\n\nvar speed = 10\n\n\nfunc _ready():\n\tpass\n",
+        )]);
         let file = temp.path().join("player.gd");
-        let result = replace_body(
+        let result = replace(
             &file,
-            "_ready",
+            &ReplaceTarget::Name {
+                name: "speed".to_string(),
+                body_only: false,
+            },
             None,
-            "\tprint(\"hello\")\n",
-            true, // no_format to keep it simple
-            temp.path(),
-        )
-        .unwrap();
-        assert!(result.applied);
-        assert_eq!(result.operation, "replace-body");
-        assert_eq!(result.symbol, Some("_ready".to_string()));
-
-        let content = fs::read_to_string(&file).unwrap();
-        assert!(content.contains("print(\"hello\")"));
-        assert!(!content.contains("\tpass"));
-        assert!(content.contains("func _ready():"));
-    }
-
-    #[test]
-    fn replace_body_multiline() {
-        let temp = setup(&[("player.gd", "extends Node\n\n\nfunc move(delta):\n\tpass\n")]);
-        let file = temp.path().join("player.gd");
-        let result = replace_body(
-            &file,
-            "move",
-            None,
-            "\tvar speed = 10\n\tposition += speed * delta\n",
+            "var speed = 99\n",
             true,
             temp.path(),
         )
         .unwrap();
         assert!(result.applied);
-
+        assert_eq!(result.operation, "replace");
         let content = fs::read_to_string(&file).unwrap();
-        assert!(content.contains("\tvar speed = 10"));
-        assert!(content.contains("\tposition += speed * delta"));
+        assert!(content.contains("var speed = 99"));
+        assert!(!content.contains("var speed = 10"));
+        assert!(content.contains("func _ready():"));
     }
 
     #[test]
-    fn replace_body_in_class() {
+    fn replace_name_function() {
+        let temp = setup(&[("player.gd", "extends Node\n\n\nfunc _ready():\n\tpass\n")]);
+        let file = temp.path().join("player.gd");
+        let result = replace(
+            &file,
+            &ReplaceTarget::Name {
+                name: "_ready".to_string(),
+                body_only: false,
+            },
+            None,
+            "func _ready():\n\tprint(\"hello\")\n",
+            true,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        let content = fs::read_to_string(&file).unwrap();
+        assert!(content.contains("print(\"hello\")"));
+        assert!(!content.contains("\tpass"));
+    }
+
+    #[test]
+    fn replace_name_body_only() {
+        let temp = setup(&[("player.gd", "extends Node\n\n\nfunc _ready():\n\tpass\n")]);
+        let file = temp.path().join("player.gd");
+        let result = replace(
+            &file,
+            &ReplaceTarget::Name {
+                name: "_ready".to_string(),
+                body_only: true,
+            },
+            None,
+            "\tprint(\"hello\")\n",
+            true,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        let content = fs::read_to_string(&file).unwrap();
+        assert!(content.contains("func _ready():"));
+        assert!(content.contains("print(\"hello\")"));
+        assert!(!content.contains("\tpass"));
+    }
+
+    #[test]
+    fn replace_name_body_reindents_from_zero() {
+        let temp = setup(&[("player.gd", "extends Node\n\n\nfunc _ready():\n\tpass\n")]);
+        let file = temp.path().join("player.gd");
+        let result = replace(
+            &file,
+            &ReplaceTarget::Name {
+                name: "_ready".to_string(),
+                body_only: true,
+            },
+            None,
+            "print(\"a\")\nprint(\"b\")\n",
+            true,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        let content = fs::read_to_string(&file).unwrap();
+        assert!(content.contains("\tprint(\"a\")"));
+        assert!(content.contains("\tprint(\"b\")"));
+    }
+
+    #[test]
+    fn replace_name_body_rejects_non_function() {
+        let temp = setup(&[("player.gd", "extends Node\nvar speed = 10\n")]);
+        let file = temp.path().join("player.gd");
+        let result = replace(
+            &file,
+            &ReplaceTarget::Name {
+                name: "speed".to_string(),
+                body_only: true,
+            },
+            None,
+            "\t42\n",
+            true,
+            temp.path(),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn replace_name_body_rejects_signature_in_input() {
+        let temp = setup(&[("player.gd", "extends Node\n\n\nfunc _ready():\n\tpass\n")]);
+        let file = temp.path().join("player.gd");
+        let result = replace(
+            &file,
+            &ReplaceTarget::Name {
+                name: "_ready".to_string(),
+                body_only: true,
+            },
+            None,
+            "func _ready():\n\tprint(1)\n",
+            true,
+            temp.path(),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn replace_name_in_class() {
         let temp = setup(&[(
             "player.gd",
             "extends Node\n\n\nclass Inner:\n\tfunc foo():\n\t\tpass\n",
         )]);
         let file = temp.path().join("player.gd");
-        let result = replace_body(
+        let result = replace(
             &file,
-            "foo",
+            &ReplaceTarget::Name {
+                name: "foo".to_string(),
+                body_only: true,
+            },
             Some("Inner"),
             "\t\tprint(1)\n",
             true,
@@ -913,299 +1028,50 @@ mod tests {
         )
         .unwrap();
         assert!(result.applied);
-
         let content = fs::read_to_string(&file).unwrap();
-        assert!(content.contains("\t\tprint(1)"));
-    }
-
-    #[test]
-    fn replace_body_non_function_rejected() {
-        let temp = setup(&[("player.gd", "extends Node\nvar speed = 10\n")]);
-        let file = temp.path().join("player.gd");
-        let result = replace_body(&file, "speed", None, "\t42\n", true, temp.path());
-        assert!(result.is_err());
-        let msg = result.unwrap_err().to_string();
-        assert!(msg.contains("variable"));
-    }
-
-    #[test]
-    fn replace_body_constructor() {
-        let temp = setup(&[("player.gd", "extends Node\n\n\nfunc _init():\n\tpass\n")]);
-        let file = temp.path().join("player.gd");
-        let result = replace_body(
-            &file,
-            "_init",
-            None,
-            "\tprint(\"init\")\n",
-            true,
-            temp.path(),
-        )
-        .unwrap();
-        assert!(result.applied);
-
-        let content = fs::read_to_string(&file).unwrap();
-        assert!(content.contains("print(\"init\")"));
-    }
-
-    #[test]
-    fn replace_body_reindents_from_zero() {
-        let temp = setup(&[("player.gd", "extends Node\n\n\nfunc _ready():\n\tpass\n")]);
-        let file = temp.path().join("player.gd");
-        // Content with no indentation — should be reindented to 1 tab
-        let result = replace_body(
-            &file,
-            "_ready",
-            None,
-            "print(\"hello\")\nprint(\"world\")\n",
-            true,
-            temp.path(),
-        )
-        .unwrap();
-        assert!(result.applied);
-
-        let content = fs::read_to_string(&file).unwrap();
-        assert!(content.contains("\tprint(\"hello\")"));
-        assert!(content.contains("\tprint(\"world\")"));
-    }
-
-    #[test]
-    fn replace_body_rejects_signature_in_input() {
-        let temp = setup(&[("player.gd", "extends Node\n\n\nfunc _ready():\n\tpass\n")]);
-        let file = temp.path().join("player.gd");
-        let result = replace_body(
-            &file,
-            "_ready",
-            None,
-            "func _ready():\n\tprint(\"hello\")\n",
-            true,
-            temp.path(),
-        );
-        assert!(result.is_err());
-        let msg = result.unwrap_err().to_string();
-        assert!(
-            msg.contains("function signature"),
-            "expected signature error, got: {msg}"
-        );
-    }
-
-    #[test]
-    fn replace_body_rejects_static_func_signature() {
-        let temp = setup(&[(
-            "player.gd",
-            "extends Node\n\n\nstatic func helper():\n\tpass\n",
-        )]);
-        let file = temp.path().join("player.gd");
-        let result = replace_body(
-            &file,
-            "helper",
-            None,
-            "static func helper():\n\tprint(1)\n",
-            true,
-            temp.path(),
-        );
-        assert!(result.is_err());
-        let msg = result.unwrap_err().to_string();
-        assert!(
-            msg.contains("function signature"),
-            "expected signature error, got: {msg}"
-        );
-    }
-
-    // ── insert ──────────────────────────────────────────────────────────
-
-    #[test]
-    fn insert_after() {
-        let temp = setup(&[("player.gd", "extends Node\n\n\nfunc _ready():\n\tpass\n")]);
-        let file = temp.path().join("player.gd");
-        let result = insert(
-            &file,
-            "_ready",
-            true, // after
-            None,
-            "\nfunc _process(delta):\n\tpass\n",
-            true,
-            temp.path(),
-        )
-        .unwrap();
-        assert!(result.applied);
-        assert_eq!(result.operation, "insert");
-
-        let content = fs::read_to_string(&file).unwrap();
-        assert!(content.contains("func _process(delta):"));
-        // _process should come after _ready
-        let ready_pos = content.find("func _ready()").unwrap();
-        let process_pos = content.find("func _process(delta)").unwrap();
-        assert!(process_pos > ready_pos);
-    }
-
-    #[test]
-    fn insert_before() {
-        let temp = setup(&[("player.gd", "extends Node\n\n\nfunc _ready():\n\tpass\n")]);
-        let file = temp.path().join("player.gd");
-        let result = insert(
-            &file,
-            "_ready",
-            false, // before
-            None,
-            "var speed = 10\n",
-            true,
-            temp.path(),
-        )
-        .unwrap();
-        assert!(result.applied);
-
-        let content = fs::read_to_string(&file).unwrap();
-        assert!(content.contains("var speed = 10"));
-        let var_pos = content.find("var speed").unwrap();
-        let ready_pos = content.find("func _ready()").unwrap();
-        assert!(var_pos < ready_pos);
-    }
-
-    // ── replace-symbol ──────────────────────────────────────────────────
-
-    #[test]
-    fn replace_symbol_var() {
-        let temp = setup(&[(
-            "player.gd",
-            "extends Node\nvar speed = 10\n\n\nfunc _ready():\n\tpass\n",
-        )]);
-        let file = temp.path().join("player.gd");
-        let result = replace_symbol(
-            &file,
-            "speed",
-            None,
-            "var speed: float = 42.0\n",
-            true,
-            temp.path(),
-        )
-        .unwrap();
-        assert!(result.applied);
-        assert_eq!(result.operation, "replace-symbol");
-
-        let content = fs::read_to_string(&file).unwrap();
-        assert!(content.contains("var speed: float = 42.0"));
-        assert!(!content.contains("var speed = 10"));
-    }
-
-    #[test]
-    fn replace_symbol_function() {
-        let temp = setup(&[(
-            "player.gd",
-            "extends Node\n\n\nfunc old_func():\n\tvar x = 1\n\tprint(x)\n",
-        )]);
-        let file = temp.path().join("player.gd");
-        let result = replace_symbol(
-            &file,
-            "old_func",
-            None,
-            "func new_func():\n\tprint(\"replaced\")\n",
-            true,
-            temp.path(),
-        )
-        .unwrap();
-        assert!(result.applied);
-
-        let content = fs::read_to_string(&file).unwrap();
-        assert!(content.contains("func new_func():"));
-        assert!(content.contains("print(\"replaced\")"));
-        assert!(!content.contains("old_func"));
-    }
-
-    #[test]
-    fn replace_symbol_class_name_replaces_whole_file() {
-        let temp = setup(&[(
-            "npc.gd",
-            "class_name Npc\nextends Node\n\n\nvar speed = 100\n\n\nfunc _ready():\n\tpass\n",
-        )]);
-        let file = temp.path().join("npc.gd");
-        let result = replace_symbol(
-            &file,
-            "Npc",
-            None,
-            "class_name Npc\nextends Node\n\n\nvar speed = 200\n\n\nfunc _ready():\n\tprint(1)\n",
-            true,
-            temp.path(),
-        )
-        .unwrap();
-        assert!(result.applied);
-
-        let content = fs::read_to_string(&file).unwrap();
-        assert!(content.contains("var speed = 200"));
         assert!(content.contains("print(1)"));
-        // Old content must be gone
-        assert!(!content.contains("var speed = 100"));
-        assert!(!content.contains("\tpass"));
     }
 
     #[test]
-    fn replace_symbol_inner_class_preserves_indent() {
-        // Exact reproduction from false-positives report: replace-symbol on an
-        // inner class function should keep the replacement at inner-class indent
-        // level, not drop it to column 0.
-        let temp = setup(&[(
-            "tmp_script.gd",
-            "extends RefCounted\n\n\nclass Inner:\n\tvar name: String = \"\"\n\tvar value: int = 0\n\n\tfunc get_name() -> String:\n\t\treturn name\n\n\tfunc get_value() -> int:\n\t\treturn value\n\n\tfunc set_value(v: int) -> void:\n\t\tvalue = v\n\n\nfunc outer_func() -> void:\n\tpass\n",
-        )]);
-        let file = temp.path().join("tmp_script.gd");
-        let result = replace_symbol(
-            &file,
-            "get_name",
-            Some("Inner"),
-            "func get_name() -> Variant:\n\treturn name\n",
-            true, // no_format — test raw re-indentation
-            temp.path(),
-        )
-        .unwrap();
-        assert!(result.applied);
-
-        let content = fs::read_to_string(&file).unwrap();
-        // Must be indented inside Inner (1 tab for func, 2 tabs for body)
-        assert!(
-            content.contains("\tfunc get_name() -> Variant:"),
-            "function should be at 1-tab indent inside Inner class, got:\n{content}"
-        );
-        assert!(
-            content.contains("\t\treturn name"),
-            "body should be at 2-tab indent inside Inner class, got:\n{content}"
-        );
-        // Sibling methods must remain at their original indent
-        assert!(
-            content.contains("\tfunc get_value() -> int:"),
-            "sibling get_value should stay at 1-tab indent, got:\n{content}"
-        );
-        assert!(
-            content.contains("\tfunc set_value(v: int) -> void:"),
-            "sibling set_value should stay at 1-tab indent, got:\n{content}"
-        );
-        // Outer function must remain top-level
-        assert!(
-            content.contains("\nfunc outer_func() -> void:"),
-            "outer_func should remain at indent 0, got:\n{content}"
-        );
-    }
-
-    // ── edit-range ──────────────────────────────────────────────────────
-
-    #[test]
-    fn edit_range_basic() {
+    fn replace_line_single() {
         let temp = setup(&[(
             "player.gd",
             "extends Node\nvar a = 1\nvar b = 2\nvar c = 3\n",
         )]);
         let file = temp.path().join("player.gd");
-        let result = edit_range(
+        let result = replace(
             &file,
-            2,
-            3, // replace lines 2-3
+            &ReplaceTarget::Line(2),
+            None,
+            "var x = 10\n",
+            true,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        let content = fs::read_to_string(&file).unwrap();
+        assert!(content.contains("var x = 10"));
+        assert!(!content.contains("var a = 1"));
+        assert!(content.contains("var b = 2"));
+    }
+
+    #[test]
+    fn replace_line_range() {
+        let temp = setup(&[(
+            "player.gd",
+            "extends Node\nvar a = 1\nvar b = 2\nvar c = 3\n",
+        )]);
+        let file = temp.path().join("player.gd");
+        let result = replace(
+            &file,
+            &ReplaceTarget::LineRange { start: 2, end: 3 },
+            None,
             "var x = 10\nvar y = 20\n",
             true,
             temp.path(),
         )
         .unwrap();
         assert!(result.applied);
-        assert_eq!(result.operation, "replace-range");
-        assert!(result.symbol.is_none());
-
         let content = fs::read_to_string(&file).unwrap();
         assert!(content.contains("var x = 10"));
         assert!(content.contains("var y = 20"));
@@ -1215,97 +1081,17 @@ mod tests {
     }
 
     #[test]
-    fn edit_range_invalid_lines() {
-        let temp = setup(&[("player.gd", "extends Node\nvar a = 1\n")]);
-        let file = temp.path().join("player.gd");
-        let result = edit_range(&file, 3, 1, "x\n", true, temp.path());
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn edit_range_zero_line() {
-        let temp = setup(&[("player.gd", "extends Node\nvar a = 1\n")]);
-        let file = temp.path().join("player.gd");
-        let result = edit_range(&file, 0, 1, "x\n", true, temp.path());
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn edit_range_empty_file() {
-        let temp = setup(&[("empty.gd", "")]);
-        let file = temp.path().join("empty.gd");
-        let result = edit_range(
-            &file,
-            1,
-            1,
-            "extends Node\n",
-            true, // no_format
-            temp.path(),
-        )
-        .unwrap();
-        assert!(result.applied);
-        let content = fs::read_to_string(&file).unwrap();
-        assert!(content.contains("extends Node"));
-    }
-
-    #[test]
-    fn edit_range_newline_only_file() {
-        let temp = setup(&[("nl.gd", "\n")]);
-        let file = temp.path().join("nl.gd");
-        let result =
-            edit_range(&file, 1, 1, "extends Node\nvar x = 1\n", true, temp.path()).unwrap();
-        assert!(result.applied);
-        let content = fs::read_to_string(&file).unwrap();
-        assert!(content.contains("extends Node"));
-        assert!(content.contains("var x = 1"));
-    }
-
-    #[test]
-    fn edit_range_rejects_split_node() {
-        // A function spans lines 4-5; selecting only line 4 splits the node
-        let temp = setup(&[("player.gd", "extends Node\n\n\nfunc _ready():\n\tpass\n")]);
-        let file = temp.path().join("player.gd");
-        let result = edit_range(&file, 4, 4, "var x = 1\n", true, temp.path());
-        assert!(result.is_err());
-        let msg = result.unwrap_err().to_string();
-        assert!(
-            msg.contains("splits"),
-            "expected boundary error, got: {msg}"
-        );
-    }
-
-    #[test]
-    fn edit_range_accepts_whole_node() {
-        // Selecting the entire function node (lines 4-5) is fine
-        let temp = setup(&[("player.gd", "extends Node\n\n\nfunc _ready():\n\tpass\n")]);
-        let file = temp.path().join("player.gd");
-        let result = edit_range(
-            &file,
-            4,
-            5,
-            "func _ready():\n\tprint(\"hi\")\n",
-            true,
-            temp.path(),
-        )
-        .unwrap();
-        assert!(result.applied);
-        let content = fs::read_to_string(&file).unwrap();
-        assert!(content.contains("print(\"hi\")"));
-    }
-
-    #[test]
-    fn edit_range_body_stmts() {
-        // Replace statements inside a function body
+    fn replace_line_range_body_stmts() {
         let temp = setup(&[(
             "player.gd",
             "extends Node\n\n\nfunc _ready():\n\tvar x = 1\n\tvar y = 2\n\tprint(x)\n",
         )]);
         let file = temp.path().join("player.gd");
-        let result = edit_range(
+        let result = replace(
             &file,
-            5,
-            6, // replace var x and var y
-            "\tvar a = 10\n\tvar b = 20\n\tvar c = 30\n",
+            &ReplaceTarget::LineRange { start: 5, end: 6 },
+            None,
+            "\tvar a = 10\n\tvar b = 20\n",
             true,
             temp.path(),
         )
@@ -1313,42 +1099,206 @@ mod tests {
         assert!(result.applied);
         let content = fs::read_to_string(&file).unwrap();
         assert!(content.contains("var a = 10"));
-        assert!(content.contains("var b = 20"));
-        assert!(content.contains("var c = 30"));
-        assert!(content.contains("print(x)"));
         assert!(!content.contains("var x = 1"));
-        assert!(!content.contains("var y = 2"));
+        assert!(content.contains("print(x)"));
     }
 
     #[test]
-    fn edit_range_body_rejects_split_if() {
-        // Selecting only the `if` header (not its body) should reject
-        let temp = setup(&[(
-            "player.gd",
-            "extends Node\n\n\nfunc _ready():\n\tif true:\n\t\tpass\n\tprint(1)\n",
-        )]);
+    fn replace_line_rejects_split() {
+        let temp = setup(&[("player.gd", "extends Node\n\n\nfunc _ready():\n\tpass\n")]);
         let file = temp.path().join("player.gd");
-        let result = edit_range(&file, 5, 5, "\tvar z = 0\n", true, temp.path());
+        let result = replace(
+            &file,
+            &ReplaceTarget::Line(4),
+            None,
+            "var x = 1\n",
+            true,
+            temp.path(),
+        );
         assert!(result.is_err());
-        let msg = result.unwrap_err().to_string();
-        assert!(msg.contains("splits"), "expected splits error, got: {msg}");
     }
 
     #[test]
-    fn edit_range_body_whole_if() {
-        // Selecting the entire if block (header + body) is fine
-        let temp = setup(&[(
-            "player.gd",
-            "extends Node\n\n\nfunc _ready():\n\tif true:\n\t\tpass\n\tprint(1)\n",
-        )]);
-        let file = temp.path().join("player.gd");
-        let result = edit_range(&file, 5, 6, "\tprint(\"replaced\")\n", true, temp.path()).unwrap();
+    fn replace_empty_file() {
+        let temp = setup(&[("empty.gd", "")]);
+        let file = temp.path().join("empty.gd");
+        let result = replace(
+            &file,
+            &ReplaceTarget::LineRange { start: 1, end: 1 },
+            None,
+            "extends Node\n",
+            true,
+            temp.path(),
+        )
+        .unwrap();
         assert!(result.applied);
         let content = fs::read_to_string(&file).unwrap();
-        assert!(content.contains("print(\"replaced\")"));
-        assert!(content.contains("print(1)"));
-        assert!(!content.contains("if true:"));
+        assert!(content.contains("extends Node"));
     }
+
+    // ── insert ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn insert_name_after() {
+        let temp = setup(&[("player.gd", "extends Node\n\n\nfunc _ready():\n\tpass\n")]);
+        let file = temp.path().join("player.gd");
+        let result = insert_cmd(
+            &file,
+            &InsertAnchor::Name("_ready".to_string()),
+            &InsertPosition::After,
+            None,
+            "func _process(delta):\n\tpass\n",
+            true,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        let content = fs::read_to_string(&file).unwrap();
+        assert!(content.contains("func _ready():"));
+        assert!(content.contains("func _process(delta):"));
+        let ready_pos = content.find("func _ready():").unwrap();
+        let process_pos = content.find("func _process(delta):").unwrap();
+        assert!(process_pos > ready_pos);
+    }
+
+    #[test]
+    fn insert_name_before() {
+        let temp = setup(&[("player.gd", "extends Node\n\n\nfunc _ready():\n\tpass\n")]);
+        let file = temp.path().join("player.gd");
+        let result = insert_cmd(
+            &file,
+            &InsertAnchor::Name("_ready".to_string()),
+            &InsertPosition::Before,
+            None,
+            "var speed = 10\n",
+            true,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        let content = fs::read_to_string(&file).unwrap();
+        assert!(content.contains("var speed = 10"));
+        assert!(content.contains("func _ready():"));
+        let var_pos = content.find("var speed").unwrap();
+        let func_pos = content.find("func _ready():").unwrap();
+        assert!(var_pos < func_pos);
+    }
+
+    #[test]
+    fn insert_into_function_body() {
+        let temp = setup(&[(
+            "player.gd",
+            "extends Node\n\n\nfunc _ready():\n\tprint(\"end\")\n",
+        )]);
+        let file = temp.path().join("player.gd");
+        let result = insert_cmd(
+            &file,
+            &InsertAnchor::Name("_ready".to_string()),
+            &InsertPosition::Into,
+            None,
+            "\tprint(\"start\")\n",
+            true,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        let content = fs::read_to_string(&file).unwrap();
+        assert!(content.contains("print(\"start\")"));
+        assert!(content.contains("print(\"end\")"));
+        let start_pos = content.find("print(\"start\")").unwrap();
+        let end_pos = content.find("print(\"end\")").unwrap();
+        assert!(start_pos < end_pos, "start should come before end");
+    }
+
+    #[test]
+    fn insert_into_end_function_body() {
+        let temp = setup(&[(
+            "player.gd",
+            "extends Node\n\n\nfunc _ready():\n\tprint(\"start\")\n",
+        )]);
+        let file = temp.path().join("player.gd");
+        let result = insert_cmd(
+            &file,
+            &InsertAnchor::Name("_ready".to_string()),
+            &InsertPosition::IntoEnd,
+            None,
+            "\tprint(\"end\")\n",
+            true,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        let content = fs::read_to_string(&file).unwrap();
+        let start_pos = content.find("print(\"start\")").unwrap();
+        let end_pos = content.find("print(\"end\")").unwrap();
+        assert!(start_pos < end_pos, "end should come after start");
+    }
+
+    #[test]
+    fn insert_into_class_body() {
+        let temp = setup(&[("player.gd", "extends Node\n\n\nclass Inner:\n\tvar x = 1\n")]);
+        let file = temp.path().join("player.gd");
+        let result = insert_cmd(
+            &file,
+            &InsertAnchor::Name("Inner".to_string()),
+            &InsertPosition::IntoEnd,
+            None,
+            "\tfunc foo():\n\t\tpass\n",
+            true,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        let content = fs::read_to_string(&file).unwrap();
+        assert!(content.contains("var x = 1"));
+        assert!(content.contains("func foo():"));
+    }
+
+    #[test]
+    fn insert_into_non_container_rejected() {
+        let temp = setup(&[("player.gd", "extends Node\nvar speed = 10\n")]);
+        let file = temp.path().join("player.gd");
+        let result = insert_cmd(
+            &file,
+            &InsertAnchor::Name("speed".to_string()),
+            &InsertPosition::Into,
+            None,
+            "var x = 1\n",
+            true,
+            temp.path(),
+        );
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("container"),
+            "expected container error, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn insert_line_after() {
+        let temp = setup(&[("player.gd", "extends Node\nvar a = 1\nvar b = 2\n")]);
+        let file = temp.path().join("player.gd");
+        let result = insert_cmd(
+            &file,
+            &InsertAnchor::Line(2),
+            &InsertPosition::After,
+            None,
+            "var inserted = 99\n",
+            true,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        let content = fs::read_to_string(&file).unwrap();
+        assert!(content.contains("var inserted = 99"));
+        let a_pos = content.find("var a = 1").unwrap();
+        let ins_pos = content.find("var inserted = 99").unwrap();
+        let b_pos = content.find("var b = 2").unwrap();
+        assert!(ins_pos > a_pos && ins_pos < b_pos);
+    }
+
+    // ── helpers ─────────────────────────────────────────────────────────
 
     #[test]
     fn diff_line_count_empty_to_content() {
