@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Added
+- **`gd edit replace-range`** — AST-safe line range replacement. Parses source and replacement into AST nodes, validates that the range aligns with complete declaration/statement boundaries, splices at the correct nesting level (top-level declarations or function body statements), and prints from the AST. Rejects ranges that split a node.
+- **`OwnedDecl::span()`** — accessor for declaration source spans, matching the existing `OwnedExpr::span()` and `OwnedStmt::span()` pattern.
+- **`clear_spans()` on all owned AST types** — recursively clears source spans so the printer regenerates from AST fields. Added to `OwnedFile`, `OwnedDecl`, `OwnedFunc`, `OwnedVar`, `OwnedStmt`, and `OwnedExpr`.
+
 ### Fixed
 - **Type inference for binary operations with builtin types** — `Vector3 / float`, `Vector3 * float`, `Color + Color`, `Transform3D * Vector3`, and all other ClassDB operator combinations now resolve correctly. Previously, operand types (variant type constants like `Vector3.ZERO`, function parameters, local variables) couldn't be resolved, so the ClassDB operator table was never consulted and the fallback incorrectly returned `float`. Fixes false positive "cannot return a value of type float from function with return type Vector3" errors.
 - **Variant type constant resolution** — `Vector3.ZERO`, `Vector2.ONE`, `Color.RED`, `Basis.IDENTITY` and all other builtin type constants now resolve to their correct types in the type inference engine.

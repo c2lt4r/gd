@@ -425,10 +425,265 @@ pub fn replace_symbol(
 
 // ── edit-range ──────────────────────────────────────────────────────────────
 
+fn edit_range_into_empty(
+    source: &str,
+    new_content: &str,
+    no_format: bool,
+    project_root: &Path,
+    file: &Path,
+    rel: &str,
+) -> Result<EditOutput> {
+    let trimmed = new_content.trim_end();
+    let mut result = String::from(trimmed);
+    if !result.ends_with('\n') {
+        result.push('\n');
+    }
+    validate_no_new_errors("", &result)?;
+    let final_source = if no_format {
+        result
+    } else {
+        format_source(&result, project_root)?
+    };
+    let lines_changed = diff_line_count(source, &final_source);
+    validate_no_new_diagnostics(source, &final_source, project_root)?;
+    let diagnostics = persist(file, &final_source, project_root)?;
+    Ok(EditOutput {
+        file: rel.to_string(),
+        operation: "replace-range",
+        symbol: None,
+        applied: true,
+        lines_changed,
+        diagnostics,
+        warnings: vec![],
+    })
+}
+
+/// Result of locating which AST nodes a byte range covers.
+#[derive(Clone, Copy)]
+enum RangeTarget {
+    /// Range covers complete top-level declarations `[first..=last]`.
+    Decls { first: usize, last: usize },
+    /// Range falls inside a single declaration at `decl_idx` and covers
+    /// complete statements `[first..=last]` within that declaration's body.
+    BodyStmts {
+        decl_idx: usize,
+        first: usize,
+        last: usize,
+    },
+    /// Range covers only blank lines / comments — no AST nodes matched.
+    Empty { insert_at: usize },
+}
+/// Recursively locate which AST nodes a byte range covers.
+fn find_range_target(
+    decls: &[gd_core::ast_owned::OwnedDecl],
+    start_byte: usize,
+    end_byte: usize,
+    start_line: usize,
+    end_line: usize,
+    line_starts: &[usize],
+) -> Result<RangeTarget> {
+    let mut first_idx: Option<usize> = None;
+    let mut last_idx: Option<usize> = None;
+    let mut containing: Option<usize> = None;
+
+    for (i, decl) in decls.iter().enumerate() {
+        let Some(span) = decl.span() else { continue };
+        let ds = span.start;
+        let de = span.end;
+
+        if de <= start_byte || ds >= end_byte {
+            continue;
+        }
+
+        if ds >= start_byte && de <= end_byte {
+            if first_idx.is_none() {
+                first_idx = Some(i);
+            }
+            last_idx = Some(i);
+            continue;
+        }
+
+        // Range is fully inside this declaration — try descending
+        if ds <= start_byte && de >= end_byte {
+            if let gd_core::ast_owned::OwnedDecl::Func(f) = &decls[i] {
+                // Only descend if the range starts at or after the first
+                // body statement's line (not at the function signature).
+                let body_line = f
+                    .body
+                    .first()
+                    .and_then(gd_core::ast_owned::OwnedStmt::span)
+                    .map(|s| byte_to_line_1based(line_starts, s.start));
+                if body_line.is_some_and(|bl| start_line >= bl) {
+                    containing = Some(i);
+                    continue;
+                }
+            }
+            // Range overlaps the signature — treat as partial overlap
+            let node_start = byte_to_line_1based(line_starts, ds);
+            let node_end = byte_to_line_1based(line_starts, de.saturating_sub(1));
+            return Err(miette::miette!(
+                "range {start_line}-{end_line} splits a declaration \
+                 (lines {node_start}-{node_end}); \
+                 adjust to align with declaration boundaries"
+            ));
+        }
+
+        let node_start = byte_to_line_1based(line_starts, ds);
+        let node_end = byte_to_line_1based(line_starts, de.saturating_sub(1));
+        return Err(miette::miette!(
+            "range {start_line}-{end_line} splits a declaration \
+             (lines {node_start}-{node_end}); \
+             adjust to align with declaration boundaries"
+        ));
+    }
+
+    if let (Some(first), Some(last)) = (first_idx, last_idx) {
+        return Ok(RangeTarget::Decls { first, last });
+    }
+
+    if let Some(idx) = containing {
+        let body = match &decls[idx] {
+            gd_core::ast_owned::OwnedDecl::Func(f) => &f.body,
+            _ => unreachable!("only Func sets containing"),
+        };
+
+        return find_stmt_range(
+            body,
+            start_byte,
+            end_byte,
+            start_line,
+            end_line,
+            line_starts,
+        )
+        .map(|target| match target {
+            RangeTarget::Decls { first, last } => RangeTarget::BodyStmts {
+                decl_idx: idx,
+                first,
+                last,
+            },
+            other => other,
+        });
+    }
+
+    let insert_at = decls
+        .iter()
+        .position(|d| d.span().is_some_and(|s| s.start >= start_byte))
+        .unwrap_or(decls.len());
+    Ok(RangeTarget::Empty { insert_at })
+}
+/// Find which statements in a body a byte range covers.
+fn find_stmt_range(
+    stmts: &[gd_core::ast_owned::OwnedStmt],
+    start_byte: usize,
+    end_byte: usize,
+    start_line: usize,
+    end_line: usize,
+    line_starts: &[usize],
+) -> Result<RangeTarget> {
+    let mut first_idx: Option<usize> = None;
+    let mut last_idx: Option<usize> = None;
+
+    for (i, stmt) in stmts.iter().enumerate() {
+        let Some(span) = stmt.span() else { continue };
+        let ss = span.start;
+        let se = span.end;
+
+        if se <= start_byte || ss >= end_byte {
+            continue;
+        }
+
+        if ss >= start_byte && se <= end_byte {
+            if first_idx.is_none() {
+                first_idx = Some(i);
+            }
+            last_idx = Some(i);
+            continue;
+        }
+
+        let node_start = byte_to_line_1based(line_starts, ss);
+        let node_end = byte_to_line_1based(line_starts, se.saturating_sub(1));
+        return Err(miette::miette!(
+            "range {start_line}-{end_line} splits a statement \
+             (lines {node_start}-{node_end}); \
+             adjust to align with statement boundaries"
+        ));
+    }
+
+    if let (Some(first), Some(last)) = (first_idx, last_idx) {
+        Ok(RangeTarget::Decls { first, last })
+    } else {
+        let insert_at = stmts
+            .iter()
+            .position(|s| s.span().is_some_and(|sp| sp.start >= start_byte))
+            .unwrap_or(stmts.len());
+        Ok(RangeTarget::Empty { insert_at })
+    }
+}
+
+/// Parse replacement content as top-level declarations.
+fn parse_replacement_decls(content: &str) -> Result<Vec<gd_core::ast_owned::OwnedDecl>> {
+    let needs_wrapper = !content.trim_start().starts_with("extends ")
+        && !content.trim_start().starts_with("class_name ")
+        && !content.trim_start().starts_with("@tool");
+    let parse_input = if needs_wrapper {
+        format!("extends Node\n{content}")
+    } else {
+        content.to_string()
+    };
+    let tree = gd_core::parser::parse(&parse_input)
+        .map_err(|e| miette::miette!("replacement content has parse errors: {e}"))?;
+    let gd_file = gd_ast::convert(&tree, &parse_input);
+    let owned = gd_core::ast_owned::OwnedFile::from_borrowed(&gd_file);
+    let mut decls = owned.declarations;
+    for d in &mut decls {
+        d.clear_spans();
+    }
+    Ok(decls)
+}
+/// Parse replacement content as function body statements.
+fn parse_replacement_stmts(content: &str) -> Result<Vec<gd_core::ast_owned::OwnedStmt>> {
+    let parse_input = format!("extends Node\nfunc _wrapper():\n{content}");
+    let tree = gd_core::parser::parse(&parse_input)
+        .map_err(|e| miette::miette!("replacement content has parse errors: {e}"))?;
+    let gd_file = gd_ast::convert(&tree, &parse_input);
+    let owned = gd_core::ast_owned::OwnedFile::from_borrowed(&gd_file);
+    // Extract _wrapper's body
+    for decl in &owned.declarations {
+        if let gd_core::ast_owned::OwnedDecl::Func(f) = decl
+            && f.name == "_wrapper"
+        {
+            let mut stmts = f.body.clone();
+            for s in &mut stmts {
+                s.clear_spans();
+            }
+            return Ok(stmts);
+        }
+    }
+    Err(miette::miette!(
+        "failed to parse replacement as function body statements"
+    ))
+}
+/// Splice items into a `Vec`, replacing indices `first..=last`.
+fn splice_vec<T: Clone>(vec: &mut Vec<T>, first: usize, last: usize, new_items: Vec<T>) {
+    let mut result = Vec::new();
+    result.extend(vec[..first].iter().cloned());
+    result.extend(new_items);
+    result.extend(vec[last + 1..].iter().cloned());
+    *vec = result;
+}
+/// Insert items into a `Vec` at position `at`.
+fn insert_vec<T: Clone>(vec: &mut Vec<T>, at: usize, new_items: Vec<T>) {
+    let mut result = Vec::new();
+    result.extend(vec[..at].iter().cloned());
+    result.extend(new_items);
+    result.extend(vec[at..].iter().cloned());
+    *vec = result;
+}
+
 pub fn edit_range(
     file: &Path,
-    start_line: usize, // 1-based inclusive
-    end_line: usize,   // 1-based inclusive
+    start_line: usize,
+    end_line: usize,
     new_content: &str,
     no_format: bool,
     project_root: &Path,
@@ -446,37 +701,9 @@ pub fn edit_range(
         ));
     }
 
-    // Handle empty or newline-only files: build the result directly
     let effectively_empty = source.is_empty() || source.chars().all(|c| c == '\n' || c == '\r');
     if effectively_empty && start_line == 1 && end_line == 1 {
-        let trimmed = new_content.trim_end();
-        let mut result = String::from(trimmed);
-        if !result.ends_with('\n') {
-            result.push('\n');
-        }
-
-        validate_no_new_errors("", &result)?;
-
-        let final_source = if no_format {
-            result
-        } else {
-            format_source(&result, project_root)?
-        };
-
-        let lines_changed = diff_line_count(&source, &final_source);
-
-        validate_no_new_diagnostics(&source, &final_source, project_root)?;
-        let diagnostics = persist(file, &final_source, project_root)?;
-
-        return Ok(EditOutput {
-            file: rel,
-            operation: "edit-range",
-            symbol: None,
-            applied: true,
-            lines_changed,
-            diagnostics,
-            warnings: vec![],
-        });
+        return edit_range_into_empty(&source, new_content, no_format, project_root, file, &rel);
     }
 
     let starts = line_starts(&source);
@@ -492,23 +719,27 @@ pub fn edit_range(
     let end_byte = if end_line >= total_lines {
         source.len()
     } else {
-        starts[end_line] // start of the line *after* end_line
+        starts[end_line]
     };
 
-    // Build new source
-    let mut result = String::with_capacity(source.len());
-    result.push_str(&source[..start_byte]);
-    let trimmed = new_content.trim_end();
-    result.push_str(trimmed);
-    if !trimmed.ends_with('\n') {
-        result.push('\n');
-    }
-    result.push_str(&source[end_byte..]);
+    let tree = gd_core::parser::parse(&source).map_err(|e| miette::miette!("parse error: {e}"))?;
+    let gd_file = gd_ast::convert(&tree, &source);
+    let mut owned = gd_core::ast_owned::OwnedFile::from_borrowed(&gd_file);
 
-    // Validate
+    let target = find_range_target(
+        &owned.declarations,
+        start_byte,
+        end_byte,
+        start_line,
+        end_line,
+        &starts,
+    )?;
+
+    apply_range_target(&mut owned, target, new_content)?;
+
+    let result = gd_core::printer::print_file(&owned, &source);
     validate_no_new_errors(&source, &result)?;
 
-    // Format
     let final_source = if no_format {
         result
     } else {
@@ -516,18 +747,65 @@ pub fn edit_range(
     };
 
     let lines_changed = diff_line_count(&source, &final_source);
-
     let diagnostics = persist(file, &final_source, project_root)?;
 
     Ok(EditOutput {
         file: rel,
-        operation: "edit-range",
+        operation: "replace-range",
         symbol: None,
         applied: true,
         lines_changed,
         diagnostics,
         warnings: vec![],
     })
+}
+/// Apply a `RangeTarget` by parsing replacement content and splicing into the AST.
+fn apply_range_target(
+    owned: &mut gd_core::ast_owned::OwnedFile,
+    target: RangeTarget,
+    new_content: &str,
+) -> Result<()> {
+    match target {
+        RangeTarget::Decls { first, last } => {
+            let new_decls = parse_replacement_decls(new_content)?;
+            splice_vec(&mut owned.declarations, first, last, new_decls);
+        }
+        RangeTarget::BodyStmts {
+            decl_idx,
+            first,
+            last,
+        } => {
+            let new_stmts = parse_replacement_stmts(new_content)?;
+            let body = match &mut owned.declarations[decl_idx] {
+                gd_core::ast_owned::OwnedDecl::Func(f) => {
+                    f.span = None;
+                    &mut f.body
+                }
+                _ => unreachable!("find_range_target only returns BodyStmts for Func"),
+            };
+            splice_vec(body, first, last, new_stmts);
+            // Clear spans on all remaining body statements so the printer
+            // regenerates them with correct indentation (the function's
+            // span was cleared, so verbatim spans would read garbage).
+            for s in body.iter_mut() {
+                s.clear_spans();
+            }
+        }
+        RangeTarget::Empty { insert_at } => {
+            let new_decls = parse_replacement_decls(new_content)?;
+            insert_vec(&mut owned.declarations, insert_at, new_decls);
+        }
+    }
+    owned.span = None;
+    Ok(())
+}
+
+/// Convert a byte offset to a 1-based line number given `line_starts`.
+fn byte_to_line_1based(starts: &[usize], byte: usize) -> usize {
+    match starts.binary_search(&byte) {
+        Ok(i) => i + 1,
+        Err(i) => i,
+    }
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -925,7 +1203,7 @@ mod tests {
         )
         .unwrap();
         assert!(result.applied);
-        assert_eq!(result.operation, "edit-range");
+        assert_eq!(result.operation, "replace-range");
         assert!(result.symbol.is_none());
 
         let content = fs::read_to_string(&file).unwrap();
@@ -980,6 +1258,96 @@ mod tests {
         let content = fs::read_to_string(&file).unwrap();
         assert!(content.contains("extends Node"));
         assert!(content.contains("var x = 1"));
+    }
+
+    #[test]
+    fn edit_range_rejects_split_node() {
+        // A function spans lines 4-5; selecting only line 4 splits the node
+        let temp = setup(&[("player.gd", "extends Node\n\n\nfunc _ready():\n\tpass\n")]);
+        let file = temp.path().join("player.gd");
+        let result = edit_range(&file, 4, 4, "var x = 1\n", true, temp.path());
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("splits"),
+            "expected boundary error, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn edit_range_accepts_whole_node() {
+        // Selecting the entire function node (lines 4-5) is fine
+        let temp = setup(&[("player.gd", "extends Node\n\n\nfunc _ready():\n\tpass\n")]);
+        let file = temp.path().join("player.gd");
+        let result = edit_range(
+            &file,
+            4,
+            5,
+            "func _ready():\n\tprint(\"hi\")\n",
+            true,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        let content = fs::read_to_string(&file).unwrap();
+        assert!(content.contains("print(\"hi\")"));
+    }
+
+    #[test]
+    fn edit_range_body_stmts() {
+        // Replace statements inside a function body
+        let temp = setup(&[(
+            "player.gd",
+            "extends Node\n\n\nfunc _ready():\n\tvar x = 1\n\tvar y = 2\n\tprint(x)\n",
+        )]);
+        let file = temp.path().join("player.gd");
+        let result = edit_range(
+            &file,
+            5,
+            6, // replace var x and var y
+            "\tvar a = 10\n\tvar b = 20\n\tvar c = 30\n",
+            true,
+            temp.path(),
+        )
+        .unwrap();
+        assert!(result.applied);
+        let content = fs::read_to_string(&file).unwrap();
+        assert!(content.contains("var a = 10"));
+        assert!(content.contains("var b = 20"));
+        assert!(content.contains("var c = 30"));
+        assert!(content.contains("print(x)"));
+        assert!(!content.contains("var x = 1"));
+        assert!(!content.contains("var y = 2"));
+    }
+
+    #[test]
+    fn edit_range_body_rejects_split_if() {
+        // Selecting only the `if` header (not its body) should reject
+        let temp = setup(&[(
+            "player.gd",
+            "extends Node\n\n\nfunc _ready():\n\tif true:\n\t\tpass\n\tprint(1)\n",
+        )]);
+        let file = temp.path().join("player.gd");
+        let result = edit_range(&file, 5, 5, "\tvar z = 0\n", true, temp.path());
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("splits"), "expected splits error, got: {msg}");
+    }
+
+    #[test]
+    fn edit_range_body_whole_if() {
+        // Selecting the entire if block (header + body) is fine
+        let temp = setup(&[(
+            "player.gd",
+            "extends Node\n\n\nfunc _ready():\n\tif true:\n\t\tpass\n\tprint(1)\n",
+        )]);
+        let file = temp.path().join("player.gd");
+        let result = edit_range(&file, 5, 6, "\tprint(\"replaced\")\n", true, temp.path()).unwrap();
+        assert!(result.applied);
+        let content = fs::read_to_string(&file).unwrap();
+        assert!(content.contains("print(\"replaced\")"));
+        assert!(content.contains("print(1)"));
+        assert!(!content.contains("if true:"));
     }
 
     #[test]

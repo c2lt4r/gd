@@ -109,6 +109,25 @@ pub fn query_replace_symbol(
     crate::refactor::replace_symbol(&path, name, class, content, no_format, &project_root)
 }
 
+pub fn query_replace_range(
+    file: &str,
+    start_line: usize,
+    end_line: usize,
+    content: &str,
+    no_format: bool,
+) -> Result<crate::refactor::EditOutput> {
+    let path = resolve_file(file)?;
+    let project_root = find_root(&path)?;
+    crate::refactor::edit_range(
+        &path,
+        start_line,
+        end_line,
+        content,
+        no_format,
+        &project_root,
+    )
+}
+
 // ── Insert into class body ──────────────────────────────────────────────────
 
 pub fn query_insert_into(

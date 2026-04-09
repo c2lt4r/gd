@@ -161,6 +161,27 @@ pub enum EditGdCommand {
         #[arg(long)]
         format: Option<String>,
     },
+    /// Replace a range of lines (AST-safe, reads new content from stdin or --input-file)
+    ReplaceRange {
+        /// Path to the GDScript file
+        #[arg()]
+        file: String,
+        /// Start line (1-based, inclusive)
+        #[arg(long)]
+        start_line: usize,
+        /// End line (1-based, inclusive)
+        #[arg(long)]
+        end_line: usize,
+        /// Read content from a file instead of stdin
+        #[arg(long)]
+        input_file: Option<String>,
+        /// Skip auto-formatting the result
+        #[arg(long)]
+        no_format: bool,
+        /// Output format: json or human (default: human)
+        #[arg(long)]
+        format: Option<String>,
+    },
 }
 
 fn is_json(format: Option<&String>) -> bool {
@@ -178,6 +199,7 @@ fn print_edit_human(r: &gd_lsp::refactor::EditOutput) {
         "insert_after" => "Inserted after",
         "insert_before" => "Inserted before",
         "replace_symbol" => "Replaced",
+        "replace-range" => "Replaced range in",
         "insert-into" => "Inserted into",
         _ => r.operation,
     };
@@ -506,6 +528,27 @@ pub fn exec(args: EditGdArgs) -> Result<()> {
         } => {
             let content = read_content(input_file.as_deref())?;
             let result = gd_lsp::query::query_insert_into(&file, &class, &content, no_format)?;
+            if is_json(format.as_ref()) {
+                let json =
+                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+                cprintln!("{json}");
+            } else {
+                print_edit_human(&result);
+            }
+            Ok(())
+        }
+        EditGdCommand::ReplaceRange {
+            file,
+            start_line,
+            end_line,
+            input_file,
+            no_format,
+            format,
+        } => {
+            let content = read_content(input_file.as_deref())?;
+            let result = gd_lsp::query::query_replace_range(
+                &file, start_line, end_line, &content, no_format,
+            )?;
             if is_json(format.as_ref()) {
                 let json =
                     serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;

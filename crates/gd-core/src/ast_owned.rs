@@ -395,6 +395,106 @@ impl OwnedExpr {
             | Self::Invalid { span } => *span,
         }
     }
+
+    /// Recursively clear all source spans so the printer regenerates
+    /// this expression entirely from AST fields.
+    pub fn clear_spans(&mut self) {
+        match self {
+            Self::IntLiteral { span, .. }
+            | Self::FloatLiteral { span, .. }
+            | Self::StringLiteral { span, .. }
+            | Self::StringName { span, .. }
+            | Self::Bool { span, .. }
+            | Self::Null { span }
+            | Self::Ident { span, .. }
+            | Self::GetNode { span, .. }
+            | Self::Preload { span, .. }
+            | Self::Invalid { span } => *span = None,
+            Self::Array { span, elements } => {
+                *span = None;
+                for e in elements {
+                    e.clear_spans();
+                }
+            }
+            Self::Dict { span, pairs } => {
+                *span = None;
+                for (k, v) in pairs {
+                    k.clear_spans();
+                    v.clear_spans();
+                }
+            }
+            Self::Call { span, callee, args } => {
+                *span = None;
+                callee.clear_spans();
+                for a in args {
+                    a.clear_spans();
+                }
+            }
+            Self::MethodCall {
+                span,
+                receiver,
+                args,
+                ..
+            } => {
+                *span = None;
+                receiver.clear_spans();
+                for a in args {
+                    a.clear_spans();
+                }
+            }
+            Self::SuperCall { span, args, .. } => {
+                *span = None;
+                for a in args {
+                    a.clear_spans();
+                }
+            }
+            Self::PropertyAccess { span, receiver, .. } => {
+                *span = None;
+                receiver.clear_spans();
+            }
+            Self::Subscript {
+                span,
+                receiver,
+                index,
+            } => {
+                *span = None;
+                receiver.clear_spans();
+                index.clear_spans();
+            }
+            Self::BinOp {
+                span, left, right, ..
+            } => {
+                *span = None;
+                left.clear_spans();
+                right.clear_spans();
+            }
+            Self::UnaryOp { span, operand, .. } => {
+                *span = None;
+                operand.clear_spans();
+            }
+            Self::Cast { span, expr, .. }
+            | Self::Is { span, expr, .. }
+            | Self::Await { span, expr } => {
+                *span = None;
+                expr.clear_spans();
+            }
+            Self::Ternary {
+                span,
+                true_val,
+                condition,
+                false_val,
+            } => {
+                *span = None;
+                true_val.clear_spans();
+                condition.clear_spans();
+                false_val.clear_spans();
+            }
+            Self::Lambda { span, func } => {
+                *span = None;
+                func.clear_spans();
+            }
+        }
+    }
 }
 
 impl OwnedStmt {
@@ -415,6 +515,98 @@ impl OwnedStmt {
             | Self::Invalid { span } => *span,
             Self::Var(v) => v.span,
             Self::If(i) => i.span,
+        }
+    }
+
+    /// Recursively clear all source spans so the printer regenerates
+    /// this statement entirely from AST fields.
+    pub fn clear_spans(&mut self) {
+        match self {
+            Self::Expr { span, expr } => {
+                *span = None;
+                expr.clear_spans();
+            }
+            Self::Var(v) => v.clear_spans(),
+            Self::Assign {
+                span,
+                target,
+                value,
+            }
+            | Self::AugAssign {
+                span,
+                target,
+                value,
+                ..
+            } => {
+                *span = None;
+                target.clear_spans();
+                value.clear_spans();
+            }
+            Self::Return { span, value } => {
+                *span = None;
+                if let Some(v) = value {
+                    v.clear_spans();
+                }
+            }
+            Self::If(i) => {
+                i.span = None;
+                i.condition.clear_spans();
+                for s in &mut i.body {
+                    s.clear_spans();
+                }
+                for (cond, body) in &mut i.elif_branches {
+                    cond.clear_spans();
+                    for s in body {
+                        s.clear_spans();
+                    }
+                }
+                if let Some(eb) = &mut i.else_body {
+                    for s in eb {
+                        s.clear_spans();
+                    }
+                }
+            }
+            Self::For {
+                span, iter, body, ..
+            } => {
+                *span = None;
+                iter.clear_spans();
+                for s in body {
+                    s.clear_spans();
+                }
+            }
+            Self::While {
+                span,
+                condition,
+                body,
+            } => {
+                *span = None;
+                condition.clear_spans();
+                for s in body {
+                    s.clear_spans();
+                }
+            }
+            Self::Match { span, value, arms } => {
+                *span = None;
+                value.clear_spans();
+                for arm in arms {
+                    arm.span = None;
+                    for p in &mut arm.patterns {
+                        p.clear_spans();
+                    }
+                    if let Some(g) = &mut arm.guard {
+                        g.clear_spans();
+                    }
+                    for s in &mut arm.body {
+                        s.clear_spans();
+                    }
+                }
+            }
+            Self::Pass { span }
+            | Self::Break { span }
+            | Self::Continue { span }
+            | Self::Breakpoint { span }
+            | Self::Invalid { span } => *span = None,
         }
     }
 }
@@ -446,6 +638,14 @@ impl OwnedFile {
                 .collect(),
         }
     }
+
+    /// Recursively clear all source spans in this file.
+    pub fn clear_spans(&mut self) {
+        self.span = None;
+        for d in &mut self.declarations {
+            d.clear_spans();
+        }
+    }
 }
 
 impl OwnedExtends {
@@ -470,6 +670,49 @@ impl OwnedDecl {
             gd_ast::GdDecl::Stmt(s) => Self::Stmt(OwnedStmt::from_borrowed(s)),
         }
     }
+
+    /// Return the source span of this declaration, if it has one.
+    #[must_use]
+    pub fn span(&self) -> Option<Span> {
+        match self {
+            Self::Func(f) => f.span,
+            Self::Var(v) => v.span,
+            Self::Signal(s) => s.span,
+            Self::Enum(e) => e.span,
+            Self::Class(c) => c.span,
+            Self::Stmt(s) => s.span(),
+        }
+    }
+
+    /// Recursively clear all source spans in this declaration.
+    pub fn clear_spans(&mut self) {
+        match self {
+            Self::Func(f) => f.clear_spans(),
+            Self::Var(v) => v.clear_spans(),
+            Self::Signal(s) => {
+                s.span = None;
+                for p in &mut s.params {
+                    p.span = None;
+                }
+            }
+            Self::Enum(e) => {
+                e.span = None;
+                for m in &mut e.members {
+                    m.span = None;
+                    if let Some(v) = &mut m.value {
+                        v.clear_spans();
+                    }
+                }
+            }
+            Self::Class(c) => {
+                c.span = None;
+                for d in &mut c.declarations {
+                    d.clear_spans();
+                }
+            }
+            Self::Stmt(s) => s.clear_spans(),
+        }
+    }
 }
 
 impl OwnedFunc {
@@ -489,6 +732,23 @@ impl OwnedFunc {
                 .map(OwnedAnnotation::from_borrowed)
                 .collect(),
             doc: f.doc.map(String::from),
+        }
+    }
+
+    /// Recursively clear all source spans.
+    pub fn clear_spans(&mut self) {
+        self.span = None;
+        for a in &mut self.annotations {
+            a.span = None;
+            for e in &mut a.args {
+                e.clear_spans();
+            }
+        }
+        for p in &mut self.params {
+            p.span = None;
+        }
+        for s in &mut self.body {
+            s.clear_spans();
         }
     }
 }
@@ -523,6 +783,20 @@ impl OwnedVar {
             setter: v.setter.map(String::from),
             getter: v.getter.map(String::from),
             doc: v.doc.map(String::from),
+        }
+    }
+
+    /// Recursively clear all source spans.
+    pub fn clear_spans(&mut self) {
+        self.span = None;
+        for a in &mut self.annotations {
+            a.span = None;
+            for e in &mut a.args {
+                e.clear_spans();
+            }
+        }
+        if let Some(e) = &mut self.value {
+            e.clear_spans();
         }
     }
 }
