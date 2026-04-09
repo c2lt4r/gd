@@ -6,6 +6,7 @@
 - **`gd edit` consolidated to CRUD primitives** — 5 overlapping commands (`replace-body`, `replace-symbol`, `replace-range`, `insert`, `insert-into`) replaced by 2 AST-safe commands: `gd edit replace` and `gd edit insert`. All mutations go through the owned AST pipeline (parse -> modify -> print). No text splicing.
   - `replace`: target by `--name <sym>` or `--line <N>[-<M>]`, with `--body` for function body-only replacement
   - `insert`: anchor by `--name <sym>` or `--line <N>`, position with `--before`/`--after`/`--into`/`--into-end`
+- **`gd edit remove` now AST-safe** — declaration and enum member removal migrated from byte-offset text splicing to owned AST manipulation (find node → remove from tree → print from AST).
 
 ### Added
 - **`OwnedDecl::name()`** — accessor for declaration names, completing the owned AST query API.

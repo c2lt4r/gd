@@ -7,7 +7,7 @@ use gd_core::gd_ast;
 use super::{
     DeleteSymbolOutput, LineRange, RefLocation, declaration_full_range, declaration_kind_str,
     find_declaration_by_line, find_declaration_by_name, find_declaration_in_class,
-    get_declaration_name, line_starts, normalize_blank_lines,
+    get_declaration_name, line_starts,
 };
 
 #[allow(clippy::too_many_lines)]
@@ -142,10 +142,39 @@ pub fn delete_symbol(
         });
     }
 
-    let mut new_source = String::with_capacity(source.len());
-    new_source.push_str(&source[..start_byte]);
-    new_source.push_str(&source[end_byte..]);
-    normalize_blank_lines(&mut new_source);
+    // Remove declaration via owned AST
+    let mut owned = gd_core::ast_owned::OwnedFile::from_borrowed(&gd_file);
+
+    if let Some(class_name) = class {
+        let class_idx =
+            gd_core::ast_owned::OwnedDecl::find_by_name(&owned.declarations, class_name)
+                .ok_or_else(|| miette::miette!("class '{class_name}' not found"))?;
+        let gd_core::ast_owned::OwnedDecl::Class(ref mut c) = owned.declarations[class_idx] else {
+            return Err(miette::miette!("'{class_name}' is not a class"));
+        };
+        let decl_idx = if let Some(name) = name {
+            gd_core::ast_owned::OwnedDecl::find_by_name(&c.declarations, name)
+        } else {
+            let byte = starts[line.unwrap() - 1];
+            gd_core::ast_owned::OwnedDecl::find_at_byte(&c.declarations, byte)
+        }
+        .ok_or_else(|| miette::miette!("declaration not found in class '{class_name}'"))?;
+        c.declarations.remove(decl_idx);
+        c.span = None;
+    } else {
+        let decl_idx = if let Some(name) = name {
+            gd_core::ast_owned::OwnedDecl::find_by_name(&owned.declarations, name)
+        } else {
+            let byte = starts[line.unwrap() - 1];
+            gd_core::ast_owned::OwnedDecl::find_at_byte(&owned.declarations, byte)
+        }
+        .ok_or_else(|| miette::miette!("declaration not found"))?;
+        owned.declarations.remove(decl_idx);
+    }
+
+    owned.span = None;
+    let new_source = gd_core::printer::print_file(&owned, &source);
+    super::validate_no_new_errors(&source, &new_source)?;
 
     let mut ms = super::mutation::MutationSet::new();
     ms.insert(file.to_path_buf(), new_source);
@@ -223,8 +252,6 @@ fn delete_enum_member(
 
     // Compute byte range to remove including comma
     let member_node = enumerators[member_idx];
-    let (remove_start, remove_end) =
-        compute_enum_member_removal_range(&source, &enumerators, member_idx);
 
     let relative_file = gd_core::fs::relative_slash(file, project_root);
     let starts = line_starts(&source);
@@ -294,9 +321,19 @@ fn delete_enum_member(
         });
     }
 
-    let mut new_source = String::with_capacity(source.len());
-    new_source.push_str(&source[..remove_start]);
-    new_source.push_str(&source[remove_end..]);
+    // Remove member via owned AST
+    let mut owned = gd_core::ast_owned::OwnedFile::from_borrowed(&gd_file);
+    let enum_idx = gd_core::ast_owned::OwnedDecl::find_by_name(&owned.declarations, enum_name)
+        .ok_or_else(|| miette::miette!("enum '{enum_name}' not found"))?;
+    let gd_core::ast_owned::OwnedDecl::Enum(ref mut e) = owned.declarations[enum_idx] else {
+        return Err(miette::miette!("'{enum_name}' is not an enum"));
+    };
+    e.members.retain(|m| m.name != member_name);
+    e.span = None;
+    owned.span = None;
+
+    let new_source = gd_core::printer::print_file(&owned, &source);
+    super::validate_no_new_errors(&source, &new_source)?;
 
     let mut ms = super::mutation::MutationSet::new();
     ms.insert(file.to_path_buf(), new_source);
@@ -313,32 +350,6 @@ fn delete_enum_member(
         references: ref_outputs,
         applied: true,
     })
-}
-
-/// Compute byte range to remove for an enum member, including adjacent comma/whitespace.
-fn compute_enum_member_removal_range(
-    source: &str,
-    enumerators: &[tree_sitter::Node],
-    idx: usize,
-) -> (usize, usize) {
-    let member = enumerators[idx];
-
-    if enumerators.len() == 1 {
-        // Should not happen (checked above), but be safe
-        return (member.start_byte(), member.end_byte());
-    }
-
-    if idx == 0 {
-        // First member: remove from member start to next member start
-        let next = enumerators[1];
-        (member.start_byte(), next.start_byte())
-    } else {
-        // Middle or last: remove from comma after previous member to this member end
-        let prev = enumerators[idx - 1];
-        let between = &source[prev.end_byte()..member.end_byte()];
-        let comma_offset = between.find(',').unwrap_or(0);
-        (prev.end_byte() + comma_offset, member.end_byte())
-    }
 }
 
 #[cfg(test)]
