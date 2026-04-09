@@ -144,8 +144,17 @@ fn variant_infer_from_subscript() {
 #[test]
 fn no_variant_for_unresolved_subscript() {
     // When we can't determine the receiver type, don't flag — user likely knows
-    let source = "var dict := {}\nfunc f():\n\tvar x := dict[\"key\"]\n";
+    let source = "func f(data):\n\tvar x := data[\"key\"]\n";
     assert!(structural_errors(source).is_empty());
+}
+
+#[test]
+fn variant_for_dict_subscript() {
+    // Dictionary subscript produces Variant — flag it
+    let source = "var dict := {}\nfunc f():\n\tvar x := dict[\"key\"]\n";
+    let errs = structural_errors(source);
+    assert_eq!(errs.len(), 1);
+    assert!(errs[0].message.contains("Variant"));
 }
 
 #[test]

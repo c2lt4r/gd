@@ -118,6 +118,16 @@ pub fn infer_expression_type_with_project(
     match node.kind() {
         "call" => infer_call_with_project(node, source, file, project),
         "attribute" => infer_attribute_with_project(node, source, file, project),
+        "binary_operator" => infer_binary_with_project(node, source, file, project),
+        "parenthesized_expression" => node
+            .named_child(0)
+            .and_then(|inner| infer_expression_type_with_project(&inner, source, file, project)),
+        "conditional_expression" | "ternary_expression" => {
+            infer_ternary_with_project(node, source, file, project)
+        }
+        "await_expression" => node
+            .named_child(0)
+            .and_then(|inner| infer_expression_type_with_project(&inner, source, file, project)),
         // For all other node kinds, delegate to the per-file inference
         _ => infer_expression_type(node, source, file),
     }
@@ -219,7 +229,9 @@ fn infer_attribute_with_project(
     } else {
         let name = receiver.utf8_text(source.as_bytes()).ok()?;
         if receiver.kind() == "identifier"
-            && (gd_class_db::class_exists(name) || project.lookup_class(name).is_some())
+            && (gd_class_db::class_exists(name)
+                || gd_class_db::is_variant_type(name)
+                || project.lookup_class(name).is_some())
         {
             receiver_class_name = Some(name.to_string());
             receiver_class_name.as_deref()?
@@ -246,6 +258,8 @@ fn infer_attribute_with_project(
             } else if let Some(t) = project.variable_type(cn, prop_name) {
                 current_type = Some(classify_type_str(&t));
             } else if let Some(t) = gd_class_db::property_type(cn, prop_name) {
+                current_type = Some(parse_class_db_type(t));
+            } else if let Some(t) = gd_class_db::builtin_constant_type(cn, prop_name) {
                 current_type = Some(parse_class_db_type(t));
             } else {
                 return None;
@@ -396,6 +410,91 @@ fn infer_binary(node: &Node, source: &str, file: &GdFile) -> Option<InferredType
     infer_binary_fallback(op_text, lt.as_ref(), rt.as_ref())
 }
 
+/// Project-aware version of `infer_binary` — propagates project context to operand inference.
+fn infer_binary_with_project(
+    node: &Node,
+    source: &str,
+    file: &GdFile,
+    project: &ProjectIndex,
+) -> Option<InferredType> {
+    let op = node.child_by_field_name("op").or_else(|| {
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            if !child.is_named() {
+                let text = child.utf8_text(source.as_bytes()).unwrap_or("");
+                if matches!(
+                    text,
+                    "+" | "-"
+                        | "*"
+                        | "/"
+                        | "%"
+                        | "**"
+                        | "<<"
+                        | ">>"
+                        | "&"
+                        | "|"
+                        | "^"
+                        | "and"
+                        | "or"
+                ) {
+                    return Some(child);
+                }
+            }
+        }
+        None
+    });
+
+    let op_text = op?.utf8_text(source.as_bytes()).ok()?;
+
+    if matches!(op_text, "and" | "or") {
+        return Some(InferredType::Builtin("bool"));
+    }
+    if matches!(op_text, "is" | "is not") {
+        return Some(InferredType::Builtin("bool"));
+    }
+
+    if op_text == "%" {
+        let left = node
+            .child_by_field_name("left")
+            .or_else(|| node.named_child(0));
+        let right = node
+            .child_by_field_name("right")
+            .or_else(|| node.named_child(1));
+        if let Some(ref l) = left
+            && (l.kind() == "string"
+                || infer_expression_type_with_project(l, source, file, project)
+                    == Some(InferredType::Builtin("String")))
+        {
+            return Some(InferredType::Builtin("String"));
+        }
+        if right.is_some_and(|r| r.kind() == "array") {
+            return Some(InferredType::Builtin("String"));
+        }
+    }
+
+    let left_node = node
+        .child_by_field_name("left")
+        .or_else(|| node.named_child(0));
+    let right_node = node
+        .child_by_field_name("right")
+        .or_else(|| node.named_child(1));
+    let lt = left_node
+        .as_ref()
+        .and_then(|l| infer_expression_type_with_project(l, source, file, project));
+    let rt = right_node
+        .as_ref()
+        .and_then(|r| infer_expression_type_with_project(r, source, file, project));
+
+    if let Some(left_name) = lt.as_ref().and_then(InferredType::class_db_name)
+        && let Some(right_name) = rt.as_ref().and_then(InferredType::class_db_name)
+        && let Some(result) = gd_class_db::operator_result_type(left_name, op_text, right_name)
+    {
+        return Some(parse_class_db_type(result));
+    }
+
+    infer_binary_fallback(op_text, lt.as_ref(), rt.as_ref())
+}
+
 /// Fallback heuristics when the ClassDB operator table can't resolve the result
 /// (e.g. one operand type is unknown, or the operator is a GDScript keyword).
 fn infer_binary_fallback(
@@ -491,6 +590,26 @@ fn infer_ternary(node: &Node, source: &str, file: &GdFile) -> Option<InferredTyp
     }
 }
 
+/// Project-aware version of `infer_ternary`.
+fn infer_ternary_with_project(
+    node: &Node,
+    source: &str,
+    file: &GdFile,
+    project: &ProjectIndex,
+) -> Option<InferredType> {
+    let true_branch = node.named_child(0)?;
+    let false_branch = node.named_child(2).or_else(|| node.named_child(1))?;
+
+    let true_type = infer_expression_type_with_project(&true_branch, source, file, project);
+    let false_type = infer_expression_type_with_project(&false_branch, source, file, project);
+
+    match (&true_type, &false_type) {
+        (Some(a), Some(b)) if a == b => true_type,
+        (None, Some(_)) => false_type,
+        _ => true_type,
+    }
+}
+
 /// Infer type from an identifier by looking it up in the typed AST.
 fn infer_identifier(node: &Node, source: &str, file: &GdFile) -> Option<InferredType> {
     let name = node.utf8_text(source.as_bytes()).ok()?;
@@ -508,6 +627,10 @@ fn infer_identifier(node: &Node, source: &str, file: &GdFile) -> Option<Inferred
                 }
                 return Some(classify_type_name(type_ann.name));
             }
+            // Infer from initializer value for class-level vars
+            if let Some(ref value) = var.value {
+                return infer_expression_type(&value.node(), source, file);
+            }
             return None;
         }
     }
@@ -519,11 +642,100 @@ fn infer_identifier(node: &Node, source: &str, file: &GdFile) -> Option<Inferred
         }
     }
 
-    // Fallback: check for type narrowing (covers function params, for-loop iterators, etc.)
+    // Check function parameters by walking up to the enclosing function_definition
+    if let Some(ty) = infer_from_func_param(node, name, source) {
+        return Some(ty);
+    }
+
+    // Check local variable declarations in the enclosing scope
+    if let Some(ty) = infer_from_local_var(node, name, source, file) {
+        return Some(ty);
+    }
+
+    // Fallback: check for type narrowing (covers `is` guards, for-loop iterators, etc.)
     if let Some(narrowed) = find_narrowed_type(node, name, source) {
         return Some(classify_type_name(&narrowed));
     }
 
+    None
+}
+/// Walk up to find the enclosing function_definition and check its parameters.
+fn infer_from_func_param(node: &Node, name: &str, source: &str) -> Option<InferredType> {
+    let mut current = node.parent()?;
+    loop {
+        if current.kind() == "function_definition" {
+            // Check parameters
+            if let Some(params) = current.child_by_field_name("parameters") {
+                let mut cursor = params.walk();
+                for param in params.children(&mut cursor) {
+                    if !param.is_named() {
+                        continue;
+                    }
+                    // Parameters can be: typed_parameter, default_parameter, identifier
+                    let (param_name, type_text) = match param.kind() {
+                        "typed_parameter" | "typed_default_parameter" => {
+                            let pn = param
+                                .child_by_field_name("name")
+                                .and_then(|n| n.utf8_text(source.as_bytes()).ok());
+                            let pt = param
+                                .child_by_field_name("type")
+                                .and_then(|t| t.utf8_text(source.as_bytes()).ok());
+                            (pn, pt)
+                        }
+                        _ => continue,
+                    };
+                    if param_name == Some(name)
+                        && let Some(type_name) = type_text
+                    {
+                        return Some(classify_type_name(type_name));
+                    }
+                }
+            }
+            return None;
+        }
+        // Don't cross into nested lambdas or inner functions
+        if matches!(current.kind(), "lambda" | "source") {
+            return None;
+        }
+        current = current.parent()?;
+    }
+}
+/// Walk up to find the enclosing body and check local variable declarations.
+fn infer_from_local_var(
+    node: &Node,
+    name: &str,
+    source: &str,
+    file: &GdFile,
+) -> Option<InferredType> {
+    let mut current = node.parent()?;
+    loop {
+        if matches!(current.kind(), "body" | "class_body" | "source") {
+            break;
+        }
+        current = current.parent()?;
+    }
+
+    let mut cursor = current.walk();
+    for child in current.children(&mut cursor) {
+        if child.kind() == "variable_statement"
+            && child.start_position().row < node.start_position().row
+            && let Some(name_node) = child.child_by_field_name("name")
+            && let Ok(var_name) = name_node.utf8_text(source.as_bytes())
+            && var_name == name
+        {
+            // Explicit type annotation
+            if let Some(type_node) = child.child_by_field_name("type")
+                && type_node.kind() != "inferred_type"
+                && let Ok(type_text) = type_node.utf8_text(source.as_bytes())
+            {
+                return Some(classify_type_name(type_text));
+            }
+            // Infer from initializer value
+            if let Some(value) = child.child_by_field_name("value") {
+                return infer_expression_type(&value, source, file);
+            }
+        }
+    }
     None
 }
 
@@ -611,7 +823,9 @@ fn infer_attribute(node: &Node, source: &str, file: &GdFile) -> Option<InferredT
     } else {
         // Check if receiver is a known class identifier
         let name = receiver.utf8_text(source.as_bytes()).ok()?;
-        if receiver.kind() == "identifier" && gd_class_db::class_exists(name) {
+        if receiver.kind() == "identifier"
+            && (gd_class_db::class_exists(name) || gd_class_db::is_variant_type(name))
+        {
             receiver_class_name = Some(name.to_string());
             receiver_class_name.as_deref()?
         } else {
@@ -634,6 +848,8 @@ fn infer_attribute(node: &Node, source: &str, file: &GdFile) -> Option<InferredT
             if let Some(t) = builtin_member_type(cn, prop_name) {
                 current_type = Some(t);
             } else if let Some(t) = gd_class_db::property_type(cn, prop_name) {
+                current_type = Some(parse_class_db_type(t));
+            } else if let Some(t) = gd_class_db::builtin_constant_type(cn, prop_name) {
                 current_type = Some(parse_class_db_type(t));
             } else {
                 return None;
@@ -1587,6 +1803,102 @@ func f():
         assert_eq!(
             infer_var_value("func f():\n\tvar x = load(some_var)\n"),
             Some(InferredType::Class("Resource".to_string()))
+        );
+    }
+
+    #[test]
+    fn vector3_zero_is_vector3() {
+        assert_eq!(
+            infer_var_value("func f():\n\tvar x = Vector3.ZERO\n"),
+            Some(InferredType::Builtin("Vector3"))
+        );
+    }
+
+    #[test]
+    fn vector2_one_is_vector2() {
+        assert_eq!(
+            infer_var_value("func f():\n\tvar x = Vector2.ONE\n"),
+            Some(InferredType::Builtin("Vector2"))
+        );
+    }
+
+    #[test]
+    fn vector3_up_is_vector3() {
+        assert_eq!(
+            infer_var_value("func f():\n\tvar x = Vector3.UP\n"),
+            Some(InferredType::Builtin("Vector3"))
+        );
+    }
+
+    #[test]
+    fn vector3_div_float_is_vector3() {
+        assert_eq!(
+            infer_var_value("func f():\n\tvar x = Vector3.ZERO / 2.0\n"),
+            Some(InferredType::Builtin("Vector3"))
+        );
+    }
+
+    #[test]
+    fn vector3_mul_float_is_vector3() {
+        assert_eq!(
+            infer_var_value("func f():\n\tvar x = Vector3.ONE * 0.5\n"),
+            Some(InferredType::Builtin("Vector3"))
+        );
+    }
+
+    #[test]
+    fn vector3_param_add_is_vector3() {
+        assert_eq!(
+            infer_var_value("func f(a: Vector3, b: Vector3):\n\tvar x = a + b\n"),
+            Some(InferredType::Builtin("Vector3"))
+        );
+    }
+
+    #[test]
+    fn vector3_param_div_float_is_vector3() {
+        assert_eq!(
+            infer_var_value("func f(v: Vector3):\n\tvar x = v / 2.0\n"),
+            Some(InferredType::Builtin("Vector3"))
+        );
+    }
+
+    #[test]
+    fn vector3_add_then_div_float() {
+        assert_eq!(
+            infer_var_value("func f(a: Vector3, b: Vector3):\n\tvar x = (a + b) / 2.0\n"),
+            Some(InferredType::Builtin("Vector3"))
+        );
+    }
+
+    #[test]
+    fn typed_param_resolves() {
+        assert_eq!(
+            infer_var_value("func f(pos: Vector3):\n\tvar x = pos\n"),
+            Some(InferredType::Builtin("Vector3"))
+        );
+    }
+
+    #[test]
+    fn local_var_explicit_type() {
+        assert_eq!(
+            infer_var_value("func f():\n\tvar pos: Vector3 = Vector3()\n\tvar x = pos\n"),
+            Some(InferredType::Builtin("Vector3"))
+        );
+    }
+
+    #[test]
+    fn local_var_inferred_from_constructor() {
+        assert_eq!(
+            infer_var_value("func f():\n\tvar pos := Vector3()\n\tvar x = pos\n"),
+            Some(InferredType::Builtin("Vector3"))
+        );
+    }
+
+    #[test]
+    fn local_var_inferred_from_constant() {
+        assert_eq!(
+            infer_var_value("func f():\n\tvar sum := Vector3.ZERO\n\tvar x = sum / 2.0\n"),
+            Some(InferredType::Builtin("Vector3"))
         );
     }
 

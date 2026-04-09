@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- **Type inference for binary operations with builtin types** — `Vector3 / float`, `Vector3 * float`, `Color + Color`, `Transform3D * Vector3`, and all other ClassDB operator combinations now resolve correctly. Previously, operand types (variant type constants like `Vector3.ZERO`, function parameters, local variables) couldn't be resolved, so the ClassDB operator table was never consulted and the fallback incorrectly returned `float`. Fixes false positive "cannot return a value of type float from function with return type Vector3" errors.
+- **Variant type constant resolution** — `Vector3.ZERO`, `Vector2.ONE`, `Color.RED`, `Basis.IDENTITY` and all other builtin type constants now resolve to their correct types in the type inference engine.
+- **Function parameter type resolution** — typed function parameters (e.g. `func f(pos: Vector3)`) now resolve in expression type inference, enabling correct binary operation type checking.
+- **Local variable type resolution** — local variables with explicit types or `:=` inferred types now resolve in expression type inference.
+- **Project-aware binary op inference** — binary operators, parenthesized expressions, ternaries, and await expressions now propagate cross-file project context through recursive inference instead of losing it.
+
 ## [0.3.26] - 2026-04-03
 
 ### Added
