@@ -713,7 +713,7 @@ fn first_identifier_text<'a>(node: &Node, source: &'a str) -> Option<&'a str> {
     None
 }
 
-/// Walk up to find the enclosing body and check local variable declarations.
+/// Walk up through enclosing scopes to find local variable declarations.
 fn infer_from_local_var(
     node: &Node,
     name: &str,
@@ -722,34 +722,40 @@ fn infer_from_local_var(
 ) -> Option<InferredType> {
     let mut current = node.parent()?;
     loop {
-        if matches!(current.kind(), "body" | "class_body" | "source") {
-            break;
+        // Find the next enclosing body/scope
+        while !matches!(current.kind(), "body" | "class_body" | "source") {
+            current = current.parent()?;
         }
-        current = current.parent()?;
-    }
 
-    let mut cursor = current.walk();
-    for child in current.children(&mut cursor) {
-        if child.kind() == "variable_statement"
-            && child.start_position().row < node.start_position().row
-            && let Some(name_node) = child.child_by_field_name("name")
-            && let Ok(var_name) = name_node.utf8_text(source.as_bytes())
-            && var_name == name
-        {
-            // Explicit type annotation
-            if let Some(type_node) = child.child_by_field_name("type")
-                && type_node.kind() != "inferred_type"
-                && let Ok(type_text) = type_node.utf8_text(source.as_bytes())
+        // Scan this scope's children for a matching variable declaration
+        let mut cursor = current.walk();
+        for child in current.children(&mut cursor) {
+            if child.kind() == "variable_statement"
+                && child.start_position().row < node.start_position().row
+                && let Some(name_node) = child.child_by_field_name("name")
+                && let Ok(var_name) = name_node.utf8_text(source.as_bytes())
+                && var_name == name
             {
-                return Some(classify_type_name(type_text));
-            }
-            // Infer from initializer value
-            if let Some(value) = child.child_by_field_name("value") {
-                return infer_expression_type(&value, source, file);
+                // Explicit type annotation
+                if let Some(type_node) = child.child_by_field_name("type")
+                    && type_node.kind() != "inferred_type"
+                    && let Ok(type_text) = type_node.utf8_text(source.as_bytes())
+                {
+                    return Some(classify_type_name(type_text));
+                }
+                // Infer from initializer value
+                if let Some(value) = child.child_by_field_name("value") {
+                    return infer_expression_type(&value, source, file);
+                }
             }
         }
+
+        // Move to the parent scope; stop at function or file boundary
+        current = current.parent()?;
+        if matches!(current.kind(), "function_definition" | "lambda" | "source") {
+            return None;
+        }
     }
-    None
 }
 
 /// Infer type from a function/constructor call.
