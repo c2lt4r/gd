@@ -29,7 +29,7 @@
 | `gd scene` | Manage `.tscn` scene files (create, add/remove nodes, properties, connections, scripts) |
 | `gd lsp` | Start the LSP server |
 | `gd refactor` | Refactoring operations (rename, extract, inline, change-signature, undo, etc.) |
-| `gd edit` | Code editing primitives (replace-body, insert, replace-symbol, edit-range, create-file) |
+| `gd edit` | Code editing primitives (replace, insert, remove, extract, create-file) |
 | `gd query` | Code intelligence queries (references, hover, definition, symbols, completions, etc.) |
 | `gd ssr` | Structural search and replace for GDScript (`$placeholder` patterns, type constraints, `--dry-run`, `--format json`) |
 | `gd deps` | Show script dependency graph (`--include-resources` for `.tscn`/`.tres`) |
@@ -636,26 +636,29 @@ Multi-file refactorings (extract-class, move-symbol, move-file) use atomic trans
 `gd edit` provides AST-aware editing primitives for AI agent workflows — reads new content from stdin or `--input-file`:
 
 ```sh
-# Replace a function body
-echo -e '\tprint("hello")' | gd edit replace-body player.gd --name _ready
+# Replace a declaration by name
+echo 'var speed: float = 42.0' | gd edit replace player.gd --name speed
+
+# Replace only a function body (keep signature)
+echo -e '\tprint("hello")' | gd edit replace player.gd --name _ready --body
+
+# Replace by line range
+echo 'var x = 10' | gd edit replace player.gd --line 5-7
 
 # Insert after a symbol
-echo 'func _process(delta):\n\tpass' | gd edit insert player.gd --after _ready
+echo 'func _process(delta):\n\tpass' | gd edit insert player.gd --name _ready --after
 
-# Replace a symbol declaration
-echo 'var speed: float = 42.0' | gd edit replace-symbol player.gd --name speed
+# Insert into a function body (as first statement)
+echo -e '\tprint("start")' | gd edit insert player.gd --name _ready --into
 
-# Replace a line range
-echo '\t# replaced' | gd edit edit-range player.gd --range 5-7
+# Insert into a class body (as last member)
+echo -e '\tfunc foo():\n\t\tpass' | gd edit insert player.gd --name Inner --into-end
 
 # Create a new GDScript file with scaffolding
 gd edit create-file enemies/boss.gd --extends CharacterBody2D --class-name Boss
 
-# Create a file with custom content (from stdin or --input-file)
-echo 'extends Node2D' | gd edit create-file utils/helper.gd
-
-# Or use --input-file to avoid stdin pipe encoding issues (recommended on Windows)
-gd edit insert player.gd --after _ready --input-file /tmp/new_func.gd
+# Use --input-file to avoid stdin pipe encoding issues (recommended on Windows)
+gd edit insert player.gd --name _ready --after --input-file /tmp/new_func.gd
 ```
 
 Edit commands support `--dry-run` to preview, `--no-format` to skip auto-formatting, `--class` for inner class targets, and `--input-file` to read from a file instead of stdin.

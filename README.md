@@ -14,7 +14,7 @@ Built with [tree-sitter-gdscript](https://github.com/PrestonKnopp/tree-sitter-gd
 - **Generate CI/CD** configurations for GitHub Actions and GitLab CI
 - **LSP server** with formatting, diagnostics, hover, go-to-definition, references, rename, completion, inlay hints, signature help, call hierarchy, find implementations, semantic tokens, workspace symbol search, scene-aware cross-referencing, and Godot LSP proxy
 - **Refactoring** (`gd refactor`) — 25 structural refactoring commands with undo support, collision warnings, type inference, and cross-file resolution
-- **Code editing** (`gd edit`) — AST-aware editing primitives (replace-body, insert, replace-symbol, edit-range, create-file)
+- **Code editing** (`gd edit`) — AST-safe editing primitives (replace, insert, remove, extract, create-file)
 - **Code queries** (`gd query`) — one-shot code intelligence (references, hover, definition, symbols, completions, scene info, and more)
 - **Scene management** — create scenes, add/remove/duplicate nodes, instance scenes, add sub-resources, batch-add nodes, set properties, wire connections, attach/detach scripts — plus validate `.tscn`/`.tres` files and visualize scene hierarchies
 - **Debug** a running Godot game via Godot's binary debug protocol — breakpoints, stepping, variable inspection, expression evaluation, live scene tree, node inspection, game speed control, and hot-reload
@@ -72,7 +72,7 @@ See [Getting Started](docs/getting-started.md) for templates, editor setup, and 
 | `gd scene` | Manage `.tscn` scene files |
 | `gd lsp` | Start the LSP server |
 | `gd refactor` | Refactoring operations (rename, extract, inline, etc.) |
-| `gd edit` | Code editing primitives (replace-body, insert, replace-symbol, etc.) |
+| `gd edit` | Code editing primitives (replace, insert, remove, extract, create-file) |
 | `gd query` | Code intelligence queries (references, hover, definition, etc.) |
 | `gd ssr` | Structural search and replace (`$placeholder` patterns, type constraints, dry-run) |
 | `gd deps` | Show script dependency graph |
