@@ -5,6 +5,10 @@
 ### Added
 - **`gd ssr` command** — structural search and replace for GDScript. Write a GDScript-like template with `$placeholders`, find all structural matches in the project, and optionally rewrite them. Supports expression and statement patterns, variadic placeholders (`$$args`), type constraints (`$x:Node`, `$x:{has_method("process")}`), dry-run preview, JSON output, file filtering, and `--count` mode. Respects `ignore_patterns` from `gd.toml`. Repeated placeholders use structural equality (ignoring whitespace and parenthesization differences).
 
+### Fixed
+- **SSR not matching expressions inside lambda bodies** — `visit_expr` for Lambda nodes only visited parameter defaults but skipped the lambda body, so SSR (and other expression visitors) never descended into closures.
+- **SSR placeholder capturing entire attribute chain** — `$expr` in patterns like `$expr.method()` incorrectly captured the full chain text (e.g. `obj.prop.method()`) instead of just the receiver (`obj.prop`). Caused replacements to duplicate method calls. Fixed by computing the correct byte range for `PropertyAccess` nodes inside flattened tree-sitter attribute chains.
+
 ## [0.3.25] - 2026-04-03
 
 ### Added

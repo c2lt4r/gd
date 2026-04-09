@@ -498,10 +498,32 @@ fn structurally_equal_via_reparse(prev_text: &str, candidate: &GdExpr<'_>) -> bo
     structurally_equal_expr(prev_expr, candidate)
 }
 
+/// Compute the actual source byte range for an expression.
+///
+/// For most expressions this equals `node.byte_range()`.  For
+/// `PropertyAccess` inside a flattened tree-sitter attribute chain the
+/// backing node covers the *entire* chain, so we recompute the range
+/// from the receiver and property sub-slice.
+fn effective_byte_range(expr: &GdExpr<'_>, source: &str) -> std::ops::Range<usize> {
+    if let GdExpr::PropertyAccess {
+        receiver, property, ..
+    } = expr
+    {
+        let start = effective_byte_range(receiver, source).start;
+        // `property` is a sub-slice of `source` (from tree-sitter txt()).
+        // Compute its end offset via pointer arithmetic.
+        let prop_ptr = (*property).as_ptr() as usize;
+        let src_ptr = source.as_ptr() as usize;
+        if prop_ptr >= src_ptr && prop_ptr <= src_ptr + source.len() {
+            return start..prop_ptr - src_ptr + property.len();
+        }
+    }
+    expr.node().byte_range()
+}
+
 /// Build a `CapturedExpr` from a borrowed `GdExpr`.
 fn make_captured_expr(expr: &GdExpr<'_>, source: &str) -> CapturedExpr {
-    let node = expr.node();
-    let range = node.byte_range();
+    let range = effective_byte_range(expr, source);
     CapturedExpr {
         source_text: source[range.clone()].to_string(),
         byte_range: range,

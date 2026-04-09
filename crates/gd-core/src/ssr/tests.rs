@@ -507,6 +507,24 @@ fn replace_inside_lambda_body() {
     assert!(!result.contains("old_method"));
 }
 
+#[test]
+fn capture_property_access_not_full_chain() {
+    // $expr should capture just the receiver, not the entire attribute chain.
+    let src = "func f():\n\tvar x = obj.prop.method()\n";
+    let m = find("$e.method()", src);
+    assert_eq!(m.len(), 1);
+    assert_eq!(cap(&m[0], "e"), "obj.prop");
+}
+
+#[test]
+fn replace_chained_duplicate() {
+    // Regression: $expr.duplicate() should NOT make $expr capture the .duplicate() part.
+    let src = "func f():\n\tvar x = data.info.duplicate()\n";
+    let result = ssr("$e.duplicate()", "$e.duplicate(false)", src);
+    assert!(result.contains("data.info.duplicate(false)"));
+    assert!(!result.contains("data.info.duplicate().duplicate(false)"));
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 //  Phase 3: Replacement engine — helpers
 // ═══════════════════════════════════════════════════════════════════════
