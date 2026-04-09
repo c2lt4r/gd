@@ -282,8 +282,11 @@ fn infer_attribute_with_project(
         return Some(classify_type_str(&ret));
     }
 
-    // Fall back to ClassDB
+    // Fall back to ClassDB (classes) and builtin types (Vector3, etc.)
     if let Some(ret_type) = gd_class_db::method_return_type(class_name, method) {
+        return Some(parse_class_db_type(ret_type));
+    }
+    if let Some(ret_type) = gd_class_db::builtin_method_return_type(class_name, method) {
         return Some(parse_class_db_type(ret_type));
     }
 
@@ -671,23 +674,22 @@ fn infer_from_func_param(node: &Node, name: &str, source: &str) -> Option<Inferr
                     if !param.is_named() {
                         continue;
                     }
-                    // Parameters can be: typed_parameter, default_parameter, identifier
-                    let (param_name, type_text) = match param.kind() {
+                    // Parameters can be: typed_parameter, typed_default_parameter, identifier
+                    // The name is the first identifier child (not a field),
+                    // the type is child_by_field_name("type").
+                    match param.kind() {
                         "typed_parameter" | "typed_default_parameter" => {
-                            let pn = param
-                                .child_by_field_name("name")
-                                .and_then(|n| n.utf8_text(source.as_bytes()).ok());
+                            let pn = first_identifier_text(&param, source);
                             let pt = param
                                 .child_by_field_name("type")
                                 .and_then(|t| t.utf8_text(source.as_bytes()).ok());
-                            (pn, pt)
+                            if pn == Some(name)
+                                && let Some(type_name) = pt
+                            {
+                                return Some(classify_type_name(type_name));
+                            }
                         }
-                        _ => continue,
-                    };
-                    if param_name == Some(name)
-                        && let Some(type_name) = type_text
-                    {
-                        return Some(classify_type_name(type_name));
+                        _ => {}
                     }
                 }
             }
@@ -700,6 +702,17 @@ fn infer_from_func_param(node: &Node, name: &str, source: &str) -> Option<Inferr
         current = current.parent()?;
     }
 }
+/// Get the text of the first identifier child node.
+fn first_identifier_text<'a>(node: &Node, source: &'a str) -> Option<&'a str> {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == "identifier" {
+            return child.utf8_text(source.as_bytes()).ok();
+        }
+    }
+    None
+}
+
 /// Walk up to find the enclosing body and check local variable declarations.
 fn infer_from_local_var(
     node: &Node,
@@ -865,8 +878,11 @@ fn infer_attribute(node: &Node, source: &str, file: &GdFile) -> Option<InferredT
         return Some(InferredType::Class(class_name.to_string()));
     }
 
-    // Look up the method in ClassDB
+    // Look up the method in ClassDB (classes) and builtin types (Vector3, etc.)
     if let Some(ret_type) = gd_class_db::method_return_type(class_name, method) {
+        return Some(parse_class_db_type(ret_type));
+    }
+    if let Some(ret_type) = gd_class_db::builtin_method_return_type(class_name, method) {
         return Some(parse_class_db_type(ret_type));
     }
 
