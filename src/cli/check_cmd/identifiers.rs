@@ -1,7 +1,7 @@
 use tree_sitter::Node;
 
 use super::StructuralError;
-use super::args::{constructor_param_counts, is_builtin_convertible};
+use super::args::is_builtin_convertible;
 use super::classdb::is_known_type;
 use gd_core::gd_ast::{GdExpr, GdFile};
 use gd_core::workspace_index::ProjectIndex;
@@ -113,7 +113,7 @@ fn check_method_not_found_in_node(
             || gd_class_db::class_exists(func_name)
             || gd_core::type_inference::is_builtin_type(func_name)
             || is_builtin_convertible(func_name)
-            || constructor_param_counts(func_name).is_some()
+            || gd_class_db::has_builtin_constructors(func_name)
             || matches!(
                 func_name,
                 "preload"
@@ -545,7 +545,7 @@ fn is_identifier_context_ok(
     }
 
     // Builtin convertible types used as constructors
-    if is_builtin_convertible(name) || constructor_param_counts(name).is_some() {
+    if is_builtin_convertible(name) || gd_class_db::has_builtin_constructors(name) {
         return true;
     }
 

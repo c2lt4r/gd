@@ -58,7 +58,7 @@ fn check_arg_types_in_node(
         if callee.kind() == "identifier"
             && (gd_class_db::class_exists(func_name)
                 || is_builtin_convertible(func_name)
-                || constructor_param_counts(func_name).is_some())
+                || gd_class_db::has_builtin_constructors(func_name))
         {
             check_constructor_arg_types(func_name, &args_node, source, file, project, errors);
         }
@@ -97,7 +97,10 @@ fn check_arg_types_in_node(
                         // Skip rpc/rpc_id — GDScript syntactic sugar:
                         // func_name.rpc(args) calls the function remotely
                         // with the function's own signature, not Object.rpc(StringName).
-                        && !matches!(method_name, "rpc" | "rpc_id")
+                        // Skip call/call_deferred/callv — these are variadic on Callable,
+                        // but Object also defines call(StringName, ...) which produces
+                        // false positives when the receiver type cannot be fully resolved.
+                        && !matches!(method_name, "rpc" | "rpc_id" | "call" | "call_deferred" | "callv")
                     {
                         check_call_arg_types_classdb(
                             method_name,
@@ -365,19 +368,6 @@ fn parse_utility_param_count(sig: &str) -> (u8, u8) {
     (required, total)
 }
 
-/// Known constructor variants for builtin types. Returns list of valid param counts.
-pub(super) fn constructor_param_counts(type_name: &str) -> Option<&'static [u8]> {
-    match type_name {
-        "Color" | "Plane" => Some(&[0, 1, 2, 3, 4]),
-        "Vector2" | "Vector2i" | "Transform3D" | "AABB" => Some(&[0, 1, 2]),
-        "Vector3" | "Vector3i" => Some(&[0, 1, 3]),
-        "Vector4" | "Vector4i" | "Projection" => Some(&[0, 1, 4]),
-        "Basis" | "Transform2D" => Some(&[0, 2, 3]),
-        "Rect2" | "Rect2i" | "Quaternion" => Some(&[0, 2, 4]),
-        _ => None,
-    }
-}
-
 /// B4: Argument count mismatch for function/method calls.
 pub(super) fn check_arg_count(
     root: &Node,
@@ -449,8 +439,8 @@ fn check_arg_count_in_node(
                 }
             }
             // 3. Check builtin constructors (e.g., Color(0.5))
-            else if let Some(valid_counts) = constructor_param_counts(name)
-                && !valid_counts.contains(&(arg_count as u8))
+            else if gd_class_db::has_builtin_constructors(name)
+                && !gd_class_db::builtin_constructor_exists(name, arg_count as u8)
             {
                 errors.push(StructuralError {
                     line: node.start_position().row as u32 + 1,

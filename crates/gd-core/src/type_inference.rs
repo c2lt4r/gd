@@ -520,6 +520,28 @@ fn infer_binary_fallback(
 
     // Arithmetic: vector types dominate, float promotes over int
     if matches!(op_text, "+" | "-" | "*" | "**") {
+        // Transform/matrix types are polymorphic under multiplication —
+        // e.g. Transform3D * Vector3 => Vector3, not Transform3D.
+        // When the other operand is unknown (Variant/None), return Variant
+        // instead of incorrectly guessing the transform type.
+        let lt_is_transform = lt.is_some_and(|t| {
+            matches!(
+                t,
+                InferredType::Builtin("Transform2D" | "Transform3D" | "Basis" | "Projection")
+            )
+        });
+        let rt_is_transform = rt.is_some_and(|t| {
+            matches!(
+                t,
+                InferredType::Builtin("Transform2D" | "Transform3D" | "Basis" | "Projection")
+            )
+        });
+        if lt_is_transform && rt.is_none_or(|t| matches!(t, InferredType::Variant)) {
+            return Some(InferredType::Variant);
+        }
+        if rt_is_transform && lt.is_none_or(|t| matches!(t, InferredType::Variant)) {
+            return Some(InferredType::Variant);
+        }
         if lt.is_some_and(is_vector_like_type) {
             return lt.cloned();
         }

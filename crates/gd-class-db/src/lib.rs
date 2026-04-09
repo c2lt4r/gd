@@ -481,6 +481,13 @@ pub fn builtin_constructor_exists(type_name: &str, arity: u8) -> bool {
         .any(|c| c.type_name == type_name && c.param_count == arity)
 }
 
+/// Check if a builtin type has any constructors in the database.
+pub fn has_builtin_constructors(type_name: &str) -> bool {
+    builtin_generated::BUILTIN_CONSTRUCTORS
+        .iter()
+        .any(|c| c.type_name == type_name)
+}
+
 /// Look up the return type of a utility or GDScript function (e.g. "sin" → "float").
 pub fn function_return_type(name: &str) -> Option<&'static str> {
     builtin_generated::FUNCTION_RETURNS

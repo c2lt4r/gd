@@ -248,14 +248,14 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "Array",
         name: "bsearch",
-        brief: "bsearch(value: Variant, before: bool) -> int",
+        brief: "bsearch(value: Variant, before: bool = true) -> int",
         description: "Returns the index of `value` in the sorted array. If it cannot be found, returns where `value` should be inserted to keep the array sorted. The algorithm used is [binary search](https://en.wikipedia.org/wiki/Binary_search_algorithm).\nIf `before` is `true` (as by default), the returned index comes before all existing elements equal to `value` in the array.\n\n```\nvar numbers = [2, 4, 8, 10]\nvar idx = numbers.bsearch(7)\n\nnumbers.insert(idx, 7)\nprint(numbers) # Prints [2, 4, 7, 8, 10]\n\nvar fruits = [\"Apple\", \"Lemon\", \"Lemon\", \"Orange\"]\nprint(fruits.bsearch(\"Lemon\", true))  # Prints 1, points at the first \"Lemon\".\nprint(fruits.bsearch(\"Lemon\", false)) # Prints 3, points at \"Orange\".\n```\n\n**Note:** Calling `bsearch()` on an *unsorted* array will result in unexpected behavior. Use `sort()` before calling this method.",
         kind: MemberKind::Method,
     },
     BuiltinMember {
         class: "Array",
         name: "bsearch_custom",
-        brief: "bsearch_custom(value: Variant, func: Callable, before: bool) -> int",
+        brief: "bsearch_custom(value: Variant, func: Callable, before: bool = true) -> int",
         description: "Returns the index of `value` in the sorted array. If it cannot be found, returns where `value` should be inserted to keep the array sorted (using `func` for the comparisons). The algorithm used is [binary search](https://en.wikipedia.org/wiki/Binary_search_algorithm).\nSimilar to `sort_custom()`, `func` is called as many times as necessary, receiving one array element and `value` as arguments. The function should return `true` if the array element should be *behind* `value`, otherwise it should return `false`.\nIf `before` is `true` (as by default), the returned index comes before all existing elements equal to `value` in the array.\n\n```\nfunc sort_by_amount(a, b):\n	if a[1] < b[1]:\n		return true\n	return false\n\nfunc _ready():\n	var my_items = [[\"Tomato\", 2], [\"Kiwi\", 5], [\"Rice\", 9]]\n\n	var apple = [\"Apple\", 5]\n	# \"Apple\" is inserted before \"Kiwi\".\n	my_items.insert(my_items.bsearch_custom(apple, sort_by_amount, true), apple)\n\n	var banana = [\"Banana\", 5]\n	# \"Banana\" is inserted after \"Kiwi\".\n	my_items.insert(my_items.bsearch_custom(banana, sort_by_amount, false), banana)\n\n	# Prints [[\"Tomato\", 2], [\"Apple\", 5], [\"Kiwi\", 5], [\"Banana\", 5], [\"Rice\", 9]]\n	print(my_items)\n```\n\n**Note:** Calling `bsearch_custom()` on an *unsorted* array will result in unexpected behavior. Use `sort_custom()` with `func` before calling this method.",
         kind: MemberKind::Method,
     },
@@ -276,14 +276,14 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "Array",
         name: "duplicate",
-        brief: "duplicate(deep: bool) -> Array",
+        brief: "duplicate(deep: bool = false) -> Array",
         description: "Returns a new copy of the array.\nBy default, a **shallow** copy is returned: all nested `Array`, `Dictionary`, and `Resource` elements are shared with the original array. Modifying any of those in one array will also affect them in the other.\nIf `deep` is `true`, a **deep** copy is returned: all nested arrays and dictionaries are also duplicated (recursively). Any `Resource` is still shared with the original array, though.",
         kind: MemberKind::Method,
     },
     BuiltinMember {
         class: "Array",
         name: "duplicate_deep",
-        brief: "duplicate_deep(deep_subresources_mode: int) -> Array",
+        brief: "duplicate_deep(deep_subresources_mode: int = 1) -> Array",
         description: "Duplicates this array, deeply, like `duplicate()` when passing `true`, with extra control over how subresources are handled.\n`deep_subresources_mode` must be one of the values from `Resource.DeepDuplicateMode`. By default, only internal resources will be duplicated (recursively).",
         kind: MemberKind::Method,
     },
@@ -311,14 +311,14 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "Array",
         name: "find",
-        brief: "find(what: Variant, from: int) -> int",
+        brief: "find(what: Variant, from: int = 0) -> int",
         description: "Returns the index of the **first** occurrence of `what` in this array, or `-1` if there are none. The search's start can be specified with `from`, continuing to the end of the array.\n**Note:** If you just want to know whether the array contains `what`, use `has()` (`Contains` in C#). In GDScript, you may also use the `in` operator.\n**Note:** For performance reasons, the search is affected by `what`'s `Variant.Type`. For example, `7` ([int]) and `7.0` ([float]) are not considered equal for this method.",
         kind: MemberKind::Method,
     },
     BuiltinMember {
         class: "Array",
         name: "find_custom",
-        brief: "find_custom(method: Callable, from: int) -> int",
+        brief: "find_custom(method: Callable, from: int = 0) -> int",
         description: "Returns the index of the **first** element in the array that causes `method` to return `true`, or `-1` if there are none. The search's start can be specified with `from`, continuing to the end of the array.\n`method` is a callable that takes an element of the array, and returns a [bool].\n**Note:** If you just want to know whether the array contains *anything* that satisfies `method`, use `any()`.\n\n```gdscript\nfunc is_even(number):\n	return number % 2 == 0\n\nfunc _ready():\n	print([1, 3, 4, 7].find_custom(is_even.bind())) # Prints 2\n```",
         kind: MemberKind::Method,
     },
@@ -479,7 +479,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "Array",
         name: "reduce",
-        brief: "reduce(method: Callable, accum: Variant) -> Variant",
+        brief: "reduce(method: Callable, accum: Variant = null) -> Variant",
         description: "Calls the given `Callable` for each element in array, accumulates the result in `accum`, then returns it.\nThe `method` takes two arguments: the current value of `accum` and the current array element. If `accum` is `null` (as by default), the iteration will start from the second element, with the first one used as initial value of `accum`.\n\n```\nfunc sum(accum, number):\n	return accum + number\n\nfunc _ready():\n	print([1, 2, 3].reduce(sum, 0))  # Prints 6\n	print([1, 2, 3].reduce(sum, 10)) # Prints 16\n\n	# Same as above, but using a lambda function.\n	print([1, 2, 3].reduce(func(accum, number): return accum + number, 10))\n```\n\nIf `max()` is not desirable, this method may also be used to implement a custom comparator:\n\n```\nfunc _ready():\n	var arr = [Vector2i(5, 0), Vector2i(3, 4), Vector2i(1, 2)]\n\n	var longest_vec = arr.reduce(func(max, vec): return vec if is_length_greater(vec, max) else max)\n	print(longest_vec) # Prints (3, 4)\n\nfunc is_length_greater(a, b):\n	return a.length() > b.length()\n```\n\nThis method can also be used to count how many elements in an array satisfy a certain condition, similar to `count()`:\n\n```\nfunc is_even(number):\n	return number % 2 == 0\n\nfunc _ready():\n	var arr = [1, 2, 3, 4, 5]\n	# If the current element is even, increment count, otherwise leave count the same.\n	var even_count = arr.reduce(func(count, next): return count + 1 if is_even(next) else count, 0)\n	print(even_count) # Prints 2\n```\n\nSee also `map()`, `filter()`, `any()`, and `all()`.",
         kind: MemberKind::Method,
     },
@@ -507,14 +507,14 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "Array",
         name: "rfind",
-        brief: "rfind(what: Variant, from: int) -> int",
+        brief: "rfind(what: Variant, from: int = -1) -> int",
         description: "Returns the index of the **last** occurrence of `what` in this array, or `-1` if there are none. The search's start can be specified with `from`, continuing to the beginning of the array. This method is the reverse of `find()`.",
         kind: MemberKind::Method,
     },
     BuiltinMember {
         class: "Array",
         name: "rfind_custom",
-        brief: "rfind_custom(method: Callable, from: int) -> int",
+        brief: "rfind_custom(method: Callable, from: int = -1) -> int",
         description: "Returns the index of the **last** element of the array that causes `method` to return `true`, or `-1` if there are none. The search's start can be specified with `from`, continuing to the beginning of the array. This method is the reverse of `find_custom()`.",
         kind: MemberKind::Method,
     },
@@ -542,7 +542,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "Array",
         name: "slice",
-        brief: "slice(begin: int, end: int, step: int, deep: bool) -> Array",
+        brief: "slice(begin: int, end: int = 2147483647, step: int = 1, deep: bool = false) -> Array",
         description: "Returns a new `Array` containing this array's elements, from index `begin` (inclusive) to `end` (exclusive), every `step` elements.\nIf either `begin` or `end` are negative, their value is relative to the end of the array.\nIf `step` is negative, this method iterates through the array in reverse, returning a slice ordered backwards. For this to work, `begin` must be greater than `end`.\nIf `deep` is `true`, all nested `Array` and `Dictionary` elements in the slice are duplicated from the original, recursively. See also `duplicate()`.\n\n```\nvar letters = [\"A\", \"B\", \"C\", \"D\", \"E\", \"F\"]\n\nprint(letters.slice(0, 2))  # Prints [\"A\", \"B\"]\nprint(letters.slice(2, -2)) # Prints [\"C\", \"D\"]\nprint(letters.slice(-2, 6)) # Prints [\"E\", \"F\"]\n\nprint(letters.slice(0, 6, 2))  # Prints [\"A\", \"C\", \"E\"]\nprint(letters.slice(4, 1, -1)) # Prints [\"E\", \"D\", \"C\"]\n```",
         kind: MemberKind::Method,
     },
@@ -571,7 +571,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "Basis",
         name: "from_euler",
-        brief: "from_euler(euler: Vector3, order: int) -> Basis",
+        brief: "from_euler(euler: Vector3, order: int = 2) -> Basis",
         description: "Constructs a new `Basis` that only represents rotation from the given `Vector3` of [Euler angles](https://en.wikipedia.org/wiki/Euler_angles), in radians.\n- The `Vector3.x` should contain the angle around the `x` axis (pitch);\n- The `Vector3.y` should contain the angle around the `y` axis (yaw);\n- The `Vector3.z` should contain the angle around the `z` axis (roll).\n\n```gdscript\n# Creates a Basis whose z axis points down.\nvar my_basis = Basis.from_euler(Vector3(TAU / 4, 0, 0))\n\nprint(my_basis.z) # Prints (0.0, -1.0, 0.0)\n```\n\nThe order of each consecutive rotation can be changed with `order` (see `EulerOrder` constants). By default, the YXZ convention is used (`EULER_ORDER_YXZ`): the basis rotates first around the Y axis (yaw), then X (pitch), and lastly Z (roll). When using the opposite method `get_euler()`, this order is reversed.",
         kind: MemberKind::Method,
     },
@@ -585,7 +585,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "Basis",
         name: "get_euler",
-        brief: "get_euler(order: int) -> Vector3",
+        brief: "get_euler(order: int = 2) -> Vector3",
         description: "Returns this basis's rotation as a `Vector3` of [Euler angles](https://en.wikipedia.org/wiki/Euler_angles), in radians. For the returned value:\n- The `Vector3.x` contains the angle around the `x` axis (pitch);\n- The `Vector3.y` contains the angle around the `y` axis (yaw);\n- The `Vector3.z` contains the angle around the `z` axis (roll).\nThe order of each consecutive rotation can be changed with `order` (see `EulerOrder` constants). By default, the YXZ convention is used (`EULER_ORDER_YXZ`): Z (roll) is calculated first, then X (pitch), and lastly Y (yaw). When using the opposite method `from_euler()`, this order is reversed.\n**Note:** For this method to return correctly, the basis needs to be *orthonormal* (see `orthonormalized()`).\n**Note:** Euler angles are much more intuitive but are not suitable for 3D math. Because of this, consider using the `get_rotation_quaternion()` method instead, which returns a `Quaternion`.\n**Note:** In the Inspector dock, a basis's rotation is often displayed in Euler angles (in degrees), as is the case with the `Node3D.rotation` property.",
         kind: MemberKind::Method,
     },
@@ -634,7 +634,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "Basis",
         name: "looking_at",
-        brief: "looking_at(target: Vector3, up: Vector3, use_model_front: bool) -> Basis",
+        brief: "looking_at(target: Vector3, up: Vector3 = Vector3(0, 1, 0), use_model_front: bool = false) -> Basis",
         description: "Creates a new `Basis` with a rotation such that the forward axis (-Z) points towards the `target` position.\nBy default, the -Z axis (camera forward) is treated as forward (implies +X is right). If `use_model_front` is `true`, the +Z axis (asset front) is treated as forward (implies +X is left) and points toward the `target` position.\nThe up axis (+Y) points as close to the `up` vector as possible while staying perpendicular to the forward axis. The returned basis is orthonormalized (see `orthonormalized()`).\nThe `target` and the `up` cannot be `Vector3.ZERO`, and shouldn't be colinear to avoid unintended rotation around local Z axis.",
         kind: MemberKind::Method,
     },
@@ -881,7 +881,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "Color",
         name: "clamp",
-        brief: "clamp(min: Color, max: Color) -> Color",
+        brief: "clamp(min: Color = Color(0, 0, 0, 0), max: Color = Color(1, 1, 1, 1)) -> Color",
         description: "Returns a new color with all components clamped between the components of `min` and `max`, by running [method @GlobalScope.clamp] on each component.",
         kind: MemberKind::Method,
     },
@@ -895,21 +895,21 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "Color",
         name: "from_hsv",
-        brief: "from_hsv(h: float, s: float, v: float, alpha: float) -> Color",
+        brief: "from_hsv(h: float, s: float, v: float, alpha: float = 1.0) -> Color",
         description: "Constructs a color from an [HSV profile](https://en.wikipedia.org/wiki/HSL_and_HSV). The hue (`h`), saturation (`s`), and value (`v`) are typically between 0.0 and 1.0.\n\n```gdscript\nvar color = Color.from_hsv(0.58, 0.5, 0.79, 0.8)\n```",
         kind: MemberKind::Method,
     },
     BuiltinMember {
         class: "Color",
         name: "from_ok_hsl",
-        brief: "from_ok_hsl(h: float, s: float, l: float, alpha: float) -> Color",
+        brief: "from_ok_hsl(h: float, s: float, l: float, alpha: float = 1.0) -> Color",
         description: "Constructs a color from an [OK HSL profile](https://bottosson.github.io/posts/colorpicker/). The hue (`h`), saturation (`s`), and lightness (`l`) are typically between 0.0 and 1.0.\n\n```gdscript\nvar color = Color.from_ok_hsl(0.58, 0.5, 0.79, 0.8)\n```",
         kind: MemberKind::Method,
     },
     BuiltinMember {
         class: "Color",
         name: "from_rgba8",
-        brief: "from_rgba8(r8: int, g8: int, b8: int, a8: int) -> Color",
+        brief: "from_rgba8(r8: int, g8: int, b8: int, a8: int = 255) -> Color",
         description: "Returns a `Color` constructed from red (`r8`), green (`g8`), blue (`b8`), and optionally alpha (`a8`) integer channels, each divided by `255.0` for their final value.\n\n```\nvar red = Color.from_rgba8(255, 0, 0)             # Same as Color(1, 0, 0).\nvar dark_blue = Color.from_rgba8(0, 0, 51)        # Same as Color(0, 0, 0.2).\nvar my_color = Color.from_rgba8(306, 255, 0, 102) # Same as Color(1.2, 1, 0, 0.4).\n```\n\n**Note:** Due to the lower precision of `from_rgba8()` compared to the standard `Color` constructor, a color created with `from_rgba8()` will generally not be equal to the same color created with the standard `Color` constructor. Use `is_equal_approx()` for comparisons to avoid issues with floating-point precision error.",
         kind: MemberKind::Method,
     },
@@ -1035,7 +1035,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "Color",
         name: "to_html",
-        brief: "to_html(with_alpha: bool) -> String",
+        brief: "to_html(with_alpha: bool = true) -> String",
         description: "Returns the color converted to an HTML hexadecimal color `String` in RGBA format, without the hash (`#`) prefix.\nSetting `with_alpha` to `false`, excludes alpha from the hexadecimal string, using RGB format instead of RGBA format.\n\n```gdscript\nvar white = Color(1, 1, 1, 0.5)\nvar with_alpha = white.to_html() # Returns \"ffffff7f\"\nvar without_alpha = white.to_html(false) # Returns \"ffffff\"\n```",
         kind: MemberKind::Method,
     },
@@ -1169,14 +1169,14 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "Dictionary",
         name: "duplicate",
-        brief: "duplicate(deep: bool) -> Dictionary",
+        brief: "duplicate(deep: bool = false) -> Dictionary",
         description: "Returns a new copy of the dictionary.\nBy default, a **shallow** copy is returned: all nested `Array`, `Dictionary`, and `Resource` keys and values are shared with the original dictionary. Modifying any of those in one dictionary will also affect them in the other.\nIf `deep` is `true`, a **deep** copy is returned: all nested arrays and dictionaries are also duplicated (recursively). Any `Resource` is still shared with the original dictionary, though.",
         kind: MemberKind::Method,
     },
     BuiltinMember {
         class: "Dictionary",
         name: "duplicate_deep",
-        brief: "duplicate_deep(deep_subresources_mode: int) -> Dictionary",
+        brief: "duplicate_deep(deep_subresources_mode: int = 1) -> Dictionary",
         description: "Duplicates this dictionary, deeply, like `duplicate()` when passing `true`, with extra control over how subresources are handled.\n`deep_subresources_mode` must be one of the values from `Resource.DeepDuplicateMode`. By default, only internal resources will be duplicated (recursively).",
         kind: MemberKind::Method,
     },
@@ -1197,14 +1197,14 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "Dictionary",
         name: "get",
-        brief: "get(key: Variant, default: Variant) -> Variant",
+        brief: "get(key: Variant, default: Variant = null) -> Variant",
         description: "Returns the corresponding value for the given `key` in the dictionary. If the `key` does not exist, returns `default`, or `null` if the parameter is omitted.",
         kind: MemberKind::Method,
     },
     BuiltinMember {
         class: "Dictionary",
         name: "get_or_add",
-        brief: "get_or_add(key: Variant, default: Variant) -> Variant",
+        brief: "get_or_add(key: Variant, default: Variant = null) -> Variant",
         description: "Gets a value and ensures the key is set. If the `key` exists in the dictionary, this behaves like `get()`. Otherwise, the `default` value is inserted into the dictionary and returned.",
         kind: MemberKind::Method,
     },
@@ -1344,14 +1344,14 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "Dictionary",
         name: "merge",
-        brief: "merge(dictionary: Dictionary, overwrite: bool) -> void",
+        brief: "merge(dictionary: Dictionary, overwrite: bool = false) -> void",
         description: "Adds entries from `dictionary` to this dictionary. By default, duplicate keys are not copied over, unless `overwrite` is `true`.\n\n```gdscript\nvar dict = { \"item\": \"sword\", \"quantity\": 2 }\nvar other_dict = { \"quantity\": 15, \"color\": \"silver\" }\n\n# Overwriting of existing keys is disabled by default.\ndict.merge(other_dict)\nprint(dict)  # { \"item\": \"sword\", \"quantity\": 2, \"color\": \"silver\" }\n\n# With overwriting of existing keys enabled.\ndict.merge(other_dict, true)\nprint(dict)  # { \"item\": \"sword\", \"quantity\": 15, \"color\": \"silver\" }\n```\n\n**Note:** `merge()` is *not* recursive. Nested dictionaries are considered as keys that can be overwritten or not depending on the value of `overwrite`, but they will never be merged together.",
         kind: MemberKind::Method,
     },
     BuiltinMember {
         class: "Dictionary",
         name: "merged",
-        brief: "merged(dictionary: Dictionary, overwrite: bool) -> Dictionary",
+        brief: "merged(dictionary: Dictionary, overwrite: bool = false) -> Dictionary",
         description: "Returns a copy of this dictionary merged with the other `dictionary`. By default, duplicate keys are not copied over, unless `overwrite` is `true`. See also `merge()`.\nThis method is useful for quickly making dictionaries with default values:\n\n```\nvar base = { \"fruit\": \"apple\", \"vegetable\": \"potato\" }\nvar extra = { \"fruit\": \"orange\", \"dressing\": \"vinegar\" }\n# Prints { \"fruit\": \"orange\", \"vegetable\": \"potato\", \"dressing\": \"vinegar\" }\nprint(extra.merged(base))\n# Prints { \"fruit\": \"apple\", \"vegetable\": \"potato\", \"dressing\": \"vinegar\" }\nprint(extra.merged(base, true))\n```",
         kind: MemberKind::Method,
     },
@@ -1464,7 +1464,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "NodePath",
         name: "slice",
-        brief: "slice(begin: int, end: int) -> NodePath",
+        brief: "slice(begin: int, end: int = 2147483647) -> NodePath",
         description: "Returns the slice of the `NodePath`, from `begin` (inclusive) to `end` (exclusive), as a new `NodePath`.\nThe absolute value of `begin` and `end` will be clamped to the sum of `get_name_count()` and `get_subname_count()`, so the default value for `end` makes it slice to the end of the `NodePath` by default (i.e. `path.slice(1)` is a shorthand for `path.slice(1, path.get_name_count() + path.get_subname_count())`).\nIf either `begin` or `end` are negative, they will be relative to the end of the `NodePath` (i.e. `path.slice(0, -2)` is a shorthand for `path.slice(0, path.get_name_count() + path.get_subname_count() - 2)`).",
         kind: MemberKind::Method,
     },
@@ -1486,28 +1486,28 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "PackedByteArray",
         name: "bsearch",
-        brief: "bsearch(value: int, before: bool) -> int",
+        brief: "bsearch(value: int, before: bool = true) -> int",
         description: "Finds the index of an existing value (or the insertion index that maintains sorting order, if the value is not yet present in the array) using binary search. Optionally, a `before` specifier can be passed. If `false`, the returned index comes after all existing entries of the value in the array.\n**Note:** Calling `bsearch()` on an unsorted array results in unexpected behavior.",
         kind: MemberKind::Method,
     },
     BuiltinMember {
         class: "PackedByteArray",
         name: "bswap16",
-        brief: "bswap16(offset: int, count: int) -> void",
+        brief: "bswap16(offset: int = 0, count: int = -1) -> void",
         description: "Swaps the byte order of `count` 16-bit segments of the array starting at `offset`. Swap is done in-place. If `count` is less than zero, all segments to the end of array are processed, if processed data size is not a multiple of 2, the byte after the last processed 16-bit segment is not modified.",
         kind: MemberKind::Method,
     },
     BuiltinMember {
         class: "PackedByteArray",
         name: "bswap32",
-        brief: "bswap32(offset: int, count: int) -> void",
+        brief: "bswap32(offset: int = 0, count: int = -1) -> void",
         description: "Swaps the byte order of `count` 32-bit segments of the array starting at `offset`. Swap is done in-place. If `count` is less than zero, all segments to the end of array are processed, if processed data size is not a multiple of 4, bytes after the last processed 32-bit segment are not modified.",
         kind: MemberKind::Method,
     },
     BuiltinMember {
         class: "PackedByteArray",
         name: "bswap64",
-        brief: "bswap64(offset: int, count: int) -> void",
+        brief: "bswap64(offset: int = 0, count: int = -1) -> void",
         description: "Swaps the byte order of `count` 64-bit segments of the array starting at `offset`. Swap is done in-place. If `count` is less than zero, all segments to the end of array are processed, if processed data size is not a multiple of 8, bytes after the last processed 64-bit segment are not modified.",
         kind: MemberKind::Method,
     },
@@ -1521,7 +1521,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "PackedByteArray",
         name: "compress",
-        brief: "compress(compression_mode: int) -> PackedByteArray",
+        brief: "compress(compression_mode: int = 0) -> PackedByteArray",
         description: "Returns a new `PackedByteArray` with the data compressed. Set the compression mode using one of `FileAccess.CompressionMode`'s constants.",
         kind: MemberKind::Method,
     },
@@ -1612,28 +1612,28 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "PackedByteArray",
         name: "decode_var",
-        brief: "decode_var(byte_offset: int, allow_objects: bool) -> Variant",
+        brief: "decode_var(byte_offset: int, allow_objects: bool = false) -> Variant",
         description: "Decodes a `Variant` from the bytes starting at `byte_offset`. Returns `null` if a valid variant can't be decoded or the value is `Object`-derived and `allow_objects` is `false`.",
         kind: MemberKind::Method,
     },
     BuiltinMember {
         class: "PackedByteArray",
         name: "decode_var_size",
-        brief: "decode_var_size(byte_offset: int, allow_objects: bool) -> int",
+        brief: "decode_var_size(byte_offset: int, allow_objects: bool = false) -> int",
         description: "Decodes a size of a `Variant` from the bytes starting at `byte_offset`. Requires at least 4 bytes of data starting at the offset, otherwise fails.",
         kind: MemberKind::Method,
     },
     BuiltinMember {
         class: "PackedByteArray",
         name: "decompress",
-        brief: "decompress(buffer_size: int, compression_mode: int) -> PackedByteArray",
+        brief: "decompress(buffer_size: int, compression_mode: int = 0) -> PackedByteArray",
         description: "Returns a new `PackedByteArray` with the data decompressed. Set `buffer_size` to the size of the uncompressed data. Set the compression mode using one of `FileAccess.CompressionMode`'s constants.\n**Note:** Decompression is not guaranteed to work with data not compressed by Godot, for example if data compressed with the deflate compression mode lacks a checksum or header.",
         kind: MemberKind::Method,
     },
     BuiltinMember {
         class: "PackedByteArray",
         name: "decompress_dynamic",
-        brief: "decompress_dynamic(max_output_size: int, compression_mode: int) -> PackedByteArray",
+        brief: "decompress_dynamic(max_output_size: int, compression_mode: int = 0) -> PackedByteArray",
         description: "Returns a new `PackedByteArray` with the data decompressed. Set the compression mode using one of `FileAccess.CompressionMode`'s constants. **This method only accepts brotli, gzip, and deflate compression modes.**\nThis method is potentially slower than `decompress()`, as it may have to re-allocate its output buffer multiple times while decompressing, whereas `decompress()` knows it's output buffer size from the beginning.\nGZIP has a maximal compression ratio of 1032:1, meaning it's very possible for a small compressed payload to decompress to a potentially very large output. To guard against this, you may provide a maximum size this function is allowed to allocate in bytes via `max_output_size`. Passing -1 will allow for unbounded output. If any positive value is passed, and the decompression exceeds that amount in bytes, then an error will be returned.\n**Note:** Decompression is not guaranteed to work with data not compressed by Godot, for example if data compressed with the deflate compression mode lacks a checksum or header.",
         kind: MemberKind::Method,
     },
@@ -1724,7 +1724,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "PackedByteArray",
         name: "encode_var",
-        brief: "encode_var(byte_offset: int, value: Variant, allow_objects: bool) -> int",
+        brief: "encode_var(byte_offset: int, value: Variant, allow_objects: bool = false) -> int",
         description: "Encodes a `Variant` at the index of `byte_offset` bytes. A sufficient space must be allocated, depending on the encoded variant's size. If `allow_objects` is `false`, `Object`-derived values are not permitted and will instead be serialized as ID-only.",
         kind: MemberKind::Method,
     },
@@ -1745,7 +1745,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "PackedByteArray",
         name: "find",
-        brief: "find(value: int, from: int) -> int",
+        brief: "find(value: int, from: int = 0) -> int",
         description: "Searches the array for a value and returns its index or `-1` if not found. Optionally, the initial search index can be passed.",
         kind: MemberKind::Method,
     },
@@ -1766,7 +1766,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "PackedByteArray",
         name: "get_string_from_multibyte_char",
-        brief: "get_string_from_multibyte_char(encoding: String) -> String",
+        brief: "get_string_from_multibyte_char(encoding: String = \"\") -> String",
         description: "Converts system multibyte code page encoded array to `String`. If conversion fails, empty string is returned. This is the inverse of `String.to_multibyte_char_buffer()`.\nThe values permitted for `encoding` are system dependent. If `encoding` is empty string, system default encoding is used.\n- For Windows, see [Code Page Identifiers](https://learn.microsoft.com/en-us/windows/win32/Intl/code-page-identifiers) .NET names.\n- For macOS and Linux/BSD, see `libiconv` library documentation and `iconv --list` for a list of supported encodings.",
         kind: MemberKind::Method,
     },
@@ -1808,7 +1808,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "PackedByteArray",
         name: "has_encoded_var",
-        brief: "has_encoded_var(byte_offset: int, allow_objects: bool) -> bool",
+        brief: "has_encoded_var(byte_offset: int, allow_objects: bool = false) -> bool",
         description: "Returns `true` if a valid `Variant` value can be decoded at the `byte_offset`. Returns `false` otherwise or when the value is `Object`-derived and `allow_objects` is `false`.",
         kind: MemberKind::Method,
     },
@@ -1864,7 +1864,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "PackedByteArray",
         name: "rfind",
-        brief: "rfind(value: int, from: int) -> int",
+        brief: "rfind(value: int, from: int = -1) -> int",
         description: "Searches the array in reverse order. Optionally, a start search index can be passed. If negative, the start index is considered relative to the end of the array.",
         kind: MemberKind::Method,
     },
@@ -1885,7 +1885,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "PackedByteArray",
         name: "slice",
-        brief: "slice(begin: int, end: int) -> PackedByteArray",
+        brief: "slice(begin: int, end: int = 2147483647) -> PackedByteArray",
         description: "Returns the slice of the `PackedByteArray`, from `begin` (inclusive) to `end` (exclusive), as a new `PackedByteArray`.\nThe absolute value of `begin` and `end` will be clamped to the array size, so the default value for `end` makes it slice to the size of the array by default (i.e. `arr.slice(1)` is a shorthand for `arr.slice(1, arr.size())`).\nIf either `begin` or `end` are negative, they will be relative to the end of the array (i.e. `arr.slice(0, -2)` is a shorthand for `arr.slice(0, arr.size() - 2)`).",
         kind: MemberKind::Method,
     },
@@ -1970,7 +1970,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "PackedColorArray",
         name: "bsearch",
-        brief: "bsearch(value: Color, before: bool) -> int",
+        brief: "bsearch(value: Color, before: bool = true) -> int",
         description: "Finds the index of an existing value (or the insertion index that maintains sorting order, if the value is not yet present in the array) using binary search. Optionally, a `before` specifier can be passed. If `false`, the returned index comes after all existing entries of the value in the array.\n**Note:** Calling `bsearch()` on an unsorted array results in unexpected behavior.",
         kind: MemberKind::Method,
     },
@@ -2012,7 +2012,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "PackedColorArray",
         name: "find",
-        brief: "find(value: Color, from: int) -> int",
+        brief: "find(value: Color, from: int = 0) -> int",
         description: "Searches the array for a value and returns its index or `-1` if not found. Optionally, the initial search index can be passed.",
         kind: MemberKind::Method,
     },
@@ -2075,7 +2075,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "PackedColorArray",
         name: "rfind",
-        brief: "rfind(value: Color, from: int) -> int",
+        brief: "rfind(value: Color, from: int = -1) -> int",
         description: "Searches the array in reverse order. Optionally, a start search index can be passed. If negative, the start index is considered relative to the end of the array.",
         kind: MemberKind::Method,
     },
@@ -2096,7 +2096,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "PackedColorArray",
         name: "slice",
-        brief: "slice(begin: int, end: int) -> PackedColorArray",
+        brief: "slice(begin: int, end: int = 2147483647) -> PackedColorArray",
         description: "Returns the slice of the `PackedColorArray`, from `begin` (inclusive) to `end` (exclusive), as a new `PackedColorArray`.\nThe absolute value of `begin` and `end` will be clamped to the array size, so the default value for `end` makes it slice to the size of the array by default (i.e. `arr.slice(1)` is a shorthand for `arr.slice(1, arr.size())`).\nIf either `begin` or `end` are negative, they will be relative to the end of the array (i.e. `arr.slice(0, -2)` is a shorthand for `arr.slice(0, arr.size() - 2)`).",
         kind: MemberKind::Method,
     },
@@ -2132,7 +2132,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "PackedFloat32Array",
         name: "bsearch",
-        brief: "bsearch(value: float, before: bool) -> int",
+        brief: "bsearch(value: float, before: bool = true) -> int",
         description: "Finds the index of an existing value (or the insertion index that maintains sorting order, if the value is not yet present in the array) using binary search. Optionally, a `before` specifier can be passed. If `false`, the returned index comes after all existing entries of the value in the array.\n**Note:** Calling `bsearch()` on an unsorted array results in unexpected behavior.\n**Note:** [constant @GDScript.NAN] doesn't behave the same as other numbers. Therefore, the results from this method may not be accurate if NaNs are included.",
         kind: MemberKind::Method,
     },
@@ -2174,7 +2174,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "PackedFloat32Array",
         name: "find",
-        brief: "find(value: float, from: int) -> int",
+        brief: "find(value: float, from: int = 0) -> int",
         description: "Searches the array for a value and returns its index or `-1` if not found. Optionally, the initial search index can be passed.\n**Note:** [constant @GDScript.NAN] doesn't behave the same as other numbers. Therefore, the results from this method may not be accurate if NaNs are included.",
         kind: MemberKind::Method,
     },
@@ -2237,7 +2237,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "PackedFloat32Array",
         name: "rfind",
-        brief: "rfind(value: float, from: int) -> int",
+        brief: "rfind(value: float, from: int = -1) -> int",
         description: "Searches the array in reverse order. Optionally, a start search index can be passed. If negative, the start index is considered relative to the end of the array.\n**Note:** [constant @GDScript.NAN] doesn't behave the same as other numbers. Therefore, the results from this method may not be accurate if NaNs are included.",
         kind: MemberKind::Method,
     },
@@ -2258,7 +2258,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "PackedFloat32Array",
         name: "slice",
-        brief: "slice(begin: int, end: int) -> PackedFloat32Array",
+        brief: "slice(begin: int, end: int = 2147483647) -> PackedFloat32Array",
         description: "Returns the slice of the `PackedFloat32Array`, from `begin` (inclusive) to `end` (exclusive), as a new `PackedFloat32Array`.\nThe absolute value of `begin` and `end` will be clamped to the array size, so the default value for `end` makes it slice to the size of the array by default (i.e. `arr.slice(1)` is a shorthand for `arr.slice(1, arr.size())`).\nIf either `begin` or `end` are negative, they will be relative to the end of the array (i.e. `arr.slice(0, -2)` is a shorthand for `arr.slice(0, arr.size() - 2)`).",
         kind: MemberKind::Method,
     },
@@ -2294,7 +2294,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "PackedFloat64Array",
         name: "bsearch",
-        brief: "bsearch(value: float, before: bool) -> int",
+        brief: "bsearch(value: float, before: bool = true) -> int",
         description: "Finds the index of an existing value (or the insertion index that maintains sorting order, if the value is not yet present in the array) using binary search. Optionally, a `before` specifier can be passed. If `false`, the returned index comes after all existing entries of the value in the array.\n**Note:** Calling `bsearch()` on an unsorted array results in unexpected behavior.\n**Note:** [constant @GDScript.NAN] doesn't behave the same as other numbers. Therefore, the results from this method may not be accurate if NaNs are included.",
         kind: MemberKind::Method,
     },
@@ -2336,7 +2336,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "PackedFloat64Array",
         name: "find",
-        brief: "find(value: float, from: int) -> int",
+        brief: "find(value: float, from: int = 0) -> int",
         description: "Searches the array for a value and returns its index or `-1` if not found. Optionally, the initial search index can be passed.\n**Note:** [constant @GDScript.NAN] doesn't behave the same as other numbers. Therefore, the results from this method may not be accurate if NaNs are included.",
         kind: MemberKind::Method,
     },
@@ -2399,7 +2399,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "PackedFloat64Array",
         name: "rfind",
-        brief: "rfind(value: float, from: int) -> int",
+        brief: "rfind(value: float, from: int = -1) -> int",
         description: "Searches the array in reverse order. Optionally, a start search index can be passed. If negative, the start index is considered relative to the end of the array.\n**Note:** [constant @GDScript.NAN] doesn't behave the same as other numbers. Therefore, the results from this method may not be accurate if NaNs are included.",
         kind: MemberKind::Method,
     },
@@ -2420,7 +2420,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "PackedFloat64Array",
         name: "slice",
-        brief: "slice(begin: int, end: int) -> PackedFloat64Array",
+        brief: "slice(begin: int, end: int = 2147483647) -> PackedFloat64Array",
         description: "Returns the slice of the `PackedFloat64Array`, from `begin` (inclusive) to `end` (exclusive), as a new `PackedFloat64Array`.\nThe absolute value of `begin` and `end` will be clamped to the array size, so the default value for `end` makes it slice to the size of the array by default (i.e. `arr.slice(1)` is a shorthand for `arr.slice(1, arr.size())`).\nIf either `begin` or `end` are negative, they will be relative to the end of the array (i.e. `arr.slice(0, -2)` is a shorthand for `arr.slice(0, arr.size() - 2)`).",
         kind: MemberKind::Method,
     },
@@ -2456,7 +2456,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "PackedInt32Array",
         name: "bsearch",
-        brief: "bsearch(value: int, before: bool) -> int",
+        brief: "bsearch(value: int, before: bool = true) -> int",
         description: "Finds the index of an existing value (or the insertion index that maintains sorting order, if the value is not yet present in the array) using binary search. Optionally, a `before` specifier can be passed. If `false`, the returned index comes after all existing entries of the value in the array.\n**Note:** Calling `bsearch()` on an unsorted array results in unexpected behavior.",
         kind: MemberKind::Method,
     },
@@ -2498,7 +2498,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "PackedInt32Array",
         name: "find",
-        brief: "find(value: int, from: int) -> int",
+        brief: "find(value: int, from: int = 0) -> int",
         description: "Searches the array for a value and returns its index or `-1` if not found. Optionally, the initial search index can be passed.",
         kind: MemberKind::Method,
     },
@@ -2561,7 +2561,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "PackedInt32Array",
         name: "rfind",
-        brief: "rfind(value: int, from: int) -> int",
+        brief: "rfind(value: int, from: int = -1) -> int",
         description: "Searches the array in reverse order. Optionally, a start search index can be passed. If negative, the start index is considered relative to the end of the array.",
         kind: MemberKind::Method,
     },
@@ -2582,7 +2582,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "PackedInt32Array",
         name: "slice",
-        brief: "slice(begin: int, end: int) -> PackedInt32Array",
+        brief: "slice(begin: int, end: int = 2147483647) -> PackedInt32Array",
         description: "Returns the slice of the `PackedInt32Array`, from `begin` (inclusive) to `end` (exclusive), as a new `PackedInt32Array`.\nThe absolute value of `begin` and `end` will be clamped to the array size, so the default value for `end` makes it slice to the size of the array by default (i.e. `arr.slice(1)` is a shorthand for `arr.slice(1, arr.size())`).\nIf either `begin` or `end` are negative, they will be relative to the end of the array (i.e. `arr.slice(0, -2)` is a shorthand for `arr.slice(0, arr.size() - 2)`).",
         kind: MemberKind::Method,
     },
@@ -2618,7 +2618,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "PackedInt64Array",
         name: "bsearch",
-        brief: "bsearch(value: int, before: bool) -> int",
+        brief: "bsearch(value: int, before: bool = true) -> int",
         description: "Finds the index of an existing value (or the insertion index that maintains sorting order, if the value is not yet present in the array) using binary search. Optionally, a `before` specifier can be passed. If `false`, the returned index comes after all existing entries of the value in the array.\n**Note:** Calling `bsearch()` on an unsorted array results in unexpected behavior.",
         kind: MemberKind::Method,
     },
@@ -2660,7 +2660,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "PackedInt64Array",
         name: "find",
-        brief: "find(value: int, from: int) -> int",
+        brief: "find(value: int, from: int = 0) -> int",
         description: "Searches the array for a value and returns its index or `-1` if not found. Optionally, the initial search index can be passed.",
         kind: MemberKind::Method,
     },
@@ -2723,7 +2723,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "PackedInt64Array",
         name: "rfind",
-        brief: "rfind(value: int, from: int) -> int",
+        brief: "rfind(value: int, from: int = -1) -> int",
         description: "Searches the array in reverse order. Optionally, a start search index can be passed. If negative, the start index is considered relative to the end of the array.",
         kind: MemberKind::Method,
     },
@@ -2744,7 +2744,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "PackedInt64Array",
         name: "slice",
-        brief: "slice(begin: int, end: int) -> PackedInt64Array",
+        brief: "slice(begin: int, end: int = 2147483647) -> PackedInt64Array",
         description: "Returns the slice of the `PackedInt64Array`, from `begin` (inclusive) to `end` (exclusive), as a new `PackedInt64Array`.\nThe absolute value of `begin` and `end` will be clamped to the array size, so the default value for `end` makes it slice to the size of the array by default (i.e. `arr.slice(1)` is a shorthand for `arr.slice(1, arr.size())`).\nIf either `begin` or `end` are negative, they will be relative to the end of the array (i.e. `arr.slice(0, -2)` is a shorthand for `arr.slice(0, arr.size() - 2)`).",
         kind: MemberKind::Method,
     },
@@ -2780,7 +2780,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "PackedStringArray",
         name: "bsearch",
-        brief: "bsearch(value: String, before: bool) -> int",
+        brief: "bsearch(value: String, before: bool = true) -> int",
         description: "Finds the index of an existing value (or the insertion index that maintains sorting order, if the value is not yet present in the array) using binary search. Optionally, a `before` specifier can be passed. If `false`, the returned index comes after all existing entries of the value in the array.\n**Note:** Calling `bsearch()` on an unsorted array results in unexpected behavior.",
         kind: MemberKind::Method,
     },
@@ -2822,7 +2822,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "PackedStringArray",
         name: "find",
-        brief: "find(value: String, from: int) -> int",
+        brief: "find(value: String, from: int = 0) -> int",
         description: "Searches the array for a value and returns its index or `-1` if not found. Optionally, the initial search index can be passed.",
         kind: MemberKind::Method,
     },
@@ -2885,7 +2885,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "PackedStringArray",
         name: "rfind",
-        brief: "rfind(value: String, from: int) -> int",
+        brief: "rfind(value: String, from: int = -1) -> int",
         description: "Searches the array in reverse order. Optionally, a start search index can be passed. If negative, the start index is considered relative to the end of the array.",
         kind: MemberKind::Method,
     },
@@ -2906,7 +2906,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "PackedStringArray",
         name: "slice",
-        brief: "slice(begin: int, end: int) -> PackedStringArray",
+        brief: "slice(begin: int, end: int = 2147483647) -> PackedStringArray",
         description: "Returns the slice of the `PackedStringArray`, from `begin` (inclusive) to `end` (exclusive), as a new `PackedStringArray`.\nThe absolute value of `begin` and `end` will be clamped to the array size, so the default value for `end` makes it slice to the size of the array by default (i.e. `arr.slice(1)` is a shorthand for `arr.slice(1, arr.size())`).\nIf either `begin` or `end` are negative, they will be relative to the end of the array (i.e. `arr.slice(0, -2)` is a shorthand for `arr.slice(0, arr.size() - 2)`).",
         kind: MemberKind::Method,
     },
@@ -2942,7 +2942,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "PackedVector2Array",
         name: "bsearch",
-        brief: "bsearch(value: Vector2, before: bool) -> int",
+        brief: "bsearch(value: Vector2, before: bool = true) -> int",
         description: "Finds the index of an existing value (or the insertion index that maintains sorting order, if the value is not yet present in the array) using binary search. Optionally, a `before` specifier can be passed. If `false`, the returned index comes after all existing entries of the value in the array.\n**Note:** Calling `bsearch()` on an unsorted array results in unexpected behavior.\n**Note:** Vectors with [constant @GDScript.NAN] elements don't behave the same as other vectors. Therefore, the results from this method may not be accurate if NaNs are included.",
         kind: MemberKind::Method,
     },
@@ -2984,7 +2984,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "PackedVector2Array",
         name: "find",
-        brief: "find(value: Vector2, from: int) -> int",
+        brief: "find(value: Vector2, from: int = 0) -> int",
         description: "Searches the array for a value and returns its index or `-1` if not found. Optionally, the initial search index can be passed.\n**Note:** Vectors with [constant @GDScript.NAN] elements don't behave the same as other vectors. Therefore, the results from this method may not be accurate if NaNs are included.",
         kind: MemberKind::Method,
     },
@@ -3047,7 +3047,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "PackedVector2Array",
         name: "rfind",
-        brief: "rfind(value: Vector2, from: int) -> int",
+        brief: "rfind(value: Vector2, from: int = -1) -> int",
         description: "Searches the array in reverse order. Optionally, a start search index can be passed. If negative, the start index is considered relative to the end of the array.\n**Note:** Vectors with [constant @GDScript.NAN] elements don't behave the same as other vectors. Therefore, the results from this method may not be accurate if NaNs are included.",
         kind: MemberKind::Method,
     },
@@ -3068,7 +3068,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "PackedVector2Array",
         name: "slice",
-        brief: "slice(begin: int, end: int) -> PackedVector2Array",
+        brief: "slice(begin: int, end: int = 2147483647) -> PackedVector2Array",
         description: "Returns the slice of the `PackedVector2Array`, from `begin` (inclusive) to `end` (exclusive), as a new `PackedVector2Array`.\nThe absolute value of `begin` and `end` will be clamped to the array size, so the default value for `end` makes it slice to the size of the array by default (i.e. `arr.slice(1)` is a shorthand for `arr.slice(1, arr.size())`).\nIf either `begin` or `end` are negative, they will be relative to the end of the array (i.e. `arr.slice(0, -2)` is a shorthand for `arr.slice(0, arr.size() - 2)`).",
         kind: MemberKind::Method,
     },
@@ -3104,7 +3104,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "PackedVector3Array",
         name: "bsearch",
-        brief: "bsearch(value: Vector3, before: bool) -> int",
+        brief: "bsearch(value: Vector3, before: bool = true) -> int",
         description: "Finds the index of an existing value (or the insertion index that maintains sorting order, if the value is not yet present in the array) using binary search. Optionally, a `before` specifier can be passed. If `false`, the returned index comes after all existing entries of the value in the array.\n**Note:** Calling `bsearch()` on an unsorted array results in unexpected behavior.\n**Note:** Vectors with [constant @GDScript.NAN] elements don't behave the same as other vectors. Therefore, the results from this method may not be accurate if NaNs are included.",
         kind: MemberKind::Method,
     },
@@ -3146,7 +3146,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "PackedVector3Array",
         name: "find",
-        brief: "find(value: Vector3, from: int) -> int",
+        brief: "find(value: Vector3, from: int = 0) -> int",
         description: "Searches the array for a value and returns its index or `-1` if not found. Optionally, the initial search index can be passed.\n**Note:** Vectors with [constant @GDScript.NAN] elements don't behave the same as other vectors. Therefore, the results from this method may not be accurate if NaNs are included.",
         kind: MemberKind::Method,
     },
@@ -3209,7 +3209,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "PackedVector3Array",
         name: "rfind",
-        brief: "rfind(value: Vector3, from: int) -> int",
+        brief: "rfind(value: Vector3, from: int = -1) -> int",
         description: "Searches the array in reverse order. Optionally, a start search index can be passed. If negative, the start index is considered relative to the end of the array.\n**Note:** Vectors with [constant @GDScript.NAN] elements don't behave the same as other vectors. Therefore, the results from this method may not be accurate if NaNs are included.",
         kind: MemberKind::Method,
     },
@@ -3230,7 +3230,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "PackedVector3Array",
         name: "slice",
-        brief: "slice(begin: int, end: int) -> PackedVector3Array",
+        brief: "slice(begin: int, end: int = 2147483647) -> PackedVector3Array",
         description: "Returns the slice of the `PackedVector3Array`, from `begin` (inclusive) to `end` (exclusive), as a new `PackedVector3Array`.\nThe absolute value of `begin` and `end` will be clamped to the array size, so the default value for `end` makes it slice to the size of the array by default (i.e. `arr.slice(1)` is a shorthand for `arr.slice(1, arr.size())`).\nIf either `begin` or `end` are negative, they will be relative to the end of the array (i.e. `arr.slice(0, -2)` is a shorthand for `arr.slice(0, arr.size() - 2)`).",
         kind: MemberKind::Method,
     },
@@ -3266,7 +3266,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "PackedVector4Array",
         name: "bsearch",
-        brief: "bsearch(value: Vector4, before: bool) -> int",
+        brief: "bsearch(value: Vector4, before: bool = true) -> int",
         description: "Finds the index of an existing value (or the insertion index that maintains sorting order, if the value is not yet present in the array) using binary search. Optionally, a `before` specifier can be passed. If `false`, the returned index comes after all existing entries of the value in the array.\n**Note:** Calling `bsearch()` on an unsorted array results in unexpected behavior.\n**Note:** Vectors with [constant @GDScript.NAN] elements don't behave the same as other vectors. Therefore, the results from this method may not be accurate if NaNs are included.",
         kind: MemberKind::Method,
     },
@@ -3308,7 +3308,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "PackedVector4Array",
         name: "find",
-        brief: "find(value: Vector4, from: int) -> int",
+        brief: "find(value: Vector4, from: int = 0) -> int",
         description: "Searches the array for a value and returns its index or `-1` if not found. Optionally, the initial search index can be passed.\n**Note:** Vectors with [constant @GDScript.NAN] elements don't behave the same as other vectors. Therefore, the results from this method may not be accurate if NaNs are included.",
         kind: MemberKind::Method,
     },
@@ -3371,7 +3371,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "PackedVector4Array",
         name: "rfind",
-        brief: "rfind(value: Vector4, from: int) -> int",
+        brief: "rfind(value: Vector4, from: int = -1) -> int",
         description: "Searches the array in reverse order. Optionally, a start search index can be passed. If negative, the start index is considered relative to the end of the array.\n**Note:** Vectors with [constant @GDScript.NAN] elements don't behave the same as other vectors. Therefore, the results from this method may not be accurate if NaNs are included.",
         kind: MemberKind::Method,
     },
@@ -3392,7 +3392,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "PackedVector4Array",
         name: "slice",
-        brief: "slice(begin: int, end: int) -> PackedVector4Array",
+        brief: "slice(begin: int, end: int = 2147483647) -> PackedVector4Array",
         description: "Returns the slice of the `PackedVector4Array`, from `begin` (inclusive) to `end` (exclusive), as a new `PackedVector4Array`.\nThe absolute value of `begin` and `end` will be clamped to the array size, so the default value for `end` makes it slice to the size of the array by default (i.e. `arr.slice(1)` is a shorthand for `arr.slice(1, arr.size())`).\nIf either `begin` or `end` are negative, they will be relative to the end of the array (i.e. `arr.slice(0, -2)` is a shorthand for `arr.slice(0, arr.size() - 2)`).",
         kind: MemberKind::Method,
     },
@@ -3428,7 +3428,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "Plane",
         name: "has_point",
-        brief: "has_point(point: Vector3, tolerance: float) -> bool",
+        brief: "has_point(point: Vector3, tolerance: float = 1e-05) -> bool",
         description: "Returns `true` if `point` is inside the plane. Comparison uses a custom minimum `tolerance` threshold.",
         kind: MemberKind::Method,
     },
@@ -3555,7 +3555,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "Projection",
         name: "create_frustum_aspect",
-        brief: "create_frustum_aspect(size: float, aspect: float, offset: Vector2, z_near: float, z_far: float, flip_fov: bool) -> Projection",
+        brief: "create_frustum_aspect(size: float, aspect: float, offset: Vector2, z_near: float, z_far: float, flip_fov: bool = false) -> Projection",
         description: "Creates a new `Projection` that projects positions in a frustum with the given size, X:Y aspect ratio, offset, and clipping planes.\n`flip_fov` determines whether the projection's field of view is flipped over its diagonal.",
         kind: MemberKind::Method,
     },
@@ -3576,14 +3576,14 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "Projection",
         name: "create_orthogonal_aspect",
-        brief: "create_orthogonal_aspect(size: float, aspect: float, z_near: float, z_far: float, flip_fov: bool) -> Projection",
+        brief: "create_orthogonal_aspect(size: float, aspect: float, z_near: float, z_far: float, flip_fov: bool = false) -> Projection",
         description: "Creates a new `Projection` that projects positions using an orthogonal projection with the given size, X:Y aspect ratio, and clipping planes.\n`flip_fov` determines whether the projection's field of view is flipped over its diagonal.",
         kind: MemberKind::Method,
     },
     BuiltinMember {
         class: "Projection",
         name: "create_perspective",
-        brief: "create_perspective(fovy: float, aspect: float, z_near: float, z_far: float, flip_fov: bool) -> Projection",
+        brief: "create_perspective(fovy: float, aspect: float, z_near: float, z_far: float, flip_fov: bool = false) -> Projection",
         description: "Creates a new `Projection` that projects positions using a perspective projection with the given Y-axis field of view (in degrees), X:Y aspect ratio, and clipping planes.\n`flip_fov` determines whether the projection's field of view is flipped over its diagonal.",
         kind: MemberKind::Method,
     },
@@ -3780,7 +3780,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "Quaternion",
         name: "get_euler",
-        brief: "get_euler(order: int) -> Vector3",
+        brief: "get_euler(order: int = 2) -> Vector3",
         description: "Returns this quaternion's rotation as a `Vector3` of [Euler angles](https://en.wikipedia.org/wiki/Euler_angles), in radians.\nThe order of each consecutive rotation can be changed with `order` (see `EulerOrder` constants). By default, the YXZ convention is used (`EULER_ORDER_YXZ`): Z (roll) is calculated first, then X (pitch), and lastly Y (yaw). When using the opposite method `from_euler()`, this order is reversed.",
         kind: MemberKind::Method,
     },
@@ -3999,7 +3999,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "Rect2",
         name: "intersects",
-        brief: "intersects(b: Rect2, include_borders: bool) -> bool",
+        brief: "intersects(b: Rect2, include_borders: bool = false) -> bool",
         description: "Returns `true` if this rectangle overlaps with the `b` rectangle. The edges of both rectangles are excluded, unless `include_borders` is `true`.",
         kind: MemberKind::Method,
     },
@@ -4162,7 +4162,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "Signal",
         name: "connect",
-        brief: "connect(callable: Callable, flags: int) -> int",
+        brief: "connect(callable: Callable, flags: int = 0) -> int",
         description: "Connects this signal to the specified `callable`. Optional `flags` can be also added to configure the connection's behavior (see `Object.ConnectFlags` constants). You can provide additional arguments to the connected `callable` by using `Callable.bind()`.\nA signal can only be connected once to the same `Callable`. If the signal is already connected, this method returns `ERR_INVALID_PARAMETER` and generates an error, unless the signal is connected with `Object.CONNECT_REFERENCE_COUNTED`. To prevent this, use `is_connected()` first to check for existing connections.\n\n```\nfor button in $Buttons.get_children():\n	button.pressed.connect(_on_pressed.bind(button))\n\nfunc _on_pressed(button):\n	print(button.name, \" was pressed\")\n```\n\n**Note:** If the `callable`'s object is freed, the connection will be lost.",
         kind: MemberKind::Method,
     },
@@ -4303,14 +4303,14 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "String",
         name: "count",
-        brief: "count(what: String, from: int, to: int) -> int",
+        brief: "count(what: String, from: int = 0, to: int = 0) -> int",
         description: "Returns the number of occurrences of the substring `what` between `from` and `to` positions. If `to` is 0, the search continues until the end of the string.",
         kind: MemberKind::Method,
     },
     BuiltinMember {
         class: "String",
         name: "countn",
-        brief: "countn(what: String, from: int, to: int) -> int",
+        brief: "countn(what: String, from: int = 0, to: int = 0) -> int",
         description: "Returns the number of occurrences of the substring `what` between `from` and `to` positions, **ignoring case**. If `to` is 0, the search continues until the end of the string.",
         kind: MemberKind::Method,
     },
@@ -4331,7 +4331,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "String",
         name: "erase",
-        brief: "erase(position: int, chars: int) -> String",
+        brief: "erase(position: int, chars: int = 1) -> String",
         description: "Returns a string with `chars` characters erased starting from `position`. If `chars` goes beyond the string's length given the specified `position`, fewer characters will be erased from the returned string. Returns an empty string if either `position` or `chars` is negative. Returns the original string unmodified if `chars` is `0`.",
         kind: MemberKind::Method,
     },
@@ -4352,21 +4352,21 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "String",
         name: "find",
-        brief: "find(what: String, from: int) -> int",
+        brief: "find(what: String, from: int = 0) -> int",
         description: "Returns the index of the **first** occurrence of `what` in this string, or `-1` if there are none. The search's start can be specified with `from`, continuing to the end of the string.\n\n```gdscript\nprint(\"Team\".find(\"I\")) # Prints -1\n\nprint(\"Potato\".find(\"t\"))    # Prints 2\nprint(\"Potato\".find(\"t\", 3)) # Prints 4\nprint(\"Potato\".find(\"t\", 5)) # Prints -1\n```\n\n**Note:** If you just want to know whether the string contains `what`, use `contains()`. In GDScript, you may also use the `in` operator.\n**Note:** A negative value of `from` is converted to a starting index by counting back from the last possible index with enough space to find `what`.",
         kind: MemberKind::Method,
     },
     BuiltinMember {
         class: "String",
         name: "findn",
-        brief: "findn(what: String, from: int) -> int",
+        brief: "findn(what: String, from: int = 0) -> int",
         description: "Returns the index of the **first** **case-insensitive** occurrence of `what` in this string, or `-1` if there are none. The starting search index can be specified with `from`, continuing to the end of the string.",
         kind: MemberKind::Method,
     },
     BuiltinMember {
         class: "String",
         name: "format",
-        brief: "format(values: Variant, placeholder: String) -> String",
+        brief: "format(values: Variant, placeholder: String = \"{_}\") -> String",
         description: "Formats the string by replacing all occurrences of `placeholder` with the elements of `values`.\n`values` can be a `Dictionary`, an `Array`, or an `Object`. Any underscores in `placeholder` will be replaced with the corresponding keys in advance. Array elements use their index as keys.\n\n```\n# Prints \"Waiting for Godot is a play by Samuel Beckett, and Godot Engine is named after it.\"\nvar use_array_values = \"Waiting for {0} is a play by {1}, and {0} Engine is named after it.\"\nprint(use_array_values.format([\"Godot\", \"Samuel Beckett\"]))\n\n# Prints \"User 42 is Godot.\"\nprint(\"User {id} is {name}.\".format({\"id\": 42, \"name\": \"Godot\"}))\n```\n\nSome additional handling is performed when `values` is an `Array`. If `placeholder` does not contain an underscore, the elements of the `values` array will be used to replace one occurrence of the placeholder in order; If an element of `values` is another 2-element array, it'll be interpreted as a key-value pair.\n\n```\n# Prints \"User 42 is Godot.\"\nprint(\"User {} is {}.\".format([42, \"Godot\"], \"{}\"))\nprint(\"User {id} is {name}.\".format([[\"id\", 42], [\"name\", \"Godot\"]]))\n```\n\nWhen passing an `Object`, the property names from `Object.get_property_list()` are used as keys.\n\n```\n# Prints \"Visible true, position (0, 0)\"\nvar node = Node2D.new()\nprint(\"Visible {visible}, position {position}\".format(node))\n```\n\nSee also the [GDScript format string]($DOCS_URL/tutorials/scripting/gdscript/gdscript_format_string.html) tutorial.\n**Note:** Each replacement is done sequentially for each element of `values`, **not** all at once. This means that if any element is inserted and it contains another placeholder, it may be changed by the next replacement. While this can be very useful, it often causes unexpected results. If not necessary, make sure `values`'s elements do not contain placeholders.\n\n```\nprint(\"{0} {1}\".format([\"{1}\", \"x\"]))           # Prints \"x x\"\nprint(\"{0} {1}\".format([\"x\", \"{0}\"]))           # Prints \"x {0}\"\nprint(\"{a} {b}\".format({\"a\": \"{b}\", \"b\": \"c\"})) # Prints \"c c\"\nprint(\"{a} {b}\".format({\"b\": \"c\", \"a\": \"{b}\"})) # Prints \"{b} c\"\n```\n\n**Note:** In C#, it's recommended to [interpolate strings with \"$\"](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/tokens/interpolated), instead.",
         kind: MemberKind::Method,
     },
@@ -4520,7 +4520,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "String",
         name: "is_valid_hex_number",
-        brief: "is_valid_hex_number(with_prefix: bool) -> bool",
+        brief: "is_valid_hex_number(with_prefix: bool = false) -> bool",
         description: "Returns `true` if this string is a valid hexadecimal number. A valid hexadecimal number only contains digits or letters `A` to `F` (either uppercase or lowercase), and may be prefixed with a positive (`+`) or negative (`-`) sign.\nIf `with_prefix` is `true`, the hexadecimal number needs to prefixed by `\"0x\"` to be considered valid.\n\n```\nprint(\"A08E\".is_valid_hex_number())    # Prints true\nprint(\"-AbCdEf\".is_valid_hex_number()) # Prints true\nprint(\"2.5\".is_valid_hex_number())     # Prints false\n\nprint(\"0xDEADC0DE\".is_valid_hex_number(true)) # Prints true\n```",
         kind: MemberKind::Method,
     },
@@ -4590,7 +4590,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "String",
         name: "lpad",
-        brief: "lpad(min_length: int, character: String) -> String",
+        brief: "lpad(min_length: int, character: String = \" \") -> String",
         description: "Formats the string to be at least `min_length` long by adding `character`s to the left of the string, if necessary. See also `rpad()`.",
         kind: MemberKind::Method,
     },
@@ -4653,14 +4653,14 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "String",
         name: "num",
-        brief: "num(number: float, decimals: int) -> String",
+        brief: "num(number: float, decimals: int = -1) -> String",
         description: "Converts a [float] to a string representation of a decimal number, with the number of decimal places specified in `decimals`.\nIf `decimals` is `-1` as by default, the string representation may only have up to 14 significant digits, with digits before the decimal point having priority over digits after.\nTrailing zeros are not included in the string. The last digit is rounded, not truncated.\n\n```\nString.num(3.141593)     # Returns \"3.141593\"\nString.num(3.141593, 3)  # Returns \"3.142\"\nString.num(3.14159300)   # Returns \"3.141593\"\n\n# Here, the last digit will be rounded up,\n# which reduces the total digit count, since trailing zeros are removed:\nString.num(42.129999, 5) # Returns \"42.13\"\n\n# If `decimals` is not specified, the maximum number of significant digits is 14:\nString.num(-0.0000012345432123454321)     # Returns \"-0.00000123454321\"\nString.num(-10000.0000012345432123454321) # Returns \"-10000.0000012345\"\n```",
         kind: MemberKind::Method,
     },
     BuiltinMember {
         class: "String",
         name: "num_int64",
-        brief: "num_int64(number: int, base: int, capitalize_hex: bool) -> String",
+        brief: "num_int64(number: int, base: int = 10, capitalize_hex: bool = false) -> String",
         description: "Converts the given `number` to a string representation, with the given `base`.\nBy default, `base` is set to decimal (`10`). Other common bases in programming include binary (`2`), [octal](https://en.wikipedia.org/wiki/Octal) (`8`), hexadecimal (`16`).\nIf `capitalize_hex` is `true`, digits higher than 9 are represented in uppercase.",
         kind: MemberKind::Method,
     },
@@ -4674,7 +4674,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "String",
         name: "num_uint64",
-        brief: "num_uint64(number: int, base: int, capitalize_hex: bool) -> String",
+        brief: "num_uint64(number: int, base: int = 10, capitalize_hex: bool = false) -> String",
         description: "Converts the given unsigned [int] to a string representation, with the given `base`.\nBy default, `base` is set to decimal (`10`). Other common bases in programming include binary (`2`), [octal](https://en.wikipedia.org/wiki/Octal) (`8`), hexadecimal (`16`).\nIf `capitalize_hex` is `true`, digits higher than 9 are represented in uppercase.",
         kind: MemberKind::Method,
     },
@@ -4758,14 +4758,14 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "String",
         name: "rfind",
-        brief: "rfind(what: String, from: int) -> int",
+        brief: "rfind(what: String, from: int = -1) -> int",
         description: "Returns the index of the **last** occurrence of `what` in this string, or `-1` if there are none. The search's start can be specified with `from`, continuing to the beginning of the string. This method is the reverse of `find()`.\n**Note:** A negative value of `from` is converted to a starting index by counting back from the last possible index with enough space to find `what`.\n**Note:** A value of `from` that is greater than the last possible index with enough space to find `what` is considered out-of-bounds, and returns `-1`.",
         kind: MemberKind::Method,
     },
     BuiltinMember {
         class: "String",
         name: "rfindn",
-        brief: "rfindn(what: String, from: int) -> int",
+        brief: "rfindn(what: String, from: int = -1) -> int",
         description: "Returns the index of the **last** **case-insensitive** occurrence of `what` in this string, or `-1` if there are none. The starting search index can be specified with `from`, continuing to the beginning of the string. This method is the reverse of `findn()`.",
         kind: MemberKind::Method,
     },
@@ -4779,14 +4779,14 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "String",
         name: "rpad",
-        brief: "rpad(min_length: int, character: String) -> String",
+        brief: "rpad(min_length: int, character: String = \" \") -> String",
         description: "Formats the string to be at least `min_length` long, by adding `character`s to the right of the string, if necessary. See also `lpad()`.",
         kind: MemberKind::Method,
     },
     BuiltinMember {
         class: "String",
         name: "rsplit",
-        brief: "rsplit(delimiter: String, allow_empty: bool, maxsplit: int) -> PackedStringArray",
+        brief: "rsplit(delimiter: String = \"\", allow_empty: bool = true, maxsplit: int = 0) -> PackedStringArray",
         description: "Splits the string using a `delimiter` and returns an array of the substrings, starting from the end of the string. The splits in the returned array appear in the same order as the original string. If `delimiter` is an empty string, each substring will be a single character.\nIf `allow_empty` is `false`, empty strings between adjacent delimiters are excluded from the array.\nIf `maxsplit` is greater than `0`, the number of splits may not exceed `maxsplit`. By default, the entire string is split, which is mostly identical to `split()`.\n\n```gdscript\nvar some_string = \"One,Two,Three,Four\"\nvar some_array = some_string.rsplit(\",\", true, 1)\n\nprint(some_array.size()) # Prints 2\nprint(some_array[0])     # Prints \"One,Two,Three\"\nprint(some_array[1])     # Prints \"Four\"\n```",
         kind: MemberKind::Method,
     },
@@ -4842,21 +4842,21 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "String",
         name: "split",
-        brief: "split(delimiter: String, allow_empty: bool, maxsplit: int) -> PackedStringArray",
+        brief: "split(delimiter: String = \"\", allow_empty: bool = true, maxsplit: int = 0) -> PackedStringArray",
         description: "Splits the string using a `delimiter` and returns an array of the substrings. If `delimiter` is an empty string, each substring will be a single character. This method is the opposite of `join()`.\nIf `allow_empty` is `false`, empty strings between adjacent delimiters are excluded from the array.\nIf `maxsplit` is greater than `0`, the number of splits may not exceed `maxsplit`. By default, the entire string is split.\n\n```gdscript\nvar some_array = \"One,Two,Three,Four\".split(\",\", true, 2)\n\nprint(some_array.size()) # Prints 3\nprint(some_array[0])     # Prints \"One\"\nprint(some_array[1])     # Prints \"Two\"\nprint(some_array[2])     # Prints \"Three,Four\"\n```\n\n**Note:** If you only need one substring from the array, consider using `get_slice()` which is faster. If you need to split strings with more complex rules, use the `RegEx` class instead.",
         kind: MemberKind::Method,
     },
     BuiltinMember {
         class: "String",
         name: "split_floats",
-        brief: "split_floats(delimiter: String, allow_empty: bool) -> PackedFloat64Array",
+        brief: "split_floats(delimiter: String, allow_empty: bool = true) -> PackedFloat64Array",
         description: "Splits the string into floats by using a `delimiter` and returns a `PackedFloat64Array`.\nIf `allow_empty` is `false`, empty or invalid [float] conversions between adjacent delimiters are excluded.\n\n```\nvar a = \"1,2,4.5\".split_floats(\",\")         # a is [1.0, 2.0, 4.5]\nvar c = \"1| ||4.5\".split_floats(\"|\")        # c is [1.0, 0.0, 0.0, 4.5]\nvar b = \"1| ||4.5\".split_floats(\"|\", false) # b is [1.0, 4.5]\n```",
         kind: MemberKind::Method,
     },
     BuiltinMember {
         class: "String",
         name: "strip_edges",
-        brief: "strip_edges(left: bool, right: bool) -> String",
+        brief: "strip_edges(left: bool = true, right: bool = true) -> String",
         description: "Strips all non-printable characters from the beginning and the end of the string. These include spaces, tabulations (`\\t`), and newlines (`\\n` `\\r`).\nIf `left` is `false`, ignores the string's beginning. Likewise, if `right` is `false`, ignores the string's end.",
         kind: MemberKind::Method,
     },
@@ -4870,7 +4870,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "String",
         name: "substr",
-        brief: "substr(from: int, len: int) -> String",
+        brief: "substr(from: int, len: int = -1) -> String",
         description: "Returns part of the string from the position `from` with length `len`. If `len` is `-1` (as by default), returns the rest of the string starting from the given position.",
         kind: MemberKind::Method,
     },
@@ -4919,7 +4919,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "String",
         name: "to_multibyte_char_buffer",
-        brief: "to_multibyte_char_buffer(encoding: String) -> PackedByteArray",
+        brief: "to_multibyte_char_buffer(encoding: String = \"\") -> PackedByteArray",
         description: "Converts the string to system multibyte code page encoded `PackedByteArray`. If conversion fails, empty array is returned.\nThe values permitted for `encoding` are system dependent. If `encoding` is empty string, system default encoding is used.\n- For Windows, see [Code Page Identifiers](https://learn.microsoft.com/en-us/windows/win32/Intl/code-page-identifiers) .NET names.\n- For macOS and Linux/BSD, see `libiconv` library documentation and `iconv --list` for a list of supported encodings.",
         kind: MemberKind::Method,
     },
@@ -5031,7 +5031,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "String",
         name: "xml_escape",
-        brief: "xml_escape(escape_quotes: bool) -> String",
+        brief: "xml_escape(escape_quotes: bool = false) -> String",
         description: "Returns a copy of the string with special characters escaped using the XML standard. If `escape_quotes` is `true`, the single quote (`'`) and double quote (`\"`) characters are also escaped.",
         kind: MemberKind::Method,
     },
@@ -5109,14 +5109,14 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "StringName",
         name: "count",
-        brief: "count(what: String, from: int, to: int) -> int",
+        brief: "count(what: String, from: int = 0, to: int = 0) -> int",
         description: "Returns the number of occurrences of the substring `what` between `from` and `to` positions. If `to` is 0, the search continues until the end of the string.",
         kind: MemberKind::Method,
     },
     BuiltinMember {
         class: "StringName",
         name: "countn",
-        brief: "countn(what: String, from: int, to: int) -> int",
+        brief: "countn(what: String, from: int = 0, to: int = 0) -> int",
         description: "Returns the number of occurrences of the substring `what` between `from` and `to` positions, **ignoring case**. If `to` is 0, the search continues until the end of the string.",
         kind: MemberKind::Method,
     },
@@ -5137,7 +5137,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "StringName",
         name: "erase",
-        brief: "erase(position: int, chars: int) -> String",
+        brief: "erase(position: int, chars: int = 1) -> String",
         description: "Returns a string with `chars` characters erased starting from `position`. If `chars` goes beyond the string's length given the specified `position`, fewer characters will be erased from the returned string. Returns an empty string if either `position` or `chars` is negative. Returns the original string unmodified if `chars` is `0`.",
         kind: MemberKind::Method,
     },
@@ -5158,21 +5158,21 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "StringName",
         name: "find",
-        brief: "find(what: String, from: int) -> int",
+        brief: "find(what: String, from: int = 0) -> int",
         description: "Returns the index of the **first** occurrence of `what` in this string, or `-1` if there are none. The search's start can be specified with `from`, continuing to the end of the string.\n\n```gdscript\nprint(\"Team\".find(\"I\")) # Prints -1\n\nprint(\"Potato\".find(\"t\"))    # Prints 2\nprint(\"Potato\".find(\"t\", 3)) # Prints 4\nprint(\"Potato\".find(\"t\", 5)) # Prints -1\n```\n\n**Note:** If you just want to know whether the string contains `what`, use `contains()`. In GDScript, you may also use the `in` operator.\n**Note:** A negative value of `from` is converted to a starting index by counting back from the last possible index with enough space to find `what`.",
         kind: MemberKind::Method,
     },
     BuiltinMember {
         class: "StringName",
         name: "findn",
-        brief: "findn(what: String, from: int) -> int",
+        brief: "findn(what: String, from: int = 0) -> int",
         description: "Returns the index of the **first** **case-insensitive** occurrence of `what` in this string, or `-1` if there are none. The starting search index can be specified with `from`, continuing to the end of the string.",
         kind: MemberKind::Method,
     },
     BuiltinMember {
         class: "StringName",
         name: "format",
-        brief: "format(values: Variant, placeholder: String) -> String",
+        brief: "format(values: Variant, placeholder: String = \"{_}\") -> String",
         description: "Formats the string by replacing all occurrences of `placeholder` with the elements of `values`.\n`values` can be a `Dictionary`, an `Array`, or an `Object`. Any underscores in `placeholder` will be replaced with the corresponding keys in advance. Array elements use their index as keys.\n\n```\n# Prints \"Waiting for Godot is a play by Samuel Beckett, and Godot Engine is named after it.\"\nvar use_array_values = \"Waiting for {0} is a play by {1}, and {0} Engine is named after it.\"\nprint(use_array_values.format([\"Godot\", \"Samuel Beckett\"]))\n\n# Prints \"User 42 is Godot.\"\nprint(\"User {id} is {name}.\".format({\"id\": 42, \"name\": \"Godot\"}))\n```\n\nSome additional handling is performed when `values` is an `Array`. If `placeholder` does not contain an underscore, the elements of the `values` array will be used to replace one occurrence of the placeholder in order; If an element of `values` is another 2-element array, it'll be interpreted as a key-value pair.\n\n```\n# Prints \"User 42 is Godot.\"\nprint(\"User {} is {}.\".format([42, \"Godot\"], \"{}\"))\nprint(\"User {id} is {name}.\".format([[\"id\", 42], [\"name\", \"Godot\"]]))\n```\n\nWhen passing an `Object`, the property names from `Object.get_property_list()` are used as keys.\n\n```\n# Prints \"Visible true, position (0, 0)\"\nvar node = Node2D.new()\nprint(\"Visible {visible}, position {position}\".format(node))\n```\n\nSee also the [GDScript format string]($DOCS_URL/tutorials/scripting/gdscript/gdscript_format_string.html) tutorial.\n**Note:** Each replacement is done sequentially for each element of `values`, **not** all at once. This means that if any element is inserted and it contains another placeholder, it may be changed by the next replacement. While this can be very useful, it often causes unexpected results. If not necessary, make sure `values`'s elements do not contain placeholders.\n\n```\nprint(\"{0} {1}\".format([\"{1}\", \"x\"]))           # Prints \"x x\"\nprint(\"{0} {1}\".format([\"x\", \"{0}\"]))           # Prints \"x {0}\"\nprint(\"{a} {b}\".format({\"a\": \"{b}\", \"b\": \"c\"})) # Prints \"c c\"\nprint(\"{a} {b}\".format({\"b\": \"c\", \"a\": \"{b}\"})) # Prints \"{b} c\"\n```\n\n**Note:** In C#, it's recommended to [interpolate strings with \"$\"](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/tokens/interpolated), instead.",
         kind: MemberKind::Method,
     },
@@ -5319,7 +5319,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "StringName",
         name: "is_valid_hex_number",
-        brief: "is_valid_hex_number(with_prefix: bool) -> bool",
+        brief: "is_valid_hex_number(with_prefix: bool = false) -> bool",
         description: "Returns `true` if this string is a valid hexadecimal number. A valid hexadecimal number only contains digits or letters `A` to `F` (either uppercase or lowercase), and may be prefixed with a positive (`+`) or negative (`-`) sign.\nIf `with_prefix` is `true`, the hexadecimal number needs to prefixed by `\"0x\"` to be considered valid.\n\n```\nprint(\"A08E\".is_valid_hex_number())    # Prints true\nprint(\"-AbCdEf\".is_valid_hex_number()) # Prints true\nprint(\"2.5\".is_valid_hex_number())     # Prints false\n\nprint(\"0xDEADC0DE\".is_valid_hex_number(true)) # Prints true\n```",
         kind: MemberKind::Method,
     },
@@ -5389,7 +5389,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "StringName",
         name: "lpad",
-        brief: "lpad(min_length: int, character: String) -> String",
+        brief: "lpad(min_length: int, character: String = \" \") -> String",
         description: "Formats the string to be at least `min_length` long by adding `character`s to the left of the string, if necessary. See also `rpad()`.",
         kind: MemberKind::Method,
     },
@@ -5529,14 +5529,14 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "StringName",
         name: "rfind",
-        brief: "rfind(what: String, from: int) -> int",
+        brief: "rfind(what: String, from: int = -1) -> int",
         description: "Returns the index of the **last** occurrence of `what` in this string, or `-1` if there are none. The search's start can be specified with `from`, continuing to the beginning of the string. This method is the reverse of `find()`.\n**Note:** A negative value of `from` is converted to a starting index by counting back from the last possible index with enough space to find `what`.\n**Note:** A value of `from` that is greater than the last possible index with enough space to find `what` is considered out-of-bounds, and returns `-1`.",
         kind: MemberKind::Method,
     },
     BuiltinMember {
         class: "StringName",
         name: "rfindn",
-        brief: "rfindn(what: String, from: int) -> int",
+        brief: "rfindn(what: String, from: int = -1) -> int",
         description: "Returns the index of the **last** **case-insensitive** occurrence of `what` in this string, or `-1` if there are none. The starting search index can be specified with `from`, continuing to the beginning of the string. This method is the reverse of `findn()`.",
         kind: MemberKind::Method,
     },
@@ -5550,14 +5550,14 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "StringName",
         name: "rpad",
-        brief: "rpad(min_length: int, character: String) -> String",
+        brief: "rpad(min_length: int, character: String = \" \") -> String",
         description: "Formats the string to be at least `min_length` long, by adding `character`s to the right of the string, if necessary. See also `lpad()`.",
         kind: MemberKind::Method,
     },
     BuiltinMember {
         class: "StringName",
         name: "rsplit",
-        brief: "rsplit(delimiter: String, allow_empty: bool, maxsplit: int) -> PackedStringArray",
+        brief: "rsplit(delimiter: String = \"\", allow_empty: bool = true, maxsplit: int = 0) -> PackedStringArray",
         description: "Splits the string using a `delimiter` and returns an array of the substrings, starting from the end of the string. The splits in the returned array appear in the same order as the original string. If `delimiter` is an empty string, each substring will be a single character.\nIf `allow_empty` is `false`, empty strings between adjacent delimiters are excluded from the array.\nIf `maxsplit` is greater than `0`, the number of splits may not exceed `maxsplit`. By default, the entire string is split, which is mostly identical to `split()`.\n\n```gdscript\nvar some_string = \"One,Two,Three,Four\"\nvar some_array = some_string.rsplit(\",\", true, 1)\n\nprint(some_array.size()) # Prints 2\nprint(some_array[0])     # Prints \"One,Two,Three\"\nprint(some_array[1])     # Prints \"Four\"\n```",
         kind: MemberKind::Method,
     },
@@ -5613,21 +5613,21 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "StringName",
         name: "split",
-        brief: "split(delimiter: String, allow_empty: bool, maxsplit: int) -> PackedStringArray",
+        brief: "split(delimiter: String = \"\", allow_empty: bool = true, maxsplit: int = 0) -> PackedStringArray",
         description: "Splits the string using a `delimiter` and returns an array of the substrings. If `delimiter` is an empty string, each substring will be a single character. This method is the opposite of `join()`.\nIf `allow_empty` is `false`, empty strings between adjacent delimiters are excluded from the array.\nIf `maxsplit` is greater than `0`, the number of splits may not exceed `maxsplit`. By default, the entire string is split.\n\n```gdscript\nvar some_array = \"One,Two,Three,Four\".split(\",\", true, 2)\n\nprint(some_array.size()) # Prints 3\nprint(some_array[0])     # Prints \"One\"\nprint(some_array[1])     # Prints \"Two\"\nprint(some_array[2])     # Prints \"Three,Four\"\n```\n\n**Note:** If you only need one substring from the array, consider using `get_slice()` which is faster. If you need to split strings with more complex rules, use the `RegEx` class instead.",
         kind: MemberKind::Method,
     },
     BuiltinMember {
         class: "StringName",
         name: "split_floats",
-        brief: "split_floats(delimiter: String, allow_empty: bool) -> PackedFloat64Array",
+        brief: "split_floats(delimiter: String, allow_empty: bool = true) -> PackedFloat64Array",
         description: "Splits the string into floats by using a `delimiter` and returns a `PackedFloat64Array`.\nIf `allow_empty` is `false`, empty or invalid [float] conversions between adjacent delimiters are excluded.\n\n```\nvar a = \"1,2,4.5\".split_floats(\",\")         # a is [1.0, 2.0, 4.5]\nvar c = \"1| ||4.5\".split_floats(\"|\")        # c is [1.0, 0.0, 0.0, 4.5]\nvar b = \"1| ||4.5\".split_floats(\"|\", false) # b is [1.0, 4.5]\n```",
         kind: MemberKind::Method,
     },
     BuiltinMember {
         class: "StringName",
         name: "strip_edges",
-        brief: "strip_edges(left: bool, right: bool) -> String",
+        brief: "strip_edges(left: bool = true, right: bool = true) -> String",
         description: "Strips all non-printable characters from the beginning and the end of the string. These include spaces, tabulations (`\\t`), and newlines (`\\n` `\\r`).\nIf `left` is `false`, ignores the string's beginning. Likewise, if `right` is `false`, ignores the string's end.",
         kind: MemberKind::Method,
     },
@@ -5641,7 +5641,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "StringName",
         name: "substr",
-        brief: "substr(from: int, len: int) -> String",
+        brief: "substr(from: int, len: int = -1) -> String",
         description: "Returns part of the string from the position `from` with length `len`. If `len` is `-1` (as by default), returns the rest of the string starting from the given position.",
         kind: MemberKind::Method,
     },
@@ -5690,7 +5690,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "StringName",
         name: "to_multibyte_char_buffer",
-        brief: "to_multibyte_char_buffer(encoding: String) -> PackedByteArray",
+        brief: "to_multibyte_char_buffer(encoding: String = \"\") -> PackedByteArray",
         description: "Converts the string to system multibyte code page encoded `PackedByteArray`. If conversion fails, empty array is returned.\nThe values permitted for `encoding` are system dependent. If `encoding` is empty string, system default encoding is used.\n- For Windows, see [Code Page Identifiers](https://learn.microsoft.com/en-us/windows/win32/Intl/code-page-identifiers) .NET names.\n- For macOS and Linux/BSD, see `libiconv` library documentation and `iconv --list` for a list of supported encodings.",
         kind: MemberKind::Method,
     },
@@ -5802,7 +5802,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "StringName",
         name: "xml_escape",
-        brief: "xml_escape(escape_quotes: bool) -> String",
+        brief: "xml_escape(escape_quotes: bool = false) -> String",
         description: "Returns a copy of the string with special characters escaped using the XML standard. If `escape_quotes` is `true`, the single quote (`'`) and double quote (`\"`) characters are also escaped.",
         kind: MemberKind::Method,
     },
@@ -5908,7 +5908,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "Transform2D",
         name: "looking_at",
-        brief: "looking_at(target: Vector2) -> Transform2D",
+        brief: "looking_at(target: Vector2 = Vector2(0, 0)) -> Transform2D",
         description: "Returns a copy of the transform rotated such that the rotated X-axis points towards the `target` position, in global space.",
         kind: MemberKind::Method,
     },
@@ -6021,7 +6021,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "Transform3D",
         name: "looking_at",
-        brief: "looking_at(target: Vector3, up: Vector3, use_model_front: bool) -> Transform3D",
+        brief: "looking_at(target: Vector3, up: Vector3 = Vector3(0, 1, 0), use_model_front: bool = false) -> Transform3D",
         description: "Returns a copy of this transform rotated so that the forward axis (-Z) points towards the `target` position.\nThe up axis (+Y) points as close to the `up` vector as possible while staying perpendicular to the forward axis. The resulting transform is orthonormalized. The existing rotation, scale, and skew information from the original transform is discarded. The `target` and `up` vectors cannot be zero, cannot be parallel to each other, and are defined in global/parent space.\nIf `use_model_front` is `true`, the +Z axis (asset front) is treated as forward (implies +X is left) and points toward the `target` position. By default, the -Z axis (camera forward) is treated as forward (implies +X is right).",
         kind: MemberKind::Method,
     },
@@ -6281,7 +6281,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "Vector2",
         name: "limit_length",
-        brief: "limit_length(length: float) -> Vector2",
+        brief: "limit_length(length: float = 1.0) -> Vector2",
         description: "Returns the vector with a maximum length by limiting its length to `length`. If the vector is non-finite, the result is undefined.",
         kind: MemberKind::Method,
     },
@@ -6745,7 +6745,7 @@ pub static GENERATED_MEMBERS: &[BuiltinMember] = &[
     BuiltinMember {
         class: "Vector3",
         name: "limit_length",
-        brief: "limit_length(length: float) -> Vector3",
+        brief: "limit_length(length: float = 1.0) -> Vector3",
         description: "Returns the vector with a maximum length by limiting its length to `length`. If the vector is non-finite, the result is undefined.",
         kind: MemberKind::Method,
     },

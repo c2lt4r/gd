@@ -2,12 +2,22 @@
 
 ## [Unreleased]
 
+### Changed
+- **`gd edit` consolidated to CRUD primitives** — 5 overlapping commands (`replace-body`, `replace-symbol`, `replace-range`, `insert`, `insert-into`) replaced by 2 AST-safe commands: `gd edit replace` and `gd edit insert`. All mutations go through the owned AST pipeline (parse -> modify -> print). No text splicing.
+  - `replace`: target by `--name <sym>` or `--line <N>[-<M>]`, with `--body` for function body-only replacement
+  - `insert`: anchor by `--name <sym>` or `--line <N>`, position with `--before`/`--after`/`--into`/`--into-end`
+
 ### Added
-- **`gd edit replace-range`** — AST-safe line range replacement. Parses source and replacement into AST nodes, validates that the range aligns with complete declaration/statement boundaries, splices at the correct nesting level (top-level declarations or function body statements), and prints from the AST. Rejects ranges that split a node.
+- **`OwnedDecl::name()`** — accessor for declaration names, completing the owned AST query API.
 - **`OwnedDecl::span()`** — accessor for declaration source spans, matching the existing `OwnedExpr::span()` and `OwnedStmt::span()` pattern.
-- **`clear_spans()` on all owned AST types** — recursively clears source spans so the printer regenerates from AST fields. Added to `OwnedFile`, `OwnedDecl`, `OwnedFunc`, `OwnedVar`, `OwnedStmt`, and `OwnedExpr`.
+- **`clear_spans()` on all owned AST types** — recursively clears source spans so the printer regenerates from AST fields.
 
 ### Fixed
+- **Regenerate ClassDB with all 39 Godot singletons** — `symbols.json` was missing 12 singletons (PhysicsServer2D/3D, AudioServer, DisplayServer, RenderingServer, NavigationServer2D/3D, etc.). Fixes false positive "cannot call non-static method on class" errors when calling methods on singleton classes like `PhysicsServer3D.body_set_state()`.
+- **Builtin method default arguments now recognized** — `PackedByteArray.slice()`, `Dictionary.merge()`, `Array.find()`, and all other builtin methods with optional parameters no longer produce false "too few arguments" errors. The `default_value` field from Godot's extension API is now propagated through `symbols.json` into the generated brief signatures.
+- **Constructor validation uses generated data** — replaced hardcoded `constructor_param_counts()` with `builtin_constructor_exists()` backed by the generated `BUILTIN_CONSTRUCTORS` table. Fixes `Basis(Quaternion)` and `Quaternion(Basis)` false positives and prevents future drift.
+- **Skip arg type checking for `call`/`call_deferred`/`callv`** — these methods are variadic on `Callable` but `Object.call()` has a fixed `(StringName, ...)` signature. When the receiver type can't be fully resolved, the checker would match `Object.call()` and produce false "argument should be StringName" errors.
+- **Transform/matrix * Variant no longer guesses wrong type** — when one operand of `*` is a transform type (Transform2D, Transform3D, Basis, Projection) and the other is Variant/unknown, the fallback now returns Variant instead of incorrectly assuming the transform type dominates (e.g. `Transform3D * Vector3` was inferred as `Transform3D` instead of `Vector3`).
 - **Type inference for binary operations with builtin types** — `Vector3 / float`, `Vector3 * float`, `Color + Color`, `Transform3D * Vector3`, and all other ClassDB operator combinations now resolve correctly. Previously, operand types (variant type constants like `Vector3.ZERO`, function parameters, local variables) couldn't be resolved, so the ClassDB operator table was never consulted and the fallback incorrectly returned `float`. Fixes false positive "cannot return a value of type float from function with return type Vector3" errors.
 - **Variant type constant resolution** — `Vector3.ZERO`, `Vector2.ONE`, `Color.RED`, `Basis.IDENTITY` and all other builtin type constants now resolve to their correct types in the type inference engine.
 - **Function parameter type resolution** — typed function parameters (e.g. `func f(pos: Vector3)`) now resolve in expression type inference, enabling correct binary operation type checking.
