@@ -102,9 +102,9 @@ pub enum Command {
     Log(log_cmd::LogArgs),
     /// Start the Language Server Protocol server
     Lsp(lsp_cmd::LspArgs),
-    /// Refactoring operations (rename, extract, inline, etc.)
+    /// Refactoring operations (rename, extract-method, move-symbol, move-file, change-signature)
     Refactor(refactor_cmd::RefactorArgs),
-    /// Code editing primitives (replace-body, insert, edit-range, etc.)
+    /// Code editing primitives (replace, insert, remove, create-file)
     Edit(edit_gd_cmd::EditGdArgs),
     /// Code intelligence queries (references, hover, definition, etc.)
     Query(query_cmd::QueryArgs),

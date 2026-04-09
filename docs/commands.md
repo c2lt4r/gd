@@ -28,8 +28,8 @@
 | `gd resource` | Manage `.tres` resource files (create, properties, scripts, info) |
 | `gd scene` | Manage `.tscn` scene files (create, add/remove nodes, properties, connections, scripts) |
 | `gd lsp` | Start the LSP server |
-| `gd refactor` | Refactoring operations (rename, extract, inline, change-signature, undo, etc.) |
-| `gd edit` | Code editing primitives (replace, insert, remove, extract, create-file) |
+| `gd refactor` | Refactoring operations (rename, extract-method, move-symbol, move-file, change-signature) |
+| `gd edit` | Code editing primitives (replace, insert, remove, create-file) |
 | `gd query` | Code intelligence queries (references, hover, definition, symbols, completions, etc.) |
 | `gd ssr` | Structural search and replace for GDScript (`$placeholder` patterns, type constraints, `--dry-run`, `--format json`) |
 | `gd deps` | Show script dependency graph (`--include-resources` for `.tscn`/`.tres`) |

@@ -94,6 +94,30 @@ pub enum RefactorCommand {
         #[arg(long)]
         format: Option<String>,
     },
+    /// Move a symbol from one file to another
+    MoveSymbol {
+        /// Symbol name to move
+        #[arg(long)]
+        name: String,
+        /// Source file
+        #[arg(long)]
+        from: String,
+        /// Destination file (created if doesn't exist)
+        #[arg(long)]
+        to: String,
+        /// Source inner class
+        #[arg(long)]
+        class: Option<String>,
+        /// Target inner class (defaults to top-level)
+        #[arg(long)]
+        target_class: Option<String>,
+        /// Update preload/load paths in files that reference the source
+        #[arg(long)]
+        update_callers: bool,
+        /// Output format: json or human (default: human)
+        #[arg(long)]
+        format: Option<String>,
+    },
 }
 
 fn is_json(format: Option<&String>) -> bool {
@@ -193,6 +217,23 @@ fn print_change_signature_human(r: &gd_lsp::refactor::ChangeSignatureOutput) {
         r.new_signature.green().bold(),
         r.call_sites_updated,
         if r.call_sites_updated == 1 { "" } else { "s" },
+        dry_run_suffix(r.applied),
+    );
+    for w in &r.warnings {
+        cprintln!("  {}: {w}", "warning".yellow());
+    }
+}
+
+fn print_move_symbol_human(r: &gd_lsp::refactor::MoveSymbolOutput) {
+    use owo_colors::OwoColorize;
+    cprintln!(
+        "{} {} ({}) {} {} {}{}",
+        if r.applied { "Moved" } else { "Would move" },
+        r.symbol.bold(),
+        r.kind.dimmed(),
+        r.from.cyan(),
+        "→".dimmed(),
+        r.to.cyan(),
         dry_run_suffix(r.applied),
     );
     for w in &r.warnings {
@@ -321,6 +362,32 @@ pub fn exec(args: RefactorArgs) -> Result<()> {
                 cprintln!("{json}");
             } else {
                 print_change_signature_human(&result);
+            }
+            Ok(())
+        }
+        RefactorCommand::MoveSymbol {
+            name,
+            from,
+            to,
+            class,
+            target_class,
+            update_callers,
+            format,
+        } => {
+            let result = gd_lsp::query::query_extract(
+                &name,
+                &from,
+                &to,
+                class.as_deref(),
+                target_class.as_deref(),
+                update_callers,
+            )?;
+            if is_json(format.as_ref()) {
+                let json =
+                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
+                cprintln!("{json}");
+            } else {
+                print_move_symbol_human(&result);
             }
             Ok(())
         }

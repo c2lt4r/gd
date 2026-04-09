@@ -116,30 +116,6 @@ pub enum EditGdCommand {
         #[arg(long)]
         format: Option<String>,
     },
-    /// Move a symbol from one file to another
-    Extract {
-        /// Symbol name to extract
-        #[arg(long)]
-        name: String,
-        /// Source file
-        #[arg(long)]
-        from: String,
-        /// Destination file (created if doesn't exist)
-        #[arg(long)]
-        to: String,
-        /// Source inner class
-        #[arg(long)]
-        class: Option<String>,
-        /// Target inner class (defaults to top-level)
-        #[arg(long)]
-        target_class: Option<String>,
-        /// Update preload/load paths in files that reference the source
-        #[arg(long)]
-        update_callers: bool,
-        /// Output format: json or human (default: human)
-        #[arg(long)]
-        format: Option<String>,
-    },
 }
 
 /// Parse `--line` argument: "5" → (5, None), "5-10" → (5, Some(10))
@@ -213,27 +189,6 @@ fn print_remove_human(r: &gd_lsp::refactor::DeleteSymbolOutput) {
         for loc in &r.references {
             cprintln!("  {}:{}:{}", loc.file.cyan(), loc.line, loc.column);
         }
-    }
-}
-
-fn print_extract_human(r: &gd_lsp::refactor::MoveSymbolOutput) {
-    use owo_colors::OwoColorize;
-    cprintln!(
-        "{} {} ({}) {} {} {}{}",
-        if r.applied {
-            "Extracted"
-        } else {
-            "Would extract"
-        },
-        r.symbol.bold(),
-        r.kind.dimmed(),
-        r.from.cyan(),
-        "→".dimmed(),
-        r.to.cyan(),
-        dry_run_suffix(r.applied),
-    );
-    for w in &r.warnings {
-        cprintln!("  {}: {w}", "warning".yellow());
     }
 }
 
@@ -474,32 +429,6 @@ pub fn exec(args: EditGdArgs) -> Result<()> {
             }
             if !force && !result.references.is_empty() {
                 std::process::exit(1);
-            }
-            Ok(())
-        }
-        EditGdCommand::Extract {
-            name,
-            from,
-            to,
-            class,
-            target_class,
-            update_callers,
-            format,
-        } => {
-            let result = gd_lsp::query::query_extract(
-                &name,
-                &from,
-                &to,
-                class.as_deref(),
-                target_class.as_deref(),
-                update_callers,
-            )?;
-            if is_json(format.as_ref()) {
-                let json =
-                    serde_json::to_string_pretty(&result).map_err(|e| miette::miette!("{e}"))?;
-                cprintln!("{json}");
-            } else {
-                print_extract_human(&result);
             }
             Ok(())
         }

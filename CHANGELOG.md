@@ -7,6 +7,7 @@
   - `replace`: target by `--name <sym>` or `--line <N>[-<M>]`, with `--body` for function body-only replacement
   - `insert`: anchor by `--name <sym>` or `--line <N>`, position with `--before`/`--after`/`--into`/`--into-end`
 - **`gd edit remove` now AST-safe** — declaration and enum member removal migrated from byte-offset text splicing to owned AST manipulation (find node → remove from tree → print from AST).
+- **`gd edit extract` moved to `gd refactor move-symbol`** — cross-file symbol movement belongs under refactor, not edit. `gd edit` is now purely single-file CRUD primitives.
 
 ### Added
 - **`OwnedDecl::name()`** — accessor for declaration names, completing the owned AST query API.
