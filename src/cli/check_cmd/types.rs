@@ -327,8 +327,14 @@ fn operator_valid(op: &str, left: &str, right: &str) -> bool {
     if left == "Variant" || right == "Variant" {
         return true;
     }
-    // Equality/inequality, boolean logic, and unknown ops: always valid
-    if matches!(op, "==" | "!=" | "and" | "or" | "&&" | "||") {
+    // Equality/inequality, boolean logic, not/not-in: always valid
+    if matches!(op, "==" | "!=" | "and" | "or" | "&&" | "||" | "not") {
+        return true;
+    }
+    // "property" in object — GDScript allows `in` on any Object to check property existence.
+    // The ClassDB operator table only covers builtin types (Array, Dictionary, Packed*),
+    // but `in` works on any Object (ClassDB or project-defined) for property checking.
+    if matches!(op, "in" | "not in") && left == "String" {
         return true;
     }
     // Consult the generated operator table from ClassDB
