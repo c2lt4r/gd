@@ -7,6 +7,7 @@
 - **Variant type constant resolution** — `Vector3.ZERO`, `Vector2.ONE`, `Color.RED`, `Basis.IDENTITY` and all other builtin type constants now resolve to their correct types in the type inference engine.
 - **Function parameter type resolution** — typed function parameters (e.g. `func f(pos: Vector3)`) now resolve in expression type inference, enabling correct binary operation type checking.
 - **Local variable type resolution** — local variables with explicit types or `:=` inferred types now resolve in expression type inference.
+- **Builtin method return types** — methods on variant types like `Vector3.normalized()`, `Vector2.length()`, `Color.lerp()` now resolve correctly in type inference, fixing false positives for expressions like `offset.normalized() * threshold`.
 - **Project-aware binary op inference** — binary operators, parenthesized expressions, ternaries, and await expressions now propagate cross-file project context through recursive inference instead of losing it.
 
 ## [0.3.26] - 2026-04-03
